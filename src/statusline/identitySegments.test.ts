@@ -233,12 +233,19 @@ describe("the provider segment", () => {
 
 describe("the account segment", () => {
   it("writes the email and the plan by default", () => {
-    expect(segments({ settings: onlyHeader("account") })).toEqual(["ada.lovelace@example.com · Max 20x"]);
+    expect(segments({ settings: onlyHeader("account") })).toEqual(["ada.lovelace@example.com · Ultra"]);
+  });
+
+  it("names the Max plans by their product names, keeping the figure of a multiplier with none", () => {
+    const plan = (loginRateLimitTier: string): string[] => segments({ settings: { ...onlyHeader("account"), account: { parts: ["plan"] } }, summary: { loginOrganizationType: "claude_max", loginRateLimitTier } });
+    expect(plan("default_claude_max_5x")).toEqual(["Max"]);
+    expect(plan("default_claude_max_20x")).toEqual(["Ultra"]);
+    expect(plan("default_claude_max_10x")).toEqual(["Max 10x"]);
   });
 
   it("writes the parts the list names, in its order, and hides the segment when it is empty", () => {
-    expect(segments({ settings: { ...onlyHeader("account"), account: { parts: ["plan", "user"] } } })).toEqual(["Max 20x · ada.lovelace@example.com"]);
-    expect(segments({ settings: { ...onlyHeader("account"), account: { parts: ["plan"] } } })).toEqual(["Max 20x"]);
+    expect(segments({ settings: { ...onlyHeader("account"), account: { parts: ["plan", "user"] } } })).toEqual(["Ultra · ada.lovelace@example.com"]);
+    expect(segments({ settings: { ...onlyHeader("account"), account: { parts: ["plan"] } } })).toEqual(["Ultra"]);
     expect(segments({ settings: { ...onlyHeader("account"), account: { parts: ["user"] } } })).toEqual(["ada.lovelace@example.com"]);
     expect(segments({ settings: { ...onlyHeader("account"), account: { parts: [] } } })).toEqual([]);
   });
@@ -250,8 +257,8 @@ describe("the account segment", () => {
   });
 
   it("cuts the email to the length set, with an ellipsis, and leaves a shorter one whole", () => {
-    expect(segments({ settings: { ...onlyHeader("account"), account: { userLength: SHORT_USER_LENGTH } } })).toEqual(["ada.l… · Max 20x"]);
-    expect(segments({ settings: { ...onlyHeader("account"), account: { userLength: 100 } } })).toEqual(["ada.lovelace@example.com · Max 20x"]);
+    expect(segments({ settings: { ...onlyHeader("account"), account: { userLength: SHORT_USER_LENGTH } } })).toEqual(["ada.l… · Ultra"]);
+    expect(segments({ settings: { ...onlyHeader("account"), account: { userLength: 100 } } })).toEqual(["ada.lovelace@example.com · Ultra"]);
   });
 });
 
@@ -431,12 +438,12 @@ describe("the segments' defaults", () => {
     expect(STATUSLINE_DEFAULTS.layout.header).toEqual(["model", "project", "vcs", "provider", "route", "account", "identity", "headroom", "extra"]);
     const payload = { version: "2.1.81", effort: "high", cwd: "/work", transcript_path: TRANSCRIPT };
     const ports = { ...transcriptOf(assistant("glm-5.3", "claude-opus-4-7")), readText: () => explanatoryStyle() };
-    expect(segments({ payload, ports })).toEqual(["Claude Opus 4.7 (1M context)", `${ESCAPE}[33mwork${ESCAPE}[0m`, "ada.lovelace@example.com · Max 20x"]);
+    expect(segments({ payload, ports })).toEqual(["Claude Opus 4.7 (1M context)", `${ESCAPE}[33mwork${ESCAPE}[0m`, "ada.lovelace@example.com · Ultra"]);
   });
 
   it("draw the platform beside the model, as claude-hud's default does", () => {
     expect(STATUSLINE_DEFAULTS.model.platform).toBe(true);
-    expect(segments({ payload: { cwd: "/work" }, ports: { env: { CLAUDE_CODE_USE_VERTEX: "1" } } })).toEqual(["Claude Opus 4.7 (1M context)", "Vertex", `${ESCAPE}[33mwork${ESCAPE}[0m`, "ada.lovelace@example.com · Max 20x"]);
+    expect(segments({ payload: { cwd: "/work" }, ports: { env: { CLAUDE_CODE_USE_VERTEX: "1" } } })).toEqual(["Claude Opus 4.7 (1M context)", "Vertex", `${ESCAPE}[33mwork${ESCAPE}[0m`, "ada.lovelace@example.com · Ultra"]);
   });
 });
 
