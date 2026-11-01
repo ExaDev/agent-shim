@@ -172,7 +172,7 @@ describe("agent-shim pool", () => {
     expect(JSON.parse((await cli(["pool", "show", "subs", "--json"])).stdout)).toEqual({ name: "subs", identities: ["work"], resumeOnLimit: true, compactBeforeLimit: true, compactAtUtilisation: 85 });
     expect((await cli(["pool", "set", "subs", "--no-compact-at-utilisation"])).code).toBe(0);
     expect((await cli(["pool", "list"])).stdout).toContain("subs: work (resumes on limit, compacts before the limit)");
-    expect((await cli(["pool", "show", "subs"])).stdout).toContain("Compact before limit: when compacting would cost more than the five-hour window has left");
+    expect((await cli(["pool", "show", "subs"])).stdout).toContain("Compact before limit: when compacting would cost more than the member's tightest quota window has left");
     expect((await cli(["pool", "set", "subs", "--no-compact-before-limit"])).code).toBe(0);
     expect((await cli(["pool", "show", "subs"])).stdout).not.toContain("Compact before limit");
     // A setting that needs another one switched on is refused, naming what is missing.

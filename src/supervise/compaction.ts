@@ -1,6 +1,6 @@
 import { ANTHROPIC_PROVIDER } from "../usage/middleware";
-import { utilisationPerBilledToken } from "../usage/pick";
-import { effectiveWindow } from "../usage/preflight";
+import { utilisationPerBilledToken, type PlanWindowName } from "../usage/pick";
+import { effectiveWindow, type EffectiveWindow } from "../usage/preflight";
 import type { UsageRecord, UsageSnapshot } from "../usage/schema";
 import type { SessionState } from "./registry";
 
@@ -37,28 +37,47 @@ function compactableTokens(state: SessionState | undefined): number | undefined 
   return state?.mark === "idle" && state.compacted !== true && state.contextTokens !== undefined && state.contextTokens > 0 ? state.contextTokens : undefined;
 }
 
+/** One plan window the identity reports, as it stands now, with the label the reason text gives it. */
+interface PresentWindow {
+  readonly name: PlanWindowName;
+  readonly label: string;
+  readonly window: EffectiveWindow;
+}
+
+/** The plan windows the identity reports, five-hour first, each as it stands at `nowMs`; a window the snapshot does not hold is not one of them. */
+function presentWindows(input: Readonly<CompactionInput>): readonly PresentWindow[] {
+  const unified = input.snapshot?.providers[ANTHROPIC_PROVIDER]?.rateLimit?.unified;
+  return ([["fiveHour", "5h"], ["sevenDay", "7d"]] as const).flatMap(([name, label]) => {
+    const recorded = unified?.[name];
+    return recorded === undefined ? [] : [{ name, label, window: effectiveWindow(recorded, input.nowMs) }];
+  });
+}
+
 /**
- * Why the identity's quota has reached the point of compacting, or undefined while it has not. With `atUtilisation` it is either window passing that share. Without it the rule is the cost: the five-hour window has less left than compacting every session on the identity would use, measured by what one billed token has cost the identity's own window. A session's context is counted whole, which overstates a compaction that reads a warm cache, so the rule errs towards compacting early. An identity whose cost per token has not been measured, or that reports no five-hour window, never reaches it by this rule.
+ * Why the identity's quota has reached the point of compacting, or undefined while it has not. With `atUtilisation` it is either window passing that share. Without it the rule is the cost: the window with the smallest share left, among the plan windows the identity reports that state a utilisation (the five-hour one on a tie), has less left than compacting every session on the identity would use, measured by what one billed token has cost that same window. An account with no five-hour window is therefore measured against its seven-day one. A session's context is counted whole, which overstates a compaction that reads a warm cache, so the rule errs towards compacting early. An identity whose cost per token has not been measured in that window, or that reports no plan window with a utilisation, never reaches it by this rule.
  */
 function triggerReason(input: Readonly<CompactionInput>): string | undefined {
-  const unified = input.snapshot?.providers[ANTHROPIC_PROVIDER]?.rateLimit?.unified;
-  const five = unified?.fiveHour === undefined ? undefined : effectiveWindow(unified.fiveHour, input.nowMs);
+  const windows = presentWindows(input);
   if (input.atUtilisation !== undefined) {
-    const seven = unified?.sevenDay === undefined ? undefined : effectiveWindow(unified.sevenDay, input.nowMs);
-    for (const [name, window] of [["5h", five], ["7d", seven]] as const) {
-      if (window?.utilization !== undefined && window.utilization * PERCENT >= input.atUtilisation) {
-        return `the ${name} window is at ${asPercent(window.utilization)}, past ${String(input.atUtilisation)}%`;
+    for (const { label, window } of windows) {
+      if (window.utilization !== undefined && window.utilization * PERCENT >= input.atUtilisation) {
+        return `the ${label} window is at ${asPercent(window.utilization)}, past ${String(input.atUtilisation)}%`;
       }
     }
     return undefined;
   }
-  const perToken = utilisationPerBilledToken(input.records());
-  if (five?.utilization === undefined || perToken === undefined) {
+  const measured = windows.flatMap(({ name, label, window }) => (window.utilization === undefined ? [] : [{ name, label, remaining: Math.max(0, 1 - window.utilization) }]));
+  // The strict comparison keeps the earlier window, the five-hour one, when both have the same share left.
+  const tightest = measured.reduce<(typeof measured)[number] | undefined>((least, entry) => (least === undefined || entry.remaining < least.remaining ? entry : least), undefined);
+  if (tightest === undefined) {
     return undefined;
   }
-  const remaining = Math.max(0, 1 - five.utilization);
+  const perToken = utilisationPerBilledToken(input.records(), tightest.name);
+  if (perToken === undefined) {
+    return undefined;
+  }
   const cost = input.sessions.reduce((sum, session) => sum + (session.state?.contextTokens ?? 0), 0) * perToken;
-  return remaining < cost ? `the 5h window has ${asPercent(remaining)} left, and compacting every session on this member would use about ${asPercent(cost)}` : undefined;
+  return tightest.remaining < cost ? `the ${tightest.label} window has ${asPercent(tightest.remaining)} left, and compacting every session on this member would use about ${asPercent(cost)}` : undefined;
 }
 
 /**

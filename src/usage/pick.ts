@@ -154,7 +154,7 @@ interface BurnPoint {
 /**
  * The pace of one window's utilisation, per millisecond, over the member's records in its current instance of that window, or undefined without two readings that show it rising. The same arithmetic reads either window: the records carry both, and each window's pace is measured in its own utilisation fractions.
  */
-function windowBurn(records: readonly UsageRecord[], which: "fiveHour" | "sevenDay"): number | undefined {
+function windowBurn(records: readonly UsageRecord[], which: PlanWindowName): number | undefined {
   const points: { resetsAt: string; point: BurnPoint }[] = [];
   for (const record of records) {
     const window = record.rateLimitHeaders === undefined ? undefined : parseUnifiedRateLimit(record.rateLimitHeaders)?.[which];
@@ -178,13 +178,16 @@ function billedTokensOf(record: UsageRecord): number {
   return (usage?.inputTokens ?? 0) + (usage?.cacheCreationInputTokens ?? 0) + (usage?.outputTokens ?? 0);
 }
 
+/** A subscription plan window, as the unified rate-limit state names it. */
+export type PlanWindowName = "fiveHour" | "sevenDay";
+
 /**
- * How much five-hour utilisation one billed token costs this member, measured over its records in the current instance of the window, or undefined without two readings in which utilisation rose over tokens that were billed. It converts a resumed conversation's context size into the share of the window rewriting it would take.
+ * How much of the named window's utilisation one billed token costs this member, measured over its records in the current instance of that window, or undefined without two readings of that window in which utilisation rose over tokens that were billed. Each window is priced only from its own readings, so the figure is in that window's utilisation fractions. It converts a context size into the share of the window writing it would take.
  */
-export function utilisationPerBilledToken(records: readonly UsageRecord[]): number | undefined {
+export function utilisationPerBilledToken(records: readonly UsageRecord[], which: PlanWindowName): number | undefined {
   const points: { resetsAt: string; utilization: number; billed: number }[] = [];
   for (const record of records) {
-    const window = record.rateLimitHeaders === undefined ? undefined : parseUnifiedRateLimit(record.rateLimitHeaders)?.fiveHour;
+    const window = record.rateLimitHeaders === undefined ? undefined : parseUnifiedRateLimit(record.rateLimitHeaders)?.[which];
     if (window?.utilization !== undefined && window.resetsAt !== undefined) {
       points.push({ resetsAt: window.resetsAt, utilization: window.utilization, billed: billedTokensOf(record) });
     }
@@ -438,7 +441,7 @@ export function rankPool(input: RankPoolInput): PoolRanking {
     const { sticky } = input;
     const warmHere = sticky?.identity === candidate.identity && nowMs - Date.parse(sticky.at) <= PROMPT_CACHE_TTL_MS;
     if (input.resuming && input.resumeContextTokens !== undefined && fiveHour !== undefined && !warmHere) {
-      const perToken = utilisationPerBilledToken(assessment.member.records);
+      const perToken = utilisationPerBilledToken(assessment.member.records, "fiveHour");
       const committed = input.committedContextTokens?.[candidate.identity] ?? 0;
       const cost = perToken === undefined ? undefined : (input.resumeContextTokens + committed) * perToken;
       if (cost !== undefined && cost > fiveHour.remaining) {
