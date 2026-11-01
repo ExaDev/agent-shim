@@ -18,6 +18,7 @@ import {
   requireIdentityNames,
   setAllowAmbientCredential,
   setDefaultConfigProfile,
+  setIdentityLabel,
   setIdentityProvider,
   setIdentityAnchors,
   setIdentityCredential,
@@ -141,6 +142,7 @@ function identityValue(name: string, paths: LayoutPaths) {
   }
   return {
     name: identity.name,
+    ...(identity.label === undefined ? {} : { label: identity.label }),
     ...(identity.defaultConfigProfile === undefined ? {} : { defaultConfigProfile: identity.defaultConfigProfile }),
     ...(identity.provider === undefined ? {} : { provider: identity.provider }),
     allowAmbientCredential: identity.allowAmbientCredential,
@@ -190,12 +192,12 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
               return { action: "created" as const, kind: "identity" as const, name: input.name, value: identityValue(input.name, paths) };
             }),
           ),
-        set: route("/rest/config/identity/set", "Update an identity's default profile, provider, ambient-credential setting, credential or anchors")
+        set: route("/rest/config/identity/set", "Update an identity's label, default profile, provider, ambient-credential setting, credential or anchors")
           .input(ConfigIdentitySetInputSchema)
           .output(ConfigIdentitySetOutputSchema)
           .handler(({ input }) =>
             guarded(() => {
-              requireChange(input.defaultConfigProfile !== undefined || input.provider !== undefined || input.allowAmbientCredential !== undefined || input.credential !== undefined || input.anchors !== undefined, "defaultConfigProfile, provider, allowAmbientCredential, credential or anchors");
+              requireChange(input.label !== undefined || input.defaultConfigProfile !== undefined || input.provider !== undefined || input.allowAmbientCredential !== undefined || input.credential !== undefined || input.anchors !== undefined, "label, defaultConfigProfile, provider, allowAmbientCredential, credential or anchors");
               if (!identityExists(paths, input.name)) {
                 throw new IdentityNotFoundError(input.name);
               }
@@ -204,6 +206,9 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
               }
               if (typeof input.provider === "string") {
                 requireProviderExists(paths, input.provider);
+              }
+              if (input.label !== undefined) {
+                setIdentityLabel(paths, input.name, input.label === false ? undefined : input.label);
               }
               if (input.defaultConfigProfile !== undefined) {
                 setDefaultConfigProfile(paths, input.name, input.defaultConfigProfile === false ? undefined : input.defaultConfigProfile);

@@ -1,5 +1,5 @@
 import { proxyBypassSyntaxProblem } from "./proxyBypass";
-import { FILE_NAME_PATTERN, FileNameSchema, StoredNameSchema } from "./names";
+import { FILE_NAME_PATTERN, FileNameSchema, IdentityLabelSchema, StoredNameSchema } from "./names";
 import { STATUSLINE_EXTRA_GROUP, StatuslineSchema } from "./statusline";
 import path from "node:path";
 
@@ -831,6 +831,8 @@ export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;
 export const IdentitySchema = z.strictObject({
   $schema: z.string().optional(),
   name: FileNameSchema,
+  /** What the identity is for, in the person's words, drawn beside its name in `identity list` and `show`, the launch banner and the statusline. Display only: the name stays the key for lookup, paths, keychain service names and pools. */
+  label: IdentityLabelSchema.optional(),
   defaultConfigProfile: StoredNameSchema.optional(),
   /** The provider this identity exists for: a launch on the identity routes through it unless `--provider`, `--no-provider` or a cascade layer's `launch.provider` says otherwise. Its sessions run on the provider's credential, so the identity needs no stored login. */
   provider: StoredNameSchema.optional(),

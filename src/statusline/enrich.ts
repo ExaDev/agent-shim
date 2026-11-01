@@ -8,6 +8,8 @@ const MS_PER_SECOND = 1000;
 
 export interface StatuslineSummary {
   readonly identity: string | undefined;
+  /** The identity's display label, drawn beside its name; absent when it has none or the caller could not read it. */
+  readonly identityLabel?: string | undefined;
   readonly provider: string | undefined;
   readonly providerAccountEmail: string | undefined;
   readonly providerAccountSub: string | undefined;
@@ -195,6 +197,8 @@ export interface EnrichParams {
   readonly env: Readonly<Record<string, string | undefined>>;
   /** The identity's usage snapshot, or undefined when there is none. */
   readonly snapshot: UsageSnapshot | undefined;
+  /** The launching identity's display label, read from its `identity.json`; absent when it has none. */
+  readonly identityLabel?: string | undefined;
   /** The identity's own OAuth account metadata, or undefined when the identity never logged in. */
   readonly account: AccountMetadata | undefined;
   /** The launch-selected provider's registered name, when the environment's display name resolves to one; the snapshot keys providers by this name, which can differ from the display name a session's environment carries. */
@@ -222,6 +226,7 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
   const account = clientEmail === undefined ? params.account : undefined;
   let summary: StatuslineSummary = {
     identity,
+    identityLabel: params.identityLabel,
     provider: params.env.AGENT_SHIM_PROVIDER === undefined || params.env.AGENT_SHIM_PROVIDER === "" ? undefined : params.env.AGENT_SHIM_PROVIDER,
     providerAccountEmail: undefined,
     providerAccountSub: undefined,

@@ -200,6 +200,22 @@ describe("runLauncher provider selection", () => {
     });
   });
 
+  describe("an identity's label", () => {
+    const labelled = (identity: Readonly<Record<string, unknown>>) => {
+      const log = fakeLog();
+      launch({ paths, fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/identities/work/identity.json`]: { name: "work", allowAmbientCredential: false, ...identity } }), spawn: fakeSpawn(), proc: fakeProc({}, ["--identity", "work", "-p", "say hi"]), log, resolveClaudeBinary: () => discovered });
+      return log;
+    };
+
+    it("is drawn beside the name on the banner's identity row, which keeps the name as the identity the launch runs as", () => {
+      expect(reportedRow(labelled({ label: "Example Org" }), "identity")).toEqual({ label: "identity", value: "work (Example Org)", detail: "argv" });
+    });
+
+    it("leaves the identity row at the name alone when the identity has none", () => {
+      expect(reportedRow(labelled({}), "identity")?.value).toBe("work");
+    });
+  });
+
   it("lets --no-provider opt one launch out of the cascade's provider selection", () => {
     const fs = createFakeFarmFs({});
     const spawn = fakeSpawn();

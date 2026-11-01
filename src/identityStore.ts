@@ -214,6 +214,16 @@ export function setIdentityProvider(paths: LayoutPaths, identityName: string, pr
 }
 
 /**
+ * Sets `identity`'s display `label`, or clears it when `label` is undefined. Throws `IdentityNotFoundError` when the identity does not exist, and `ConfigValidationError` when `label` fails `IdentityLabelSchema`: `identity set --label` reports that as a usage error first. The label is display only and changes nothing the name keys.
+ */
+export function setIdentityLabel(paths: LayoutPaths, identityName: string, label: string | undefined): Identity {
+  if (!identityExists(paths, identityName)) {
+    throw new IdentityNotFoundError(identityName);
+  }
+  return applyPatch(identityJsonPath(paths, identityName), IdentitySchema, { label });
+}
+
+/**
  * Patches `identity`'s `allowAmbientCredential` field. Throws `IdentityNotFoundError` when the identity does not exist.
  */
 export function setAllowAmbientCredential(paths: LayoutPaths, identityName: string, allow: boolean): Identity {

@@ -15,6 +15,7 @@ import {
   PROVIDER_KINDS,
   RemoteCredentialSourceSchema,
 } from "../config/schema";
+import { IdentityLabelSchema } from "../config/names";
 import { STATUSLINE_EXTRA_GROUP } from "../config/statusline";
 
 /**
@@ -61,6 +62,7 @@ const storedMutationOutput = <Kind extends string, Action extends "created" | "u
 /** One identity as a write reports it. The stored credential block is reported as its summary, never its sources' values. */
 const IdentityValueSchema = z.strictObject({
   name: z.string(),
+  label: z.string().optional(),
   defaultConfigProfile: z.string().optional(),
   provider: z.string().optional(),
   allowAmbientCredential: z.boolean(),
@@ -90,6 +92,8 @@ export const ConfigIdentityAddOutputSchema = storedMutationOutput("identity", "c
 /** `defaultConfigProfile: false` clears it; `credential: false` removes the credential block, returning the identity to its stored login. At least one field must be present. */
 export const ConfigIdentitySetInputSchema = z.strictObject({
   name: z.string().min(1),
+  /** The identity's display label; `false` clears it. */
+  label: z.union([IdentityLabelSchema, z.literal(false)]).optional(),
   defaultConfigProfile: z.union([z.string().min(1), z.literal(false)]).optional(),
   /** The provider the identity exists for; `false` clears it. */
   provider: z.union([z.string().min(1), z.literal(false)]).optional(),
