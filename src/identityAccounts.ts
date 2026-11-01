@@ -59,9 +59,16 @@ export function groupByLogin<T>(items: readonly T[], loginOf: (item: T) => strin
   return [...groups.values()].flat();
 }
 
-/** One line for an identity's account, in the wording `account show` uses: `email (organisation); role <role>; <plan>`, each part only when the login has it. */
-export function describeIdentityAccount(summary: Readonly<IdentityAccountSummary>): string {
+/** Who an identity's login is, in the wording `account show` uses: `email (organisation)`, or the organisation alone when the login has no email. Undefined when it has neither. */
+export function describeAccountHolder(summary: Readonly<IdentityAccountSummary>): string | undefined {
   const organisation = describeAccountOrganisation(summary);
-  const who = summary.emailAddress === undefined ? organisation : organisation === undefined ? summary.emailAddress : `${summary.emailAddress} (${organisation})`;
-  return [who, summary.organizationRole === undefined ? undefined : `role ${summary.organizationRole}`, describeAccountPlan(summary)].filter((part) => part !== undefined).join("; ");
+  if (summary.emailAddress === undefined) {
+    return organisation;
+  }
+  return organisation === undefined ? summary.emailAddress : `${summary.emailAddress} (${organisation})`;
+}
+
+/** One line for an identity's account: `email (organisation); role <role>; <plan>`, each part only when the login has it. */
+export function describeIdentityAccount(summary: Readonly<IdentityAccountSummary>): string {
+  return [describeAccountHolder(summary), summary.organizationRole === undefined ? undefined : `role ${summary.organizationRole}`, describeAccountPlan(summary)].filter((part) => part !== undefined).join("; ");
 }
