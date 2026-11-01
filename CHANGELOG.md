@@ -1,3 +1,9 @@
+## [11.81.0](https://github.com/ExaDev/agent-shim/compare/v11.80.0...v11.81.0) (2026-11-01)
+
+### Features
+
+* **identity:** let an identity carry a display label ([f4909a5](https://github.com/ExaDev/agent-shim/commit/f4909a580c652026f716c939c4592c82710f1c6c))
+
 ## [11.80.0](https://github.com/ExaDev/agent-shim/compare/v11.79.0...v11.80.0) (2026-11-01)
 
 ### Features
