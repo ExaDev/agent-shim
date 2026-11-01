@@ -163,6 +163,13 @@ describe("identity rename", () => {
     return file;
   }
 
+  it("says in its help what refuses it and how an interrupted rename is finished", () => {
+    const program = buildProgram({ ...fakeCommandDeps(paths), runClaude: vi.fn(), identityRenamePorts: ports() });
+    const rename = program.commands.find((command) => command.name() === "identity")?.commands.find((command) => command.name() === "rename");
+    expect(rename?.description()).toContain("Refused while a session is running on it or a launch is starting on it.");
+    expect(rename?.description()).toContain("A rename that was interrupted is finished by running the same command again.");
+  });
+
   it("says in its help what --discard-journal does and when it refuses", () => {
     const program = buildProgram({ ...fakeCommandDeps(paths), runClaude: vi.fn(), identityRenamePorts: ports() });
     const rename = program.commands.find((command) => command.name() === "identity")?.commands.find((command) => command.name() === "rename");
