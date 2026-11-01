@@ -64,7 +64,7 @@ export function readRenameJournal(fs: Pick<RenameJournalFs, "readFileUtf8">, fil
 }
 
 /** A file in the journals directory that is not a journal this release can read, and why. */
-export interface UnreadableRenameJournal {
+interface UnreadableRenameJournal {
   readonly file: string;
   readonly detail: string;
 }
