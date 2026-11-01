@@ -152,13 +152,26 @@ function parseProviderFile(filePath: string, raw: unknown): Provider {
   return parsed.data;
 }
 
-/** Reads and validates one provider definition, or undefined when it does not exist. */
+/** Raised when a provider file is not JSON. It says so and nothing of the text, which the parser would quote and which may hold a credential. */
+class ProviderFileNotJsonError extends CliError {
+  constructor(filePath: string) {
+    super(`${filePath} is not valid JSON.`);
+    this.name = "ProviderFileNotJsonError";
+  }
+}
+
+/** Reads and validates one provider definition, or undefined when it does not exist. Throws `ProviderFileNotJsonError` for a file that is not JSON, and what `parseProviderFile` throws for one that is not a valid definition. */
 export function readProvider(paths: LayoutPaths, name: string): Provider | undefined {
   const filePath = providerJsonPath(paths, name);
   if (!fs.existsSync(filePath)) {
     return undefined;
   }
-  const raw: unknown = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  let raw: unknown;
+  try {
+    raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch (error) {
+    throw error instanceof SyntaxError ? new ProviderFileNotJsonError(filePath) : error;
+  }
   return parseProviderFile(filePath, raw);
 }
 
@@ -182,7 +195,7 @@ export interface ProviderListEntry {
   readonly provider: Provider;
 }
 
-/** Lists every provider under `providersDir` that has a valid `<name>.json`. A file that fails validation is skipped here and reported through `onInvalid` (standard error by default); `provider list` is the place a broken definition gets surfaced, not a launch. */
+/** Lists every provider under `providersDir` that has a valid `<name>.json`. A file that fails validation or is not JSON is skipped here and reported through `onInvalid` (standard error by default); `provider list` is the place a broken definition gets surfaced, not a launch. */
 export function listProviders(paths: LayoutPaths, onInvalid: (name: string, message: string) => void = reportInvalidProvider): readonly ProviderListEntry[] {
   const names = listProviderNames(
     (dir) => fs.readdirSync(dir),
@@ -194,7 +207,7 @@ export function listProviders(paths: LayoutPaths, onInvalid: (name: string, mess
     try {
       provider = readProvider(paths, name);
     } catch (error) {
-      if (!(error instanceof ConfigValidationError || error instanceof LegacyProviderFileError || error instanceof UnsafeNameError)) {
+      if (!(error instanceof ConfigValidationError || error instanceof LegacyProviderFileError || error instanceof ProviderFileNotJsonError || error instanceof UnsafeNameError)) {
         throw error;
       }
       onInvalid(name, error.message);

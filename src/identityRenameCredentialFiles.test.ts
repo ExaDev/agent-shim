@@ -53,4 +53,35 @@ describe("a file that holds credential sources and cannot be re-pointed", () => 
       expect(fs.existsSync(world.directory("client"))).toBe(true);
     });
   });
+
+  describe("that is not JSON", () => {
+    it("does not stop a rename of an identity it has nothing to do with, and is left as it was", async () => {
+      fs.mkdirSync(world.paths.providersDir, { recursive: true });
+      fs.writeFileSync(providerFile("garbled"), "{ not json");
+      expect(() => describeIdentityRename(world.paths, "work", "client", world.ports())).not.toThrow();
+      await expect(renameIdentity(world.paths, "work", "client", world.ports())).resolves.toBeDefined();
+      expect(fs.readFileSync(providerFile("garbled"), "utf8")).toBe("{ not json");
+    });
+
+    it("refuses with a message, not a stack trace, when its text names a path the rename moves", async () => {
+      fs.mkdirSync(world.paths.providersDir, { recursive: true });
+      fs.writeFileSync(providerFile("garbled"), `{ "credential": { "sources": [{ "file": "${path.join(world.root, "credentials", "work.token")}" `);
+      await refusedEverywhere("providers/garbled.json");
+      await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.not.toBeInstanceOf(SyntaxError);
+    });
+
+    it("refuses when its text names the moved login's service", async () => {
+      fs.mkdirSync(world.paths.providersDir, { recursive: true });
+      fs.writeFileSync(providerFile("garbled"), `{ "credential": { "sources": [{ "keychain": { "service": "${oldService()}" `);
+      await refusedEverywhere("providers/garbled.json");
+    });
+
+    it("says nothing of the file's text in the refusal", async () => {
+      fs.mkdirSync(world.paths.providersDir, { recursive: true });
+      fs.writeFileSync(providerFile("garbled"), `made-up-secret-text ${oldService()}`);
+      const failure: unknown = await renameIdentity(world.paths, "work", "client", world.ports()).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(CliError);
+      expect(failure instanceof Error ? failure.message : "").not.toContain("made-up-secret-text");
+    });
+  });
 });
