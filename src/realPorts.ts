@@ -364,10 +364,17 @@ export async function realRunningAmong(pids: readonly number[], psTimeoutMs: num
   return new Set(existing.filter((pid) => states.get(pid)?.startsWith("Z") !== true));
 }
 
+/**
+ * The most output a command run through `realRunPort` may print before `spawnSync` kills it. Node's default is one mebibyte, which `ps -E` exceeds on a host running many sessions, since it prints every process's whole environment (a few kilobytes each); a killed command reads as a failure with no status. The limit only bounds memory.
+ */
+const RUN_OUTPUT_LIMIT_MIB = 256;
+const BYTES_PER_MIB = 1_048_576;
+const RUN_OUTPUT_LIMIT_BYTES = RUN_OUTPUT_LIMIT_MIB * BYTES_PER_MIB;
+
 /** The real `RunPort`, used for auxiliary commands whose output this process needs to read — git branch detection for `when: { branch }` conditions, and `check.ts`'s macOS Keychain lookup. */
 export const realRunPort: RunPort = {
-  run(command, args) {
-    const result = spawnSyncBlocking("an external command", command, args, { encoding: "utf8" });
+  run(command, args, input) {
+    const result = spawnSyncBlocking("an external command", command, args, { encoding: "utf8", maxBuffer: RUN_OUTPUT_LIMIT_BYTES, ...(input === undefined ? {} : { input }) });
     return { status: result.status, stdout: result.stdout, stderr: result.stderr };
   },
 };

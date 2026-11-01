@@ -100,7 +100,8 @@ interface RunResult {
 
 /** Runs an external command and captures its output, injected so no test ever shells out for real. Not used by this phase's own modules yet — declared here so every later module (branch-conditioned `when` evaluation, `check.ts`'s Keychain lookup) shares one injectable shape rather than each inventing its own. */
 export interface RunPort {
-  readonly run: (command: string, args: readonly string[]) => RunResult;
+  /** `input`, when given, is written to the child's standard input and then closed: the way to hand a command a secret without putting it in the argument list, which any local process can read from the process table. */
+  readonly run: (command: string, args: readonly string[], input?: string) => RunResult;
 }
 
 /**
