@@ -163,4 +163,8 @@ describe("reasonNotToOpen", () => {
     expect(reasonNotToOpen("a", refused, AFTER_ANCHOR)).toContain("refused");
     expect(reasonNotToOpen("a", snapshotWith("a", { overageStatus: "allowed" }, AFTER_ANCHOR), AFTER_ANCHOR)).toContain("no plan windows");
   });
+
+  it("does not open for an account that has a seven-day window and no five-hour one, since there is nothing to anchor", () => {
+    expect(reasonNotToOpen("a", snapshotWith("a", { sevenDay: { utilization: U40, resetsAt: at(AFTER_ANCHOR + HOUR_MS) } }, AFTER_ANCHOR), AFTER_ANCHOR)).toContain("no five-hour window");
+  });
 });

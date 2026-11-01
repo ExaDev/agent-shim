@@ -48,7 +48,7 @@ export function refusalReason(identity: string, snapshot: UsageSnapshot | undefi
   return candidate?.class === "ineligible" ? `it is refused right now (${candidate.reasons[0] ?? "no reason recorded"})` : undefined;
 }
 
-/** Why a window should not be opened for this identity right now, or undefined when one should. A window is already open, the account is refused, or it reports no five-hour window to anchor (an API key, or an account metered by extra usage alone). */
+/** Why a window should not be opened for this identity right now, or undefined when one should. A window is already open, the account is refused, or it reports no five-hour window to anchor: an API key, an account metered by extra usage alone, or one whose plan has a seven-day window and no five-hour one. A five-hour window that has lapsed or never opened is still reported, with no reset, so only an account without one lacks it altogether. */
 export function reasonNotToOpen(identity: string, snapshot: UsageSnapshot | undefined, nowMs: number): string | undefined {
   // A request spends tokens and starts a window, so it is only ever sent knowing where the account's windows stand: an identity whose quota has not been read has an unknown reset, and opening one then could restart or move a window someone else opened.
   const unified = snapshot?.providers[ANTHROPIC_PROVIDER]?.rateLimit?.unified;
@@ -62,7 +62,11 @@ export function reasonNotToOpen(identity: string, snapshot: UsageSnapshot | unde
   if (five?.resetsAtMs !== undefined) {
     return `a five-hour window is already open, resetting in ${formatAge(five.resetsAtMs - nowMs)}`;
   }
-  return refusalReason(identity, snapshot, nowMs);
+  const refusal = refusalReason(identity, snapshot, nowMs);
+  if (refusal !== undefined || five !== undefined) {
+    return refusal;
+  }
+  return "it reports a seven-day window and no five-hour one, so there is no five-hour window to anchor";
 }
 
 /**
