@@ -16,6 +16,11 @@
       "minLength": 1,
       "maxLength": 197
     },
+    "provider": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 197
+    },
     "allowAmbientCredential": {
       "default": false,
       "type": "boolean"

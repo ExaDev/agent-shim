@@ -442,16 +442,16 @@ export function removeProvider(paths: LayoutPaths, name: string): void {
 }
 
 /**
- * The provider name the cascade selects through `launch.provider`, if any layer sets one. Last layer wins, the same rule `flattenLayers` applies to every other launch flag.
+ * The provider name the cascade selects through `launch.provider`, if any layer sets one, else `identityProvider`, the provider the launching identity declares in its `identity.json`. Last layer wins, the same rule `flattenLayers` applies to every other launch flag, and the identity's own declaration ranks beneath every layer.
  */
-export function cascadeProviderName(cascade: CascadeInput): string | undefined {
+export function cascadeProviderName(cascade: CascadeInput, identityProvider?: string): string | undefined {
   let name: string | undefined;
   for (const layer of assembleCascade(cascade).layers) {
     if (layer.launch?.provider !== undefined) {
       name = layer.launch.provider;
     }
   }
-  return name;
+  return name ?? identityProvider;
 }
 
 /** Inputs to `resolveProvider`. */
@@ -465,6 +465,8 @@ export interface ResolveProviderParams {
   readonly cliProvider?: string;
   /** The assembled-but-unflattened cascade for this launch, when one was loaded. Its layers are scanned for a `launch.provider` selection so a profile, directory rule, portable file, or the global config can pin a provider exactly the way they pin the other launch flags. */
   readonly cascade?: CascadeInput;
+  /** The `provider` the launching identity declares in its `identity.json`. It ranks beneath the flag and every cascade layer, so it is the provider only when neither selects one. */
+  readonly identityProvider?: string;
 }
 
 /**
@@ -488,13 +490,13 @@ export type ProviderSelection =
   | { readonly ok: false; readonly status: number; readonly message: string };
 
 /**
- * Selects which API provider this launch routes through, if any: the `--provider` flag first, then the cascade's `launch.provider` selection, either of which may name a renamed provider by its former name. Returns undefined when nothing selected a provider at all.
+ * Selects which API provider this launch routes through, if any: the `--provider` flag first, then the cascade's `launch.provider` selection, then the launching identity's own `provider`, any of which may name a renamed provider by its former name. Returns undefined when nothing selected a provider at all.
  *
  * Reads the provider's definition only: its credential is neither resolved nor run, so a read-only caller can name the provider a launch would use without touching a secret store or a credential command.
  */
-export function selectProvider(params: Pick<ResolveProviderParams, "paths" | "port" | "cliProvider" | "cascade">): ProviderSelection | undefined {
+export function selectProvider(params: Pick<ResolveProviderParams, "paths" | "port" | "cliProvider" | "cascade" | "identityProvider">): ProviderSelection | undefined {
   const cliName = params.cliProvider !== undefined && params.cliProvider !== "" ? params.cliProvider : undefined;
-  const named = cliName ?? (params.cascade === undefined ? undefined : cascadeProviderName(params.cascade));
+  const named = cliName ?? (params.cascade === undefined ? params.identityProvider : cascadeProviderName(params.cascade, params.identityProvider));
   if (named === undefined) {
     return undefined;
   }

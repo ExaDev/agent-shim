@@ -3,8 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { collectDoctorReport, formatDoctorReport, refinePathShadow, runDoctor, type DoctorConfigProfileInput, type DoctorProviderInput, type RunDoctorParams } from "./doctorReport";
-import { baseParams, findingsFor, identity } from "./doctorTestFixtures";
+import { collectDoctorReport, formatDoctorReport, refinePathShadow, runDoctor, type DoctorConfigProfileInput, type RunDoctorParams } from "./doctorReport";
+import { baseParams, findingsFor, identity, provider } from "./doctorTestFixtures";
 import type { CredentialCacheEnv } from "./credential";
 import type { RunPort } from "./launcher/ports";
 import { buildLayoutPaths } from "./paths";
@@ -308,10 +308,6 @@ describe("runDoctor: identity", () => {
     );
   });
 });
-
-function provider(name: string, body: unknown): DoctorProviderInput {
-  return { name, path: `/agent-shim/providers/${name}.json`, raw: JSON.stringify(body) };
-}
 
 describe("runDoctor: stored names", () => {
   const findingOf = (report: ReturnType<typeof runDoctor>, section: "config-profile" | "provider", subject: string) => findingsFor(report, section).filter((finding) => finding.subject === subject);

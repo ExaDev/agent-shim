@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { runDoctor } from "./doctorReport";
-import { baseParams, findingsFor, identity } from "./doctorTestFixtures";
+import { baseParams, findingsFor, identity, provider } from "./doctorTestFixtures";
 import type { RunPort } from "./launcher/ports";
 
 describe("runDoctor: sign-in", () => {
+  const minimaxProvider = { displayName: "MiniMax", baseUrl: "http://127.0.0.1:9", credential: { sources: [{ literal: "placeholder" }] } };
   const keychainMissing: RunPort = { run: () => ({ status: 44, stdout: "", stderr: "" }) };
   const keychainPresent: RunPort = { run: () => ({ status: 0, stdout: "", stderr: "" }) };
 
@@ -30,6 +31,16 @@ describe("runDoctor: sign-in", () => {
   it("lets the credentials file stand in when the Keychain holds nothing", () => {
     const report = runDoctor(baseParams({ identities: [identity("work", { credentialsFilePresent: true })], run: keychainMissing, platform: "darwin" }));
     expect(findingsFor(report, "sign-in")[0]?.severity).toBe("pass");
+  });
+
+  it("passes an identity that exists for a provider, whatever login it stores", () => {
+    const raw = JSON.stringify({ name: "minimax", allowAmbientCredential: false, provider: "minimax" });
+    const report = runDoctor(baseParams({ identities: [identity("minimax", { raw, credentialsFilePresent: false })], providers: [provider("minimax", minimaxProvider)], platform: "linux" }));
+    const [finding] = findingsFor(report, "sign-in");
+    expect(finding?.severity).toBe("pass");
+    expect(finding?.message).toBe(
+      'minimax exists for provider "minimax" (runs provider sessions with the provider\'s credential, so a stored login is not what a launch uses).',
+    );
   });
 
   it("passes an identity that authenticates with its own credential block", () => {

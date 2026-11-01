@@ -14,7 +14,7 @@ function runWith(status: number) {
 }
 
 describe("decideSignIn", () => {
-  const base = { hasCredentialBlock: false, keychainItem: undefined, credentialsFile: false, platform: "linux" } as const;
+  const base = { hasCredentialBlock: false, provider: undefined, keychainItem: undefined, credentialsFile: false, platform: "linux" } as const;
 
   it("is signed out with no stored login, whatever else is on disk", () => {
     expect(decideSignIn(base).state).toBe("signed-out");
@@ -37,6 +37,12 @@ describe("decideSignIn", () => {
   it("does not call an identity with its own credential block signed out", () => {
     expect(decideSignIn({ ...base, hasCredentialBlock: true }).state).toBe("token");
   });
+
+  it("does not call an identity that exists for a provider signed out", () => {
+    const answer = decideSignIn({ ...base, provider: "minimax" });
+    expect(answer.state).toBe("token");
+    expect(answer.detail).toContain("provider's credential");
+  });
 });
 
 describe("claudeCodeKeychainService", () => {
@@ -55,22 +61,28 @@ describe("claudeCodeKeychainService", () => {
 describe("identitySignIn", () => {
   it("asks the Keychain for the item's existence only, never for its secret", () => {
     const { port, run } = runWith(0);
-    const answer = identitySignIn({ lstat: () => undefined }, { platform: "darwin", run: port }, { farmRoot: FARM_ROOT, hasCredentialBlock: false });
+    const answer = identitySignIn({ lstat: () => undefined }, { platform: "darwin", run: port }, { farmRoot: FARM_ROOT, hasCredentialBlock: false, provider: undefined });
     expect(answer.state).toBe("signed-in");
     expect(run).toHaveBeenCalledWith("security", ["find-generic-password", "-s", claudeCodeKeychainService(FARM_ROOT)]);
   });
 
   it("does not ask the Keychain off macOS, and reads the file's presence only", () => {
     const { port, run } = runWith(0);
-    const present = identitySignIn({ lstat: (target) => (target === `${FARM_ROOT}/.credentials.json` ? FILE_STAT : undefined) }, { platform: "linux", run: port }, { farmRoot: FARM_ROOT, hasCredentialBlock: false });
+    const present = identitySignIn({ lstat: (target) => (target === `${FARM_ROOT}/.credentials.json` ? FILE_STAT : undefined) }, { platform: "linux", run: port }, { farmRoot: FARM_ROOT, hasCredentialBlock: false, provider: undefined });
     expect(present.state).toBe("signed-in");
     expect(run).not.toHaveBeenCalled();
-    expect(identitySignIn({ lstat: () => undefined }, { platform: "linux", run: port }, { farmRoot: FARM_ROOT, hasCredentialBlock: false }).state).toBe("signed-out");
+    expect(identitySignIn({ lstat: () => undefined }, { platform: "linux", run: port }, { farmRoot: FARM_ROOT, hasCredentialBlock: false, provider: undefined }).state).toBe("signed-out");
   });
 
   it("runs nothing at all for an identity with a credential block", () => {
     const { port, run } = runWith(1);
-    expect(identitySignIn({ lstat: () => undefined }, { platform: "darwin", run: port }, { farmRoot: FARM_ROOT, hasCredentialBlock: true }).state).toBe("token");
+    expect(identitySignIn({ lstat: () => undefined }, { platform: "darwin", run: port }, { farmRoot: FARM_ROOT, hasCredentialBlock: true, provider: undefined }).state).toBe("token");
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("runs nothing at all for an identity that exists for a provider", () => {
+    const { port, run } = runWith(1);
+    expect(identitySignIn({ lstat: () => undefined }, { platform: "darwin", run: port }, { farmRoot: FARM_ROOT, hasCredentialBlock: false, provider: "minimax" }).state).toBe("token");
     expect(run).not.toHaveBeenCalled();
   });
 });

@@ -173,6 +173,33 @@ describe("runLauncher provider selection", () => {
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("agent-shim-provider-session");
   });
 
+  describe("an identity's own provider", () => {
+    const identityFile = `${FAKE_HOME}/.agent-shim/identities/work/identity.json`;
+    const files = {
+      [`${FAKE_HOME}/.agent-shim/providers/z.json`]: providerZ,
+      [`${FAKE_HOME}/.agent-shim/providers/o.json`]: providerO,
+      [identityFile]: { name: "work", allowAmbientCredential: false, provider: "z" },
+    };
+    const env = { Z_API_TOKEN: "tok-z", OPENROUTER_API_KEY: "tok-o" };
+    const launched = (argv: readonly string[]) => {
+      const spawn = fakeSpawn();
+      launch({ paths, fs: fakeFs(files), spawn, proc: fakeProc(env, argv), log: fakeLog(), resolveClaudeBinary: () => discovered });
+      return spawnedEnv(spawn);
+    };
+
+    it("is the provider a launch on that identity routes through when nothing else selects one", () => {
+      expect(launched(["--identity", "work", "-p", "say hi"]).AGENT_SHIM_PROVIDER).toBe("GLM");
+    });
+
+    it("is outranked by --provider", () => {
+      expect(launched(["--identity", "work", "--provider", "o", "-p", "say hi"]).AGENT_SHIM_PROVIDER).toBe("OpenRouter");
+    });
+
+    it("is opted out of by --no-provider", () => {
+      expect(launched(["--identity", "work", "--no-provider", "-p", "say hi"]).AGENT_SHIM_PROVIDER).toBeUndefined();
+    });
+  });
+
   it("lets --no-provider opt one launch out of the cascade's provider selection", () => {
     const fs = createFakeFarmFs({});
     const spawn = fakeSpawn();

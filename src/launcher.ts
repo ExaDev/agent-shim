@@ -376,12 +376,13 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
       ? { farm, identity: farmIdentity, cascade: farm.loadCascade(configProfileDecision.name, cliOverride) }
       : undefined;
 
-  // `--no-provider` opts this one launch out of whatever provider the cascade would otherwise select, so selection is skipped outright rather than asked to ignore its own cascade input. A read-only decision names the provider from its definition alone and resolves no credential.
+  // `--no-provider` opts this one launch out of whatever provider the cascade or the identity would otherwise select, so selection is skipped outright rather than asked to ignore its own cascade input. A read-only decision names the provider from its definition alone and resolves no credential.
   const providerParams = {
     paths,
     port: fs,
     ...(parsedArgv.provider === undefined || parsedArgv.provider === false ? {} : { cliProvider: parsedArgv.provider }),
     ...(farmContext === undefined ? {} : { cascade: farmContext.cascade }),
+    ...(loadedIdentity?.config.provider === undefined ? {} : { identityProvider: loadedIdentity.config.provider }),
   };
   let selectedProvider: SelectedProvider | undefined;
   let resolvedProvider: ResolvedProvider | undefined;

@@ -1,4 +1,4 @@
-import type { DoctorIdentityInput, RunDoctorParams, runDoctor } from "./doctorReport";
+import type { DoctorIdentityInput, DoctorProviderInput, RunDoctorParams, runDoctor } from "./doctorReport";
 
 const DISCOVERED_BINARY = { ok: true, binary: { path: "/opt/claude/2.1.0", source: "versions-dir", version: "2.1.0" } } as const;
 
@@ -21,6 +21,11 @@ export function baseParams(overrides: Partial<RunDoctorParams> = {}): RunDoctorP
     headroom: { state: { path: "/agent-shim/headroom/state.v2.json", raw: undefined }, isRunning: () => false },
     ...overrides,
   };
+}
+
+/** One provider input whose `<name>.json` holds `body` serialised, for a test to give any shape. */
+export function provider(name: string, body: unknown): DoctorProviderInput {
+  return { name, path: `/agent-shim/providers/${name}.json`, raw: JSON.stringify(body) };
 }
 
 /** One identity input with a valid `identity.json` and a stored login, for a test to override. */
