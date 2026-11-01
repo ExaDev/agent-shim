@@ -587,7 +587,7 @@ export function collectCheckReport(params: CollectCheckReportParams): CheckRepor
     ...(configProfileDecision.name === undefined ? {} : { baseConfigProfile: configProfileDecision.name }),
   }).input;
 
-  const providerName = cascadeProviderName(cascade);
+  const providerName = cascadeProviderName(cascade, identityConfig?.provider);
   const provider = providerName === undefined ? undefined : loadCheckProvider(paths, providerName);
 
   const farmRoot = identityDecision.name === undefined ? undefined : path.join(paths.identitiesDir, identityDecision.name);

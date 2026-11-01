@@ -43,6 +43,8 @@ export function keychainHasItem(run: RunPort, configDir: string): boolean {
 /** The facts a sign-in state is decided from, each gathered by the caller so the decision itself is pure. `keychainItem` is undefined where the Keychain is not asked (off macOS). */
 export interface SignInFacts {
   readonly hasCredentialBlock: boolean;
+  /** The provider the identity's `identity.json` says it exists for, when it names one. */
+  readonly provider: string | undefined;
   readonly keychainItem: boolean | undefined;
   readonly credentialsFile: boolean;
   readonly platform: string;
@@ -53,11 +55,14 @@ export interface SignInFacts {
  *
  * - `signed-in`: a stored login exists (a Keychain item on macOS, or the credentials file).
  * - `signed-out`: no stored login exists. The identity's `.claude.json` profile survives a sign-out, so the account metadata can still be present.
- * - `token`: the identity supplies its own credential through a `credential` block, so its stored login is not what a launch authenticates with and its absence says nothing.
+ * - `token`: the identity supplies its own credential through a `credential` block, or exists for a `provider` whose credential its sessions run on, so its stored login is not what a launch authenticates with and its absence says nothing.
  */
 export function decideSignIn(facts: Readonly<SignInFacts>): SignInAnswer {
   if (facts.hasCredentialBlock) {
     return { state: "token", detail: "supplies its own credential through a credential block, so a stored login is not what a launch uses" };
+  }
+  if (facts.provider !== undefined) {
+    return { state: "token", detail: "runs provider sessions with the provider's credential, so a stored login is not what a launch uses" };
   }
   if (facts.keychainItem === true) {
     return { state: "signed-in", detail: "a login is stored in the macOS Keychain" };
@@ -81,12 +86,13 @@ export function credentialsFilePath(farmRoot: string): string {
 export function identitySignIn(
   fs: Pick<FarmFs, "lstat">,
   probe: Readonly<SignInProbe>,
-  identity: Readonly<{ readonly farmRoot: string; readonly hasCredentialBlock: boolean }>,
+  identity: Readonly<{ readonly farmRoot: string; readonly hasCredentialBlock: boolean; readonly provider: string | undefined }>,
 ): SignInAnswer {
-  // An identity with its own credential block is `token` whatever is stored, so nothing is asked of the Keychain or the file system for it.
-  const probing = !identity.hasCredentialBlock;
+  // An identity with its own credential block or a provider is `token` whatever is stored, so nothing is asked of the Keychain or the file system for it.
+  const probing = !identity.hasCredentialBlock && identity.provider === undefined;
   return decideSignIn({
     hasCredentialBlock: identity.hasCredentialBlock,
+    provider: identity.provider,
     keychainItem: probing && probe.platform === "darwin" && probe.run !== undefined ? keychainHasItem(probe.run, identity.farmRoot) : undefined,
     credentialsFile: probing && fs.lstat(credentialsFilePath(identity.farmRoot)) !== undefined,
     platform: probe.platform,

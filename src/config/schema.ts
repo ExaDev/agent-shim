@@ -832,6 +832,8 @@ export const IdentitySchema = z.strictObject({
   $schema: z.string().optional(),
   name: FileNameSchema,
   defaultConfigProfile: StoredNameSchema.optional(),
+  /** The provider this identity exists for: a launch on the identity routes through it unless `--provider`, `--no-provider` or a cascade layer's `launch.provider` says otherwise. Its sessions run on the provider's credential, so the identity needs no stored login. */
+  provider: StoredNameSchema.optional(),
   allowAmbientCredential: z.boolean().default(false),
   credential: CredentialSchema.optional(),
   /** When this identity's five-hour window should be open: the front door opens one at each anchor if none is. Absent, nothing is opened on a schedule. */

@@ -499,6 +499,8 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     }
   }
   const validProfileNames = new Set(profileSources.keys());
+  // A recorded former name still resolves to the provider it became, so an identity may name a provider by either.
+  const validProviderNames = new Set([...params.providers.map((entry) => entry.name), ...Object.keys(params.providerAliases ?? {})]);
 
   const validIdentityNames = new Set<string>();
   for (const entry of params.identities) {
@@ -509,37 +511,51 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     }
     validIdentityNames.add(entry.name);
     const defaultProfile = validated.data.defaultConfigProfile;
+    let consistent = true;
     if (defaultProfile !== undefined && !validProfileNames.has(defaultProfile)) {
+      consistent = false;
       push(
         "identity",
         "fail",
         `Identity "${entry.name}" names configuration profile "${defaultProfile}" as its default, but no such profile exists.`,
         entry.name,
       );
-    } else {
-      const credential = validated.data.credential;
-      const cache = credential === undefined ? { text: "", unreadable: false } : cacheClause(params.credentialCache, `identity ${entry.name}`, credential);
-      push(
-        "identity",
-        cache.unreadable ? "fail" : "pass",
-        `${entry.name} is valid and authenticates with ${credential === undefined ? "its stored login" : `credential ${describeCredential(credential)}`}${cache.text}.`,
-        entry.name,
-      );
-      const signIn = decideSignIn({
-        hasCredentialBlock: credential !== undefined,
-        keychainItem: params.platform === "darwin" && params.run !== undefined ? keychainHasItem(params.run, entry.farmRoot) : undefined,
-        credentialsFile: entry.credentialsFilePresent,
-        platform: params.platform,
-      });
-      push(
-        "sign-in",
-        signIn.state === "signed-out" ? "warn" : "pass",
-        signIn.state === "signed-out"
-          ? `${entry.name} is signed out (${signIn.detail}). Run \`agent-shim run @${entry.name}\` and sign in.`
-          : `${entry.name} ${signIn.state === "token" ? "uses a credential block" : "is signed in"} (${signIn.detail}).`,
-        entry.name,
-      );
     }
+    const identityProvider = validated.data.provider;
+    if (identityProvider !== undefined && !validProviderNames.has(identityProvider)) {
+      consistent = false;
+      push("identity", "fail", `Identity "${entry.name}" names provider "${identityProvider}" as its provider, but no such provider exists.`, entry.name);
+    }
+    if (!consistent) {
+      continue;
+    }
+    const credential = validated.data.credential;
+    const cache = credential === undefined ? { text: "", unreadable: false } : cacheClause(params.credentialCache, `identity ${entry.name}`, credential);
+    const authenticatesWith =
+      credential !== undefined ? `credential ${describeCredential(credential)}` : identityProvider !== undefined ? `the credential of provider "${identityProvider}"` : "its stored login";
+    push(
+      "identity",
+      cache.unreadable ? "fail" : "pass",
+      `${entry.name} is valid and authenticates with ${authenticatesWith}${cache.text}.`,
+      entry.name,
+    );
+    // A `token` answer rests on the credential block or on the provider, never both being absent; anything else here is a stored login.
+    const standing = credential !== undefined ? "uses a credential block" : identityProvider !== undefined ? `exists for provider "${identityProvider}"` : "is signed in";
+    const signIn = decideSignIn({
+      hasCredentialBlock: credential !== undefined,
+      provider: identityProvider,
+      keychainItem: params.platform === "darwin" && params.run !== undefined ? keychainHasItem(params.run, entry.farmRoot) : undefined,
+      credentialsFile: entry.credentialsFilePresent,
+      platform: params.platform,
+    });
+    push(
+      "sign-in",
+      signIn.state === "signed-out" ? "warn" : "pass",
+      signIn.state === "signed-out"
+        ? `${entry.name} is signed out (${signIn.detail}). Run \`agent-shim run @${entry.name}\` and sign in.`
+        : `${entry.name} ${standing} (${signIn.detail}).`,
+      entry.name,
+    );
   }
 
   const validatedGlobalConfig = params.globalConfig.raw === undefined ? undefined : validateJson(GlobalConfigSchema, params.globalConfig);

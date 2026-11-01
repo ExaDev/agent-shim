@@ -117,7 +117,7 @@ export function realPrepareLaunchParams(paths: LayoutPaths, options: RealLaunchO
     frontdoor: realFrontDoorPort(paths, options.spawnDaemon),
     credentials: { ...realCredentialPort, cache: realCredentialCacheEnv(paths) },
     hold: realHoldPort,
-    hasStoredLogin: (identity) => identitySignIn(realFarmFs, { platform: process.platform, run: options.run ?? realRunPort }, { farmRoot: path.join(paths.identitiesDir, identity), hasCredentialBlock: false }).state !== "signed-out",
+    hasStoredLogin: (identity) => identitySignIn(realFarmFs, { platform: process.platform, run: options.run ?? realRunPort }, { farmRoot: path.join(paths.identitiesDir, identity), hasCredentialBlock: false, provider: undefined }).state !== "signed-out",
     ...(farm.directoryIdentity === undefined ? {} : { directoryPinnedIdentity: farm.directoryIdentity }),
     ...(farm.directoryConfigProfile === undefined ? {} : { directoryRuleConfigProfile: farm.directoryConfigProfile }),
     ...(farm.globalDefaultConfigProfile === undefined ? {} : { globalDefaultConfigProfile: farm.globalDefaultConfigProfile }),

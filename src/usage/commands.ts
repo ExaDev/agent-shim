@@ -212,12 +212,15 @@ export function collectAccounts(fs: ReportFs & Pick<FarmFs, "lstat">, paths: Lay
     requireIdentity(paths, identity);
   }
   const names = identity === undefined ? listIdentities(paths).map((entry) => entry.name) : [identity];
-  return names.map((name) => ({
-    identity: name,
-    account: readAccountMetadata(fs, paths.identitiesDir, name),
-    signIn: identitySignIn(fs, probe, { farmRoot: path.join(paths.identitiesDir, name), hasCredentialBlock: readIdentity(paths, name)?.credential !== undefined }),
-    usage: readUsageSnapshot(fs, paths.usageSnapshotsDir, name),
-  }));
+  return names.map((name) => {
+    const stored = readIdentity(paths, name);
+    return {
+      identity: name,
+      account: readAccountMetadata(fs, paths.identitiesDir, name),
+      signIn: identitySignIn(fs, probe, { farmRoot: path.join(paths.identitiesDir, name), hasCredentialBlock: stored?.credential !== undefined, provider: stored?.provider }),
+      usage: readUsageSnapshot(fs, paths.usageSnapshotsDir, name),
+    };
+  });
 }
 
 /** Formats `agent-shim account show`, one block per identity. */

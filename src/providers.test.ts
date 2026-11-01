@@ -471,6 +471,29 @@ describe("providers", () => {
       expect(result?.ok).toBe(true);
     });
 
+    it("uses the identity's provider when neither the flag nor the cascade selects one", () => {
+      addProvider(paths, "z", zInput);
+      const cascade = { home: root, loadProfile: () => undefined };
+      const result = resolveProvider({ paths, port: tempFsPort(), env: { Z_API_TOKEN: "tok-z" }, credentials: fakeCredentials(), cascade, identityProvider: "z" });
+      expect(result).toMatchObject({ ok: true, provider: { name: "z", credential: { token: "tok-z" } } });
+    });
+
+    it("lets the flag and the cascade outrank the identity's provider", () => {
+      addProvider(paths, "z", zInput);
+      addProvider(paths, "other", { ...zInput, displayName: "Other" });
+      const cascade = { home: root, loadProfile: () => undefined, cliOverride: { launch: { provider: "other" } } };
+      const env = { Z_API_TOKEN: "tok-z" };
+      const fromCascade = resolveProvider({ paths, port: tempFsPort(), env, credentials: fakeCredentials(), cascade, identityProvider: "z" });
+      expect(fromCascade).toMatchObject({ ok: true, provider: { name: "other" } });
+      const fromFlag = resolveProvider({ paths, port: tempFsPort(), env, credentials: fakeCredentials(), cascade, cliProvider: "z", identityProvider: "other" });
+      expect(fromFlag).toMatchObject({ ok: true, provider: { name: "z" } });
+    });
+
+    it("refuses an identity's provider that does not exist", () => {
+      const result = resolveProvider({ paths, port: tempFsPort(), env: {}, credentials: fakeCredentials(), identityProvider: "missing" });
+      expect(result).toMatchObject({ ok: false, status: 1 });
+    });
+
     it("refuses an unknown provider with a message naming the known providers", () => {
       addProvider(paths, "z", zInput);
       const result = resolveProvider({ paths, port: tempFsPort(), env: {}, credentials: fakeCredentials(), cliProvider: "missing" });
