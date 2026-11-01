@@ -697,6 +697,48 @@ describe("renameIdentity with a macOS Keychain login", () => {
     expect(calls.slice(deleteOld + 1)).toEqual([]);
   });
 
+  it("reads the login and the cached credential, which can wait on a person, once and before taking any lock", () => {
+    const events: string[] = [];
+    const recording = {
+      ...realFarmFs,
+      writeFileExclusive: (file: string, contents: string): boolean => {
+        events.push("lock");
+        return realFarmFs.writeFileExclusive(file, contents);
+      },
+    };
+    const run = {
+      run: (command: string, args: readonly string[], input?: string) => {
+        if (args.includes("-g")) {
+          events.push("read the login");
+        }
+        return world.keychain.run.run(command, args, input);
+      },
+    };
+    const cachePort: CredentialCachePort = {
+      read: (store, owner) => {
+        events.push("read the cache");
+        return world.cache.get(`${store}:${owner}`);
+      },
+      write: (store, owner, entry) => {
+        world.cache.set(`${store}:${owner}`, entry);
+      },
+      remove: (store, owner) => {
+        world.cache.delete(`${store}:${owner}`);
+      },
+    };
+    renameIdentity(world.paths, "work", "client", world.ports({ fs: recording, run, credentialCache: { port: cachePort, platform: "linux" } }));
+    expect(events.filter((event) => event === "read the login")).toHaveLength(1);
+    expect(events.filter((event) => event === "read the cache")).toHaveLength(1);
+    expect(events.indexOf("lock")).toBeGreaterThan(events.indexOf("read the login"));
+    expect(events.indexOf("lock")).toBeGreaterThan(events.indexOf("read the cache"));
+  });
+
+  it("asks for neither when a session is running, since it is going to refuse", () => {
+    world.sessions.set(world.directory("work"), [{ pid: 4711, program: "claude" }]);
+    expect(() => renameIdentity(world.paths, "work", "client", world.ports())).toThrow(IdentityInUseError);
+    expect(world.keychain.calls.some((call) => call.args.includes("-g"))).toBe(false);
+  });
+
   it("keeps the old login and the old name when the new item cannot be created", () => {
     world.keychain.failNextAdd(1);
     const before = treeOf(world.root);

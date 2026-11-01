@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { copyKeychainLogin, deleteKeychainLogin, KeychainLoginError, planKeychainLogin } from "./keychainLogin";
+import { deleteKeychainLogin, KeychainLoginError, planKeychainLogin, readKeychainLogin, writeKeychainLogin, type KeychainLoginPlan } from "./keychainLogin";
+import type { RunPort } from "./launcher/ports";
 import { createFakeKeychain } from "./keychainTestWorld";
 import { claudeCodeKeychainService } from "./usage/signIn";
 
@@ -24,6 +25,11 @@ function seeded(secret: string | Uint8Array = SECRET) {
   const keychain = createFakeKeychain();
   keychain.seed(FROM_SERVICE, "alex", secret);
   return keychain;
+}
+
+/** Reads the login and writes it under the new service, as the rename does with the read made earlier than the write. */
+function copy(run: RunPort, plan: KeychainLoginPlan): void {
+  writeKeychainLogin(run, plan, readKeychainLogin(run, plan));
 }
 
 function planOf(keychain: ReturnType<typeof seeded>) {
@@ -60,10 +66,10 @@ describe("planKeychainLogin", () => {
   });
 });
 
-describe("copyKeychainLogin", () => {
+describe("reading a login and writing it under another service", () => {
   it("creates the new item with the same account and secret, and leaves the old one for the caller to delete", () => {
     const keychain = seeded();
-    copyKeychainLogin(keychain.run, planOf(keychain));
+    copy(keychain.run, planOf(keychain));
     expect(keychain.items.get(TO_SERVICE)?.account).toBe("alex");
     expect(keychain.secretOf(TO_SERVICE)).toEqual(Buffer.from(SECRET));
     expect(keychain.secretOf(FROM_SERVICE)).toEqual(Buffer.from(SECRET));
@@ -77,14 +83,14 @@ describe("copyKeychainLogin", () => {
     ["text holding a newline", Buffer.from('{"note":"line one\nline two"}')],
   ])("copies the exact bytes of %s", (_form, bytes) => {
     const keychain = seeded(bytes);
-    copyKeychainLogin(keychain.run, planOf(keychain));
+    copy(keychain.run, planOf(keychain));
     expect(keychain.secretOf(TO_SERVICE)).toEqual(bytes);
     expect(keychain.secretOf(FROM_SERVICE)).toEqual(bytes);
   });
 
   it("never puts the secret, in any encoding, on an argument list", () => {
     const keychain = seeded();
-    copyKeychainLogin(keychain.run, planOf(keychain));
+    copy(keychain.run, planOf(keychain));
     const exposed = exposedArguments(keychain.calls);
     expect(exposed).not.toContain(SECRET);
     expect(exposed).not.toContain(Buffer.from(SECRET).toString("hex"));
@@ -100,7 +106,7 @@ describe("copyKeychainLogin", () => {
     const keychain = seeded();
     const plan = planOf(keychain);
     keychain.calls.length = 0;
-    copyKeychainLogin(keychain.run, plan);
+    copy(keychain.run, plan);
     const reads = keychain.calls.filter((call) => call.args.includes("-g") || call.args.includes("-w"));
     expect(reads.map((call) => call.args)).toEqual([["find-generic-password", "-s", FROM_SERVICE, "-a", "alex", "-g"]]);
   });
@@ -109,7 +115,7 @@ describe("copyKeychainLogin", () => {
     const keychain = seeded();
     const plan = planOf(keychain);
     keychain.calls.length = 0;
-    copyKeychainLogin(keychain.run, plan);
+    copy(keychain.run, plan);
     const last = keychain.calls.at(-1);
     expect(last?.args).toEqual(["find-generic-password", "-s", TO_SERVICE]);
     expect(last?.args).not.toContain("-w");
@@ -119,7 +125,7 @@ describe("copyKeychainLogin", () => {
   it("falls back to a quoted password when the hex form would not fit one interactive line, and the tool reads it back intact", () => {
     const large = `{"claudeAiOauth":{"accessToken":"${"a".repeat(FIRST_PART_BYTES)}","refreshToken":"${"b".repeat(SECOND_PART_BYTES)}"}}`;
     const keychain = seeded(large);
-    copyKeychainLogin(keychain.run, planOf(keychain));
+    copy(keychain.run, planOf(keychain));
     expect(keychain.secretOf(TO_SERVICE)?.toString("utf8")).toBe(large);
     expect(exposedArguments(keychain.calls)).not.toContain("aaaaaaaaaa");
   });
@@ -128,7 +134,7 @@ describe("copyKeychainLogin", () => {
     const keychain = seeded(`{"claudeAiOauth":{"accessToken":"${"a".repeat(TOO_LARGE_FOR_ANY_FORM)}"}}`);
     const plan = planOf(keychain);
     expect(() => {
-      copyKeychainLogin(keychain.run, plan);
+      copy(keychain.run, plan);
     }).toThrow(KeychainLoginError);
     expect(keychain.calls.some((call) => call.args[0] === "-i")).toBe(false);
     expect(keychain.items.has(TO_SERVICE)).toBe(false);
@@ -138,7 +144,7 @@ describe("copyKeychainLogin", () => {
     const keychain = seeded(`{"note":"line one\nline two ${"x".repeat(TOO_LARGE_FOR_HEX)}"}`);
     const plan = planOf(keychain);
     expect(() => {
-      copyKeychainLogin(keychain.run, plan);
+      copy(keychain.run, plan);
     }).toThrow(KeychainLoginError);
     expect(keychain.items.has(TO_SERVICE)).toBe(false);
   });
@@ -150,7 +156,7 @@ describe("copyKeychainLogin", () => {
     keychain.failNextAdd(1, `unbalanced quote near "${hex.slice(0, QUOTED_FRAGMENT_DIGITS)}" in the command`);
     let message = "";
     try {
-      copyKeychainLogin(keychain.run, plan);
+      copy(keychain.run, plan);
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
@@ -163,7 +169,7 @@ describe("copyKeychainLogin", () => {
     keychain.hideFromLookup.add(TO_SERVICE);
     const plan = planOf(keychain);
     expect(() => {
-      copyKeychainLogin(keychain.run, plan);
+      copy(keychain.run, plan);
     }).toThrow(/not found afterwards/);
     expect(keychain.items.has(TO_SERVICE)).toBe(false);
     expect(keychain.items.has(FROM_SERVICE)).toBe(true);
