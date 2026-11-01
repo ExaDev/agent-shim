@@ -10,7 +10,8 @@ import type { z } from "zod";
 import { lookupKeychainService } from "./checkReport";
 import { credentialsFilePath, decideSignIn, keychainHasItem } from "./usage/signIn";
 import { describeAccountHolder, groupSharedLogins, joinNames, loginKeyOf, readIdentityAccount, summariseIdentityAccount } from "./identityAccounts";
-import type { AccountMetadata } from "./usage/schema";
+import { readUsageSnapshot, UsageSnapshotError } from "./usage/read";
+import type { AccountMetadata, UsageSnapshot } from "./usage/schema";
 import { parseSiwcFile } from "./codex/siwcStore";
 import { SIWC_PLAN_SCOPE } from "./codex/siwc";
 import { ConfigValidationError } from "./config/load";
@@ -40,6 +41,7 @@ import { detectAmbientCredential, formatAmbientCredentialGuardMessage } from "./
 import { poolNameOf } from "./launcher/identity";
 import { poolCycleOf } from "./poolStore";
 import { describeSharedLoginMembers, sharedLoginMembers } from "./poolSharedLogins";
+import { jobWindowReadFindings, poolWindowReadFindings, receivedWindows } from "./poolWindowReads";
 import type { RunPort } from "./launcher/ports";
 import { lineariseProfile, type ProfileLoader, type ProfileSource } from "./resolve/extends";
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
@@ -158,6 +160,8 @@ export interface RunDoctorParams {
   /** The Sign in with ChatGPT file. Omit to leave it out of the findings; with it, a codex provider whose `codex.login` is `chatgpt-sign-in` warns when there is no usable sign-in to spend. */
   readonly chatgptSignIn?: { readonly path: string; readonly raw: string | undefined };
   readonly identities: readonly DoctorIdentityInput[];
+  /** Each identity's last recorded usage snapshot, by identity name. Omit to skip checking that pools and jobs read only windows their identities receive; an identity missing from it has no readable snapshot, so what it receives is unknown and nothing is reported for it. */
+  readonly usageSnapshots?: Readonly<Record<string, UsageSnapshot>>;
   readonly configProfiles: readonly DoctorConfigProfileInput[];
   readonly providers: readonly DoctorProviderInput[];
   /** The recorded former names of renamed providers. Omit to leave them out of the findings. */
@@ -618,6 +622,18 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     reportedCycles.add(key);
     push("pool", "fail", `Pool cycle: ${chain.join(" -> ")}. A pool cannot nest itself, directly or through another pool.`, chain[0]);
   }
+  // A window an identity does not receive answers nothing, so whatever reads it for that identity stays undecided or idle without failing.
+  const { usageSnapshots } = params;
+  if (usageSnapshots !== undefined) {
+    const windowsOf = (identityName: string) => receivedWindows(usageSnapshots[identityName]);
+    for (const finding of poolWindowReadFindings(pools, windowsOf)) {
+      push("pool", "warn", finding.message, finding.subject);
+    }
+    const jobs = validatedGlobalConfig?.ok === true ? (validatedGlobalConfig.data.jobs ?? {}) : {};
+    for (const finding of jobWindowReadFindings(jobs, pools, windowsOf)) {
+      push("global-config", "warn", finding.message, finding.subject);
+    }
+  }
   /** Whether what a rule or the active-identity file selects (an identity, or `pool:<name>`) exists. */
   const selectionExists = (selector: string): boolean => {
     const poolName = poolNameOf(selector);
@@ -917,6 +933,21 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
     return { name, path: identityPath, raw: realFsPort.readFileUtf8(identityPath), farmRoot, credentialsFilePresent: fs.existsSync(credentialsFilePath(farmRoot)), account: readIdentityAccount(realFsPort, paths.identitiesDir, name)?.account };
   });
 
+  // An unreadable snapshot leaves that identity's windows unknown, which the window checks report nothing for, rather than failing the audit.
+  const usageSnapshots: Record<string, UsageSnapshot> = {};
+  for (const name of identityNames) {
+    try {
+      const snapshot = readUsageSnapshot(realFsPort, paths.usageSnapshotsDir, name);
+      if (snapshot !== undefined) {
+        usageSnapshots[name] = snapshot;
+      }
+    } catch (error) {
+      if (!(error instanceof UsageSnapshotError)) {
+        throw error;
+      }
+    }
+  }
+
   const profileNames = fs.existsSync(paths.configProfilesDir)
     ? fs
         .readdirSync(paths.configProfilesDir, { withFileTypes: true })
@@ -983,6 +1014,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
     chatgptSignIn: { path: paths.chatgptSignInFile, raw: realFsPort.readFileUtf8(paths.chatgptSignInFile) },
     installedClaudeVersions: realInstalledClaudeVersions(),
     identities,
+    usageSnapshots,
     configProfiles,
     providers,
     providerAliases: readProviderAliases(paths),
