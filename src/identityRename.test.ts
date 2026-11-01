@@ -444,6 +444,20 @@ describe("describeIdentityRename (--dry-run)", () => {
     expect(done.warnings).toEqual(planned.warnings);
   });
 
+  it("refuses a usage snapshot it cannot read in the plan, so a dry run that passes is not followed by a real run that fails after the Keychain copy", () => {
+    fs.writeFileSync(path.join(world.paths.usageSnapshotsDir, "work.json"), "{ not json");
+    const before = treeOf(world.root);
+    expect(() => describeIdentityRename(world.paths, "work", "client", world.ports())).toThrow(/usage\/snapshots\/work\.json/);
+    expect(() => renameIdentity(world.paths, "work", "client", world.ports())).toThrow(/usage\/snapshots\/work\.json/);
+    expect(treeOf(world.root)).toEqual(before);
+    expect(world.keychain.calls.every((call) => call.args[0] === "find-generic-password" && !call.args.includes("-g"))).toBe(true);
+  });
+
+  it("refuses a usage snapshot of another schema version in the plan too", () => {
+    writeJson(path.join(world.paths.usageSnapshotsDir, "work.json"), { schemaVersion: 99, identity: "work", updatedAt: "2026-10-30T10:00:00.000Z", providers: {} }, PRIVATE_FILE_MODE);
+    expect(() => describeIdentityRename(world.paths, "work", "client", world.ports())).toThrow(CliError);
+  });
+
   it("asks the Keychain nothing that returns a secret, and writes nothing to it", () => {
     describeIdentityRename(world.paths, "work", "client", world.ports());
     expect(world.keychain.calls.length).toBeGreaterThan(0);
