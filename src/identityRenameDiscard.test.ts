@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -10,6 +11,7 @@ import { NOW_MS, OWN_PID, createWorld, treeOf, type World } from "./identityRena
 import { InvalidIdentityNameError, addIdentity, identityExists, removeIdentity } from "./identityStore";
 import { IdentityLockBusyError } from "./launcher/lock";
 import { realFarmFs } from "./realPorts";
+import { ignoresCase } from "./sameDirectory";
 
 /** Writes the journal of a rename of `from` to `to` that nothing has applied yet, as one left by a run that was killed would be. */
 function leaveJournal(world: World, from: string, to: string): RenameJournal {
@@ -188,6 +190,26 @@ describe("identity add and identity remove while a rename is unfinished", () => 
     }).toThrow(/Cannot remove identity "work"/);
     expect(identityExists(world.paths, "work")).toBe(true);
     expect(treeOf(world.root)).toEqual(before);
+  });
+
+  it("refuses a name that reaches the directory of either one through a symlink, which the filesystem treats as the same identity", () => {
+    leaveJournal(world, "work", "client");
+    fs.symlinkSync(world.directory("work"), world.directory("work-alias"));
+    const before = treeOf(world.root);
+    expect(() => addIdentity(world.paths, "work-alias")).toThrow(/Cannot add identity "work-alias"/);
+    expect(() => {
+      removeIdentity(world.paths, "work-alias");
+    }).toThrow(/Cannot remove identity "work-alias"/);
+    expect(treeOf(world.root)).toEqual(before);
+  });
+
+  it.runIf(ignoresCase(os.tmpdir()))("refuses another spelling of a held name on a filesystem that ignores case, whether or not its directory exists yet", () => {
+    leaveJournal(world, "work", "client");
+    expect(() => {
+      removeIdentity(world.paths, "Work");
+    }).toThrow(/Cannot remove identity "Work"/);
+    expect(() => addIdentity(world.paths, "CLIENT")).toThrow(/Cannot add identity "CLIENT"/);
+    expect(fs.existsSync(world.directory("client"))).toBe(false);
   });
 
   it("leaves every other name alone, and a file that is not a journal does not stop it", () => {

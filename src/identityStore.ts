@@ -10,6 +10,7 @@ import { requirePool } from "./poolStore";
 import type { LayoutPaths } from "./paths";
 import { identityLockPath } from "./launcher/lock";
 import { requireNameFreeOfUnfinishedRename } from "./identityRenameJournal";
+import { ignoresCase, sameDirectory } from "./sameDirectory";
 
 /** Raised by any operation that requires an identity to already exist, when it does not. */
 export class IdentityNotFoundError extends CliError {
@@ -303,11 +304,16 @@ export function requireNewIdentityName(name: string): void {
   }
 }
 
+/** Whether the identity names `first` and `second` are one identity on this machine: the same directory, which a symlink gives and a filesystem that ignores case gives two spellings of one name, including a name whose directory does not exist yet. */
+function sameIdentityName(paths: LayoutPaths, first: string, second: string): boolean {
+  return sameDirectory(path.join(paths.identitiesDir, first), path.join(paths.identitiesDir, second)) || (first.toLowerCase() === second.toLowerCase() && ignoresCase(paths.identitiesDir));
+}
+
 /**
- * Throws a `CliError` naming the command that finishes the rename when an unfinished rename names `name`, as its old name or its new one, so `identity add` and `identity remove` cannot take a name the rename still needs. Without this, removing the identity a rename was moving, or adding its target by hand, would leave a journal no rename could ever finish. `action` is the verb the refusal reports.
+ * Throws a `CliError` naming the command that finishes the rename when an unfinished rename holds `name`, as its old name or its new one or another spelling of either that reaches the same directory (see `requireNameFreeOfUnfinishedRename`), so `identity add` and `identity remove` cannot take a name the rename still needs. Without this, removing the identity a rename was moving, or adding its target by hand, would leave a journal no rename could ever finish. `action` is the verb the refusal reports.
  */
 export function requireNoUnfinishedRenameNaming(paths: LayoutPaths, name: string, action: "add" | "remove"): void {
-  requireNameFreeOfUnfinishedRename({ readFileUtf8: nodeStoreFs.readFileUtf8, readdir: (directory) => (fs.existsSync(directory) ? fs.readdirSync(directory) : []) }, paths.identityRenamesDir, name, action);
+  requireNameFreeOfUnfinishedRename({ readFileUtf8: nodeStoreFs.readFileUtf8, readdir: (directory) => (fs.existsSync(directory) ? fs.readdirSync(directory) : []) }, paths.identityRenamesDir, name, action, (first, second) => sameIdentityName(paths, first, second));
 }
 
 /**

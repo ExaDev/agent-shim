@@ -13,8 +13,8 @@ import { addIdentity, identityExists, readActiveIdentity, useIdentity } from "./
 import { createFakeKeychain } from "./keychainTestWorld";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { buildProgram } from "./program";
-import { sameDirectory } from "./realIdentityRename";
 import { realFarmFs } from "./realPorts";
+import { sameDirectory } from "./sameDirectory";
 import { fakeCommandDeps } from "./test-helpers";
 import { claudeCodeKeychainService } from "./usage/signIn";
 

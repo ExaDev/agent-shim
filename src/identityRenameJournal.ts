@@ -160,10 +160,10 @@ class NameHeldByUnfinishedRenameError extends CliError {
 }
 
 /**
- * Throws `NameHeldByUnfinishedRenameError` when an unfinished rename in `directory` names `name`, as its old name or its new one, so `action` (`add`, `remove`) is refused until the rename is finished or its journal discarded. A file that is not a journal names no identity and is left to `doctor`, which reports it.
+ * Throws `NameHeldByUnfinishedRenameError` when an unfinished rename in `directory` holds `name`, as its old name or its new one, so `action` (`add`, `remove`) is refused until the rename is finished or its journal discarded. A name holds the same identity as a held one when it is equal to it or `sameName` says the two are one directory, which a symlink makes them and a filesystem that ignores case makes two spellings of one name: either would reach the identity the rename is moving or create the one it will find at its target. A file that is not a journal names no identity and is left to `doctor`, which reports it.
  */
-export function requireNameFreeOfUnfinishedRename(fs: Pick<RenameJournalFs, "readFileUtf8" | "readdir">, directory: string, name: string, action: string): void {
-  const held = listRenameJournals(fs, directory).journals.find((journal) => journal.from === name || journal.to === name);
+export function requireNameFreeOfUnfinishedRename(fs: Pick<RenameJournalFs, "readFileUtf8" | "readdir">, directory: string, name: string, action: string, sameName: (first: string, second: string) => boolean): void {
+  const held = listRenameJournals(fs, directory).journals.find((journal) => [journal.from, journal.to].some((heldName) => heldName === name || sameName(name, heldName)));
   if (held !== undefined) {
     throw new NameHeldByUnfinishedRenameError(action, name, held);
   }
