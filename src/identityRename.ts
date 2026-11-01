@@ -4,6 +4,7 @@ import type { z } from "zod";
 
 import { CliError, UsageError } from "./cliError";
 import { ConfigValidationError } from "./config/load";
+import { UnsafeNameError, isStoredName } from "./config/names";
 import { ConfigProfileSchema, DirectoryRulesSchema, GlobalConfigSchema, IdentitySchema, ProviderSchema, isRouterProvider, type CredentialCacheStore, type CredentialSource } from "./config/schema";
 import { nodeStoreFs, readJson, writeJsonAtomic, writeTextAtomic } from "./config/store";
 import { listProfiles } from "./configProfilesStore";
@@ -132,10 +133,13 @@ function counted(count: number, noun: string): string {
   return `${String(count)} ${noun}${count === 1 ? "" : "s"}`;
 }
 
-/** The name's own checks, which need no state: they run before anything is locked, so a bad name leaves no lock file behind. */
+/** The names' own checks, which need no state: they run before anything is locked, so a bad name leaves no lock file behind and a name that would leave the identities directory never reaches a path. The old name need only stay inside the directory, since an identity created under an older, looser rule may have it; the new name must have the shape a new identity is given. */
 function requireNames(from: string, to: string): void {
   if (from === to) {
     throw new UsageError(`"${from}" is already the identity's name.`);
+  }
+  if (!isStoredName(from)) {
+    throw new UnsafeNameError(from, "identity");
   }
   requireNewIdentityName(to);
 }
@@ -844,9 +848,10 @@ export interface DiscardedRenameJournal {
 /**
  * Removes the journal of an unfinished rename of `from` to `to` that nothing can finish: the identity is under neither name, or under both. It takes the resync lock of both names first, so a process still running that rename, which holds them, is never robbed of its journal, and it changes no identity, file or login. The journal is read again under the locks, so the verdict is of the state it removes.
  *
- * Throws a `CliError` saying there is nothing to discard when the pair has no journal, one saying the rename can be finished when the identity is under exactly one of the names, `IdentityLockBusyError` when the lock of either name is held, and what `readRenameJournal` throws for a journal it cannot read.
+ * Throws `UsageError` for equal names, `UnsafeNameError` for an old name that would leave the identities directory, `InvalidIdentityNameError` for a new name that is not valid, all before taking a lock, a `CliError` saying there is nothing to discard when the pair has no journal, one saying the rename can be finished when the identity is under exactly one of the names, `IdentityLockBusyError` when the lock of either name is held, and what `readRenameJournal` throws for a journal it cannot read.
  */
 export function discardRenameJournal(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts): DiscardedRenameJournal {
+  requireNames(from, to);
   const held = holdLocks(paths, [from, to], ports);
   try {
     const file = renameJournalFile(paths.identityRenamesDir, from, to);

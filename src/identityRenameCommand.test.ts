@@ -195,6 +195,12 @@ describe("identity rename", () => {
     expect(JSON.parse(out.join("\n"))).toEqual({ action: "removed", kind: "rename-journal", name: "client", value: { from: "work", to: "client" } });
   });
 
+  it("with --discard-journal is a usage error for the same name twice, as without it", async () => {
+    const file = leaveUnfinishable();
+    expect(await run(["identity", "rename", "work", "work", "--discard-journal"])).toBe(EXIT_USAGE);
+    expect(readRenameJournal(realFarmFs, file)).toBeDefined();
+  });
+
   it("refuses --discard-journal with --dry-run, which would have nothing to preview, and keeps the record", async () => {
     const file = leaveUnfinishable();
     expect(await run(["identity", "rename", "work", "client", "--discard-journal", "--dry-run"])).toBe(EXIT_USAGE);
