@@ -8,6 +8,8 @@ import type { RunPort } from "./launcher/ports";
  */
 const CONFIG_DIR_VARIABLE = "CLAUDE_CONFIG_DIR";
 
+const VARIABLE_PREFIX = `${CONFIG_DIR_VARIABLE}=`;
+
 /** One process found running against an identity's directory: its id, and the program's name, which is all a message about it needs to say. */
 export interface SessionProcess {
   readonly pid: number;
@@ -16,7 +18,7 @@ export interface SessionProcess {
 
 /** Answers which processes are running against a configuration directory. Injected so the rename never reads the real process table in a test. */
 export interface IdentitySessionProbe {
-  /** The roots of every process tree that carries `configDir` as its configuration directory: a session, and whatever it started, counts once. Throws when the process table cannot be read, since "none found" would then be a guess. */
+  /** The roots of every process tree that carries `configDir` as its configuration directory: a session, and whatever it started, counts once. Throws when the process table cannot be read, or shows a process of this user whose environment it cannot, since "none found" would then be a guess. */
   readonly sessionsOn: (configDir: string) => readonly SessionProcess[];
 }
 
@@ -44,13 +46,34 @@ function rootsOf(matches: readonly ListedProcess[], ownPid: number): readonly Se
   return others.filter((match) => !pids.has(match.ppid)).map((match) => ({ pid: match.pid, program: match.program }));
 }
 
-/** Whether `text` carries `CLAUDE_CONFIG_DIR=<configDir>` as a whole word: at the start of the line or after a space, and followed by a space or the end, so `…/work2` is not `…/work`. */
-function carriesDirectory(text: string, configDir: string): boolean {
-  const word = `${CONFIG_DIR_VARIABLE}=${configDir}`;
-  for (let from = text.indexOf(word); from !== -1; from = text.indexOf(word, from + 1)) {
-    const before = text.charAt(from - 1);
-    const after = text.charAt(from + word.length);
-    if ((from === 0 || before === " ") && (after === "" || after === " ")) {
+/** Where a path really is: its trailing slashes and dot segments removed, then its symlinks followed. A path that does not exist is its own place. */
+function canonicalDirectory(directory: string, realpath: (target: string) => string): string {
+  return realpath(path.resolve(directory));
+}
+
+/** The spellings of the wanted directory a process may carry it under: as asked, and where it really is. */
+function spellingsOf(configDir: string, canonical: string): readonly string[] {
+  return [...new Set([configDir, canonical])];
+}
+
+/** Whether `rest` is `spelling` followed by the end of the word: a space, the end, or slashes and then either. */
+function startsWithWord(rest: string, spelling: string): boolean {
+  return rest.startsWith(spelling) && /^\/*(?: |$)/u.test(rest.slice(spelling.length));
+}
+
+/**
+ * Whether `text` carries `CLAUDE_CONFIG_DIR=<dir>` as a whole word naming the wanted directory: at the start of the line or after a space, and followed by a space or the end, so `…/work2` is not `…/work`. A spelling with a trailing slash, or one reaching the directory through a symlink, names it too. `ps` prints the environment space separated, so a directory with a space in it is only recognised when it is spelled as asked or as it really is.
+ */
+function carriesDirectory(text: string, configDir: string, realpath: (target: string) => string): boolean {
+  const canonical = canonicalDirectory(configDir, realpath);
+  const spellings = spellingsOf(configDir, canonical);
+  for (let from = text.indexOf(VARIABLE_PREFIX); from !== -1; from = text.indexOf(VARIABLE_PREFIX, from + 1)) {
+    if (from > 0 && text.charAt(from - 1) !== " ") {
+      continue;
+    }
+    const rest = text.slice(from + VARIABLE_PREFIX.length);
+    const [value = ""] = rest.split(" ");
+    if (spellings.some((spelling) => startsWithWord(rest, spelling)) || (value !== "" && canonicalDirectory(value, realpath) === canonical)) {
       return true;
     }
   }
@@ -58,14 +81,14 @@ function carriesDirectory(text: string, configDir: string): boolean {
 }
 
 /**
- * The sessions in `ps -E -ww -o pid=,ppid=,command=` output that run against `configDir`. `-E` makes `ps` print each process's environment after its command, space separated, which is the only form macOS offers; the match is on the whole `CLAUDE_CONFIG_DIR=<dir>` word. The environment is never returned or reported, only a pid and a program name.
+ * The sessions in `ps -E -ww -o pid=,ppid=,command=` output that run against `configDir`. `-E` makes `ps` print each process's environment after its command, space separated, which is the only form macOS offers. The environment is never returned or reported, only a pid and a program name.
  */
-export function parseEnvironmentListing(listing: string, configDir: string, ownPid: number): readonly SessionProcess[] {
+export function parseEnvironmentListing(listing: string, configDir: string, ownPid: number, realpath: (target: string) => string): readonly SessionProcess[] {
   const matches: ListedProcess[] = [];
   for (const line of listing.split("\n")) {
     const parsed = /^\s*(\d+)\s+(\d+)\s+(.*)$/u.exec(line);
     const [, pidText, ppidText, command] = parsed ?? [];
-    if (pidText === undefined || ppidText === undefined || command === undefined || !carriesDirectory(command, configDir)) {
+    if (pidText === undefined || ppidText === undefined || command === undefined || !carriesDirectory(command, configDir, realpath)) {
       continue;
     }
     const [executable = ""] = command.split(" ");
@@ -74,13 +97,21 @@ export function parseEnvironmentListing(listing: string, configDir: string, ownP
   return rootsOf(matches, ownPid);
 }
 
-/** The reads the Linux probe makes of `/proc`: a directory listing, and a file's text or undefined when the process has gone or belongs to another user. */
+/** What reading one file of a process's `/proc` entry found: its text, nothing because the process has gone, or nothing because this user may not read it. */
+export type ProcRead = { readonly kind: "text"; readonly text: string } | { readonly kind: "absent" } | { readonly kind: "unreadable" };
+
+/** The reads the Linux probe makes of `/proc`: a directory listing, and a file. */
 export interface ProcessTableFs {
   readonly readdir: (dir: string) => readonly string[];
-  readonly readFile: (file: string) => string | undefined;
+  readonly readFile: (file: string) => ProcRead;
 }
 
 const PROC_ROOT = "/proc";
+
+/** The text of a `/proc` file, or undefined when it is absent or unreadable. */
+function textOf(read: ProcRead): string | undefined {
+  return read.kind === "text" ? read.text : undefined;
+}
 
 /** The parent pid in `/proc/<pid>/stat`: the second field after the command name, which is in parentheses and may itself hold spaces and parentheses, so the fields are counted from the last closing one. */
 function parentPidOf(stat: string): number | undefined {
@@ -88,35 +119,60 @@ function parentPidOf(stat: string): number | undefined {
   return ppid === undefined ? undefined : Number(ppid);
 }
 
+/** Whether the process `entry` runs as user `uid`, from the real user id in its `/proc/<pid>/status`, which every user may read. A process that has gone is nobody's. */
+function ownedBy(procFs: ProcessTableFs, entry: string, uid: number): boolean {
+  const real = /^Uid:\s+(\d+)/mu.exec(textOf(procFs.readFile(`${PROC_ROOT}/${entry}/status`)) ?? "")?.[1];
+  return real !== undefined && Number(real) === uid;
+}
+
 /** The sessions on Linux, read from each process's own NUL separated environment, which unlike `ps` output keeps a value with a space in it exact. */
-function sessionsFromProc(procFs: ProcessTableFs, configDir: string, ownPid: number): readonly SessionProcess[] {
-  const word = `${CONFIG_DIR_VARIABLE}=${configDir}`;
+function sessionsFromProc(deps: IdentitySessionProbeDeps, configDir: string): readonly SessionProcess[] {
+  const { procFs, realpath } = deps;
+  const canonical = canonicalDirectory(configDir, realpath);
   const matches: ListedProcess[] = [];
   for (const entry of procFs.readdir(PROC_ROOT)) {
     if (!/^\d+$/u.test(entry)) {
       continue;
     }
     const environment = procFs.readFile(`${PROC_ROOT}/${entry}/environ`);
-    if (environment?.split("\u0000").includes(word) !== true) {
+    if (environment.kind === "absent") {
       continue;
     }
-    const ppid = parentPidOf(procFs.readFile(`${PROC_ROOT}/${entry}/stat`) ?? "");
+    if (environment.kind === "unreadable") {
+      // Another user's process cannot be a session on this user's directory. One of this user's that withholds its environment (a process that marked itself undumpable, say) might be, and saying nothing is running would be a guess.
+      if (ownedBy(procFs, entry, deps.uid())) {
+        const program = (textOf(procFs.readFile(`${PROC_ROOT}/${entry}/comm`)) ?? "").trim();
+        throw new SessionProbeUnavailableError(`Cannot read the environment of pid ${entry} (${program === "" ? "unknown program" : program}), a process of yours, so cannot tell whether it is a session running against ${configDir}. End it, then run the command again.`);
+      }
+      continue;
+    }
+    const carries = environment.text
+      .split("\u0000")
+      .filter((variable) => variable.startsWith(VARIABLE_PREFIX))
+      .map((variable) => variable.slice(VARIABLE_PREFIX.length))
+      .some((value) => value !== "" && canonicalDirectory(value, realpath) === canonical);
+    if (!carries) {
+      continue;
+    }
+    const ppid = parentPidOf(textOf(procFs.readFile(`${PROC_ROOT}/${entry}/stat`)) ?? "");
     if (ppid === undefined || Number.isNaN(ppid)) {
       continue;
     }
-    matches.push({ pid: Number(entry), ppid, program: (procFs.readFile(`${PROC_ROOT}/${entry}/comm`) ?? "").trim() });
+    matches.push({ pid: Number(entry), ppid, program: (textOf(procFs.readFile(`${PROC_ROOT}/${entry}/comm`)) ?? "").trim() });
   }
-  return rootsOf(matches, ownPid);
+  return rootsOf(matches, deps.ownPid);
 }
 
 /** What the probe reads the process table through. */
 export interface IdentitySessionProbeDeps {
   readonly run: RunPort;
-  /** The user whose processes are listed: a session of another user cannot be running against this user's directory. Asked for only on macOS, where `ps` lists by user. */
+  /** The user whose processes are listed: a session of another user cannot be running against this user's directory. Asked for only where it is needed: on macOS, where `ps` lists by user, and on Linux for a process whose environment is unreadable. */
   readonly uid: () => number;
   /** The asking process, left out of what it finds. */
   readonly ownPid: number;
   readonly procFs: ProcessTableFs;
+  /** Where a path really is, following symlinks; a path that does not exist answers as itself. */
+  readonly realpath: (target: string) => string;
 }
 
 /**
@@ -130,12 +186,12 @@ export function createIdentitySessionProbe(platform: NodeJS.Platform, deps: Iden
         if (result.status !== 0) {
           throw new SessionProbeUnavailableError(`Could not read the process table to see whether a session is running (ps exited ${result.status === null ? "without a status" : String(result.status)}).`);
         }
-        return parseEnvironmentListing(result.stdout, configDir, deps.ownPid);
+        return parseEnvironmentListing(result.stdout, configDir, deps.ownPid, deps.realpath);
       },
     };
   }
   if (platform === "linux") {
-    return { sessionsOn: (configDir) => sessionsFromProc(deps.procFs, configDir, deps.ownPid) };
+    return { sessionsOn: (configDir) => sessionsFromProc(deps, configDir) };
   }
   return {
     sessionsOn() {
