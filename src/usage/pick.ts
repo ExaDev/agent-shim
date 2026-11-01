@@ -47,6 +47,8 @@ export interface PoolMember {
   readonly records: readonly UsageRecord[];
   /** Present when this member stands for a nested `pool:<name>` entry rather than a direct identity. */
   readonly nested?: NestedContribution;
+  /** The member that represents this member's login in the ranking, when both hold the same login and so draw on one quota window. This member is then ineligible as a candidate of its own, since ranking it beside its representative would count one window twice and could fail over to a login that is limited too. */
+  readonly sameLoginAs?: string;
   /** The member entry's policy condition, from the object form of a pool member: definite false skips the member as ineligible by policy, indeterminate demotes it to last within its class, naming the missing fact either way. */
   readonly policy?: WhenCondition;
 }
@@ -259,6 +261,9 @@ function assessRefusedNested(member: PoolMember, nested: Extract<NestedContribut
 
 /** Assesses one member, unfolding what a nested `pool:<name>` entry contributes: its pool's pick is re-ranked from the picked identity's own snapshot (so it competes in a scored outer pool like any member). The nested pool's own reasons stand in for the member's window and plan lines rather than sitting beside a second copy re-derived from the same snapshot, with the composition named first. */
 function assess(member: PoolMember, nowMs: number): Assessment {
+  if (member.sameLoginAs !== undefined) {
+    return { candidate: { identity: member.identity, class: "ineligible", plan: planOf(member.account), reasons: [`same login as ${member.sameLoginAs}`] } };
+  }
   const nested = member.nested;
   if (nested === undefined) {
     return assessIdentity(member, nowMs);

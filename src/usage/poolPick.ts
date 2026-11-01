@@ -7,6 +7,7 @@ import { poolNameOf } from "../launcher/identity";
 import type { FarmFs } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
 import { poolMemberIdentity } from "../config/schema";
+import { groupSharedLogins, loginKeyOf } from "../identityAccounts";
 import { AccountMetadataError, readAccountMetadata } from "./account";
 import { FIVE_HOUR_WINDOW_MS, rankPool, type PoolMember, type PoolRanking, type StickyPick } from "./pick";
 import { readUsageLog, readUsageSnapshot, UsageSnapshotError, type UsageReadFs } from "./read";
@@ -63,6 +64,37 @@ export function loadPoolMembers(fs: PoolPickFs, paths: PoolPickPaths, identities
       throw error;
     }
   });
+}
+
+/** When a member's usage snapshot was written, as a comparable instant. A member with no snapshot sorts before every member that has one. */
+function snapshotAgeKey(member: PoolMember): number {
+  return member.snapshot === undefined ? Number.NEGATIVE_INFINITY : Date.parse(member.snapshot.updatedAt);
+}
+
+/**
+ * Marks all but one of the direct members that hold the same login (same account uuid and organisation uuid, `loginKeyOf`) as twins of the one whose usage snapshot is freshest, which stands for the login. Members of one login draw on one quota window, so ranking each would count it twice, and a twin looks usable while its sibling is limited. The earliest listed member wins a tie. A nested `pool:<name>` entry is not grouped, so its pool keeps its own evaluation, and a member with no account uuid is never grouped. Returns `members` in the same order.
+ */
+function collapseSharedLogins(members: readonly PoolMember[]): readonly PoolMember[] {
+  const groups = groupSharedLogins(members, (member) => (member.nested === undefined && member.account !== undefined ? loginKeyOf(member.account) : undefined));
+  const representativeOf = new Map<PoolMember, string>();
+  for (const group of groups) {
+    const representative = group.reduce((freshest, member) => (snapshotAgeKey(member) > snapshotAgeKey(freshest) ? member : freshest));
+    for (const member of group) {
+      if (member !== representative) {
+        representativeOf.set(member, representative.identity);
+      }
+    }
+  }
+  return members.map((member) => {
+    const representative = representativeOf.get(member);
+    return representative === undefined ? member : { ...member, sameLoginAs: representative };
+  });
+}
+
+/** The last pick, moved onto the member that stands for its login when it was a twin in `members`: the conversation's prompt cache is per organisation, so the representative on the same login is as warm. */
+function stickyOnRepresentative(sticky: StickyPick | undefined, members: readonly PoolMember[]): StickyPick | undefined {
+  const twin = sticky === undefined ? undefined : members.find((member) => member.identity === sticky.identity && member.sameLoginAs !== undefined);
+  return sticky === undefined || twin?.sameLoginAs === undefined ? sticky : { ...sticky, identity: twin.sameLoginAs };
 }
 
 /** Everything ranking a whole pool graph needs, injected so it runs against the same fakes as the rest of the launcher. */
@@ -124,13 +156,15 @@ function rankNamedPool(input: Readonly<RankPoolGraphInput>, poolName: string, st
     members.push(typeof entry === "string" ? nested.member : { ...nested.member, policy: entry.when });
     missing.push(...nested.missing);
   }
+  const collapsed = collapseSharedLogins(members);
+  const stickyPick = stickyOnRepresentative(sticky, collapsed);
   const ranking = rankPool({
-    members,
+    members: collapsed,
     nowMs: input.nowMs,
     resuming: input.resuming,
     ...(input.resumeContextTokens === undefined ? {} : { resumeContextTokens: input.resumeContextTokens }),
     ...(input.committedContextTokens === undefined ? {} : { committedContextTokens: input.committedContextTokens }),
-    ...(sticky === undefined ? {} : { sticky }),
+    ...(stickyPick === undefined ? {} : { sticky: stickyPick }),
     ...(pool.preference === undefined ? {} : { preference: pool.preference }),
   });
   return { ranking, missing };
