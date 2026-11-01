@@ -179,6 +179,13 @@ describe("createIdentitySessionProbe", () => {
     expect(calls).toEqual([{ command: "ps", args: ["-E", "-ww", "-U", String(MACOS_UID), "-o", "pid=,ppid=,command="] }]);
   });
 
+  it("on macOS counts only the processes whose environment ps shows, since it prints none for one it cannot read", () => {
+    const listing = [` 100 1 /usr/local/bin/claude CLAUDE_CONFIG_DIR=${WORK_DIR}`, " 300 1 /usr/libexec/some-agent", " 301 1 /Applications/Example.app/Contents/MacOS/Example"].join("\n");
+    const run: RunPort = { run: () => ({ status: 0, stdout: `${listing}\n`, stderr: "" }) };
+    const probe = createIdentitySessionProbe("darwin", { run, uid: () => MACOS_UID, ownPid: OWN_PID, procFs: fakeProc([]), realpath: noLinks });
+    expect(probe.sessionsOn(WORK_DIR)).toEqual([{ pid: 100, program: "claude" }]);
+  });
+
   it("refuses to guess when ps cannot be read", () => {
     const run: RunPort = { run: () => ({ status: 1, stdout: "", stderr: "ps: not permitted" }) };
     const probe = createIdentitySessionProbe("darwin", { run, uid: () => MACOS_UID, ownPid: OWN_PID, procFs: fakeProc([]), realpath: noLinks });
