@@ -12,6 +12,7 @@ import { addIdentity, identityExists, readActiveIdentity, useIdentity } from "./
 import { createFakeKeychain } from "./keychainTestWorld";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { buildProgram } from "./program";
+import { sameDirectory } from "./realIdentityRename";
 import { realFarmFs } from "./realPorts";
 import { fakeCommandDeps } from "./test-helpers";
 import { claudeCodeKeychainService } from "./usage/signIn";
@@ -58,6 +59,7 @@ describe("identity rename", () => {
       run: keychain.run,
       platform: "darwin",
       home: "/example/home",
+      sameDirectory,
       sessions: { sessionsOn: () => sessions },
       lock: { nowMs: () => NOW_MS, pid: OWN_PID, isRunning: () => true, sleep: () => undefined },
     };

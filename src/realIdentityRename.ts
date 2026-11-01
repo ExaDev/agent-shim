@@ -55,6 +55,16 @@ function currentUid(): number {
   return process.getuid();
 }
 
+/** Whether two paths are one directory on disk, by device and inode: true for a name that differs only in case on a filesystem that ignores case, and for a symlink to the directory. False when either does not exist. */
+export function sameDirectory(first: string, second: string): boolean {
+  const a = fs.statSync(first, { throwIfNoEntry: false });
+  const b = fs.statSync(second, { throwIfNoEntry: false });
+  if (a === undefined || b === undefined) {
+    return false;
+  }
+  return a.dev === b.dev && a.ino === b.ino;
+}
+
 /** The real ports behind `identity rename`: the filesystem, the credential cache, `security`, the process table and the resync lock's clock, sleep and liveness check. */
 export function realIdentityRenamePorts(paths: LayoutPaths): IdentityRenamePorts {
   return {
@@ -63,6 +73,7 @@ export function realIdentityRenamePorts(paths: LayoutPaths): IdentityRenamePorts
     run: realRunPort,
     platform: process.platform,
     home: os.homedir(),
+    sameDirectory,
     sessions: createIdentitySessionProbe(process.platform, { run: realRunPort, uid: currentUid, ownPid: process.pid, procFs: realProcessTableFs, realpath: realpathOrSelf }),
     lock: { nowMs: () => Date.now(), pid: process.pid, isRunning: realIsProcessRunning, sleep: realSleepSync },
   };

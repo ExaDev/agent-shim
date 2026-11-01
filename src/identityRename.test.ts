@@ -13,6 +13,7 @@ import { IDENTITY_NAME_LOCATIONS } from "./identityNameLocations";
 import { createFakeKeychain, type FakeKeychain } from "./keychainTestWorld";
 import type { SessionProcess } from "./identitySessions";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
+import { sameDirectory } from "./realIdentityRename";
 import { realFarmFs } from "./realPorts";
 import { claudeCodeKeychainService } from "./usage/signIn";
 
@@ -127,6 +128,7 @@ function createWorld(platform: NodeJS.Platform = "linux"): World {
       run: keychain.run,
       platform,
       home: "/example/home",
+      sameDirectory,
       sessions: { sessionsOn: (configDir) => sessions.get(configDir) ?? [] },
       lock: { nowMs: () => NOW_MS, pid: OWN_PID, isRunning: () => true, sleep: () => undefined },
       ...overrides,
@@ -455,6 +457,39 @@ describe("renameIdentity credential file sources held elsewhere", () => {
     fs.rmSync(path.join(world.paths.providersDir, "old-format.json"));
     writeFile(path.join(world.paths.providersDir, "unrelated.json"), '{ "tokenFile": "/example/elsewhere/token" }\n');
     expect(() => renameIdentity(world.paths, "work", "client", world.ports())).not.toThrow();
+  });
+});
+
+describe("renameIdentity with a new name that is the old directory under another spelling", () => {
+  let world: World;
+
+  beforeEach(() => {
+    world = createWorld();
+  });
+
+  afterEach(() => {
+    fs.rmSync(world.root, { recursive: true, force: true });
+  });
+
+  /** Makes `Work` resolve to the directory of `work`. A filesystem that ignores case (APFS and NTFS by default) does it already; elsewhere a symlink stands in for it. */
+  function aliasWork(): void {
+    if (!fs.existsSync(world.directory("Work"))) {
+      fs.symlinkSync(world.directory("work"), world.directory("Work"));
+    }
+  }
+
+  it("is refused in the dry run and the real run, saying the two names are one directory and how to change the case through a temporary name", () => {
+    aliasWork();
+    const before = treeOf(world.root);
+    for (const attempt of [() => describeIdentityRename(world.paths, "work", "Work", world.ports()), () => renameIdentity(world.paths, "work", "Work", world.ports())]) {
+      expect(attempt).toThrow(/same directory/);
+      expect(attempt).toThrow("agent-shim identity rename work Work-tmp && agent-shim identity rename Work-tmp Work");
+    }
+    expect(treeOf(world.root)).toEqual(before);
+  });
+
+  it("is still refused as already existing when the other identity is a different directory", () => {
+    expect(() => renameIdentity(world.paths, "work", "personal", world.ports())).toThrow(IdentityAlreadyExistsError);
   });
 });
 

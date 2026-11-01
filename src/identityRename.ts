@@ -38,6 +38,8 @@ export interface IdentityRenamePorts {
   readonly platform: NodeJS.Platform;
   /** The home directory a credential `file` source spelled `~/...` is relative to. */
   readonly home: string;
+  /** Whether two paths are one directory on disk, which is how a rename that only changes the case of a name is told on a filesystem that ignores case. */
+  readonly sameDirectory: (first: string, second: string) => boolean;
   /** Tells whether a session is running against the identity's directory. */
   readonly sessions: IdentitySessionProbe;
   /** What taking a resync lock needs from the machine. */
@@ -114,10 +116,21 @@ function requireNames(from: string, to: string): void {
   requireNewIdentityName(to);
 }
 
+/** Raised when the new name is the old identity's directory under another spelling, as a name that differs only in case is on a filesystem that ignores case. The Keychain login is filed under a name derived from the exact spelling of the path, which the filesystem would not change, so it cannot be done in one step. */
+class SameDirectoryError extends CliError {
+  constructor(from: string, to: string) {
+    super(`"${from}" and "${to}" are the same directory on this filesystem, so a rename that only changes the case cannot be done in one step. Go through a temporary name instead: agent-shim identity rename ${from} ${to}-tmp && agent-shim identity rename ${to}-tmp ${to}`);
+    this.name = "SameDirectoryError";
+  }
+}
+
 /** The checks that read the machine's state. `from` must exist and `to` must be free in every place its name would be filed. */
-function requireRenamable(paths: LayoutPaths, from: string, to: string): void {
+function requireRenamable(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts): void {
   if (!identityExists(paths, from)) {
     throw new IdentityNotFoundError(from);
+  }
+  if (ports.sameDirectory(path.join(paths.identitiesDir, from), path.join(paths.identitiesDir, to))) {
+    throw new SameDirectoryError(from, to);
   }
   if (identityExists(paths, to)) {
     throw new IdentityAlreadyExistsError(to);
@@ -410,7 +423,7 @@ function credentialHolderSteps(paths: LayoutPaths, ports: IdentityRenamePorts, f
 
 /** Builds the plan: every check that can refuse, then every step in the order it is applied. The order puts what can fail for reasons outside the files first and the Keychain's old item last, and rewrites the identity's own files before the directory moves so each path is read where it is. */
 function planRename(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts): Plan {
-  requireRenamable(paths, from, to);
+  requireRenamable(paths, from, to, ports);
   const fromDir = path.join(paths.identitiesDir, from);
   const toDir = path.join(paths.identitiesDir, to);
   const sessions = ports.sessions.sessionsOn(fromDir);
@@ -560,7 +573,7 @@ export function describeIdentityRename(paths: LayoutPaths, from: string, to: str
  */
 export function renameIdentity(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts): IdentityRenameReport {
   requireNames(from, to);
-  requireRenamable(paths, from, to);
+  requireRenamable(paths, from, to, ports);
   const release = holdLocks(paths, [from, to], ports);
   try {
     const plan = planRename(paths, from, to, ports);
