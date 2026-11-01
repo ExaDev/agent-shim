@@ -167,24 +167,22 @@ describe("identity add and identity remove while a rename is unfinished", () => 
 
   it("add refuses either name of the pair, naming the command that finishes the rename, and writes nothing", () => {
     const journal = leaveJournal(world, "work", "client");
-    removeByHand(world, "work");
     const before = treeOf(world.root);
-    expect(() => addIdentity(world.paths, "client")).toThrow(describeUnfinishedRename(journal));
-    expect(() => addIdentity(world.paths, "work")).toThrow(describeUnfinishedRename(journal));
+    expect(() => addIdentity(world.paths, "client")).toThrow(describeUnfinishedRename(journal, { finishable: true }));
+    expect(() => addIdentity(world.paths, "work")).toThrow(describeUnfinishedRename(journal, { finishable: true }));
     expect(() => addIdentity(world.paths, "client")).toThrow(/Cannot add identity "client"/);
     expect(treeOf(world.root)).toEqual(before);
   });
 
   it("remove refuses either name of the pair, naming the command that finishes the rename, and removes nothing", () => {
     const journal = leaveJournal(world, "work", "client");
-    createByHand(world, "client");
     const before = treeOf(world.root);
     expect(() => {
       removeIdentity(world.paths, "work");
-    }).toThrow(describeUnfinishedRename(journal));
+    }).toThrow(describeUnfinishedRename(journal, { finishable: true }));
     expect(() => {
       removeIdentity(world.paths, "client");
-    }).toThrow(describeUnfinishedRename(journal));
+    }).toThrow(describeUnfinishedRename(journal, { finishable: true }));
     expect(() => {
       removeIdentity(world.paths, "work");
     }).toThrow(/Cannot remove identity "work"/);
@@ -210,6 +208,30 @@ describe("identity add and identity remove while a rename is unfinished", () => 
     }).toThrow(/Cannot remove identity "Work"/);
     expect(() => addIdentity(world.paths, "CLIENT")).toThrow(/Cannot add identity "CLIENT"/);
     expect(fs.existsSync(world.directory("client"))).toBe(false);
+  });
+
+  it("names the discard command in the refusal of a rename of another name when nothing can finish the unfinished one", async () => {
+    removeByHand(world, "work");
+    leaveJournal(world, "work", "client");
+    await expect(renameIdentity(world.paths, "work", "other", world.ports())).rejects.toThrow("agent-shim identity rename work client --discard-journal");
+    await expect(renameIdentity(world.paths, "work", "other", world.ports())).rejects.not.toThrow("Finish it with");
+  });
+
+  it("names the command that discards the record, not one that finishes the rename, when nothing can finish it", () => {
+    removeByHand(world, "work");
+    leaveJournal(world, "work", "client");
+    const attempts = [
+      () => {
+        addIdentity(world.paths, "client");
+      },
+      () => {
+        removeIdentity(world.paths, "work");
+      },
+    ];
+    for (const attempt of attempts) {
+      expect(attempt).toThrow("agent-shim identity rename work client --discard-journal");
+      expect(attempt).not.toThrow("Finish it with");
+    }
   });
 
   it("leaves every other name alone, and a file that is not a journal does not stop it", () => {

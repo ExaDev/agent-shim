@@ -328,7 +328,7 @@ function sameIdentityName(paths: LayoutPaths, first: string, second: string): bo
  * Throws a `CliError` naming the command that finishes the rename when an unfinished rename holds `name`, as its old name or its new one or another spelling of either that reaches the same directory (see `requireNameFreeOfUnfinishedRename`), so `identity add` and `identity remove` cannot take a name the rename still needs. Without this, removing the identity a rename was moving, or adding its target by hand, would leave a journal no rename could ever finish. `action` is the verb the refusal reports.
  */
 export function requireNoUnfinishedRenameNaming(paths: LayoutPaths, name: string, action: "add" | "remove"): void {
-  requireNameFreeOfUnfinishedRename({ readFileUtf8: nodeStoreFs.readFileUtf8, readdir: (directory) => (fs.existsSync(directory) ? fs.readdirSync(directory) : []) }, paths.identityRenamesDir, name, action, (first, second) => sameIdentityName(paths, first, second));
+  requireNameFreeOfUnfinishedRename({ readFileUtf8: nodeStoreFs.readFileUtf8, readdir: (directory) => (fs.existsSync(directory) ? fs.readdirSync(directory) : []) }, paths.identityRenamesDir, name, action, (first, second) => sameIdentityName(paths, first, second), (identity) => identityExists(paths, identity));
 }
 
 /**

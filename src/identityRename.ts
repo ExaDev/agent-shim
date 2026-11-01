@@ -14,7 +14,7 @@ import { IdentityAlreadyExistsError, IdentityNotFoundError, identityExists, iden
 import { identityTokenPath } from "./identityToken";
 import type { IdentitySessionProbe, SessionProcess } from "./identitySessions";
 import { renameIdentityInJobs } from "./jobStore";
-import { describeUnfinishable, describeUnfinishedRename, discardJournalCommand, readRenameJournal, readRenameJournals, removeRenameJournal, renameJournalFile, unfinishedRenameFor, writeRenameJournal, type RenameJournal } from "./identityRenameJournal";
+import { describeUnfinishable, describeUnfinishedRename, discardJournalCommand, finishabilityOf, readRenameJournal, readRenameJournals, removeRenameJournal, renameJournalFile, unfinishedRenameFor, writeRenameJournal, type RenameFinishability, type RenameJournal } from "./identityRenameJournal";
 import { deleteKeychainLogin, planKeychainLogin, readKeychainLogin, writeKeychainLogin, type KeychainLoginPlan } from "./keychainLogin";
 import { FARM_MANIFEST_FILENAME, manifestWithIdentity } from "./launcher/farm";
 import { acquireIdentityLock, type AcquireIdentityLockParams, type IdentityLock } from "./launcher/lock";
@@ -154,8 +154,8 @@ class SameDirectoryError extends CliError {
 
 /** Raised when a rename was left unfinished that names `from` or `to` and is not this same rename: the identities are partly moved, and anything else done to them now would be done to a state nobody chose. */
 class UnfinishedRenameError extends CliError {
-  constructor(from: string, to: string, journal: Readonly<RenameJournal>) {
-    super(`Cannot rename "${from}" to "${to}": there is ${describeUnfinishedRename(journal)}`);
+  constructor(from: string, to: string, journal: Readonly<RenameJournal>, finishability: RenameFinishability) {
+    super(`Cannot rename "${from}" to "${to}": there is ${describeUnfinishedRename(journal, finishability)}`);
     this.name = "UnfinishedRenameError";
   }
 }
@@ -775,7 +775,7 @@ function descriptionsOf(plan: Plan): readonly string[] {
 function unfinishedRename(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts): RenameJournal | undefined {
   const found = unfinishedRenameFor(readRenameJournals(ports.fs, paths.identityRenamesDir), from, to);
   if (found?.kind === "blocked") {
-    throw new UnfinishedRenameError(from, to, found.journal);
+    throw new UnfinishedRenameError(from, to, found.journal, finishabilityOf(found.journal, (name) => identityExists(paths, name)));
   }
   return found?.journal;
 }

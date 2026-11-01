@@ -155,8 +155,8 @@ describe("running a rename again after one was left unfinished", () => {
     }
     const before = treeOf(world.root);
     for (const [from, to] of [["client", "work"], ["work", "other"], ["client", "other"], ["other", "client"]] as const) {
-      await expect(renameIdentity(world.paths, from, to, world.ports())).rejects.toThrow(describeUnfinishedRename(journal));
-      expect(() => describeIdentityRename(world.paths, from, to, world.ports())).toThrow(describeUnfinishedRename(journal));
+      await expect(renameIdentity(world.paths, from, to, world.ports())).rejects.toThrow(describeUnfinishedRename(journal, { finishable: true }));
+      expect(() => describeIdentityRename(world.paths, from, to, world.ports())).toThrow(describeUnfinishedRename(journal, { finishable: true }));
     }
     expect(treeOf(world.root)).toEqual(before);
   });
