@@ -261,7 +261,7 @@ describe("supervise", () => {
     // The child stopped on SIGTERM and gave the terminal back itself.
     expect(w.resetTerminal).not.toHaveBeenCalled();
     expect(w.released).toEqual(["work"]);
-    expect(w.launches[1]).toEqual({ sessionId: SESSION, conversation: "resume", member: "spare" });
+    expect(w.launches[1]).toEqual({ sessionId: SESSION, conversation: "resume", member: "spare", from: "work" });
     expect(w.log.infos.join("\n")).toContain(`agent-shim: work is out of quota; resuming session ${SESSION} under spare (pool subs: spare is next)`);
     expect(w.children).toHaveLength(2);
     // The relaunch was registered by the move that chose it, so the supervisor adds no second entry.
@@ -283,7 +283,7 @@ describe("supervise", () => {
     expect(w.decideRemodel).toHaveBeenCalledWith({ sessionId: SESSION, from: "work", to: "spare" });
     expect(w.children[0]?.signals).toEqual(["SIGTERM"]);
     expect(w.released).toEqual(["work"]);
-    expect(w.launches[1]).toEqual({ sessionId: SESSION, conversation: "resume", member: "spare", model: "glm-5.3" });
+    expect(w.launches[1]).toEqual({ sessionId: SESSION, conversation: "resume", member: "spare", from: "work", model: "glm-5.3" });
     expect(w.log.infos.join("\n")).toContain(`resuming session ${SESSION} under spare with glm-5.3`);
     // The claim is one request: it served its relaunch and is not asked again.
     expect(w.claimModelMove).toHaveBeenCalledTimes(1);
@@ -593,7 +593,7 @@ describe("supervise with compaction", () => {
     expect(c.acquire).toHaveBeenCalledWith("spare");
     expect(c.compact).toHaveBeenCalledWith({ identity: "spare", sessionId: SESSION, cwd: "/repo" }, expect.any(AbortSignal));
     expect(c.slotsReleased).toEqual(["spare"]);
-    expect(w.launches[1]).toEqual({ sessionId: SESSION, conversation: "resume", member: "spare" });
+    expect(w.launches[1]).toEqual({ sessionId: SESSION, conversation: "resume", member: "spare", from: "work" });
     w.children[1]?.exitWith(0);
     await done;
   });
@@ -612,7 +612,7 @@ describe("supervise with compaction", () => {
     expect(c.compact).toHaveBeenCalledTimes(1);
     expect(c.acquire).not.toHaveBeenCalledWith("spare");
     expect(c.markCompacted.mock.calls).toEqual([[SESSION, true], [SESSION, false]]);
-    expect(w.launches[2]).toEqual({ sessionId: SESSION, conversation: "resume", member: "spare" });
+    expect(w.launches[2]).toEqual({ sessionId: SESSION, conversation: "resume", member: "spare", from: "work" });
     w.children[2]?.exitWith(0);
     await done;
   });
@@ -627,7 +627,7 @@ describe("supervise with compaction", () => {
     w.watchers.get("work")?.();
     await settle();
     expect(c.compact).not.toHaveBeenCalled();
-    expect(w.launches[1]).toEqual({ sessionId: SESSION, conversation: "resume", member: "spare" });
+    expect(w.launches[1]).toEqual({ sessionId: SESSION, conversation: "resume", member: "spare", from: "work" });
     w.children[1]?.exitWith(0);
     await done;
   });

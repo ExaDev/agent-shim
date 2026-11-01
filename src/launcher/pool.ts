@@ -1,7 +1,7 @@
 import type { Pool } from "../config/schema";
 import { loadIdentity } from "./identity";
 import type { LayoutPaths } from "../paths";
-import type { Candidate } from "../usage/pick";
+import type { Candidate, StickyPick } from "../usage/pick";
 import { formatAge } from "../usage/preflight";
 import { PoolGraphError, rankPoolGraph, readStickyPick, recordStickyPick, type PoolPickFs } from "../usage/poolPick";
 import type { FarmFs, FsPort, LogPort } from "./ports";
@@ -54,6 +54,8 @@ export type PoolResolution =
       readonly candidates: readonly Candidate[];
       /** The member a resumed conversation left, and why the ranking could not keep it. */
       readonly movedOff?: { readonly identity: string; readonly reason: string };
+      /** The pick this directory's record held before this one replaced it: who it last ran as, and when. Absent when the directory had no record. */
+      readonly lastRanAs?: StickyPick;
     }
   | { readonly ok: false; readonly message: string };
 
@@ -141,6 +143,7 @@ export function resolvePoolLaunch(params: ResolvePoolParams): PoolResolution {
         reasons: pick.reasons,
         candidates: graph.ranking.candidates,
         ...(movedOff === undefined ? {} : { movedOff }),
+        ...(stickyRead.sticky === undefined ? {} : { lastRanAs: stickyRead.sticky }),
       };
     }
     if (earliestReturn === undefined) {

@@ -387,15 +387,35 @@ describe("runLauncher with a pool selector", () => {
       expect(spawnedEnv(second.spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/personal`);
     });
 
-    it("says in the pool row which member a resumed conversation moved off, and why", () => {
-      // Between the launches, the member the conversation started on exhausts its plan and keeps serving on extra usage: stickiness yields, the conversation continues on the other member, and the line names the move.
+    it("flags in a moved row the member the resumed conversation moved off, and why, leaving the pool row to the pick's reason", () => {
+      // Between launches, the member the conversation started on exhausts its plan and keeps serving on extra usage: stickiness yields, the conversation continues on the other member, and a notice line names the move.
       const { second } = twoLaunches(PROMPT_CACHE_TTL_MS + FIVE_MINUTES_MS, ["@pool:main", "--resume"], (farmFs) => {
         farmFs.writeFileUtf8(snapshotPath("work"), snapshotOf("work", { utilization: 1, resetsInMs: SIX_DAYS_MS, status: "rejected" }, "allowed"));
       });
       expect(spawnedEnv(second.spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/personal`);
-      const pool = reportedRow(second.log, "pool");
-      expect(pool?.detail).toContain("moved off work: ");
-      expect(pool?.detail).toContain("continues as extra usage");
+      const moved = reportedRow(second.log, "moved");
+      expect(moved).toMatchObject({ value: "work -> personal", notice: true });
+      expect(moved?.detail).toContain("the resumed conversation could not stay: ");
+      expect(moved?.detail).toContain("continues as extra usage");
+      expect(reportedRow(second.log, "pool")?.detail).not.toContain("moved off");
+    });
+
+    it("flags a pick that changed the account from the one the directory last ran as, though nothing is resumed", () => {
+      const { first, second } = twoLaunches(PROMPT_CACHE_TTL_MS + FIVE_MINUTES_MS, ["@pool:main", "--print"]);
+      expect(reportedRow(first.log, "moved")).toBeUndefined();
+      expect(reportedRow(second.log, "moved")).toMatchObject({ value: "work -> personal", detail: "this directory last ran as work 1h ago", notice: true });
+    });
+
+    it("flags nothing when the pick keeps the account the directory last ran as", () => {
+      const { second } = twoLaunches(FIVE_MINUTES_MS, ["@pool:main", "--print"]);
+      expect(reportedRow(second.log, "moved")).toBeUndefined();
+    });
+
+    it("names the account the launch bills and the quota recorded for it, writing to neither the snapshots nor the login files to do it", () => {
+      const { log, farmFs } = launch();
+      expect(reportedRow(log, "account")).toEqual({ label: "account", value: "20x" });
+      expect(reportedRow(log, "quota")).toEqual({ label: "quota", value: "7d 60% used, resets in 1h", detail: "recorded 1h ago" });
+      expect(farmFs.writes.filter((write) => write.path.includes("/snapshots/") || write.path.endsWith(".claude.json"))).toEqual([]);
     });
   });
 
@@ -403,12 +423,12 @@ describe("runLauncher with a pool selector", () => {
     const SESSION = "33333333-3333-4333-8333-333333333333";
 
     /** The plan a pool launch makes under a supervising launcher, over the pool state `launch` uses. */
-    function planOf(argv: readonly string[], supervised?: SupervisedLaunch): ReturnType<typeof prepareLaunch> {
+    function planOf(argv: readonly string[], supervised?: SupervisedLaunch, log = fakeLog()): ReturnType<typeof prepareLaunch> {
       return prepareLaunch({
         paths,
         fs: fakeFs({}),
         proc: fakeProc({}, argv),
-        log: fakeLog(),
+        log,
         resolveClaudeBinary: () => discovered,
         farm: fakeFarm(createFakeFarmFs(WORK_SOON)),
         frontdoor: fakeFrontDoorPort(FRONTDOOR_PORT),
@@ -446,6 +466,12 @@ describe("runLauncher with a pool selector", () => {
       expect(plan.args.join(" ")).toMatch(new RegExp(`--model opus --resume ${SESSION}$`));
       expect(plan.args).not.toContain("--continue");
       expect(plan.decision.pool).toEqual({ name: "main", reasons: ["resumed here by the supervising launcher after the previous member ran out of quota"] });
+    });
+
+    it("flags a relaunch after a limit with the member the session left", () => {
+      const log = fakeLog();
+      planOf(["@pool:main", "--continue"], { sessionId: SESSION, conversation: "resume", member: "personal", from: "work" }, log);
+      expect(reportedRow(log, "moved")).toEqual({ label: "moved", value: "work -> personal", detail: "work ran out of quota; the session resumed here", notice: true });
     });
   });
 });

@@ -346,7 +346,7 @@ export async function supervise(deps: Readonly<SupervisorDeps>, first: Supervise
         launch = { ...base, conversation: "resume", member: identity };
         continue;
       }
-      launch = { ...base, conversation: "resume", member: outcome.to, ...(outcome.kind === "remodel" ? { model: outcome.model } : {}) };
+      launch = { ...base, conversation: "resume", member: outcome.to, from: identity, ...(outcome.kind === "remodel" ? { model: outcome.model } : {}) };
       const compactedOnOld = compactedHere;
       compactedHere = false;
       if (compaction !== undefined) {
