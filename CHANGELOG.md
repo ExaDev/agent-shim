@@ -1,3 +1,10 @@
+## [11.79.0](https://github.com/ExaDev/agent-shim/compare/v11.78.0...v11.79.0) (2026-11-01)
+
+### Features
+
+* **launcher:** decide when a run asks which identity to use ([783b58c](https://github.com/ExaDev/agent-shim/commit/783b58c886b879218f96094101be52cf6c5d67e1))
+* **launcher:** offer an identity picker when a run has a real choice ([22575de](https://github.com/ExaDev/agent-shim/commit/22575ded0293058833f73b8490ed429eafe3a382))
+
 ## [11.78.0](https://github.com/ExaDev/agent-shim/compare/v11.77.0...v11.78.0) (2026-11-01)
 
 ### Features
