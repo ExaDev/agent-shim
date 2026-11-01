@@ -1,3 +1,14 @@
+## [11.80.0](https://github.com/ExaDev/agent-shim/compare/v11.79.0...v11.80.0) (2026-11-01)
+
+### Features
+
+* **pool:** rank members that hold one login as a single candidate ([8d76106](https://github.com/ExaDev/agent-shim/commit/8d76106ac111d361cdcf95c1ef037321cb047c2f))
+* **pool:** warn when a pool lists two members on one login ([0656fba](https://github.com/ExaDev/agent-shim/commit/0656fba5a82e4e90f9dce175d319756c11af7739))
+
+### Documentation
+
+* **pool:** describe ranking and warnings for members on one login ([9f8b76e](https://github.com/ExaDev/agent-shim/commit/9f8b76ea8f2020ae0f9c9d251aa12c7d97f8ba12))
+
 ## [11.79.0](https://github.com/ExaDev/agent-shim/compare/v11.78.0...v11.79.0) (2026-11-01)
 
 ### Features
