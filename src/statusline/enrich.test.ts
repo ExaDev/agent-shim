@@ -88,6 +88,12 @@ describe("enrichStatuslinePayload", () => {
     expect(summary.quotaFamilies.map((window) => window.measures)).toEqual(["Gem Wk", "3P 5h"]);
   });
 
+  it("carries the identity's label into the summary beside its name, and none when the identity has none", () => {
+    const params = { payload: {}, env: { ANTHROPIC_CUSTOM_HEADERS: "x-agent-shim-identity: work" }, snapshot: undefined, account: undefined, providerName: undefined, nowMs: NOW_MS, headroom: undefined };
+    expect(enrichStatuslinePayload({ ...params, identityLabel: "Example Org" }).summary).toMatchObject({ identity: "work", identityLabel: "Example Org" });
+    expect(enrichStatuslinePayload(params).summary.identityLabel).toBeUndefined();
+  });
+
   it("adds the identity, provider, account and binding windows under one agent_shim key", () => {
     const { payload, summary } = enrichStatuslinePayload({
       payload: { model: { display_name: "gemini-3.8-flash" } },

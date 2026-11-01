@@ -58,6 +58,21 @@ export const FileNameSchema = z.string().min(1).regex(FILE_NAME, FILE_NAME_RULE)
 /** A name in the person's own configuration (the global config, an identity, a directory rule, a profile), which may be one stored under an older rule but must still stay inside its directory. */
 export const StoredNameSchema = z.string().min(1).max(MAX_NAME_BYTES).refine(isStoredName, STORED_NAME_RULE);
 
+/** Control characters (C0, DELETE and C1, which include tab, newline and the escape that starts a terminal sequence) and the Unicode line and paragraph separators: anything that would break a label across lines or be interpreted by the terminal it is drawn on. */
+const LABEL_FORBIDDEN = /[\p{Cc}\p{Zl}\p{Zp}]/u;
+
+/** What a label that fails `IdentityLabelSchema` is told. */
+export const IDENTITY_LABEL_RULE = `must be non-empty single-line text of at most ${String(MAX_NAME_BYTES)} characters, with no control characters and no leading or trailing whitespace`;
+
+/**
+ * An identity's display label: free text drawn beside its name, never used to look the identity up. Single-line, free of control characters and without leading or trailing whitespace. It is bounded by `MAX_NAME_BYTES` UTF-16 code units, because it is drawn beside the name it describes in the launch banner, the statusline and `identity list`, and a label no longer than a name keeps that pair at most twice the width the name alone could already take.
+ */
+export const IdentityLabelSchema = z
+  .string()
+  .min(1)
+  .max(MAX_NAME_BYTES)
+  .refine((label) => label === label.trim() && !LABEL_FORBIDDEN.test(label), IDENTITY_LABEL_RULE);
+
 /** Raised when a name about to be joined into a path would leave its directory, or (for a name being created) does not have the shape new names are given. Names the file or source that referred to it when the caller knows it. */
 export class UnsafeNameError extends CliError {
   constructor(

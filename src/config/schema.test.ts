@@ -480,6 +480,34 @@ describe("IdentitySchema", () => {
   });
 });
 
+describe("IdentitySchema label", () => {
+  it("has no label unless one is given", () => {
+    expect(IdentitySchema.parse({ name: "work" }).label).toBeUndefined();
+  });
+
+  it.each(["Example Org", "alex@example.com (Example Org)", "Café Ünïcode ✓", "a", "x".repeat(MAX_NAME_BYTES)])("accepts identity label %s", (label) => {
+    expect(IdentitySchema.parse({ name: "work", label }).label).toBe(label);
+  });
+
+  it.each([
+    ["empty", ""],
+    ["blank", "   "],
+    ["a newline", "Example\nOrg"],
+    ["a carriage return", "Example\rOrg"],
+    ["padded with a leading space", " Example Org"],
+    ["padded with a trailing space", "Example Org "],
+    ["a tab", "Example\tOrg"],
+    ["an escape sequence", "\u001b[31mExample Org"],
+    ["a delete character", "Example\u007fOrg"],
+    ["a C1 control", "Example\u0085Org"],
+    ["a line separator", "Example Org"],
+    ["a paragraph separator", "Example Org"],
+    ["more characters than a name may take", "x".repeat(MAX_NAME_BYTES + 1)],
+  ])("rejects an identity label that is %s", (_description, label) => {
+    expect(IdentitySchema.safeParse({ name: "work", label }).success).toBe(false);
+  });
+});
+
 describe("CategoryClassificationSchema", () => {
   it("is a different shape from CategoryMapSchema — lists of patterns per category, not booleans", () => {
     const parsed = CategoryClassificationSchema.parse(categoriesDefaultJson);

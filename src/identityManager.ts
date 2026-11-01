@@ -10,11 +10,12 @@ import { runProfileWizard, type PromptsPort } from "./configure";
 import { PromptCancelledError, UsageError } from "./cliError";
 import { resolveFarmConflicts, type FarmConflictChoice } from "./launcher/farmResolve";
 import { ensureProfileExists } from "./configProfiles";
+import { IDENTITY_LABEL_RULE, IdentityLabelSchema } from "./config/names";
 import { requireProviderExists } from "./providersStore";
 import { poolNameOf } from "./launcher/identity";
 import type { LayoutPaths } from "./paths";
 import { realFarmFs } from "./realPorts";
-import { IdentityNotFoundError, InvalidIdentityNameError, identityExists, readIdentity, addIdentity, useIdentity, type IdentityListing, listIdentities, setDefaultConfigProfile, setIdentityProvider, setAllowAmbientCredential, setIdentityCredential, setIdentityAnchors, removeIdentity } from "./identityStore";
+import { IdentityNotFoundError, InvalidIdentityNameError, identityExists, readIdentity, addIdentity, useIdentity, type IdentityListing, listIdentities, setDefaultConfigProfile, setIdentityLabel, setIdentityProvider, setAllowAmbientCredential, setIdentityCredential, setIdentityAnchors, removeIdentity } from "./identityStore";
 import { describeAccountHolder, describeIdentityAccount, groupByLogin, loginKeyOf, readIdentityAccount, summariseIdentityAccount, type IdentityAccountRead, type IdentityAccountSummary } from "./identityAccounts";
 import { describeAccountPlan } from "./usage/accountDescription";
 import { ANCHOR_SYNTAX, formatAnchor } from "./usage/anchor";
@@ -117,6 +118,8 @@ interface IdentityView {
   readonly name: string;
   readonly active: boolean;
   readonly directory: string;
+  /** What the identity is for, in the person's words; display only. Absent when it has none. */
+  readonly label?: string;
   readonly defaultConfigProfile?: string;
   /** The provider the identity exists for; absent when it has none. */
   readonly provider?: string;
@@ -148,6 +151,7 @@ function toIdentityView(paths: LayoutPaths, { entry, read }: IdentityWithAccount
     directory: path.join(paths.identitiesDir, entry.name),
     ...(entry.problem === undefined
       ? {
+          ...(entry.identity.label === undefined ? {} : { label: entry.identity.label }),
           ...(entry.identity.defaultConfigProfile === undefined ? {} : { defaultConfigProfile: entry.identity.defaultConfigProfile }),
           ...(entry.identity.provider === undefined ? {} : { provider: entry.identity.provider }),
           allowAmbientCredential: entry.identity.allowAmbientCredential,
@@ -188,16 +192,18 @@ function formatIdentityLine(entry: IdentityListing, view: IdentityView): string 
   if (entry.problem !== undefined) {
     return `${marker}${entry.name} [unreadable: ${entry.problem}]${account}${accountProblem}`;
   }
+  const label = entry.identity.label === undefined ? "" : ` (label: ${entry.identity.label})`;
   const defaultProfile =
     entry.identity.defaultConfigProfile === undefined ? "" : ` (default profile: ${entry.identity.defaultConfigProfile})`;
   const provider = entry.identity.provider === undefined ? "" : ` (provider: ${entry.identity.provider})`;
   const ambient = entry.identity.allowAmbientCredential ? " [allows ambient credential]" : "";
   const credential = entry.identity.credential === undefined ? "" : ` [credential ${describeCredential(entry.identity.credential)}]`;
-  return `${marker}${entry.name}${defaultProfile}${provider}${ambient}${credential}${account}${accountProblem}`;
+  return `${marker}${entry.name}${label}${defaultProfile}${provider}${ambient}${credential}${account}${accountProblem}`;
 }
 
-/** Options `identity set` accepts. `defaultProfile` is `false` for `--no-default-profile`, `provider` is `false` for `--no-provider`, `credential` is `false` for `--no-credential` and `anchor` is `false` for `--no-anchor`. */
+/** Options `identity set` accepts. `label` is `false` for `--no-label`, `defaultProfile` is `false` for `--no-default-profile`, `provider` is `false` for `--no-provider`, `credential` is `false` for `--no-credential` and `anchor` is `false` for `--no-anchor`. */
 interface IdentitySetOptions extends CredentialCacheOptions {
+  readonly label?: string | false;
   readonly defaultProfile?: string | false;
   readonly provider?: string | false;
   readonly allowAmbientCredential?: boolean;
@@ -293,6 +299,7 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
           console.log(`Unreadable: ${view.problem}`);
           return;
         }
+        console.log(`Label: ${view.label ?? "(none)"}`);
         console.log(`Default configuration profile: ${view.defaultConfigProfile ?? "(none)"}`);
         console.log(`Provider: ${view.provider ?? "(none)"}`);
         console.log(`Allows ambient credential: ${view.allowAmbientCredential === true ? "yes" : "no"}`);
@@ -306,6 +313,8 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
       .command("set <name>")
       .description("Update an identity's settings.")
       .option("--json", "Print the result as JSON.")
+      .option("--label <text>", "Free text shown beside this identity's name in `identity list` and `show`, the launch banner and the statusline. Display only: the name stays the key.")
+      .option("--no-label", "Clear this identity's label.")
       .option("--default-profile <profile>", "Configuration profile this identity uses when nothing more specific selects one.")
       .option("--no-default-profile", "Clear this identity's default configuration profile.")
       .option("--provider <provider>", "Provider this identity exists for: a launch on it routes through the provider unless a flag, directory rule or profile selects another, and doctor expects no stored login.")
@@ -337,16 +346,25 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
         const { json, ...options } = allOptions;
         if (Object.entries(allOptions).every(([key, value]) => key === "json" || value === undefined)) {
           throw new UsageError(
-            "Nothing to change: pass --default-profile, --no-default-profile, --provider, --no-provider, --allow-ambient-credential, --no-allow-ambient-credential, --credential, --no-credential, --credential-target, --anchor, --no-anchor or a --credential-cache option.",
+            "Nothing to change: pass --label, --no-label, --default-profile, --no-default-profile, --provider, --no-provider, --allow-ambient-credential, --no-allow-ambient-credential, --credential, --no-credential, --credential-target, --anchor, --no-anchor or a --credential-cache option.",
           );
         }
         if (!identityExists(paths, name)) {
           throw new IdentityNotFoundError(name);
         }
+        const label = typeof options.label === "string" ? IdentityLabelSchema.safeParse(options.label) : undefined;
+        if (label?.success === false) {
+          throw new UsageError(`Identity label ${JSON.stringify(options.label)} ${IDENTITY_LABEL_RULE}.`);
+        }
         if (typeof options.provider === "string") {
           requireProviderExists(paths, options.provider);
         }
         const messages: string[] = [];
+        if (options.label !== undefined) {
+          const labelText = options.label === false ? undefined : options.label;
+          setIdentityLabel(paths, name, labelText);
+          messages.push(labelText === undefined ? `Identity "${name}" no longer has a label.` : `Identity "${name}" is now labelled ${JSON.stringify(labelText)}.`);
+        }
         if (options.defaultProfile !== undefined) {
           const profileName = options.defaultProfile === false ? undefined : options.defaultProfile;
           if (profileName !== undefined) {
@@ -393,6 +411,7 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
         });
       }),
     [
+      "agent-shim identity set work --label \"Example Org\"",
       "agent-shim identity set work --default-profile client-acme",
       "agent-shim identity set minimax --provider minimax",
       "agent-shim identity set work --allow-ambient-credential",

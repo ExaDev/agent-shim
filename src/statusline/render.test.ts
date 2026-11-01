@@ -201,6 +201,15 @@ describe("renderStatuslineBlock", () => {
     expect(header.length).toBe(WIDE_TERMINAL_MAX);
   });
 
+  it("draws the identity's label beside its name, and draws the segment for a plain anthropic session only when there is a label to add", () => {
+    const plain = { ...SUMMARY, identity: "ada@example.com", provider: undefined, providerAccountEmail: undefined, providerAccountSub: undefined, providerPlan: undefined, loginAccountEmail: "ada@example.com", loginRateLimitTier: "default_claude_max_20x" };
+    expect(stripAnsi(renderStatuslineBlock(plain, VIEW, WIDE_TERMINAL, NOW_MS)).split("\n")[0]).not.toContain("Example Org");
+    const labelled = stripAnsi(renderStatuslineBlock({ ...plain, identityLabel: "Example Org" }, VIEW, WIDE_TERMINAL, NOW_MS)).split("\n")[0] ?? "";
+    expect(labelled.endsWith("ada@example.com (Example Org)")).toBe(true);
+    const onProvider = stripAnsi(renderStatuslineBlock({ ...SUMMARY, identityLabel: "Example Org" }, VIEW, WIDE_TERMINAL, NOW_MS)).split("\n")[0] ?? "";
+    expect(onProvider.endsWith("antigravity (Example Org)")).toBe(true);
+  });
+
   it("names an organisation account's plan from its organisation and its seat's tier, not the seat's rate-limit tier", () => {
     const lines = stripAnsi(
       renderStatuslineBlock(

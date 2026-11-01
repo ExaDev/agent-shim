@@ -7,6 +7,7 @@ import { printJson, withExamples } from "../cli/commandDeps";
 import { cosmiconfigReader } from "../config/load";
 import { resolveStatusline } from "../config/statusline";
 import type { LayoutPaths } from "../paths";
+import { readIdentity } from "../identityStore";
 import { listProviders } from "../providersStore";
 import { realFarmFs, realFsPort, realHeadroomSocketTrust } from "../realPorts";
 import { readAccountMetadata, readAccountMetadataFile } from "../usage/account";
@@ -58,7 +59,13 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
       const identity = identityOf(process.env);
       let snapshot;
       let account;
+      let identityLabel: string | undefined;
       if (identity !== undefined) {
+        try {
+          identityLabel = readIdentity(deps.paths, identity)?.label;
+        } catch {
+          identityLabel = undefined;
+        }
         try {
           snapshot = readUsageSnapshot(realFarmFs, deps.paths.usageSnapshotsDir, identity);
         } catch {
@@ -114,7 +121,7 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
         }
       }
       const clientPayload = parseClientPayload(payload);
-      const enrichParams = { payload, env: process.env, snapshot, account, providerName, nowMs, headroom, routedTarget, ...(modelChoice === undefined ? {} : { modelChoice }) };
+      const enrichParams = { payload, env: process.env, identityLabel, snapshot, account, providerName, nowMs, headroom, routedTarget, ...(modelChoice === undefined ? {} : { modelChoice }) };
       const renderer = process.env.AGENT_SHIM_STATUSLINE_CMD;
       if (renderer !== undefined && renderer !== "") {
         const child = spawn("/bin/sh", ["-c", renderer], { stdio: ["pipe", "inherit", "inherit"] });

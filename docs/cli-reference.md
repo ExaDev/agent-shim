@@ -60,7 +60,7 @@ agent-shim <noun> <verb> [name] [options]      # nouns: identity, profile, pool,
 agent-shim identity add <name>
 agent-shim identity list [--json]
 agent-shim identity show <name> [--json]
-agent-shim identity set <name> [--default-profile <profile> | --no-default-profile] [--provider <provider> | --no-provider] [--[no-]allow-ambient-credential]
+agent-shim identity set <name> [--label <text> | --no-label] [--default-profile <profile> | --no-default-profile] [--provider <provider> | --no-provider] [--[no-]allow-ambient-credential]
 agent-shim identity set <name> [--credential <source>]... [--credential-target <bearer|apiKey|oauthToken>] [--no-credential]
 agent-shim identity set <name> [--anchor <days>@<HH:MM>[/<zone>]]... [--no-anchor]
 agent-shim identity set <name> [--credential-cache] [--credential-cache-ttl <ttl>] [--credential-cache-store <keychain|file>] [--no-credential-cache]

@@ -89,6 +89,18 @@ describe("config API: identities", () => {
     expect(cleared.value.provider).toBeUndefined();
   });
 
+  it("sets and clears an identity's display label, refusing one that is blank or multi-line", async () => {
+    const api = clientWith(TOKEN).config;
+    await api.identity.add({ name: "work" });
+    expect(await codeOf(api.identity.set({ name: "ghost", label: "Example Org" }))).toBe("NOT_FOUND");
+    const updated = await api.identity.set({ name: "work", label: "Example Org" });
+    expect(updated.value).toEqual({ name: "work", label: "Example Org", allowAmbientCredential: false });
+    expect(await codeOf(api.identity.set({ name: "work", label: "Example\nOrg" }))).toBe("BAD_REQUEST");
+    expect(await codeOf(api.identity.set({ name: "work", label: "  " }))).toBe("BAD_REQUEST");
+    const cleared = await api.identity.set({ name: "work", label: false });
+    expect(cleared.value.label).toBeUndefined();
+  });
+
   it("refuses names that do not exist, a missing profile and a change that names nothing", async () => {
     const api = clientWith(TOKEN).config;
     await api.identity.add({ name: "work" });

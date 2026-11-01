@@ -10,6 +10,7 @@ const SEVERAL = 2;
 const MANY = 3;
 const NONE = {
   identity: undefined,
+  identityLabel: undefined,
   identitySource: "none",
   pool: undefined,
   ranking: undefined,
@@ -55,6 +56,10 @@ const rowLabelled = (rows: readonly ReportRow[], label: string): ReportRow | und
 describe("decisionRows", () => {
   it("reports the identity and where it was chosen, and nothing about a profile or provider the launch has none of", () => {
     expect(decisionRows({ ...NONE, identity: "work", identitySource: "argv" })).toEqual([{ label: "identity", value: "work", detail: "argv" }]);
+  });
+
+  it("draws the identity's label beside its name, leaving the name as the row's key", () => {
+    expect(decisionRows({ ...NONE, identity: "work", identityLabel: "Example Org", identitySource: "argv" })).toEqual([{ label: "identity", value: "work (Example Org)", detail: "argv" }]);
   });
 
   it("names a launch with no identity", () => {

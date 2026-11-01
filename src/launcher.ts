@@ -250,6 +250,8 @@ function pickFromPool(
 interface DecidedLaunch {
   readonly parsedArgv: ParsedLauncherArgv;
   readonly identityDecision: IdentityDecision;
+  /** The resolved identity's display label, when it has one. */
+  readonly identityLabel: string | undefined;
   readonly poolPick: LaunchPoolDecision | undefined;
   /** Every member the pool pick ranked, best first. Absent when the launch picked no member itself (no pool, or a supervisor already chose the member). */
   readonly poolRanking: readonly Candidate[] | undefined;
@@ -566,6 +568,7 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
   return {
     parsedArgv,
     identityDecision,
+    identityLabel: loadedIdentity?.config.label,
     poolPick,
     poolRanking,
     lastRanAs,
@@ -608,6 +611,7 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
   const rows: ReportRow[] = [
     ...decisionRows({
       identity: identityDecision.name,
+      identityLabel: decided.identityLabel,
       identitySource: identityDecision.source,
       pool: poolPick,
       ranking: resolvedFlags.explain ? poolRanking : undefined,

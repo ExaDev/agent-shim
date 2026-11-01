@@ -248,6 +248,36 @@ describe("identity commands", () => {
     expect((await cli(["identity", "show", "work"])).stdout).toContain("Provider: (none)");
   });
 
+  it("sets and clears an identity's display label through set, showing it beside the name and never keying anything on it", async () => {
+    addIdentity(paths, "work");
+    addIdentity(paths, "other");
+    expect((await cli(["identity", "set", "work", "--label", "Example Org"])).code).toBe(0);
+    expect(readIdentity(paths, "work")?.label).toBe("Example Org");
+    expect((await cli(["identity", "show", "work"])).stdout).toContain("Label: Example Org");
+    expect((await cli(["identity", "show", "other"])).stdout).toContain("Label: (none)");
+    const listed = (await cli(["identity", "list"])).stdout;
+    expect(listed).toContain("work (label: Example Org)");
+    expect(listed).not.toContain("other (label:");
+    expect(parseJson((await cli(["identity", "show", "work", "--json"])).stdout)).toMatchObject({ name: "work", label: "Example Org" });
+    expect(parseJson((await cli(["identity", "list", "--json"])).stdout)).toEqual(expect.arrayContaining([expect.objectContaining({ name: "work", label: "Example Org" })]));
+    expect((await cli(["identity", "show", "Example Org"])).code).toBe(EXIT_FAILURE);
+
+    expect((await cli(["identity", "set", "work", "--no-label"])).code).toBe(0);
+    expect(readIdentity(paths, "work")?.label).toBeUndefined();
+    expect((await cli(["identity", "show", "work"])).stdout).toContain("Label: (none)");
+  });
+
+  it("refuses an identity label that is blank, multi-line or holds a control character, leaving the stored one alone", async () => {
+    addIdentity(paths, "work");
+    expect((await cli(["identity", "set", "work", "--label", "Example Org"])).code).toBe(0);
+    for (const label of ["", "   ", "Example\nOrg", "Example\u001b[31mOrg"]) {
+      const result = await cli(["identity", "set", "work", "--label", label]);
+      expect(result.code).toBe(EXIT_USAGE);
+      expect(result.stderr).toContain("label");
+    }
+    expect(readIdentity(paths, "work")?.label).toBe("Example Org");
+  });
+
   it("offers to create a missing default profile on a terminal", async () => {
     addIdentity(paths, "work");
     const result = await cli(["identity", "set", "work", "--default-profile", "fresh"], {

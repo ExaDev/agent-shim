@@ -30,6 +30,8 @@ export interface LastRanAs {
 /** What a launch decided about who it runs as, as data. */
 interface DecisionFacts {
   readonly identity: string | undefined;
+  /** The identity's display label, drawn beside its name; the name stays the row's key. */
+  readonly identityLabel: string | undefined;
   /** Which precedence rule selected the identity. */
   readonly identitySource: string;
   /** The pool pick behind the identity, when the launch selected a pool. */
@@ -149,12 +151,20 @@ function movedRows(facts: Readonly<DecisionFacts>): readonly ReportRow[] {
   return [];
 }
 
+/** The identity row's value: the name, with the label beside it in parentheses when the identity has one, or `(none)` for a launch with no identity. */
+function identityText(facts: Readonly<Pick<DecisionFacts, "identity" | "identityLabel">>): string {
+  if (facts.identity === undefined) {
+    return "(none)";
+  }
+  return facts.identityLabel === undefined ? facts.identity : `${facts.identity} (${facts.identityLabel})`;
+}
+
 /**
  * The rows that say who a launch runs as: the identity and where it was chosen, the pool it was picked from and the reason for the pick, a `moved` notice when the pick or a resume-on-limit relaunch changed the account, the account the session bills and its recorded quota, the configuration profile and the provider when there are any, and the identity's own credential. A launch with no profile or provider says nothing about them rather than that they are absent, and the account, quota and moved rows are left out when nothing is recorded for them.
  */
 export function decisionRows(facts: Readonly<DecisionFacts>): readonly ReportRow[] {
   return [
-    { label: "identity", value: facts.identity ?? "(none)", detail: facts.identitySource },
+    { label: "identity", value: identityText(facts), detail: facts.identitySource },
     ...(facts.pool === undefined
       ? []
       : [
