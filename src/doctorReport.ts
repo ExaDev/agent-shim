@@ -219,8 +219,9 @@ function validateJson<S extends z.ZodType>(
   let parsed: unknown;
   try {
     parsed = JSON.parse(input.raw);
-  } catch (error) {
-    return { ok: false, message: `${input.path} is not valid JSON: ${error instanceof Error ? error.message : String(error)}` };
+  } catch {
+    // The parser's message quotes the text either side of the failure, which may be a secret.
+    return { ok: false, message: `${input.path} is not valid JSON.` };
   }
   const result = parseIgnoringUnrecognisedKeys(schema, parsed);
   if (!result.success) {
@@ -356,8 +357,8 @@ function pushProvider(push: (section: DoctorSection, severity: DoctorSeverity, m
   let parsed: unknown;
   try {
     parsed = JSON.parse(entry.raw);
-  } catch (error) {
-    push("provider", "fail", `${entry.path} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`, entry.name);
+  } catch {
+    push("provider", "fail", `${entry.path} is not valid JSON.`, entry.name);
     return;
   }
   const conversion = legacyProviderConversion(parsed);
