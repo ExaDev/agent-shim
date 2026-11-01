@@ -1,3 +1,14 @@
+## [11.77.0](https://github.com/ExaDev/agent-shim/compare/v11.76.0...v11.77.0) (2026-11-01)
+
+### Features
+
+* **launcher:** render a notice row apart from the report's facts ([dfd246d](https://github.com/ExaDev/agent-shim/commit/dfd246dfc67f394b4c42d4350fd91e0300d08bcc))
+* **launcher:** say which account a launch bills and flag a move to another ([8d78550](https://github.com/ExaDev/agent-shim/commit/8d78550cd6c7c53c3980ce3b968ee2cc7bc3ea1f))
+
+### Code Refactoring
+
+* **usage:** share the quota window wording with the launch report ([f3a37ec](https://github.com/ExaDev/agent-shim/commit/f3a37ece879672c43f7b15d90e7338f33c28f3d2))
+
 ## [11.76.0](https://github.com/ExaDev/agent-shim/compare/v11.75.0...v11.76.0) (2026-11-01)
 
 ### Features
