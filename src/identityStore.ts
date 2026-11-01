@@ -2,13 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { ConfigValidationError } from "./config/load";
 import { FileNameSchema } from "./config/names";
-import { applyPatch, readJson, writeJsonAtomic, writeTextAtomic } from "./config/store";
+import { applyPatch, nodeStoreFs, readJson, writeJsonAtomic, writeTextAtomic } from "./config/store";
 import { IdentitySchema, type Anchor, type CredentialCache, type CredentialSource, type CredentialTarget, type Identity } from "./config/schema";
 import { CliError, UsageError } from "./cliError";
 import { poolNameOf } from "./launcher/identity";
 import { requirePool } from "./poolStore";
 import type { LayoutPaths } from "./paths";
 import { identityLockPath } from "./launcher/lock";
+import { requireNameFreeOfUnfinishedRename } from "./identityRenameJournal";
 
 /** Raised by any operation that requires an identity to already exist, when it does not. */
 export class IdentityNotFoundError extends CliError {
@@ -62,9 +63,10 @@ export function readIdentity(paths: LayoutPaths, name: string): Identity | undef
 /**
  * Creates a new identity: validates `name` against `IdentitySchema`'s own naming rule and writes a fresh `identity.json` with `allowAmbientCredential: false` and no `defaultConfigProfile`.
  *
- * Throws `IdentityAlreadyExistsError` if an identity with this name already has an `identity.json` — `add` never silently overwrites an existing identity. Throws `InvalidIdentityNameError` when `name` fails `IdentitySchema`'s naming rule, rather than letting the underlying `ZodError` escape as an unhandled crash.
+ * Throws a `CliError` naming the command that finishes the rename when an unfinished rename names `name` (see `requireNoUnfinishedRenameNaming`), `IdentityAlreadyExistsError` if an identity with this name already has an `identity.json` — `add` never silently overwrites an existing identity. Throws `InvalidIdentityNameError` when `name` fails `IdentitySchema`'s naming rule, rather than letting the underlying `ZodError` escape as an unhandled crash.
  */
 export function addIdentity(paths: LayoutPaths, name: string): Identity {
+  requireNoUnfinishedRenameNaming(paths, name, "add");
   if (identityExists(paths, name)) {
     throw new IdentityAlreadyExistsError(name);
   }
@@ -302,9 +304,17 @@ export function requireNewIdentityName(name: string): void {
 }
 
 /**
- * Deletes identity `name` entirely: its directory under `identitiesDir` (the farm, its `identity.json`, and whatever that farm holds unshared, credentials included), its resync lock, any scratch or superseded farm a resync left behind, and the active-identity selection when it names this identity. Data shared into `~/.claude` stays there, since the farm only ever symlinks to it. Throws `IdentityNotFoundError` when the identity does not exist.
+ * Throws a `CliError` naming the command that finishes the rename when an unfinished rename names `name`, as its old name or its new one, so `identity add` and `identity remove` cannot take a name the rename still needs. Without this, removing the identity a rename was moving, or adding its target by hand, would leave a journal no rename could ever finish. `action` is the verb the refusal reports.
+ */
+export function requireNoUnfinishedRenameNaming(paths: LayoutPaths, name: string, action: "add" | "remove"): void {
+  requireNameFreeOfUnfinishedRename({ readFileUtf8: nodeStoreFs.readFileUtf8, readdir: (directory) => (fs.existsSync(directory) ? fs.readdirSync(directory) : []) }, paths.identityRenamesDir, name, action);
+}
+
+/**
+ * Deletes identity `name` entirely: its directory under `identitiesDir` (the farm, its `identity.json`, and whatever that farm holds unshared, credentials included), its resync lock, any scratch or superseded farm a resync left behind, and the active-identity selection when it names this identity. Data shared into `~/.claude` stays there, since the farm only ever symlinks to it. Throws a `CliError` naming the command that finishes the rename when an unfinished rename names `name`, and `IdentityNotFoundError` when the identity does not exist.
  */
 export function removeIdentity(paths: LayoutPaths, name: string): void {
+  requireNoUnfinishedRenameNaming(paths, name, "remove");
   if (!identityExists(paths, name)) {
     throw new IdentityNotFoundError(name);
   }
