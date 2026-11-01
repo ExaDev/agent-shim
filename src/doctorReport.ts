@@ -9,6 +9,8 @@ import path from "node:path";
 import type { z } from "zod";
 import { lookupKeychainService } from "./checkReport";
 import { credentialsFilePath, decideSignIn, keychainHasItem } from "./usage/signIn";
+import { describeAccountHolder, groupSharedLogins, loginKeyOf, readIdentityAccount, summariseIdentityAccount } from "./identityAccounts";
+import type { AccountMetadata } from "./usage/schema";
 import { parseSiwcFile } from "./codex/siwcStore";
 import { SIWC_PLAN_SCOPE } from "./codex/siwc";
 import { ConfigValidationError } from "./config/load";
@@ -74,6 +76,12 @@ interface DoctorFinding {
   readonly message: string;
 }
 
+/** `a`, `a and b` or `a, b and c`. */
+function joinNames(names: readonly string[]): string {
+  const last = names.at(-1);
+  return names.length < 2 || last === undefined ? names.join("") : `${names.slice(0, -1).join(", ")} and ${last}`;
+}
+
 /** The full result of `runDoctor`. `ok` is false iff any finding is a `fail` — a `warn` never fails the report on its own. */
 export interface DoctorReport {
   readonly findings: readonly DoctorFinding[];
@@ -89,6 +97,8 @@ export interface DoctorIdentityInput {
   readonly farmRoot: string;
   /** Whether the identity's `.credentials.json` exists, pre-resolved by the wiring layer since it is a file-existence check. */
   readonly credentialsFilePresent: boolean;
+  /** The account metadata of the identity's stored login, pre-resolved by the wiring layer since it is a read of the identity's `.claude.json`. Undefined when the identity has no stored login or its metadata cannot be read. */
+  readonly account: AccountMetadata | undefined;
 }
 
 /** One configuration profile's raw `<name>.json`, unparsed. */
@@ -503,6 +513,8 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   const validProviderNames = new Set([...params.providers.map((entry) => entry.name), ...Object.keys(params.providerAliases ?? {})]);
 
   const validIdentityNames = new Set<string>();
+  /** Identities that authenticate with their stored login and have account metadata for it, in the order the loop below meets them. */
+  const signedInAccounts: { readonly name: string; readonly account: AccountMetadata }[] = [];
   for (const entry of params.identities) {
     const validated = validate(IdentitySchema, entry, "identity", entry.name);
     if (!validated.ok) {
@@ -555,6 +567,22 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
         ? `${entry.name} is signed out (${signIn.detail}). Run \`agent-shim run @${entry.name}\` and sign in.`
         : `${entry.name} ${standing} (${signIn.detail}).`,
       entry.name,
+    );
+    if (signIn.state === "signed-in" && entry.account !== undefined) {
+      signedInAccounts.push({ name: entry.name, account: entry.account });
+    }
+  }
+  // Identities holding one login share its quota window, so all but one are redundant. A different organisation or a different account is a different login (`loginKeyOf`).
+  for (const group of groupSharedLogins(signedInAccounts, (entry) => loginKeyOf(entry.account))) {
+    const names = group.map((entry) => entry.name);
+    const holder = group
+      .map((entry) => summariseIdentityAccount(entry.account))
+      .map((summary) => (summary === undefined ? undefined : describeAccountHolder(summary)))
+      .find((described) => described !== undefined);
+    push(
+      "sign-in",
+      "warn",
+      `Identities ${joinNames(names)} hold the same login${holder === undefined ? "" : ` (${holder})`}, so they share one quota window and all but one are redundant. Remove the redundant ones with \`agent-shim identity remove <name>\`.`,
     );
   }
 
@@ -886,7 +914,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
   const identities: DoctorIdentityInput[] = identityNames.map((name) => {
     const farmRoot = path.join(paths.identitiesDir, name);
     const identityPath = path.join(farmRoot, "identity.json");
-    return { name, path: identityPath, raw: realFsPort.readFileUtf8(identityPath), farmRoot, credentialsFilePresent: fs.existsSync(credentialsFilePath(farmRoot)) };
+    return { name, path: identityPath, raw: realFsPort.readFileUtf8(identityPath), farmRoot, credentialsFilePresent: fs.existsSync(credentialsFilePath(farmRoot)), account: readIdentityAccount(realFsPort, paths.identitiesDir, name)?.account };
   });
 
   const profileNames = fs.existsSync(paths.configProfilesDir)

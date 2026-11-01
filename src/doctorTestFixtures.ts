@@ -36,6 +36,7 @@ export function identity(name: string, overrides: Partial<DoctorIdentityInput> =
     raw: JSON.stringify({ name, allowAmbientCredential: false }),
     farmRoot: `/agent-shim/identities/${name}`,
     credentialsFilePresent: true,
+    account: undefined,
     ...overrides,
   };
 }
