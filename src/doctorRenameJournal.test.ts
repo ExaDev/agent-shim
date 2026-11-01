@@ -48,6 +48,14 @@ describe("doctor and an unfinished rename", () => {
     expect(finding?.message).toContain("agent-shim identity rename work client --discard-journal");
   });
 
+  it("counts a name as an identity only when it has an identity.json, as the rename does, so a directory without one is not a name that exists", () => {
+    const withoutRecord = identity("work", { raw: undefined });
+    const neither = runDoctor(baseParams({ identities: [withoutRecord], renameJournals: { journals: [JOURNAL], unreadable: [] } }));
+    expect(findingsFor(neither, "identity").find((entry) => entry.subject === "work" && entry.severity === "fail" && entry.message.includes("--discard-journal"))?.message).toContain("there is no identity under either name");
+    const oneOfTwo = runDoctor(baseParams({ identities: [identity("work"), identity("client", { raw: undefined })], renameJournals: { journals: [JOURNAL], unreadable: [] } }));
+    expect(findingsFor(oneOfTwo, "identity").every((entry) => !entry.message.includes("--discard-journal"))).toBe(true);
+  });
+
   it("does not offer to discard one that running the rename again finishes", () => {
     const report = runDoctor(baseParams({ identities: [identity("work")], renameJournals: { journals: [JOURNAL], unreadable: [] } }));
     expect(findingsFor(report, "identity").every((entry) => !entry.message.includes("--discard-journal"))).toBe(true);
@@ -80,6 +88,19 @@ describe("collectDoctorReport and an unfinished rename", () => {
     writeRenameJournal(realFarmFs, renameJournalFile(paths.identityRenamesDir, "work", "client"), JOURNAL);
     const report = collectDoctorReport({ paths, env: { PATH: "" } });
     expect(findingsFor(report, "identity")).toContainEqual({ section: "identity", subject: "work", severity: "fail", message: `There is ${describeUnfinishedRename(JOURNAL)}` });
+  });
+
+  it("agrees with the rename about which names exist: an empty directory is not an identity, and one holding an identity.json is", () => {
+    const paths = buildLayoutPaths(root);
+    fs.mkdirSync(path.join(paths.identitiesDir, "work"), { recursive: true });
+    writeRenameJournal(realFarmFs, renameJournalFile(paths.identityRenamesDir, "work", "client"), JOURNAL);
+    const hint = (): string | undefined => findingsFor(collectDoctorReport({ paths, env: { PATH: "" } }), "identity").find((entry) => entry.subject === "work" && entry.message.includes("--discard-journal"))?.message;
+    expect(hint()).toContain("there is no identity under either name");
+    fs.mkdirSync(path.join(paths.identitiesDir, "client"), { recursive: true });
+    fs.writeFileSync(path.join(paths.identitiesDir, "client", "identity.json"), `${JSON.stringify({ name: "client", allowAmbientCredential: false })}\n`);
+    expect(hint()).toBeUndefined();
+    fs.writeFileSync(path.join(paths.identitiesDir, "work", "identity.json"), `${JSON.stringify({ name: "work", allowAmbientCredential: false })}\n`);
+    expect(hint()).toContain("both names are identities");
   });
 
   it("reports a damaged journal instead of failing to produce a report", () => {

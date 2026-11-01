@@ -514,7 +514,8 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   // A recorded former name still resolves to the provider it became, so an identity may name a provider by either.
   const validProviderNames = new Set([...params.providers.map((entry) => entry.name), ...Object.keys(params.providerAliases ?? {})]);
 
-  const identityNames = new Set(params.identities.map((entry) => entry.name));
+  // A name is an identity when it has an `identity.json`, the test `identityExists` makes, so that the hint below says what the rename will do. A directory without one is not.
+  const identityNames = new Set(params.identities.filter((entry) => entry.raw !== undefined).map((entry) => entry.name));
   for (const journal of params.renameJournals?.journals ?? []) {
     const fromExists = identityNames.has(journal.from);
     const unfinishable = fromExists === identityNames.has(journal.to) ? ` It cannot be finished: ${describeUnfinishable(fromExists)}. If nothing is left of it to keep, discard its record with \`${discardJournalCommand(journal)}\`; that removes only the record and changes no identity.` : "";
