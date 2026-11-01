@@ -9,6 +9,7 @@ import type { FarmFs } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
 import { realFarmFs, realRunPort, spawnDetachedSupervisor } from "../realPorts";
 import { createAccountReader, readAccountMetadata } from "./account";
+import { describeAccountOrganisation } from "./accountDescription";
 import { identitySignIn, type SignInAnswer, type SignInProbe } from "./signIn";
 import { collectResets, formatPeriod, formatResetRow } from "./resets";
 import { listUsageSnapshots, readUsageLog, readUsageSnapshot, summariseUsage, type UsageSummary } from "./read";
@@ -231,9 +232,9 @@ function formatAccounts(views: readonly AccountView[]): string[] {
     if (account === undefined) {
       lines.push("Account: (no stored login profile: never logged in, or a setup-token identity, which has no profile scope)");
     } else {
-      const organisation = [account.organizationName, account.organizationType].filter((part) => part !== undefined).join(", ");
+      const organisation = describeAccountOrganisation(account);
       lines.push(
-        `Account: ${account.emailAddress ?? "(no email)"}${organisation === "" ? "" : ` (${organisation})`}`,
+        `Account: ${account.emailAddress ?? "(no email)"}${organisation === undefined ? "" : ` (${organisation})`}`,
         `Plan: billing ${account.billingType ?? "unknown"}, seat tier ${account.seatTier ?? "none"}`,
         `Rate-limit tier: organisation ${account.organizationRateLimitTier ?? "unknown"}, user ${account.userRateLimitTier ?? "unknown"}`,
         `Extra usage: ${account.hasExtraUsageEnabled === undefined ? "unknown" : account.hasExtraUsageEnabled ? "enabled" : "disabled"}`,
