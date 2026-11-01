@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { CliError } from "./cliError";
 import { ConfigValidationError } from "./config/load";
 import { isRouterProvider, type Provider } from "./config/schema";
 import type { FsPort } from "./launcher/ports";
@@ -305,6 +306,26 @@ describe("providers", () => {
       }).map((entry) => entry.name)).toEqual(["z"]);
       expect(skipped).toHaveLength(1);
       expect(skipped[0]).toContain("not a valid provider name");
+    });
+
+    it("skips a file that is not valid JSON, and says so without repeating what it holds, instead of aborting the listing with a stack trace", () => {
+      addProvider(paths, "z", zInput);
+      fs.writeFileSync(path.join(paths.providersDir, "garbled.json"), "{ \"credential\": made-up-secret-text");
+      const skipped: string[] = [];
+      expect(listProviders(paths, (name, message) => {
+        skipped.push(`${name}: ${message}`);
+      }).map((entry) => entry.name)).toEqual(["z"]);
+      expect(skipped).toHaveLength(1);
+      expect(skipped[0]).toContain("garbled: ");
+      expect(skipped[0]).toContain("is not valid JSON");
+      expect(skipped[0]).not.toContain("made-up-secret-text");
+    });
+
+    it("reads a provider file that is not valid JSON as a refusal that names the file, not a SyntaxError", () => {
+      fs.mkdirSync(paths.providersDir, { recursive: true });
+      fs.writeFileSync(path.join(paths.providersDir, "garbled.json"), "{ not json");
+      expect(() => readProvider(paths, "garbled")).toThrow(CliError);
+      expect(() => readProvider(paths, "garbled")).toThrow(/garbled\.json is not valid JSON/);
     });
 
     it("returns an empty list when no providers directory exists at all", () => {
