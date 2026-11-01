@@ -1,15 +1,14 @@
-import os from "node:os";
 import path from "node:path";
 import type { z } from "zod";
 
 import { CliError, UsageError } from "./cliError";
 import { ConfigValidationError } from "./config/load";
-import { ConfigProfileSchema, DirectoryRulesSchema, GlobalConfigSchema, IdentitySchema, type CredentialCacheStore, type CredentialSource } from "./config/schema";
+import { ConfigProfileSchema, DirectoryRulesSchema, GlobalConfigSchema, IdentitySchema, ProviderSchema, isRouterProvider, type CredentialCacheStore, type CredentialSource } from "./config/schema";
 import { nodeStoreFs, readJson, writeJsonAtomic, writeTextAtomic } from "./config/store";
 import { listProfiles } from "./configProfilesStore";
 import { effectiveStore, type CachedCredential, type CredentialCachePort } from "./credentialCache";
 import { renameIdentityInRules } from "./directoryRulesStore";
-import { IdentityAlreadyExistsError, IdentityNotFoundError, identityExists, identityFarmEntries, readActiveIdentity, readIdentity, renamedFarmEntry, requireNewIdentityName } from "./identityStore";
+import { IdentityAlreadyExistsError, IdentityNotFoundError, identityExists, identityFarmEntries, listIdentities, readActiveIdentity, readIdentity, renamedFarmEntry, requireNewIdentityName } from "./identityStore";
 import { identityTokenPath } from "./identityToken";
 import type { IdentitySessionProbe } from "./identitySessions";
 import { renameIdentityInJobs } from "./jobStore";
@@ -20,6 +19,7 @@ import type { FarmFs, RunPort } from "./launcher/ports";
 import { LEGACY_FARM_MANIFEST_FILENAME } from "./legacy";
 import { renameAccountModelRefs } from "./modelRefs";
 import type { LayoutPaths } from "./paths";
+import { listProviders, providerJsonPath } from "./providersStore";
 import { renameIdentityInPools } from "./poolStore";
 import { stampsWithKeyRenamed } from "./usage/handledStamps";
 import { picksWithIdentityRenamed } from "./usage/poolPick";
@@ -36,6 +36,8 @@ export interface IdentityRenamePorts {
   /** Runs `security`. Only used when `platform` is `darwin`. */
   readonly run: RunPort;
   readonly platform: NodeJS.Platform;
+  /** The home directory a credential `file` source spelled `~/...` is relative to. */
+  readonly home: string;
   /** Tells whether a session is running against the identity's directory. */
   readonly sessions: IdentitySessionProbe;
   /** What taking a resync lock needs from the machine. */
@@ -126,24 +128,57 @@ function requireRenamable(paths: LayoutPaths, from: string, to: string): void {
   }
 }
 
+/** Where the renamed identity's files go, as the credential `file` sources that name them must follow. */
+interface MovedPaths {
+  readonly fromDir: string;
+  readonly toDir: string;
+  readonly fromToken: string;
+  readonly toToken: string;
+  readonly home: string;
+}
+
 /** Expands a leading `~/` as the credential resolver does. */
-function expandHome(filePath: string): string {
-  return filePath.startsWith("~/") ? path.join(os.homedir(), filePath.slice(1)) : filePath;
+function expandHome(filePath: string, home: string): string {
+  return filePath.startsWith("~/") ? path.join(home, filePath.slice(1)) : filePath;
+}
+
+/** `absolute` written the way `original` was: with a leading `~` when it was and the new path is still under the home directory, so a source that was portable between machines stays so. */
+function spelledLike(original: string, absolute: string, home: string): string {
+  return original.startsWith("~/") && absolute.startsWith(`${home}${path.sep}`) ? `~${absolute.slice(home.length)}` : absolute;
 }
 
 /**
  * A credential source after the rename. A `file` source that names the identity's stored token file follows the file to its new name, and one that points inside the identity's directory follows the directory; any other path is the person's own and stays where it points. Sources of every other kind name things outside the directory and are untouched.
  */
-function repointedSource(source: CredentialSource, fromDir: string, toDir: string, fromToken: string, toToken: string): CredentialSource {
+function repointedSource(source: CredentialSource, moved: MovedPaths): CredentialSource {
   if (!("file" in source)) {
     return source;
   }
-  const file = expandHome(source.file);
-  if (file === fromToken) {
-    return { file: toToken };
+  const file = expandHome(source.file, moved.home);
+  if (file === moved.fromToken) {
+    return { file: spelledLike(source.file, moved.toToken, moved.home) };
   }
-  const inside = file === fromDir || file.startsWith(`${fromDir}${path.sep}`);
-  return inside ? { file: `${toDir}${file.slice(fromDir.length)}` } : source;
+  const inside = file === moved.fromDir || file.startsWith(`${moved.fromDir}${path.sep}`);
+  return inside ? { file: spelledLike(source.file, `${moved.toDir}${file.slice(moved.fromDir.length)}`, moved.home) } : source;
+}
+
+/** `sources` with each one re-pointed, or undefined when none of them names anything that moved. */
+function repointedSources(sources: readonly CredentialSource[], moved: MovedPaths): CredentialSource[] | undefined {
+  const next = sources.map((source) => repointedSource(source, moved));
+  return JSON.stringify(next) === JSON.stringify(sources) ? undefined : next;
+}
+
+/** Whether `text`, a file that could not be parsed, names a path that moved, in any spelling a source could take. */
+function namesMovedPath(text: string, moved: MovedPaths): boolean {
+  return [moved.fromToken, moved.fromDir].some((target) => text.includes(target) || (target.startsWith(`${moved.home}${path.sep}`) && text.includes(`~${target.slice(moved.home.length)}`)));
+}
+
+/** Raised when a file that holds credential sources cannot be read and names a path the rename would move, so it cannot be re-pointed and would be left broken. Nothing has been changed. */
+class UnreadableCredentialFileError extends CliError {
+  constructor(file: string, detail: string) {
+    super(`Cannot rename: ${file} cannot be read (${detail}) and names a path this rename moves, so it could not be updated. Fix or remove it, then run the command again; nothing was changed.`);
+    this.name = "UnreadableCredentialFileError";
+  }
 }
 
 /** The result of rewriting one parsed value: the value, and what changed in it, for the step's description. */
@@ -333,6 +368,46 @@ function snapshotStep(paths: LayoutPaths, ports: IdentityRenamePorts, from: stri
   };
 }
 
+/** The steps that re-point the credential `file` sources of every identity but the renamed one, and of every provider, that name the token file or sit inside the directory being moved. A file that cannot be parsed and names a moved path is refused, since it can be neither updated nor trusted. */
+function credentialHolderSteps(paths: LayoutPaths, ports: IdentityRenamePorts, from: string, moved: MovedPaths): readonly (Step | undefined)[] {
+  const refuseIfNamed = (file: string, detail: string): void => {
+    const text = ports.fs.readFileUtf8(file);
+    if (text !== undefined && namesMovedPath(text, moved)) {
+      throw new UnreadableCredentialFileError(path.relative(paths.root, file), detail);
+    }
+  };
+  const identitySteps = listIdentities(paths)
+    .filter((entry) => entry.name !== from)
+    .map((entry) => {
+      const file = path.join(paths.identitiesDir, entry.name, "identity.json");
+      if (entry.identity === undefined) {
+        refuseIfNamed(file, entry.problem);
+        return undefined;
+      }
+      return jsonRewriteStep(paths, file, IdentitySchema, (stored) => {
+        const sources = stored.credential === undefined ? undefined : repointedSources(stored.credential.sources, moved);
+        return stored.credential === undefined || sources === undefined ? undefined : { value: { ...stored, credential: { ...stored.credential, sources } }, changes: ["credential file source"] };
+      });
+    });
+  const invalidProviders: { readonly name: string; readonly message: string }[] = [];
+  const providers = listProviders(paths, (name, message) => {
+    invalidProviders.push({ name, message });
+  });
+  for (const { name, message } of invalidProviders) {
+    refuseIfNamed(providerJsonPath(paths, name), message.split("\n")[0] ?? message);
+  }
+  const providerSteps = providers.map(({ name }) =>
+    jsonRewriteStep(paths, providerJsonPath(paths, name), ProviderSchema, (stored) => {
+      if (isRouterProvider(stored)) {
+        return undefined;
+      }
+      const sources = repointedSources(stored.credential.sources, moved);
+      return sources === undefined ? undefined : { value: { ...stored, credential: { ...stored.credential, sources } }, changes: ["credential file source"] };
+    }),
+  );
+  return [...identitySteps, ...providerSteps];
+}
+
 /** Builds the plan: every check that can refuse, then every step in the order it is applied. The order puts what can fail for reasons outside the files first and the Keychain's old item last, and rewrites the identity's own files before the directory moves so each path is read where it is. */
 function planRename(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts): Plan {
   requireRenamable(paths, from, to);
@@ -353,14 +428,17 @@ function planRename(paths: LayoutPaths, from: string, to: string, ports: Identit
     throw new IdentityNotFoundError(from);
   }
 
+  const moved: MovedPaths = { fromDir, toDir, fromToken, toToken, home: ports.home };
   const keychain = keychainPlan(ports, fromDir, toDir);
   const farmFiles = [FARM_MANIFEST_FILENAME, LEGACY_FARM_MANIFEST_FILENAME].map((name) => path.join(fromDir, name));
   const steps: (Step | undefined)[] = [
     keychain?.step,
     jsonRewriteStep(paths, path.join(fromDir, "identity.json"), IdentitySchema, (stored) => {
-      const credential = stored.credential === undefined ? undefined : { ...stored.credential, sources: stored.credential.sources.map((source) => repointedSource(source, fromDir, toDir, fromToken, toToken)) };
-      const repointed = JSON.stringify(credential?.sources) !== JSON.stringify(stored.credential?.sources);
-      return { value: { ...stored, name: to, ...(credential === undefined ? {} : { credential }) }, changes: ["name", ...(repointed ? ["credential file source"] : [])] };
+      const sources = stored.credential === undefined ? undefined : repointedSources(stored.credential.sources, moved);
+      return {
+        value: { ...stored, name: to, ...(stored.credential === undefined || sources === undefined ? {} : { credential: { ...stored.credential, sources } }) },
+        changes: ["name", ...(sources === undefined ? [] : ["credential file source"])],
+      };
     }),
     ...farmFiles.map((file) => textRewriteStep(paths, ports, file, (target, text) => { ports.fs.writeFileUtf8(target, text); }, (raw) => {
       const text = manifestWithIdentity(raw, to);
@@ -384,6 +462,7 @@ function planRename(paths: LayoutPaths, from: string, to: string, ports: Identit
         return models === undefined ? undefined : { value: { ...profile, models }, changes: ["models"] };
       }),
     ),
+    ...credentialHolderSteps(paths, ports, from, moved),
     jsonRewriteStep(paths, paths.directoryRulesFile, DirectoryRulesSchema, (rules) => {
       const renamed = renameIdentityInRules(rules, from, to);
       return renamed === undefined ? undefined : { value: renamed.rules, changes: renamed.renamedAt.map((rulePath) => `rule ${rulePath}`) };

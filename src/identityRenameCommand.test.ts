@@ -57,6 +57,7 @@ describe("identity rename", () => {
       credentialCache: { port: cache, platform: "darwin" },
       run: keychain.run,
       platform: "darwin",
+      home: "/example/home",
       sessions: { sessionsOn: () => sessions },
       lock: { nowMs: () => NOW_MS, pid: OWN_PID, isRunning: () => true, sleep: () => undefined },
     };

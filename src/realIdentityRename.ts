@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 
 import type { IdentityRenamePorts } from "./identityRename";
 import { createIdentitySessionProbe, type ProcessTableFs, type ProcRead } from "./identitySessions";
@@ -61,6 +62,7 @@ export function realIdentityRenamePorts(paths: LayoutPaths): IdentityRenamePorts
     credentialCache: realCredentialCacheEnv(paths),
     run: realRunPort,
     platform: process.platform,
+    home: os.homedir(),
     sessions: createIdentitySessionProbe(process.platform, { run: realRunPort, uid: currentUid, ownPid: process.pid, procFs: realProcessTableFs, realpath: realpathOrSelf }),
     lock: { nowMs: () => Date.now(), pid: process.pid, isRunning: realIsProcessRunning, sleep: realSleepSync },
   };

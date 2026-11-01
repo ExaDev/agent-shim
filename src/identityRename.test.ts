@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { CliError } from "./cliError";
+import { readProvider } from "./providersStore";
 import { IdentityAlreadyExistsError, IdentityNotFoundError, InvalidIdentityNameError, readActiveIdentity, readIdentity } from "./identityStore";
 import { describeIdentityRename, IdentityInUseError, renameIdentity, type IdentityRenamePorts } from "./identityRename";
 import { identityTokenPath, TOKEN_FILE_MODE } from "./identityToken";
@@ -125,6 +126,7 @@ function createWorld(platform: NodeJS.Platform = "linux"): World {
       credentialCache: { port: cachePort, platform: "linux" },
       run: keychain.run,
       platform,
+      home: "/example/home",
       sessions: { sessionsOn: (configDir) => sessions.get(configDir) ?? [] },
       lock: { nowMs: () => NOW_MS, pid: OWN_PID, isRunning: () => true, sleep: () => undefined },
       ...overrides,
@@ -388,6 +390,71 @@ describe("renameIdentity", () => {
       expect(() => renameIdentity(world.paths, "work", "client", world.ports())).toThrow();
       expect(treeOf(world.root)).toEqual(before);
     });
+  });
+});
+
+describe("renameIdentity credential file sources held elsewhere", () => {
+  let world: World;
+  const movedToken = (): string => path.join(world.root, "credentials", "work.token");
+  const insideDirectory = (): string => path.join(world.directory("work"), "secrets", "token");
+
+  beforeEach(() => {
+    world = createWorld();
+    writeJson(path.join(world.directory("personal"), "identity.json"), {
+      name: "personal",
+      allowAmbientCredential: false,
+      credential: { sources: [{ file: movedToken() }, { file: insideDirectory() }, { file: "/example/elsewhere/token" }, { env: "EXAMPLE_TOKEN" }], target: "oauthToken" },
+    });
+    writeJson(path.join(world.paths.providersDir, "z.json"), {
+      displayName: "z.ai",
+      baseUrl: "https://api.z.ai/api/anthropic",
+      credential: { sources: [{ file: movedToken() }, { env: "Z_API_TOKEN" }] },
+    });
+    writeJson(path.join(world.paths.providersDir, "router.json"), { kind: "router", displayName: "Router" });
+  });
+
+  afterEach(() => {
+    fs.rmSync(world.root, { recursive: true, force: true });
+  });
+
+  it("re-points another identity's file sources that name the moved token file or sit inside the moved directory, and leaves every other source alone", () => {
+    renameIdentity(world.paths, "work", "client", world.ports());
+    expect(readIdentity(world.paths, "personal")?.credential?.sources).toEqual([
+      { file: path.join(world.root, "credentials", "client.token") },
+      { file: path.join(world.directory("client"), "secrets", "token") },
+      { file: "/example/elsewhere/token" },
+      { env: "EXAMPLE_TOKEN" },
+    ]);
+  });
+
+  it("re-points a provider's file sources the same way, and leaves a provider with no credential alone", () => {
+    renameIdentity(world.paths, "work", "client", world.ports());
+    expect(readProvider(world.paths, "z")).toMatchObject({ credential: { sources: [{ file: path.join(world.root, "credentials", "client.token") }, { env: "Z_API_TOKEN" }] } });
+    expect(readProvider(world.paths, "router")).toEqual({ kind: "router", displayName: "Router" });
+  });
+
+  it("names those files among the steps, in the dry run and the real run alike", () => {
+    const planned = describeIdentityRename(world.paths, "work", "client", world.ports());
+    expect(planned.steps).toContain("rewrite identities/personal/identity.json: credential file source");
+    expect(planned.steps).toContain("rewrite providers/z.json: credential file source");
+    expect(renameIdentity(world.paths, "work", "client", world.ports()).steps).toEqual(planned.steps);
+  });
+
+  it("keeps the ~ spelling of a source that was written that way", () => {
+    writeJson(path.join(world.directory("personal"), "identity.json"), { name: "personal", allowAmbientCredential: false, credential: { sources: [{ file: "~/credentials/work.token" }, { file: "~/identities/work/secrets/token" }], target: "oauthToken" } });
+    renameIdentity(world.paths, "work", "client", world.ports({ home: world.root }));
+    expect(readIdentity(world.paths, "personal")?.credential?.sources).toEqual([{ file: "~/credentials/client.token" }, { file: "~/identities/client/secrets/token" }]);
+  });
+
+  it("refuses, naming the file, when a provider file it cannot read mentions the moved token, and ignores one that does not", () => {
+    writeFile(path.join(world.paths.providersDir, "old-format.json"), `{ "tokenFile": "${movedToken()}" }\n`);
+    const before = treeOf(world.root);
+    expect(() => describeIdentityRename(world.paths, "work", "client", world.ports())).toThrow(/providers\/old-format\.json/);
+    expect(() => renameIdentity(world.paths, "work", "client", world.ports())).toThrow(/providers\/old-format\.json/);
+    expect(treeOf(world.root)).toEqual(before);
+    fs.rmSync(path.join(world.paths.providersDir, "old-format.json"));
+    writeFile(path.join(world.paths.providersDir, "unrelated.json"), '{ "tokenFile": "/example/elsewhere/token" }\n');
+    expect(() => renameIdentity(world.paths, "work", "client", world.ports())).not.toThrow();
   });
 });
 
