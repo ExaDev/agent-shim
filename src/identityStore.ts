@@ -204,6 +204,16 @@ export function setDefaultConfigProfile(paths: LayoutPaths, identityName: string
 }
 
 /**
+ * Sets `identity`'s `provider` field, or clears it when `providerName` is undefined. Throws `IdentityNotFoundError` when identity does not exist. Whether the provider exists is the caller's concern: `identity set --provider` checks it first.
+ */
+export function setIdentityProvider(paths: LayoutPaths, identityName: string, providerName: string | undefined): Identity {
+  if (!identityExists(paths, identityName)) {
+    throw new IdentityNotFoundError(identityName);
+  }
+  return applyPatch(identityJsonPath(paths, identityName), IdentitySchema, { provider: providerName });
+}
+
+/**
  * Patches `identity`'s `allowAmbientCredential` field. Throws `IdentityNotFoundError` when the identity does not exist.
  */
 export function setAllowAmbientCredential(paths: LayoutPaths, identityName: string, allow: boolean): Identity {

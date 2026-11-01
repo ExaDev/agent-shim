@@ -62,6 +62,7 @@ const storedMutationOutput = <Kind extends string, Action extends "created" | "u
 const IdentityValueSchema = z.strictObject({
   name: z.string(),
   defaultConfigProfile: z.string().optional(),
+  provider: z.string().optional(),
   allowAmbientCredential: z.boolean(),
   credential: CredentialSummarySchema.optional(),
   anchors: z.array(AnchorSchema).optional(),
@@ -90,6 +91,8 @@ export const ConfigIdentityAddOutputSchema = storedMutationOutput("identity", "c
 export const ConfigIdentitySetInputSchema = z.strictObject({
   name: z.string().min(1),
   defaultConfigProfile: z.union([z.string().min(1), z.literal(false)]).optional(),
+  /** The provider the identity exists for; `false` clears it. */
+  provider: z.union([z.string().min(1), z.literal(false)]).optional(),
   allowAmbientCredential: z.boolean().optional(),
   credential: z.union([z.literal(false), CredentialWriteSchema(CREDENTIAL_TARGETS)]).optional(),
   /** `false` removes the anchors; a list replaces them. */

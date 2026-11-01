@@ -10,10 +10,11 @@ import { runProfileWizard, type PromptsPort } from "./configure";
 import { PromptCancelledError, UsageError } from "./cliError";
 import { resolveFarmConflicts, type FarmConflictChoice } from "./launcher/farmResolve";
 import { ensureProfileExists } from "./configProfiles";
+import { requireProviderExists } from "./providersStore";
 import { poolNameOf } from "./launcher/identity";
 import type { LayoutPaths } from "./paths";
 import { realFarmFs } from "./realPorts";
-import { IdentityNotFoundError, InvalidIdentityNameError, identityExists, readIdentity, addIdentity, useIdentity, type IdentityListing, listIdentities, setDefaultConfigProfile, setAllowAmbientCredential, setIdentityCredential, setIdentityAnchors, removeIdentity } from "./identityStore";
+import { IdentityNotFoundError, InvalidIdentityNameError, identityExists, readIdentity, addIdentity, useIdentity, type IdentityListing, listIdentities, setDefaultConfigProfile, setIdentityProvider, setAllowAmbientCredential, setIdentityCredential, setIdentityAnchors, removeIdentity } from "./identityStore";
 import { describeAccountHolder, describeIdentityAccount, groupByLogin, loginKeyOf, readIdentityAccount, summariseIdentityAccount, type IdentityAccountRead, type IdentityAccountSummary } from "./identityAccounts";
 import { describeAccountPlan } from "./usage/accountDescription";
 import { ANCHOR_SYNTAX, formatAnchor } from "./usage/anchor";
@@ -117,6 +118,8 @@ interface IdentityView {
   readonly active: boolean;
   readonly directory: string;
   readonly defaultConfigProfile?: string;
+  /** The provider the identity exists for; absent when it has none. */
+  readonly provider?: string;
   readonly allowAmbientCredential?: boolean;
   /** How the identity authenticates when it has a credential block: its target and each source's kind, never a value. Absent when it uses its stored login. */
   readonly credential?: CredentialSummary;
@@ -146,6 +149,7 @@ function toIdentityView(paths: LayoutPaths, { entry, read }: IdentityWithAccount
     ...(entry.problem === undefined
       ? {
           ...(entry.identity.defaultConfigProfile === undefined ? {} : { defaultConfigProfile: entry.identity.defaultConfigProfile }),
+          ...(entry.identity.provider === undefined ? {} : { provider: entry.identity.provider }),
           allowAmbientCredential: entry.identity.allowAmbientCredential,
           ...(entry.identity.credential === undefined ? {} : { credential: summariseCredential(entry.identity.credential) }),
           ...(entry.identity.anchors === undefined ? {} : { anchors: entry.identity.anchors }),
@@ -186,14 +190,16 @@ function formatIdentityLine(entry: IdentityListing, view: IdentityView): string 
   }
   const defaultProfile =
     entry.identity.defaultConfigProfile === undefined ? "" : ` (default profile: ${entry.identity.defaultConfigProfile})`;
+  const provider = entry.identity.provider === undefined ? "" : ` (provider: ${entry.identity.provider})`;
   const ambient = entry.identity.allowAmbientCredential ? " [allows ambient credential]" : "";
   const credential = entry.identity.credential === undefined ? "" : ` [credential ${describeCredential(entry.identity.credential)}]`;
-  return `${marker}${entry.name}${defaultProfile}${ambient}${credential}${account}${accountProblem}`;
+  return `${marker}${entry.name}${defaultProfile}${provider}${ambient}${credential}${account}${accountProblem}`;
 }
 
-/** Options `identity set` accepts. `defaultProfile` is `false` for `--no-default-profile`, `credential` is `false` for `--no-credential` and `anchor` is `false` for `--no-anchor`. */
+/** Options `identity set` accepts. `defaultProfile` is `false` for `--no-default-profile`, `provider` is `false` for `--no-provider`, `credential` is `false` for `--no-credential` and `anchor` is `false` for `--no-anchor`. */
 interface IdentitySetOptions extends CredentialCacheOptions {
   readonly defaultProfile?: string | false;
+  readonly provider?: string | false;
   readonly allowAmbientCredential?: boolean;
   readonly credential?: CredentialSource[] | false;
   readonly credentialTarget?: CredentialTarget;
@@ -288,6 +294,7 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
           return;
         }
         console.log(`Default configuration profile: ${view.defaultConfigProfile ?? "(none)"}`);
+        console.log(`Provider: ${view.provider ?? "(none)"}`);
         console.log(`Allows ambient credential: ${view.allowAmbientCredential === true ? "yes" : "no"}`);
         console.log(`Credential: ${entry.identity?.credential === undefined ? "(none; uses its stored login)" : describeCredential(entry.identity.credential)}`);
         console.log(`Anchors: ${view.anchors === undefined ? "(none)" : view.anchors.map(formatAnchor).join(" ")}`);
@@ -301,6 +308,8 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
       .option("--json", "Print the result as JSON.")
       .option("--default-profile <profile>", "Configuration profile this identity uses when nothing more specific selects one.")
       .option("--no-default-profile", "Clear this identity's default configuration profile.")
+      .option("--provider <provider>", "Provider this identity exists for: a launch on it routes through the provider unless a flag, directory rule or profile selects another, and doctor expects no stored login.")
+      .option("--no-provider", "Clear this identity's provider.")
       .option("--allow-ambient-credential", "Allow this identity to launch even with an ambient credential env var set.")
       .option("--no-allow-ambient-credential", "Disallow ambient credential env vars for this identity (the default).")
       .option(
@@ -328,11 +337,14 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
         const { json, ...options } = allOptions;
         if (Object.entries(allOptions).every(([key, value]) => key === "json" || value === undefined)) {
           throw new UsageError(
-            "Nothing to change: pass --default-profile, --no-default-profile, --allow-ambient-credential, --no-allow-ambient-credential, --credential, --no-credential, --credential-target, --anchor, --no-anchor or a --credential-cache option.",
+            "Nothing to change: pass --default-profile, --no-default-profile, --provider, --no-provider, --allow-ambient-credential, --no-allow-ambient-credential, --credential, --no-credential, --credential-target, --anchor, --no-anchor or a --credential-cache option.",
           );
         }
         if (!identityExists(paths, name)) {
           throw new IdentityNotFoundError(name);
+        }
+        if (typeof options.provider === "string") {
+          requireProviderExists(paths, options.provider);
         }
         const messages: string[] = [];
         if (options.defaultProfile !== undefined) {
@@ -346,6 +358,11 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
               ? `Identity "${name}" no longer has a default configuration profile.`
               : `Identity "${name}" now defaults to configuration profile "${profileName}".`,
           );
+        }
+        if (options.provider !== undefined) {
+          const providerName = options.provider === false ? undefined : options.provider;
+          setIdentityProvider(paths, name, providerName);
+          messages.push(providerName === undefined ? `Identity "${name}" no longer has a provider.` : `Identity "${name}" now runs on provider "${providerName}" unless something more specific selects one.`);
         }
         if (options.allowAmbientCredential !== undefined) {
           setAllowAmbientCredential(paths, name, options.allowAmbientCredential);
@@ -377,6 +394,7 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
       }),
     [
       "agent-shim identity set work --default-profile client-acme",
+      "agent-shim identity set minimax --provider minimax",
       "agent-shim identity set work --allow-ambient-credential",
       "agent-shim identity set work --credential-target oauthToken --credential op:op://vault/claude-work/token",
       "agent-shim identity set work --no-credential",

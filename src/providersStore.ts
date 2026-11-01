@@ -21,7 +21,7 @@ import {
   type ModelsConfig,
 } from "./config/schema";
 import { CliError, UsageError } from "./cliError";
-import { canonicalProviderName, loadProviderAliases } from "./providerAliases";
+import { canonicalProviderName, loadProviderAliases, readProviderAliases } from "./providerAliases";
 import { CREDENTIAL_UNAVAILABLE_EXIT, resolveCredential, type CredentialPort } from "./credential";
 import type { ResolvedProvider } from "./launcher/flags";
 import type { FsPort } from "./launcher/ports";
@@ -58,6 +58,14 @@ export function providerFileDefined(lstat: (filePath: string) => unknown, provid
 /** True when a provider file exists for `name`, regardless of whether it validates. */
 export function providerExists(paths: LayoutPaths, name: string): boolean {
   return fs.existsSync(providerJsonPath(paths, name));
+}
+
+/** Throws `ProviderNotFoundError` unless `name` is a provider or the recorded former name of one, the two names a launch resolves. */
+export function requireProviderExists(paths: LayoutPaths, name: string): void {
+  const canonical = canonicalProviderName(name, (candidate) => providerExists(paths, candidate), () => readProviderAliases(paths));
+  if (!providerExists(paths, canonical)) {
+    throw new ProviderNotFoundError(name);
+  }
 }
 
 /** The provider fields the credential block replaced. A file still carrying any of them is reported with its exact replacement rather than a bare schema error. */

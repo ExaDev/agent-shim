@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ModelsConfig, ModelsLayer } from "./config/schema";
 import { writeJsonAtomic } from "./config/store";
 import type { CachedCredential, CredentialCachePort } from "./credentialCache";
+import { addIdentity, readIdentity, setIdentityProvider } from "./identityStore";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { readProviderAliases } from "./providerAliases";
 import { renameModelRefs, renameProvider, type ProviderRenamePorts } from "./providerRename";
@@ -124,6 +125,17 @@ describe("renameProvider", () => {
     expect(JSON.parse(fs.readFileSync(path.join(paths.configProfilesDir, "other.json"), "utf8"))).toEqual({ launch: { provider: "s" } });
     expect(JSON.parse(fs.readFileSync(paths.directoryRulesFile, "utf8"))).toEqual({ rules: [{ path: "/work", launch: { provider: "zai" } }, { path: "/play", launch: { provider: "s" } }] });
     expect(readProvider(paths, "s")).toMatchObject({ routes: [{ provider: "zai" }] });
+  });
+
+  it("repoints the identities that exist for the provider and leaves the others alone", () => {
+    addProvider(paths, "z", base);
+    addIdentity(paths, "glm");
+    addIdentity(paths, "plain");
+    setIdentityProvider(paths, "glm", "z");
+    const report = renameProvider(paths, "z", "zai", ports);
+    expect(report.updated).toEqual(["identity glm"]);
+    expect(readIdentity(paths, "glm")?.provider).toBe("zai");
+    expect(readIdentity(paths, "plain")?.provider).toBeUndefined();
   });
 
   it("moves the provider's usage slice to the new name, and drops a stale one the new name already has", () => {

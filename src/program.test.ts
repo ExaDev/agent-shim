@@ -229,6 +229,25 @@ describe("identity commands", () => {
     expect(readIdentity(paths, "work")?.defaultConfigProfile).toBeUndefined();
   });
 
+  it("sets and clears the provider an identity exists for through set, refusing a missing provider", async () => {
+    addIdentity(paths, "work");
+    const missing = await cli(["identity", "set", "work", "--provider", "ghost"]);
+    expect(missing.code).toBe(EXIT_FAILURE);
+    expect(missing.stderr).toContain('agent-shim: No provider named "ghost"');
+
+    const addZ = ["provider", "add", "z", "--display-name", "z.ai", "--base-url", "https://api.z.ai/api/anthropic", "--credential", "env:Z_API_TOKEN"];
+    expect((await cli(addZ)).code).toBe(0);
+    expect((await cli(["identity", "set", "work", "--provider", "z"])).code).toBe(0);
+    expect(readIdentity(paths, "work")?.provider).toBe("z");
+    expect((await cli(["identity", "show", "work"])).stdout).toContain("Provider: z");
+    expect((await cli(["identity", "list"])).stdout).toContain("(provider: z)");
+    expect(parseJson((await cli(["identity", "show", "work", "--json"])).stdout)).toMatchObject({ provider: "z" });
+
+    expect((await cli(["identity", "set", "work", "--no-provider"])).code).toBe(0);
+    expect(readIdentity(paths, "work")?.provider).toBeUndefined();
+    expect((await cli(["identity", "show", "work"])).stdout).toContain("Provider: (none)");
+  });
+
   it("offers to create a missing default profile on a terminal", async () => {
     addIdentity(paths, "work");
     const result = await cli(["identity", "set", "work", "--default-profile", "fresh"], {

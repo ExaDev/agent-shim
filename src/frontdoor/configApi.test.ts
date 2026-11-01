@@ -78,6 +78,17 @@ describe("config API: identities", () => {
     expect(identityExists(paths, "work")).toBe(false);
   });
 
+  it("sets and clears the provider an identity exists for, refusing one that does not exist", async () => {
+    const api = clientWith(TOKEN).config;
+    await api.identity.add({ name: "work" });
+    expect(await codeOf(api.identity.set({ name: "work", provider: "z" }))).toBe("NOT_FOUND");
+    await api.provider.add({ name: "z", displayName: "z.ai", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z_API_TOKEN" }], target: "apiKey" } });
+    const updated = await api.identity.set({ name: "work", provider: "z" });
+    expect(updated.value).toEqual({ name: "work", provider: "z", allowAmbientCredential: false });
+    const cleared = await api.identity.set({ name: "work", provider: false });
+    expect(cleared.value.provider).toBeUndefined();
+  });
+
   it("refuses names that do not exist, a missing profile and a change that names nothing", async () => {
     const api = clientWith(TOKEN).config;
     await api.identity.add({ name: "work" });
