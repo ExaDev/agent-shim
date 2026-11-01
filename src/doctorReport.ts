@@ -2,7 +2,7 @@ import { ClaudeShimStateSchema, commandFilename, findPathShadow, resolveOwnBinar
 import type { LayoutPaths } from "./paths";
 import { FILE_NAME_RULE, isFileName, isStoredName } from "./config/names";
 import { readJson } from "./config/store";
-import { isIdentityDirectoryName } from "./identityStore";
+import { identityDirectoryNames } from "./identityStore";
 import { findExecutableInDir, realContentSourcePath, realFarmFs, realFsPort, realHeadroomSocketTrust, realInstalledClaudeVersions, realFrontDoorLiveness, realIsProcessRunning, realOwnExecutablePath, realProcessCommandLine, realResolveClaudeBinary, realRunPort } from "./realPorts";
 import fs from "node:fs";
 import path from "node:path";
@@ -934,13 +934,7 @@ function servingDoorListeners(paths: LayoutPaths): readonly FrontDoorListenerRea
  */
 export function collectDoctorReport(params: CollectDoctorReportParams): DoctorReport {
   const { paths } = params;
-  const identityNames = fs.existsSync(paths.identitiesDir)
-    ? fs
-        .readdirSync(paths.identitiesDir, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory() && isIdentityDirectoryName(entry.name))
-        .map((entry) => entry.name)
-        .sort()
-    : [];
+  const identityNames = identityDirectoryNames(paths);
   const identities: DoctorIdentityInput[] = identityNames.map((name) => {
     const farmRoot = path.join(paths.identitiesDir, name);
     const identityPath = path.join(farmRoot, "identity.json");
