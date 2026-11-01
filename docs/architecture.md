@@ -42,6 +42,7 @@ src/
   configProfiles.ts       # the `profile` noun's commands: add/set/list/show/remove/use, and the interactive wizard
   configProfilesStore.ts  # the configuration profile and global config data layer, with no command-line dependencies, exported by the library
   pools.ts, poolStore.ts  # the `pool` noun (add/set/list/show/remove/use/pick) and the global-config `pools` map it edits, plus `collectPoolPick`, the read-only ranking `pool pick` and `check` print
+  poolSharedLogins.ts     # the members of one pool that hold the same login, found through the grouping in `identityAccounts.ts`, and the warning `pool add`, `pool set` and `doctor` print for them
   providers.ts            # the `provider` noun's commands (add/set/list/show/remove/rename/unalias)
   providerCatalogue.ts    # an http provider's model catalogue: the candidate URLs, the response parsing, the include/exclude filter, the cache shape and its staleness, over an injected fetch
   catalogueRefresh.ts, catalogueKeeper.ts, realCatalogueRefresh.ts   # fetching and storing one provider's catalogue over injected ports, the front door's schedule of which catalogues are due, and the real ports behind `__refresh-catalogue` and `provider models --refresh`
@@ -70,7 +71,7 @@ src/
     quotaRefresh.ts        # the refresher (throttled, one fetch in flight per identity and provider, failures contained), the provider and credential lookup it fetches with, and the wrapper that triggers it after a recorded request
     preflight.ts            # `effectiveWindow` (a recorded window read at an instant: one past its reset is empty) and the launch-time quota warnings derived from it, by the API's own window statuses rather than a typed threshold
     plan.ts, pick.ts        # the account plan class (subscription capacity from the rate-limit tier, or pay-per-use) and `rankPool`, the pure ranking of a pool's members: refused members out, remaining quota weighted by plan size per hour to reset, five-hour feasibility, last-pick stickiness, and nested `pool:<name>` entries contributing their own pool's pick or refusal
-    poolPick.ts             # the store-backed side of picking: walks a pool and everything it nests (each pool under its own preference, cycles refused), loads each member's snapshot, login metadata and recent log records for `rankPool`, and keeps the per-directory last-pick record
+    poolPick.ts             # the store-backed side of picking: walks a pool and everything it nests (each pool under its own preference, cycles refused), loads each member's snapshot, login metadata and recent log records for `rankPool`, and keeps the per-directory last-pick record; members of one login (the same account and organisation) are collapsed to the one with the freshest snapshot and the others ranked ineligible as `same login as <name>`
     anchor.ts               # anchors: parsing and formatting `<days>@<HH:MM>[/<zone>]`, and the pure next-and-due arithmetic over an injected zone and clock, daylight saving included
     windowKeeper.ts         # the front door's window keeper: at each anchor that has fallen, opens a five-hour window when none is open, once per anchor, over injected ports
     childRun.ts             # runs headless identity work in a short-lived child of this executable, so a launch routed through the door never probes the door from inside it
