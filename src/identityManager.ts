@@ -215,8 +215,9 @@ interface IdentitySetOptions extends CredentialCacheOptions {
   readonly json?: boolean;
 }
 
-/** What `identity rename --help` says it does. */
-const RENAME_DESCRIPTION = "Rename an identity: move its directory, carry its login across and rewrite every reference to its name. Refused while a session is running on it.";
+/** What `identity rename --help` says it does, as the README and the configuration model describe it: a running session and a starting launch both refuse it, and a rename that was interrupted is finished by running it again. */
+const RENAME_DESCRIPTION =
+  "Rename an identity: move its directory, carry its login across and rewrite every reference to its name. Refused while a session is running on it or a launch is starting on it. A rename that was interrupted is finished by running the same command again.";
 
 /** What `--discard-journal` does and when it refuses, exactly: it removes a record and nothing else. */
 const DISCARD_JOURNAL_DESCRIPTION =
