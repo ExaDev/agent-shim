@@ -104,7 +104,7 @@ function parseLockRecord(raw: string | undefined): LockRecord | undefined {
  *
  * Two terminals in two different client directories under one identity is exactly the pattern directory rules exist to support, and it is exactly the pattern that races: both launches resolve their own cascade and both want to rewrite the same identity's farm toward two different states. This serialises them.
  *
- * Mutual exclusion rests on one exclusive-create — a read-then-write pair would leave a window where both processes see no lock. A lock whose holder is no longer running, or whose record is older than the staleness window, or whose contents cannot be parsed at all, is removed and retaken: a machine that crashed mid-resync must not need manual cleanup before `claude` works again. A lock genuinely held by a live process is waited on, and only after the full retry budget does this give up — loudly, with the holder's pid, rather than proceeding unsynchronised.
+ * Mutual exclusion rests on one exclusive-create — a read-then-write pair would leave a window where both processes see no lock. A lock whose holder is no longer running, or whose record is older than the staleness window, or whose contents cannot be parsed on two reads a retry delay apart, is removed and retaken: a machine that crashed mid-resync must not need manual cleanup before `claude` works again. A lock genuinely held by a live process is waited on, and only after the full retry budget does this give up — loudly, with the holder's pid, rather than proceeding unsynchronised.
  */
 export function acquireIdentityLock(params: AcquireIdentityLockParams): IdentityLock {
   const lockPath = identityLockPath(params.dir, params.identity);
@@ -130,7 +130,8 @@ export function acquireIdentityLock(params: AcquireIdentityLockParams): Identity
           if (current?.token !== token) {
             throw new IdentityLockLostError(params.identity);
           }
-          params.fs.writeFileUtf8(lockPath, `${JSON.stringify({ ...current, acquiredAtMs: params.nowMs() })}\n`);
+          // Replaced whole, never truncated first: a waiter polling every few milliseconds that read the file empty or half written would take the lock for abandoned, and this holder would go on working on a file nobody can see.
+          params.fs.writeFilePrivate(lockPath, `${JSON.stringify({ ...current, acquiredAtMs: params.nowMs() })}\n`);
         },
         release: () => {
           const current = parseLockRecord(params.fs.readFileUtf8(lockPath));
@@ -142,9 +143,22 @@ export function acquireIdentityLock(params: AcquireIdentityLockParams): Identity
       };
     }
 
-    const existing = parseLockRecord(params.fs.readFileUtf8(lockPath));
+    const raw = params.fs.readFileUtf8(lockPath);
+    if (raw === undefined) {
+      // The holder released between the failed create and this read. Nothing is removed: whatever is there by now is someone else's, and the next attempt creates the lock if it is free.
+      continue;
+    }
+    let existing = parseLockRecord(raw);
     if (existing === undefined) {
-      // Either the holder vanished between the failed create and this read, or the file is unparseable — a truncated write from a process killed mid-`writeFileExclusive`. Neither is a lock anyone is relying on.
+      // An empty or half-written file is what a write in progress looks like, and also what a process killed mid-`writeFileExclusive` leaves. Only a second read, a retry delay later, that still cannot be parsed says it is the second.
+      params.sleep(retryDelayMs);
+      const again = params.fs.readFileUtf8(lockPath);
+      if (again === undefined) {
+        continue;
+      }
+      existing = parseLockRecord(again);
+    }
+    if (existing === undefined) {
       params.fs.removeRecursive(lockPath);
       continue;
     }
