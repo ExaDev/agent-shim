@@ -13,7 +13,8 @@ import { IDENTITY_NAME_LOCATIONS } from "./identityNameLocations";
 import { createFakeKeychain, type FakeKeychain } from "./keychainTestWorld";
 import type { SessionProcess } from "./identitySessions";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
-import { sameDirectory } from "./realIdentityRename";
+import { registerLaunch } from "./launcher/launchRecords";
+import { realLaunchProbe, sameDirectory } from "./realIdentityRename";
 import { realFarmFs } from "./realPorts";
 import { claudeCodeKeychainService } from "./usage/signIn";
 
@@ -34,6 +35,8 @@ interface World {
   readonly keychain: FakeKeychain;
   readonly cache: Map<string, CachedCredential>;
   readonly sessions: Map<string, readonly SessionProcess[]>;
+  /** The launches in progress, by identity name: a launcher that has recorded itself and not yet exited. */
+  readonly launches: Map<string, readonly SessionProcess[]>;
   readonly ports: (overrides?: Partial<IdentityRenamePorts>) => IdentityRenamePorts;
   readonly read: (relative: string) => string;
   readonly json: (relative: string) => unknown;
@@ -59,6 +62,7 @@ function createWorld(platform: NodeJS.Platform = "linux"): World {
   const keychain = createFakeKeychain();
   const cache = new Map<string, CachedCredential>();
   const sessions = new Map<string, readonly SessionProcess[]>();
+  const launches = new Map<string, readonly SessionProcess[]>();
   const tokenFile = path.join(root, "credentials", "work.token");
 
   writeJson(path.join(root, "identities", "work", "identity.json"), {
@@ -122,6 +126,7 @@ function createWorld(platform: NodeJS.Platform = "linux"): World {
     keychain,
     cache,
     sessions,
+    launches,
     ports: (overrides = {}) => ({
       fs: realFarmFs,
       credentialCache: { port: cachePort, platform: "linux" },
@@ -130,6 +135,7 @@ function createWorld(platform: NodeJS.Platform = "linux"): World {
       home: "/example/home",
       sameDirectory,
       sessions: { sessionsOn: (configDir) => sessions.get(configDir) ?? [] },
+      launches: { liveOn: (identity) => launches.get(identity) ?? [] },
       lock: { nowMs: () => NOW_MS, pid: OWN_PID, isRunning: () => true, sleep: () => undefined },
       ...overrides,
     }),
@@ -323,6 +329,20 @@ describe("renameIdentity", () => {
       expect(() => renameIdentity(world.paths, "work", "client", world.ports())).toThrow(IdentityInUseError);
       expect(() => renameIdentity(world.paths, "work", "client", world.ports())).toThrow(/pid 4711 \(claude\)/);
       expect(treeOf(world.root)).toEqual(before);
+    });
+
+    it("refuses while a launch is between its farm resync and its spawn, when no process carries the directory yet, naming the launcher", () => {
+      world.launches.set("work", [{ pid: 4712, program: "agent-shim launch" }]);
+      const before = treeOf(world.root);
+      expect(() => renameIdentity(world.paths, "work", "client", world.ports())).toThrow(IdentityInUseError);
+      expect(() => renameIdentity(world.paths, "work", "client", world.ports())).toThrow(/pid 4712 \(agent-shim launch\)/);
+      expect(() => describeIdentityRename(world.paths, "work", "client", world.ports())).toThrow(IdentityInUseError);
+      expect(treeOf(world.root)).toEqual(before);
+    });
+
+    it("does not mind a launch of another identity", () => {
+      world.launches.set("personal", [{ pid: 4712, program: "agent-shim launch" }]);
+      expect(() => renameIdentity(world.paths, "work", "client", world.ports())).not.toThrow();
     });
 
     it("refuses an unknown identity, a name it already has, an unusable name and an unchanged one, naming which", () => {
@@ -528,6 +548,35 @@ describe("renameIdentity and the usage records of the current five-hour window",
     log(record("work", OUTSIDE_WINDOW_HOURS_AGO), record("personal", 1), record("work", 1, "z"));
     expect(describeIdentityRename(world.paths, "work", "client", ports()).warnings).toEqual([]);
     expect(renameIdentity(world.paths, "work", "client", ports()).warnings).toEqual([]);
+  });
+});
+
+describe("renameIdentity against the launch records a launcher writes", () => {
+  let world: World;
+
+  beforeEach(() => {
+    world = createWorld();
+  });
+
+  afterEach(() => {
+    fs.rmSync(world.root, { recursive: true, force: true });
+  });
+
+  it("refuses while a running launcher's record names the identity, and goes ahead once the launcher has removed it", () => {
+    const ports = world.ports({ launches: realLaunchProbe(world.paths) });
+    const remove = registerLaunch(realFarmFs, world.paths.launchesDir, { pid: process.pid, identity: "work", startedAtMs: NOW_MS }, () => true);
+    expect(() => renameIdentity(world.paths, "work", "client", ports)).toThrow(/agent-shim launch/);
+    expect(fs.existsSync(world.directory("work"))).toBe(true);
+    remove();
+    renameIdentity(world.paths, "work", "client", ports);
+    expect(fs.existsSync(world.directory("client"))).toBe(true);
+  });
+
+  it("ignores the record of a launcher that is no longer running, as one that crashed leaves", () => {
+    const deadPid = 2_147_483_646;
+    registerLaunch(realFarmFs, world.paths.launchesDir, { pid: deadPid, identity: "work", startedAtMs: NOW_MS }, () => true);
+    renameIdentity(world.paths, "work", "client", world.ports({ launches: realLaunchProbe(world.paths) }));
+    expect(fs.existsSync(world.directory("client"))).toBe(true);
   });
 });
 

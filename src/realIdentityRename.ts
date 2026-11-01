@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import os from "node:os";
 
-import type { IdentityRenamePorts } from "./identityRename";
+import type { IdentityLaunchProbe, IdentityRenamePorts } from "./identityRename";
 import { createIdentitySessionProbe, type ProcessTableFs, type ProcRead } from "./identitySessions";
+import { liveLaunchesOn } from "./launcher/launchRecords";
 import type { LayoutPaths } from "./paths";
 import { realCredentialCacheEnv } from "./realCredentialCache";
 import { realFarmFs, realIsProcessRunning, realRunPort, realSleepSync } from "./realPorts";
@@ -65,6 +66,14 @@ export function sameDirectory(first: string, second: string): boolean {
   return a.dev === b.dev && a.ino === b.ino;
 }
 
+/** What a launch in progress is called when a refusal names it. */
+const LAUNCH_PROGRAM = "agent-shim launch";
+
+/** The real launch probe: the records launchers write under the state root, of launchers whose process is still running. */
+export function realLaunchProbe(paths: LayoutPaths): IdentityLaunchProbe {
+  return { liveOn: (identity) => liveLaunchesOn(realFarmFs, paths.launchesDir, identity, realIsProcessRunning).map((pid) => ({ pid, program: LAUNCH_PROGRAM })) };
+}
+
 /** The real ports behind `identity rename`: the filesystem, the credential cache, `security`, the process table and the resync lock's clock, sleep and liveness check. */
 export function realIdentityRenamePorts(paths: LayoutPaths): IdentityRenamePorts {
   return {
@@ -74,6 +83,7 @@ export function realIdentityRenamePorts(paths: LayoutPaths): IdentityRenamePorts
     platform: process.platform,
     home: os.homedir(),
     sameDirectory,
+    launches: realLaunchProbe(paths),
     sessions: createIdentitySessionProbe(process.platform, { run: realRunPort, uid: currentUid, ownPid: process.pid, procFs: realProcessTableFs, realpath: realpathOrSelf }),
     lock: { nowMs: () => Date.now(), pid: process.pid, isRunning: realIsProcessRunning, sleep: realSleepSync },
   };

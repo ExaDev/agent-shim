@@ -53,6 +53,7 @@ export const IDENTITY_NAME_LOCATIONS = {
   usageJobsFile: "unaffected",
   jobLogsDir: "unaffected",
   statuslineDir: "unaffected",
+  launchesDir: "unaffected",
   superviseDir: "unaffected",
   modelMovesDir: "unaffected",
 } as const satisfies Record<keyof LayoutPaths, NameLocation>;

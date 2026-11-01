@@ -8,6 +8,7 @@ import type { LayoutPaths } from "./paths";
 import { parseLauncherArgv, type ParsedLauncherArgv } from "./launcher/argv";
 import { buildCliOverride, type CliOverride } from "./launcher/cliOverride";
 import { IdentityGoneError, recoverFarm, recoveryDiagnostics, resyncFarm } from "./launcher/farm";
+import { registerLaunch } from "./launcher/launchRecords";
 import { evaluateAmbientCredentialGuard } from "./launcher/guard";
 import { decideConfigProfile, decideIdentity, loadIdentity, type ConfigProfileDecisionSource, type IdentityDecision, type IdentityDecisionSource } from "./launcher/identity";
 import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedLaunchFlags, type ResolvedProvider } from "./launcher/flags";
@@ -593,6 +594,25 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
 }
 
 /**
+ * Decides one launch and brings everything its child depends on into place; see `prepareRegisteredLaunch` for the steps.
+ *
+ * When the launch resyncs an identity's farm it records itself first (see `registerLaunch`), and the record stays until the returned plan is released. A launch that fails after recording removes the record before the failure propagates, so a library host that outlives the failure does not leave an identity that can never be renamed.
+ */
+export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
+  const removers: (() => void)[] = [];
+  try {
+    return prepareRegisteredLaunch(params, (remove) => {
+      removers.push(remove);
+    });
+  } catch (error) {
+    for (const remove of removers) {
+      remove();
+    }
+    throw error;
+  }
+}
+
+/**
  * Prepares one `claude` launch, in order:
  *
  * `CLAUDE_CONFIG_DIR` escape-hatch check, then the identity/config-profile decision, the provider decision, the identity's own credential, the ambient-credential guard, the config-gated launch-time update check (fired after the decision line and never awaited; see `runLaunchUpdateCheck`), farm resync, version discovery, flag resolution (and, when headroom resolved on, daemon bring-up), the extra-flags split, and the final argument list and environment, returned as a `LaunchPlan` for the caller to spawn. It refuses through `params.proc.exit`, so a caller that is not a command line process passes a `proc` whose `exit` throws.
@@ -601,7 +621,7 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
  *
  * The farm resync is skipped when `CLAUDE_CONFIG_DIR` was already set (the escape hatch means the user has named a configuration directory explicitly, and agent-shim manages neither its contents nor its lifetime) and when no identity resolved at all (a bare launch against plain `~/.claude`, matching the legacy tool's own behaviour). In both cases there is no agent-shim-managed farm for a resync to act on.
  */
-export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
+function prepareRegisteredLaunch(params: PrepareLaunchParams, onRecorded: (remove: () => void) => void): LaunchPlan {
   const { paths, proc, log } = params;
   const { env } = proc;
   const decided = decideLaunch(params, false);
@@ -624,6 +644,7 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
     }),
   ];
   let warnings: readonly DiagnosticLine[] = [];
+  let unregisterLaunch: (() => void) | undefined;
 
   // The launch-time update check sits directly after the launch's decisions are made: it is the last thing that may write to the terminal before the child owns it, it never awaits anything (its answer arrives, if at all, while the child runs), and it is wrapped so a network or filesystem failure never delays, blocks or fails the launch.
   const updateCheck = runLaunchUpdateCheck({
@@ -636,6 +657,9 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
   // The farm resync sits here, between the identity/profile decision above and the daemons below, because it needs the first: the launch flags it would otherwise have produced are already in `decided`, computed from the same assembled cascade it consumes.
   if (decided.farmContext !== undefined) {
     const { farm: resyncFarmRuntime, identity: resyncIdentity, cascade } = decided.farmContext;
+    // Recorded before the lock is asked for, not after the resync: a rename that takes the lock while this launch waits for it must still see the launch, and one that looks after the resync must find it until the child exists.
+    unregisterLaunch = registerLaunch(resyncFarmRuntime.fs, paths.launchesDir, { pid: resyncFarmRuntime.lock.pid, identity: resyncIdentity, startedAtMs: resyncFarmRuntime.now() }, resyncFarmRuntime.lock.isRunning);
+    onRecorded(unregisterLaunch);
     let result;
     try {
       result = resyncFarm({
@@ -730,7 +754,7 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
   });
 
   // Every daemon session registration this launch holds, released when the child exits.
-  const releases = [...(headroom === undefined || headroomPort === undefined ? [] : [headroomPort.release]), ...(frontDoorRelease === undefined ? [] : [frontDoorRelease])];
+  const releases = [...(unregisterLaunch === undefined ? [] : [unregisterLaunch]), ...(headroom === undefined || headroomPort === undefined ? [] : [headroomPort.release]), ...(frontDoorRelease === undefined ? [] : [frontDoorRelease])];
   const release = (): void => {
     for (const registered of releases) {
       registered();

@@ -10,7 +10,7 @@ import { effectiveStore, type CachedCredential, type CredentialCachePort } from 
 import { renameIdentityInRules } from "./directoryRulesStore";
 import { IdentityAlreadyExistsError, IdentityNotFoundError, identityExists, identityFarmEntries, listIdentities, readActiveIdentity, readIdentity, renamedFarmEntry, requireNewIdentityName } from "./identityStore";
 import { identityTokenPath } from "./identityToken";
-import type { IdentitySessionProbe } from "./identitySessions";
+import type { IdentitySessionProbe, SessionProcess } from "./identitySessions";
 import { renameIdentityInJobs } from "./jobStore";
 import { deleteKeychainLogin, planKeychainLogin, readKeychainLogin, writeKeychainLogin, type KeychainLoginPlan } from "./keychainLogin";
 import { FARM_MANIFEST_FILENAME, manifestWithIdentity } from "./launcher/farm";
@@ -44,8 +44,16 @@ export interface IdentityRenamePorts {
   readonly sameDirectory: (first: string, second: string) => boolean;
   /** Tells whether a session is running against the identity's directory. */
   readonly sessions: IdentitySessionProbe;
+  /** The launches in progress for an identity: a launcher that has recorded itself and not yet exited, which is a session about to start when no process carries the directory yet. */
+  readonly launches: IdentityLaunchProbe;
   /** What taking a resync lock needs from the machine. */
   readonly lock: Pick<AcquireIdentityLockParams, "nowMs" | "pid" | "isRunning" | "sleep">;
+}
+
+/** Tells which launches are in progress for an identity. Injected so the rename never reads the real launch records in a test. */
+export interface IdentityLaunchProbe {
+  /** The launchers that are launching `identity` now, in the shape of the sessions found on its directory. */
+  readonly liveOn: (identity: string) => readonly SessionProcess[];
 }
 
 /** What `renameIdentity` did, or in a dry run would do, for the command to report. */
@@ -66,7 +74,7 @@ export class IdentityInUseError extends CliError {
     readonly directory: string,
     readonly sessions: readonly { readonly pid: number; readonly program: string }[],
   ) {
-    super(`Identity "${identity}" is in use: ${sessions.map((session) => `pid ${String(session.pid)} (${session.program})`).join(", ")} ${sessions.length === 1 ? "is" : "are"} running against ${directory}. End ${sessions.length === 1 ? "it" : "them"}, then run the command again.`);
+    super(`Identity "${identity}" is in use: ${sessions.map((session) => `pid ${String(session.pid)} (${session.program})`).join(", ")} ${sessions.length === 1 ? "is" : "are"} using ${directory}. End ${sessions.length === 1 ? "it" : "them"}, then run the command again.`);
     this.name = "IdentityInUseError";
   }
 }
@@ -468,12 +476,12 @@ function gather(paths: LayoutPaths, from: string, to: string, ports: IdentityRen
   };
 }
 
-/** Throws `IdentityInUseError` when a session is running against `from`'s directory. */
+/** Throws `IdentityInUseError` when a session is running against `from`'s directory, or a launch of it is between its farm resync and its spawn. */
 function requireNoSessions(paths: LayoutPaths, from: string, ports: IdentityRenamePorts): void {
   const directory = path.join(paths.identitiesDir, from);
-  const sessions = ports.sessions.sessionsOn(directory);
-  if (sessions.length > 0) {
-    throw new IdentityInUseError(from, directory, sessions);
+  const using = [...ports.sessions.sessionsOn(directory), ...ports.launches.liveOn(from)];
+  if (using.length > 0) {
+    throw new IdentityInUseError(from, directory, using);
   }
 }
 
