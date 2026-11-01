@@ -80,7 +80,7 @@ describe("identity rename", () => {
   function seed(): void {
     addIdentity(paths, "work");
     useIdentity(paths, "work");
-    keychain.items.set(claudeCodeKeychainService(path.join(paths.identitiesDir, "work")), { account: "alex", secret: "a-made-up-login-blob" });
+    keychain.seed(claudeCodeKeychainService(path.join(paths.identitiesDir, "work")), "alex", "a-made-up-login-blob");
   }
 
   it("renames the identity, its active selection and its Keychain login, and lists what it did", async () => {
