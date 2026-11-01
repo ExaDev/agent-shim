@@ -129,6 +129,9 @@ export interface UnreadableIdentityListEntry {
 /** Either shape `listIdentities` can report, discriminated by which of `identity`/`problem` is present rather than by a tag field — the two are never simultaneously satisfiable. */
 export type IdentityListing = IdentityListEntry | UnreadableIdentityListEntry;
 
+/** What an `identity.json` that is not JSON is reported as, with nothing of its text. */
+const NOT_JSON_PROBLEM = "is not valid JSON";
+
 /**
  * Reads one identity for `listIdentities`, converting an unreadable `identity.json` into a reportable problem string instead of throwing.
  *
@@ -140,7 +143,11 @@ function readIdentityForListing(paths: LayoutPaths, name: string): Identity | { 
   try {
     return readIdentity(paths, name);
   } catch (error) {
-    if (error instanceof ConfigValidationError || error instanceof SyntaxError) {
+    // A SyntaxError's message quotes the text either side of the failure, which may be a secret, so the file is said to be not JSON and nothing of it is repeated.
+    if (error instanceof SyntaxError) {
+      return { problem: NOT_JSON_PROBLEM };
+    }
+    if (error instanceof ConfigValidationError) {
       return { problem: error.message.replace(/\s*\n\s*/g, " ") };
     }
     throw error;
