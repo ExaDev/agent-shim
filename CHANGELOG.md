@@ -1,3 +1,10 @@
+## [11.76.0](https://github.com/ExaDev/agent-shim/compare/v11.75.0...v11.76.0) (2026-11-01)
+
+### Features
+
+* **identity:** name the provider an identity exists for ([386bfa4](https://github.com/ExaDev/agent-shim/commit/386bfa4b4a9d7f14db17ab309267d5f6a1fcd789))
+* **identity:** set an identity's provider from the CLI and the config API ([8911911](https://github.com/ExaDev/agent-shim/commit/891191147e2a487c3f9e06144950feb90056d2c3))
+
 ## [11.75.0](https://github.com/ExaDev/agent-shim/compare/v11.74.0...v11.75.0) (2026-11-01)
 
 ### Features
