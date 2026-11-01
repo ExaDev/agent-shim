@@ -12,7 +12,7 @@ import { IdentityAlreadyExistsError, IdentityNotFoundError, identityExists, iden
 import { identityTokenPath } from "./identityToken";
 import type { IdentitySessionProbe } from "./identitySessions";
 import { renameIdentityInJobs } from "./jobStore";
-import { deleteKeychainLogin, copyKeychainLogin, planKeychainLogin, type KeychainLoginPlan } from "./keychainLogin";
+import { deleteKeychainLogin, planKeychainLogin, readKeychainLogin, writeKeychainLogin, type KeychainLoginPlan } from "./keychainLogin";
 import { FARM_MANIFEST_FILENAME, manifestWithIdentity } from "./launcher/farm";
 import { acquireIdentityLock, type AcquireIdentityLockParams, type IdentityLock } from "./launcher/lock";
 import type { FarmFs, RunPort } from "./launcher/ports";
@@ -287,33 +287,38 @@ function moveStep(paths: LayoutPaths, ports: IdentityRenamePorts, source: string
   };
 }
 
-/** The Keychain steps: copy the macOS login to the service the new directory hashes to now, and delete the old item once everything else has succeeded. */
-function keychainPlan(ports: IdentityRenamePorts, fromDir: string, toDir: string): { readonly step: Step; readonly finisher: Finisher } | undefined {
-  const login: KeychainLoginPlan | undefined = ports.platform === "darwin" ? planKeychainLogin(ports.run, fromDir, toDir) : undefined;
+/**
+ * The Keychain steps: copy the macOS login to the service the new directory hashes to now, and delete the old item once everything else has succeeded. `login` is the plan and the password bytes read before the locks were taken; a dry run reads no password, so the step it plans has no bytes and is never applied.
+ */
+function keychainPlan(ports: IdentityRenamePorts, login: GatheredLogin | undefined, toDir: string): { readonly step: Step; readonly finisher: Finisher } | undefined {
   if (login === undefined) {
     return undefined;
   }
+  const { plan } = login;
   return {
     step: {
-      description: `copy the Keychain login "${login.fromService}" to "${login.toService}"`,
+      description: `copy the Keychain login "${plan.fromService}" to "${plan.toService}"`,
       apply: () => {
-        copyKeychainLogin(ports.run, login);
+        if (login.bytes === undefined) {
+          throw new Error("a plan made for a dry run reads no login, so it cannot be applied");
+        }
+        writeKeychainLogin(ports.run, plan, login.bytes);
       },
       undo: () => {
-        deleteKeychainLogin(ports.run, login.toService, login.account);
+        deleteKeychainLogin(ports.run, plan.toService, plan.account);
       },
     },
     finisher: {
-      description: `delete the former Keychain login "${login.fromService}"`,
+      description: `delete the former Keychain login "${plan.fromService}"`,
       finish: () => {
-        const remove = `security delete-generic-password -s "${login.fromService}" -a "${login.account}"`;
+        const remove = `security delete-generic-password -s "${plan.fromService}" -a "${plan.account}"`;
         if (!keychainHasItem(ports.run, toDir)) {
-          return `The new Keychain login "${login.toService}" could not be found after the rename, so the former one "${login.fromService}" was kept. Look at the new one before deleting the old with \`${remove}\`.`;
+          return `The new Keychain login "${plan.toService}" could not be found after the rename, so the former one "${plan.fromService}" was kept. Look at the new one before deleting the old with \`${remove}\`.`;
         }
         try {
-          deleteKeychainLogin(ports.run, login.fromService, login.account);
+          deleteKeychainLogin(ports.run, plan.fromService, plan.account);
         } catch (error) {
-          return `The former Keychain login "${login.fromService}" could not be deleted (${error instanceof Error ? error.message : String(error)}). It is harmless: delete it with \`${remove}\`.`;
+          return `The former Keychain login "${plan.fromService}" could not be deleted (${error instanceof Error ? error.message : String(error)}). It is harmless: delete it with \`${remove}\`.`;
         }
         return undefined;
       },
@@ -321,22 +326,20 @@ function keychainPlan(ports: IdentityRenamePorts, fromDir: string, toDir: string
   };
 }
 
-/** The step that moves the cached credential from the old owner to the new, when the identity's credential block turns caching on. Whether an entry exists is only known by reading it, which can prompt for a secret, so the plan names the step and applying it moves nothing when none is stored. */
-function credentialCacheStep(ports: IdentityRenamePorts, from: string, to: string, store: CredentialCacheStore): Step {
+/** The step that moves the cached credential from the old owner to the new, when the identity's credential block turns caching on. `cached` is the entry read before the locks were taken, because reading it can wait on a person; the plan names the step whether or not one is stored, and applying it moves nothing when none is. */
+function credentialCacheStep(ports: IdentityRenamePorts, from: string, to: string, store: CredentialCacheStore, cached: CachedCredential | undefined): Step {
   const { port } = ports.credentialCache;
-  let moved: CachedCredential | undefined;
   return {
     description: `move the cached credential of identity ${from} to identity ${to}, if one is stored`,
     apply: () => {
-      moved = port.read(store, `identity ${from}`);
-      if (moved !== undefined) {
-        port.write(store, `identity ${to}`, moved);
+      if (cached !== undefined) {
+        port.write(store, `identity ${to}`, cached);
         port.remove(store, `identity ${from}`);
       }
     },
     undo: () => {
-      if (moved !== undefined) {
-        port.write(store, `identity ${from}`, moved);
+      if (cached !== undefined) {
+        port.write(store, `identity ${from}`, cached);
         port.remove(store, `identity ${to}`);
       }
     },
@@ -437,15 +440,49 @@ function credentialHolderSteps(paths: LayoutPaths, ports: IdentityRenamePorts, f
   return [...identitySteps, ...providerSteps];
 }
 
+/** The login a dry run plans around: which services it would copy between, found from attributes alone, and no password. */
+function dryRunLogin(ports: IdentityRenamePorts, fromDir: string, toDir: string): GatheredLogin | undefined {
+  const plan = ports.platform === "darwin" ? planKeychainLogin(ports.run, fromDir, toDir) : undefined;
+  return plan === undefined ? undefined : { plan, bytes: undefined };
+}
+
+/** The login of the identity in the macOS Keychain: how to copy it, and its password bytes when they were read (a dry run reads none). */
+interface GatheredLogin {
+  readonly plan: KeychainLoginPlan;
+  readonly bytes: Buffer | undefined;
+}
+
+/** What the rename reads before it takes any lock, because each read can wait on a person: the Keychain asks to approve `security` reading an item Claude Code wrote, and may ask for the Keychain to be unlocked. Holding a lock across such a wait would let it go stale. */
+interface Gathered {
+  readonly login: GatheredLogin | undefined;
+  readonly cached: CachedCredential | undefined;
+}
+
+/** Reads what `Gathered` holds. Throws `KeychainLoginError` when the new directory's service already holds an item, or the login cannot be read. */
+function gather(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts): Gathered {
+  const plan = ports.platform === "darwin" ? planKeychainLogin(ports.run, path.join(paths.identitiesDir, from), path.join(paths.identitiesDir, to)) : undefined;
+  const cache = readIdentity(paths, from)?.credential?.cache;
+  return {
+    login: plan === undefined ? undefined : { plan, bytes: readKeychainLogin(ports.run, plan) },
+    cached: cache === undefined ? undefined : ports.credentialCache.port.read(effectiveStore(cache, ports.credentialCache.platform), `identity ${from}`),
+  };
+}
+
+/** Throws `IdentityInUseError` when a session is running against `from`'s directory. */
+function requireNoSessions(paths: LayoutPaths, from: string, ports: IdentityRenamePorts): void {
+  const directory = path.join(paths.identitiesDir, from);
+  const sessions = ports.sessions.sessionsOn(directory);
+  if (sessions.length > 0) {
+    throw new IdentityInUseError(from, directory, sessions);
+  }
+}
+
 /** Builds the plan: every check that can refuse, then every step in the order it is applied. The order puts what can fail for reasons outside the files first and the Keychain's old item last, and rewrites the identity's own files before the directory moves so each path is read where it is. */
-function planRename(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts): Plan {
+function planRename(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts, gathered: Gathered | undefined): Plan {
   requireRenamable(paths, from, to, ports);
   const fromDir = path.join(paths.identitiesDir, from);
   const toDir = path.join(paths.identitiesDir, to);
-  const sessions = ports.sessions.sessionsOn(fromDir);
-  if (sessions.length > 0) {
-    throw new IdentityInUseError(from, fromDir, sessions);
-  }
+  requireNoSessions(paths, from, ports);
   const fromToken = identityTokenPath(paths, from);
   const toToken = identityTokenPath(paths, to);
   const tokenExists = ports.fs.lstat(fromToken) !== undefined;
@@ -458,7 +495,7 @@ function planRename(paths: LayoutPaths, from: string, to: string, ports: Identit
   }
 
   const moved: MovedPaths = { fromDir, toDir, fromToken, toToken, home: ports.home };
-  const keychain = keychainPlan(ports, fromDir, toDir);
+  const keychain = keychainPlan(ports, gathered === undefined ? dryRunLogin(ports, fromDir, toDir) : gathered.login, toDir);
   const farmFiles = [FARM_MANIFEST_FILENAME, LEGACY_FARM_MANIFEST_FILENAME].map((name) => path.join(fromDir, name));
   const steps: (Step | undefined)[] = [
     keychain?.step,
@@ -475,7 +512,7 @@ function planRename(paths: LayoutPaths, from: string, to: string, ports: Identit
     })),
     ...identityFarmEntries(paths, from).map((entry) => moveStep(paths, ports, path.join(paths.identitiesDir, entry), path.join(paths.identitiesDir, renamedFarmEntry(entry, from, to)))),
     tokenExists ? moveStep(paths, ports, fromToken, toToken) : undefined,
-    identity.credential?.cache === undefined ? undefined : credentialCacheStep(ports, from, to, effectiveStore(identity.credential.cache, ports.credentialCache.platform)),
+    identity.credential?.cache === undefined ? undefined : credentialCacheStep(ports, from, to, effectiveStore(identity.credential.cache, ports.credentialCache.platform), gathered?.cached),
     jsonRewriteStep(paths, paths.globalConfigFile, GlobalConfigSchema, (config) => {
       const pools = config.pools === undefined ? undefined : renameIdentityInPools(config.pools, from, to);
       const jobs = config.jobs === undefined ? undefined : renameIdentityInJobs(config.jobs, from, to);
@@ -593,7 +630,7 @@ function descriptionsOf(plan: Plan): readonly string[] {
  */
 export function describeIdentityRename(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts): IdentityRenameReport {
   requireNames(from, to);
-  const plan = planRename(paths, from, to, ports);
+  const plan = planRename(paths, from, to, ports, undefined);
   return { from, to, dryRun: true, steps: descriptionsOf(plan), warnings: plan.notes };
 }
 
@@ -606,10 +643,12 @@ export function describeIdentityRename(paths: LayoutPaths, from: string, to: str
  */
 export function renameIdentity(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts): IdentityRenameReport {
   requireNames(from, to);
-  requireRenamable(paths, from, to, ports);
+  // Every refusal that needs no secret comes first, so a person is never asked to approve a read for a rename that was going to fail. The plan is made again under the locks, from what is on disk by then.
+  planRename(paths, from, to, ports, undefined);
+  const gathered = gather(paths, from, to, ports);
   const held = holdLocks(paths, [from, to], ports);
   try {
-    const plan = planRename(paths, from, to, ports);
+    const plan = planRename(paths, from, to, ports, gathered);
     applyAll(plan.steps, held.refresh);
     const warnings = plan.finishers.flatMap((finisher) => finisher.finish() ?? []);
     return { from, to, dryRun: false, steps: descriptionsOf(plan), warnings: [...plan.notes, ...warnings] };

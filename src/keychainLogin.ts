@@ -133,11 +133,11 @@ function addCommand(plan: KeychainLoginPlan, bytes: Buffer): string | undefined 
 }
 
 /**
- * Copies the login to the new service, then checks the new item is there. The bytes are read from the old item into memory and written to the new one through `security -i` on standard input, so they are never in an argument list, where any local process could read them from the process table. No message carries any text the tool printed while the bytes were in play, because the tool repeats the arguments it was given when a command fails: a failure is reported by exit status and the step that failed.
+ * Reads the login's password bytes from the old item into memory. This is the call that can wait on a person: the item was written by Claude Code, so `security` is not on its access list and the Keychain may ask for approval, or for the Keychain to be unlocked. Callers make it before they take anything others wait on.
  *
- * On failure the new item is removed again if it was created, the old item is untouched, and `KeychainLoginError` is thrown. The old item is the caller's to delete once the whole rename has succeeded (`deleteKeychainLogin`).
+ * No message carries any text the tool printed, because it prints the password itself on standard error: a failure is reported by exit status alone.
  */
-export function copyKeychainLogin(run: RunPort, plan: KeychainLoginPlan): void {
+export function readKeychainLogin(run: RunPort, plan: KeychainLoginPlan): Buffer {
   const read = run.run("security", ["find-generic-password", "-s", plan.fromService, "-a", plan.account, "-g"]);
   if (read.status !== 0) {
     throw new KeychainLoginError(`Could not read the login stored under ${plan.fromService}: security exited ${statusPhrase(read.status)} while reading it.`);
@@ -146,6 +146,15 @@ export function copyKeychainLogin(run: RunPort, plan: KeychainLoginPlan): void {
   if (bytes === undefined || bytes.length === 0) {
     throw new KeychainLoginError(`The login stored under ${plan.fromService} has no password this tool can read, so there is nothing to copy.`);
   }
+  return bytes;
+}
+
+/**
+ * Writes `bytes`, as read by `readKeychainLogin`, to the new service, then checks the new item is there. The bytes go through `security -i` on standard input, so they are never in an argument list, where any local process could read them from the process table. The tool repeats the arguments it was given when a command fails, so a failure is reported by exit status and the step that failed, never by text the tool printed.
+ *
+ * On failure the new item is removed again if it was created, the old item is untouched, and `KeychainLoginError` is thrown. A login too large for one interactive line in either encoding is refused before anything is written. The old item is the caller's to delete once the whole rename has succeeded (`deleteKeychainLogin`).
+ */
+export function writeKeychainLogin(run: RunPort, plan: KeychainLoginPlan, bytes: Buffer): void {
   const command = addCommand(plan, bytes);
   if (command === undefined) {
     throw new KeychainLoginError(`The login stored under ${plan.fromService} is too large to copy without putting it in a command's arguments, which \`security -i\` takes at most ${String(INTERACTIVE_LINE_LIMIT)} characters of. Sign in again under the new name instead.`);
