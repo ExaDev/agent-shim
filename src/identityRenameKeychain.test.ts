@@ -5,7 +5,7 @@ import { IdentityInUseError, renameIdentity } from "./identityRename";
 import type { CredentialCachePort } from "./credentialCache";
 import { realFarmFs } from "./realPorts";
 import { claudeCodeKeychainService } from "./usage/signIn";
-import { LOGIN_SECRET, type World, createWorld, treeOf } from "./identityRenameTestWorld";
+import { LOGIN_SECRET, type World, createWorld, treeOf, failingOnce } from "./identityRenameTestWorld";
 
 describe("renameIdentity with a macOS Keychain login", () => {
   let world: World;
@@ -103,15 +103,7 @@ describe("renameIdentity with a macOS Keychain login", () => {
 
   it("removes the new item and keeps the old one when a later step fails", async () => {
     const before = treeOf(world.root);
-    const failing = {
-      ...realFarmFs,
-      writeFilePrivate: (file: string, contents: string): void => {
-        if (file === world.paths.usageAnchorsFile) {
-          throw new Error("disk full");
-        }
-        realFarmFs.writeFilePrivate(file, contents);
-      },
-    };
+    const failing = failingOnce(world);
     await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: failing }))).rejects.toThrow(/disk full/);
     expect(treeOf(world.root)).toEqual(before);
     expect(world.keychain.items.has(oldService())).toBe(true);

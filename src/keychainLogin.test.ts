@@ -48,7 +48,7 @@ function exposedArguments(calls: readonly { readonly command: string; readonly a
 describe("planKeychainLogin", () => {
   it("names the services and the account of an existing login, reading attributes only", () => {
     const keychain = seeded();
-    expect(planKeychainLogin(keychain.run, FROM_DIR, TO_DIR)).toEqual({ fromService: FROM_SERVICE, toService: TO_SERVICE, account: "alex" });
+    expect(planKeychainLogin(keychain.run, FROM_DIR, TO_DIR)).toEqual({ fromService: FROM_SERVICE, toService: TO_SERVICE, account: "alex", alreadyCopied: false });
     expect(keychain.calls.map((call) => call.args)).toEqual([
       ["find-generic-password", "-s", FROM_SERVICE],
       ["find-generic-password", "-s", TO_SERVICE],
@@ -63,6 +63,25 @@ describe("planKeychainLogin", () => {
     const keychain = seeded();
     keychain.seed(TO_SERVICE, "alex", "left over from a removed identity");
     expect(() => planKeychainLogin(keychain.run, FROM_DIR, TO_DIR)).toThrow(/already holds a login/);
+  });
+});
+
+describe("planKeychainLogin for a rename being resumed", () => {
+  it("takes an item already under the new service as the earlier run's copy, and plans nothing to read or write", () => {
+    const keychain = seeded();
+    keychain.seed(TO_SERVICE, "alex", SECRET);
+    expect(planKeychainLogin(keychain.run, FROM_DIR, TO_DIR, true)).toEqual({ fromService: FROM_SERVICE, toService: TO_SERVICE, account: "alex", alreadyCopied: true });
+    expect(keychain.calls.every((call) => call.args[0] === "find-generic-password" && !call.args.includes("-g") && !call.args.includes("-w"))).toBe(true);
+  });
+
+  it("plans the copy as usual when the earlier run had not reached it", () => {
+    expect(planKeychainLogin(seeded().run, FROM_DIR, TO_DIR, true)).toMatchObject({ alreadyCopied: false });
+  });
+
+  it("plans nothing when the old item is gone too, as when the earlier run got as far as deleting it", () => {
+    const keychain = createFakeKeychain();
+    keychain.seed(TO_SERVICE, "alex", SECRET);
+    expect(planKeychainLogin(keychain.run, FROM_DIR, TO_DIR, true)).toBeUndefined();
   });
 });
 

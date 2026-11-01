@@ -8,8 +8,7 @@ import { identityTokenPath, TOKEN_FILE_MODE } from "./identityToken";
 import type { CredentialCachePort } from "./credentialCache";
 import { IDENTITY_NAME_LOCATIONS } from "./identityNameLocations";
 import { buildLayoutPaths } from "./paths";
-import { realFarmFs } from "./realPorts";
-import { NOW_MS, OTHER_SUFFIX, OWN_PID, PERMISSION_BITS, PRIVATE_FILE_MODE, SUFFIX, type World, createWorld, treeOf, writeFile, writeJson } from "./identityRenameTestWorld";
+import { NOW_MS, OTHER_SUFFIX, OWN_PID, PERMISSION_BITS, PRIVATE_FILE_MODE, SUFFIX, type World, createWorld, treeOf, writeFile, writeJson, failingOnce } from "./identityRenameTestWorld";
 
 describe("renameIdentity", () => {
   let world: World;
@@ -222,15 +221,7 @@ describe("renameIdentity", () => {
   describe("rollback", () => {
     it("restores everything when a late step fails", async () => {
       const before = treeOf(world.root);
-      const failing = {
-        ...realFarmFs,
-        writeFilePrivate: (file: string, contents: string): void => {
-          if (file === world.paths.usageAnchorsFile) {
-            throw new Error("disk full");
-          }
-          realFarmFs.writeFilePrivate(file, contents);
-        },
-      };
+      const failing = failingOnce(world);
       await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: failing }))).rejects.toThrow(/disk full/);
       expect(treeOf(world.root)).toEqual(before);
       expect(world.cache.get("file:identity work")?.token).toBe("a-made-up-cached-token");
@@ -239,10 +230,15 @@ describe("renameIdentity", () => {
 
     it("restores everything when a middle step fails", async () => {
       const before = treeOf(world.root);
+      let cacheFailed = false;
       const cachePort: CredentialCachePort = {
         read: (store, owner) => world.cache.get(`${store}:${owner}`),
-        write: () => {
-          throw new Error("cache store unavailable");
+        write: (store, owner, entry) => {
+          if (!cacheFailed) {
+            cacheFailed = true;
+            throw new Error("cache store unavailable");
+          }
+          world.cache.set(`${store}:${owner}`, entry);
         },
         remove: (store, owner) => {
           world.cache.delete(`${store}:${owner}`);

@@ -13,6 +13,7 @@ import { IdentityAlreadyExistsError, IdentityNotFoundError, identityExists, iden
 import { identityTokenPath } from "./identityToken";
 import type { IdentitySessionProbe, SessionProcess } from "./identitySessions";
 import { renameIdentityInJobs } from "./jobStore";
+import { describeUnfinishedRename, readRenameJournals, removeRenameJournal, renameJournalFile, unfinishedRenameFor, writeRenameJournal, type RenameJournal } from "./identityRenameJournal";
 import { deleteKeychainLogin, planKeychainLogin, readKeychainLogin, writeKeychainLogin, type KeychainLoginPlan } from "./keychainLogin";
 import { FARM_MANIFEST_FILENAME, manifestWithIdentity } from "./launcher/farm";
 import { acquireIdentityLock, type AcquireIdentityLockParams, type IdentityLock } from "./launcher/lock";
@@ -147,8 +148,28 @@ class SameDirectoryError extends CliError {
   }
 }
 
-/** The checks that read the machine's state. `from` must exist and `to` must be free in every place its name would be filed. */
-function requireRenamable(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts): void {
+/** Raised when a rename was left unfinished that names `from` or `to` and is not this same rename: the identities are partly moved, and anything else done to them now would be done to a state nobody chose. */
+class UnfinishedRenameError extends CliError {
+  constructor(from: string, to: string, journal: Readonly<RenameJournal>) {
+    super(`Cannot rename "${from}" to "${to}": there is ${describeUnfinishedRename(journal)}`);
+    this.name = "UnfinishedRenameError";
+  }
+}
+
+/**
+ * The checks that read the machine's state. `from` must exist and `to` must be free in every place its name would be filed. When `resuming` a rename that was left unfinished, the identity is wherever the earlier run got it to, under either name, and the places already moved are no clash.
+ */
+function requireRenamable(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts, resuming: boolean): void {
+  if (resuming) {
+    const underFrom = identityExists(paths, from);
+    if (underFrom && identityExists(paths, to)) {
+      throw new IdentityAlreadyExistsError(to);
+    }
+    if (!underFrom && !identityExists(paths, to)) {
+      throw new IdentityNotFoundError(from);
+    }
+    return;
+  }
   if (!identityExists(paths, from)) {
     throw new IdentityNotFoundError(from);
   }
@@ -235,7 +256,7 @@ function validated<S extends z.ZodType>(file: string, schema: S, value: unknown)
 /**
  * A step that rewrites one JSON configuration file, or undefined when the file is absent or `rewrite` finds nothing in it to change. It reads and writes through the same store as every other command, so keys this release does not know survive. The rewrite runs again when the step is applied, on what is on disk by then, and the file's exact bytes are kept to put back.
  */
-function jsonRewriteStep<S extends z.ZodType>(paths: LayoutPaths, file: string, schema: S, rewrite: (value: z.infer<S>) => Rewrite<z.infer<S>> | undefined): Step | undefined {
+function jsonRewriteStep<S extends z.ZodType>(paths: LayoutPaths, ports: IdentityRenamePorts, file: string, schema: S, rewrite: (value: z.infer<S>) => Rewrite<z.infer<S>> | undefined): Step | undefined {
   const current: z.infer<S> | undefined = readJson(file, schema);
   const planned = current === undefined ? undefined : rewrite(current);
   if (planned === undefined) {
@@ -254,7 +275,8 @@ function jsonRewriteStep<S extends z.ZodType>(paths: LayoutPaths, file: string, 
       }
     },
     undo: () => {
-      if (original !== undefined) {
+      // A file that moved with its directory has no place to be put back: writing here would make a stray directory under the old name, and the moved copy already holds what a resume expects.
+      if (original !== undefined && ports.fs.lstat(path.dirname(file)) !== undefined) {
         writeTextAtomic(file, original);
       }
     },
@@ -284,7 +306,7 @@ function textRewriteStep(paths: LayoutPaths, ports: IdentityRenamePorts, file: s
       }
     },
     undo: () => {
-      if (original !== undefined) {
+      if (original !== undefined && ports.fs.lstat(path.dirname(file)) !== undefined) {
         write(file, original);
       }
     },
@@ -309,24 +331,26 @@ function moveStep(paths: LayoutPaths, ports: IdentityRenamePorts, source: string
 /**
  * The Keychain steps: copy the macOS login to the service the new directory hashes to now, and delete the old item once everything else has succeeded. `login` is the plan and the password bytes read before the locks were taken; a dry run reads no password, so the step it plans has no bytes and is never applied.
  */
-function keychainPlan(ports: IdentityRenamePorts, login: GatheredLogin | undefined, toDir: string): { readonly step: Step; readonly finisher: Finisher } | undefined {
+function keychainPlan(ports: IdentityRenamePorts, login: GatheredLogin | undefined, toDir: string): { readonly step: Step | undefined; readonly finisher: Finisher } | undefined {
   if (login === undefined) {
     return undefined;
   }
   const { plan } = login;
   return {
-    step: {
-      description: `copy the Keychain login "${plan.fromService}" to "${plan.toService}"`,
-      apply: () => {
-        if (login.bytes === undefined) {
-          throw new Error("a plan made for a dry run reads no login, so it cannot be applied");
-        }
-        writeKeychainLogin(ports.run, plan, login.bytes);
-      },
-      undo: () => {
-        deleteKeychainLogin(ports.run, plan.toService, plan.account);
-      },
-    },
+    step: plan.alreadyCopied
+      ? undefined
+      : {
+          description: `copy the Keychain login "${plan.fromService}" to "${plan.toService}"`,
+          apply: () => {
+            if (login.bytes === undefined) {
+              throw new Error("a plan made for a dry run reads no login, so it cannot be applied");
+            }
+            writeKeychainLogin(ports.run, plan, login.bytes);
+          },
+          undo: () => {
+            deleteKeychainLogin(ports.run, plan.toService, plan.account);
+          },
+        },
     finisher: {
       description: `delete the former Keychain login "${plan.fromService}"`,
       finish: () => {
@@ -435,7 +459,7 @@ function credentialHolderSteps(paths: LayoutPaths, ports: IdentityRenamePorts, f
         refuseIfNamed(file, entry.problem);
         return undefined;
       }
-      return jsonRewriteStep(paths, file, IdentitySchema, (stored) => {
+      return jsonRewriteStep(paths, ports, file, IdentitySchema, (stored) => {
         const sources = stored.credential === undefined ? undefined : repointedSources(stored.credential.sources, moved);
         return stored.credential === undefined || sources === undefined ? undefined : { value: { ...stored, credential: { ...stored.credential, sources } }, changes: ["credential file source"] };
       });
@@ -448,7 +472,7 @@ function credentialHolderSteps(paths: LayoutPaths, ports: IdentityRenamePorts, f
     refuseIfNamed(providerJsonPath(paths, name), message.split("\n")[0] ?? message);
   }
   const providerSteps = providers.map(({ name }) =>
-    jsonRewriteStep(paths, providerJsonPath(paths, name), ProviderSchema, (stored) => {
+    jsonRewriteStep(paths, ports, providerJsonPath(paths, name), ProviderSchema, (stored) => {
       if (isRouterProvider(stored)) {
         return undefined;
       }
@@ -460,8 +484,8 @@ function credentialHolderSteps(paths: LayoutPaths, ports: IdentityRenamePorts, f
 }
 
 /** The login a dry run plans around: which services it would copy between, found from attributes alone, and no password. */
-function dryRunLogin(ports: IdentityRenamePorts, fromDir: string, toDir: string): GatheredLogin | undefined {
-  const plan = ports.platform === "darwin" ? planKeychainLogin(ports.run, fromDir, toDir) : undefined;
+function dryRunLogin(ports: IdentityRenamePorts, fromDir: string, toDir: string, resuming: boolean): GatheredLogin | undefined {
+  const plan = ports.platform === "darwin" ? planKeychainLogin(ports.run, fromDir, toDir, resuming) : undefined;
   return plan === undefined ? undefined : { plan, bytes: undefined };
 }
 
@@ -477,14 +501,19 @@ interface Gathered {
   readonly cached: CachedCredential | undefined;
 }
 
-/** Reads what `Gathered` holds. Throws `KeychainLoginError` when the new directory's service already holds an item, or the login cannot be read. */
-function gather(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts): Gathered {
-  const plan = ports.platform === "darwin" ? planKeychainLogin(ports.run, path.join(paths.identitiesDir, from), path.join(paths.identitiesDir, to)) : undefined;
-  const cache = readIdentity(paths, from)?.credential?.cache;
+/** Reads what `Gathered` holds. Throws `KeychainLoginError` when the new directory's service already holds an item that no earlier run of this rename put there, or the login cannot be read. */
+function gather(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts, resuming: boolean): Gathered {
+  const plan = ports.platform === "darwin" ? planKeychainLogin(ports.run, path.join(paths.identitiesDir, from), path.join(paths.identitiesDir, to), resuming) : undefined;
+  const cache = readIdentity(paths, currentName(paths, from, to))?.credential?.cache;
   return {
-    login: plan === undefined ? undefined : { plan, bytes: readKeychainLogin(ports.run, plan) },
+    login: plan === undefined ? undefined : { plan, bytes: plan.alreadyCopied ? undefined : readKeychainLogin(ports.run, plan) },
     cached: cache === undefined ? undefined : ports.credentialCache.port.read(effectiveStore(cache, ports.credentialCache.platform), `identity ${from}`),
   };
+}
+
+/** The name the identity is under now: `from`, or `to` when an earlier run of this rename had already moved it. */
+function currentName(paths: LayoutPaths, from: string, to: string): string {
+  return identityExists(paths, from) ? from : to;
 }
 
 /** Throws `IdentityInUseError` when a session is running against `from`'s directory, or a launch of it is between its farm resync and its spawn. */
@@ -497,29 +526,36 @@ function requireNoSessions(paths: LayoutPaths, from: string, ports: IdentityRena
 }
 
 /** Builds the plan: every check that can refuse, then every step in the order it is applied. The order puts what can fail for reasons outside the files first and the Keychain's old item last, and rewrites the identity's own files before the directory moves so each path is read where it is. */
-function planRename(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts, gathered: Gathered | undefined): Plan {
-  requireRenamable(paths, from, to, ports);
+function planRename(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts, gathered: Gathered | undefined, resuming: boolean): Plan {
+  requireRenamable(paths, from, to, ports, resuming);
   const fromDir = path.join(paths.identitiesDir, from);
   const toDir = path.join(paths.identitiesDir, to);
   requireNoSessions(paths, from, ports);
+  if (resuming) {
+    requireNoSessions(paths, to, ports);
+  }
   const fromToken = identityTokenPath(paths, from);
   const toToken = identityTokenPath(paths, to);
   const tokenExists = ports.fs.lstat(fromToken) !== undefined;
   if (tokenExists && ports.fs.lstat(toToken) !== undefined) {
     throw new RenameTargetTakenError(`A token file for "${to}" already exists at ${toToken}, so the one for "${from}" cannot move there.`);
   }
-  const identity = readIdentity(paths, from);
+  const identityDir = path.join(paths.identitiesDir, currentName(paths, from, to));
+  const identity = readIdentity(paths, currentName(paths, from, to));
   if (identity === undefined) {
     throw new IdentityNotFoundError(from);
   }
 
   const moved: MovedPaths = { fromDir, toDir, fromToken, toToken, home: ports.home };
-  const keychain = keychainPlan(ports, gathered === undefined ? dryRunLogin(ports, fromDir, toDir) : gathered.login, toDir);
-  const farmFiles = [FARM_MANIFEST_FILENAME, LEGACY_FARM_MANIFEST_FILENAME].map((name) => path.join(fromDir, name));
+  const keychain = keychainPlan(ports, gathered === undefined ? dryRunLogin(ports, fromDir, toDir, resuming) : gathered.login, toDir);
+  const farmFiles = [FARM_MANIFEST_FILENAME, LEGACY_FARM_MANIFEST_FILENAME].map((name) => path.join(identityDir, name));
   const steps: (Step | undefined)[] = [
     keychain?.step,
-    jsonRewriteStep(paths, path.join(fromDir, "identity.json"), IdentitySchema, (stored) => {
+    jsonRewriteStep(paths, ports, path.join(identityDir, "identity.json"), IdentitySchema, (stored) => {
       const sources = stored.credential === undefined ? undefined : repointedSources(stored.credential.sources, moved);
+      if (stored.name === to && sources === undefined) {
+        return undefined;
+      }
       return {
         value: { ...stored, name: to, ...(stored.credential === undefined || sources === undefined ? {} : { credential: { ...stored.credential, sources } }) },
         changes: ["name", ...(sources === undefined ? [] : ["credential file source"])],
@@ -532,7 +568,7 @@ function planRename(paths: LayoutPaths, from: string, to: string, ports: Identit
     ...identityFarmEntries(paths, from).map((entry) => moveStep(paths, ports, path.join(paths.identitiesDir, entry), path.join(paths.identitiesDir, renamedFarmEntry(entry, from, to)))),
     tokenExists ? moveStep(paths, ports, fromToken, toToken) : undefined,
     identity.credential?.cache === undefined ? undefined : credentialCacheStep(ports, from, to, effectiveStore(identity.credential.cache, ports.credentialCache.platform), gathered?.cached),
-    jsonRewriteStep(paths, paths.globalConfigFile, GlobalConfigSchema, (config) => {
+    jsonRewriteStep(paths, ports, paths.globalConfigFile, GlobalConfigSchema, (config) => {
       const pools = config.pools === undefined ? undefined : renameIdentityInPools(config.pools, from, to);
       const jobs = config.jobs === undefined ? undefined : renameIdentityInJobs(config.jobs, from, to);
       const models = config.models === undefined ? undefined : renameAccountModelRefs(config.models, from, to);
@@ -542,13 +578,13 @@ function planRename(paths: LayoutPaths, from: string, to: string, ports: Identit
         : { value: { ...config, ...(pools === undefined ? {} : { pools: pools.pools }), ...(jobs === undefined ? {} : { jobs: jobs.jobs }), ...(models === undefined ? {} : { models }) }, changes };
     }),
     ...listProfiles(paths).map(({ name }) =>
-      jsonRewriteStep(paths, path.join(paths.configProfilesDir, `${name}.json`), ConfigProfileSchema, (profile) => {
+      jsonRewriteStep(paths, ports, path.join(paths.configProfilesDir, `${name}.json`), ConfigProfileSchema, (profile) => {
         const models = profile.models === undefined ? undefined : renameAccountModelRefs(profile.models, from, to);
         return models === undefined ? undefined : { value: { ...profile, models }, changes: ["models"] };
       }),
     ),
     ...credentialHolderSteps(paths, ports, from, moved),
-    jsonRewriteStep(paths, paths.directoryRulesFile, DirectoryRulesSchema, (rules) => {
+    jsonRewriteStep(paths, ports, paths.directoryRulesFile, DirectoryRulesSchema, (rules) => {
       const renamed = renameIdentityInRules(rules, from, to);
       return renamed === undefined ? undefined : { value: renamed.rules, changes: renamed.renamedAt.map((rulePath) => `rule ${rulePath}`) };
     }),
@@ -570,12 +606,12 @@ function planRename(paths: LayoutPaths, from: string, to: string, ports: Identit
 /** The shell's convention for the exit status of a process ended by a signal: this plus the signal's number. */
 const SIGNAL_EXIT_STATUS_BASE = 128;
 
-/** Raised when the process was sent SIGINT or SIGTERM while the rename was applying its steps. Everything done so far has been undone, so nothing has changed. The exit status is the shell's convention for a process ended by that signal. */
+/** Raised when the process was sent SIGINT or SIGTERM while the rename was applying its steps. Everything this run did has been undone. The exit status is the shell's convention for a process ended by that signal. */
 class RenameInterruptedError extends CliError {
   override readonly exitCode: number;
 
-  constructor(readonly signal: NodeJS.Signals) {
-    super(`Interrupted by ${signal}: the rename was rolled back and nothing was changed.`);
+  constructor(readonly signal: NodeJS.Signals, resuming: boolean) {
+    super(`Interrupted by ${signal}: ${resuming ? "the steps this run applied were rolled back; the rename it was finishing is still unfinished, and running the same command again finishes it" : "the rename was rolled back and nothing was changed"}.`);
     this.name = "RenameInterruptedError";
     this.exitCode = SIGNAL_EXIT_STATUS_BASE + os.constants.signals[signal];
   }
@@ -595,8 +631,10 @@ function messageOf(error: unknown): string {
 
 /** What the apply loop does between steps. */
 interface ApplyHooks {
-  /** Called after each step: the locks are refreshed here, and the call throws when one was taken over. */
-  readonly afterStep: () => void;
+  /** Called after each step with its position in the plan: the locks are refreshed and the journal marked here, and the call throws when a lock was taken over. */
+  readonly afterStep: (index: number) => void;
+  /** Whether this run finishes a rename an earlier one left unfinished, which an interruption's message says. */
+  readonly resuming: boolean;
   /** The signal the process received, if it has received one. */
   readonly interrupted: () => NodeJS.Signals | undefined;
   /** Lets the event loop turn, so that a signal that arrived during the last step is delivered to its handler. */
@@ -609,15 +647,15 @@ interface ApplyHooks {
 async function applyAll(steps: readonly Step[], hooks: ApplyHooks): Promise<void> {
   const started: Step[] = [];
   try {
-    for (const step of steps) {
+    for (const [index, step] of steps.entries()) {
       await hooks.turn();
       const signal = hooks.interrupted();
       if (signal !== undefined) {
-        throw new RenameInterruptedError(signal);
+        throw new RenameInterruptedError(signal, hooks.resuming);
       }
       started.push(step);
       step.apply();
-      hooks.afterStep();
+      hooks.afterStep(index);
     }
   } catch (error) {
     const leftovers: string[] = [];
@@ -673,52 +711,107 @@ function descriptionsOf(plan: Plan): readonly string[] {
   return [...plan.steps.map((step) => step.description), ...plan.finishers.map((finisher) => finisher.description)];
 }
 
+/** The unfinished rename, if any, that a rename of `from` to `to` finishes. Throws `UnfinishedRenameError` when one is left that names either identity and is not this rename, and what `readRenameJournals` throws for a journal it cannot read. */
+function unfinishedRename(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts): RenameJournal | undefined {
+  const found = unfinishedRenameFor(readRenameJournals(ports.fs, paths.identityRenamesDir), from, to);
+  if (found?.kind === "blocked") {
+    throw new UnfinishedRenameError(from, to, found.journal);
+  }
+  return found?.journal;
+}
+
 /**
- * Says what `renameIdentity` would do, without doing it or taking a lock: the same checks, which refuse for the same reasons, and the same steps in the same order. The macOS Keychain is asked only for the attributes of the two items, never for a secret, and a cached credential is not read.
+ * Says what `renameIdentity` would do, without doing it or taking a lock: the same checks, which refuse for the same reasons, and the same steps in the same order. The macOS Keychain is asked only for the attributes of the two items, never for a secret, and a cached credential is not read. When an earlier run of this rename was left unfinished it lists what is left, and says so.
  *
  * Throws what `renameIdentity` throws before it changes anything.
  */
 export function describeIdentityRename(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts): IdentityRenameReport {
   requireNames(from, to);
-  const plan = planRename(paths, from, to, ports, undefined);
-  return { from, to, dryRun: true, steps: descriptionsOf(plan), warnings: plan.notes };
+  const unfinished = unfinishedRename(paths, from, to, ports);
+  const plan = planRename(paths, from, to, ports, undefined, unfinished !== undefined);
+  return { from, to, dryRun: true, steps: descriptionsOf(plan), warnings: unfinished === undefined ? plan.notes : [resumeNote(unfinished), ...plan.notes] };
+}
+
+/** What a resumed rename tells the person: that it is finishing an earlier one, and that the steps it lists are what that one had left. */
+function resumeNote(journal: Readonly<RenameJournal>): string {
+  return `This finishes the rename of "${journal.from}" to "${journal.to}" that was left unfinished on ${journal.startedAt}: the steps listed are what was left to do.`;
 }
 
 /**
  * Renames identity `from` to `to` without losing its login or anything kept under its name. Takes the resync lock of both names, refuses while a session runs against the identity's directory, then applies, in order: the macOS Keychain login is copied to the service the new directory hashes to; the identity's own `identity.json` and farm record are rewritten; the directory (and any superseded farm beside it) and the stored token file move; the cached credential follows; every reference to the old name is rewritten (pools, jobs, account model refs, directory rules, the active selection, the usage snapshot, recorded picks, anchor stamps); and last, the old Keychain item is deleted once the new one is found. The old name is not kept as an alias: nothing can be running under it, and a stale name would only hide a mistake.
  *
- * It is transactional up to the last step. If any step fails, every earlier one is undone, the new Keychain item removed and the old one kept, and the failure is thrown. A failure in the last step only (deleting the old Keychain item) is a warning in the report, because the rename is complete by then and the leftover item is harmless.
+ * It is transactional up to the last step. If any step fails, or the process is sent SIGINT or SIGTERM between steps, every earlier one is undone, the new Keychain item removed and the old one kept, and the failure is thrown. A failure in the last step only (deleting the old Keychain item) is a warning in the report, because the rename is complete by then and the leftover item is harmless.
  *
- * Throws `IdentityNotFoundError`, `IdentityAlreadyExistsError`, `InvalidIdentityNameError`, `UsageError` for equal names, `IdentityInUseError`, `KeychainLoginError` and `IdentityLockBusyError`. A committed `.agent-shim.json` in a project is not reachable from here, and neither is the usage log, which keeps its records under the name they were written with.
+ * A journal in the state root's `identity-renames` directory is written before the first step and marked as each completes. A rename that is killed, or whose rollback fails, leaves it behind, and running the same rename again plans from what is on disk, so it does only what is left, and removes the journal at the end. A rename of anything else that names either identity refuses until then.
+ *
+ * Throws `IdentityNotFoundError`, `IdentityAlreadyExistsError`, `InvalidIdentityNameError`, `UsageError` for equal names, `IdentityInUseError`, `UnfinishedRenameError`, `KeychainLoginError` and `IdentityLockBusyError`. A committed `.agent-shim.json` in a project is not reachable from here, and neither is the usage log, which keeps its records under the name they were written with.
  */
 export async function renameIdentity(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts): Promise<IdentityRenameReport> {
   requireNames(from, to);
   // Every refusal that needs no secret comes first, so a person is never asked to approve a read for a rename that was going to fail. The plan is made again under the locks, from what is on disk by then.
-  planRename(paths, from, to, ports, undefined);
+  const resuming = unfinishedRename(paths, from, to, ports) !== undefined;
+  planRename(paths, from, to, ports, undefined, resuming);
   let received: NodeJS.Signals | undefined;
   const stopListening = ports.signals.onInterrupt((signal) => {
     received ??= signal;
   });
   try {
-    const gathered = gather(paths, from, to, ports);
+    const gathered = gather(paths, from, to, ports, resuming);
     if (received !== undefined) {
-      throw new RenameInterruptedError(received);
+      throw new RenameInterruptedError(received, resuming);
     }
-    const plan = await applyUnderLocks(paths, from, to, ports, gathered, { interrupted: () => received, turn: ports.signals.turn });
-    const warnings = plan.finishers.flatMap((finisher) => finisher.finish() ?? []);
-    return { from, to, dryRun: false, steps: descriptionsOf(plan), warnings: [...plan.notes, ...warnings] };
+    const applied = await applyUnderLocks(paths, from, to, ports, gathered, { interrupted: () => received, turn: ports.signals.turn });
+    const warnings = applied.plan.finishers.flatMap((finisher) => finisher.finish() ?? []);
+    const notes = applied.resumed === undefined ? applied.plan.notes : [resumeNote(applied.resumed), ...applied.plan.notes];
+    return { from, to, dryRun: false, steps: descriptionsOf(applied.plan), warnings: [...notes, ...warnings] };
   } finally {
     stopListening();
   }
 }
 
-/** Takes the locks, plans again from what is on disk by then, applies the plan and releases the locks, which are not held while the old Keychain item is deleted since that can wait on a person too. Returns the plan that was applied. */
-async function applyUnderLocks(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts, gathered: Gathered, hooks: Pick<ApplyHooks, "interrupted" | "turn">): Promise<Plan> {
+/** What `applyUnderLocks` did: the plan it applied, and the journal of the earlier run it finished, if it finished one. */
+interface Applied {
+  readonly plan: Plan;
+  readonly resumed: RenameJournal | undefined;
+}
+
+/**
+ * Takes the locks, plans again from what is on disk by then, writes the journal, applies the plan marking each step done, removes the journal and releases the locks. The locks are not held while the old Keychain item is deleted, since that can wait on a person too.
+ *
+ * The journal is removed when the rename is over, and when a rename that began here has been rolled back completely, since nothing is then left half done. It stays when the rollback failed, and when the run was finishing an earlier rename and failed: the state is then the earlier run's unfinished one, which the journal still describes.
+ */
+async function applyUnderLocks(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts, gathered: Gathered, hooks: Pick<ApplyHooks, "interrupted" | "turn">): Promise<Applied> {
   const held = holdLocks(paths, [from, to], ports);
   try {
-    const plan = planRename(paths, from, to, ports, gathered);
-    await applyAll(plan.steps, { ...hooks, afterStep: held.refresh });
-    return plan;
+    const resumed = unfinishedRename(paths, from, to, ports);
+    const plan = planRename(paths, from, to, ports, gathered, resumed !== undefined);
+    const file = renameJournalFile(paths.identityRenamesDir, from, to);
+    const journal: RenameJournal = {
+      version: 1,
+      from,
+      to,
+      startedAt: resumed?.startedAt ?? new Date(ports.lock.nowMs()).toISOString(),
+      pid: ports.lock.pid,
+      steps: plan.steps.map((step) => ({ description: step.description, done: false })),
+    };
+    writeRenameJournal(ports.fs, file, journal);
+    try {
+      await applyAll(plan.steps, {
+        ...hooks,
+        resuming: resumed !== undefined,
+        afterStep: (index) => {
+          held.refresh();
+          writeRenameJournal(ports.fs, file, { ...journal, steps: journal.steps.map((step, position) => ({ ...step, done: position <= index })) });
+        },
+      });
+    } catch (error) {
+      if (resumed === undefined && !(error instanceof RollbackFailedError)) {
+        removeRenameJournal(ports.fs, file);
+      }
+      throw error;
+    }
+    removeRenameJournal(ports.fs, file);
+    return { plan, resumed };
   } finally {
     held.release();
   }

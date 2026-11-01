@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { IdentityRenamePorts } from "./identityRename";
+import type { FarmFs } from "./launcher/ports";
 import { TOKEN_FILE_MODE } from "./identityToken";
 import type { CachedCredential, CredentialCachePort } from "./credentialCache";
 import { createFakeKeychain, type FakeKeychain } from "./keychainTestWorld";
@@ -172,6 +173,10 @@ export function treeOf(root: string): Record<string, string> {
       const full = path.join(directory, entry.name);
       const relative = path.relative(root, full);
       if (entry.isDirectory()) {
+        // The directory the rename's journals live in stays once created; empty, it is no state.
+        if (entry.name === "identity-renames" && fs.readdirSync(full).length === 0) {
+          continue;
+        }
         tree[`${relative}/`] = "dir";
         walk(full);
       } else {
@@ -181,4 +186,19 @@ export function treeOf(root: string): Record<string, string> {
   };
   walk(root);
   return tree;
+}
+
+/** A filesystem whose first write of the anchor stamps fails, as a transient fault does. The rollback's own rewrite of that file then succeeds, so the rollback is complete. */
+export function failingOnce(world: World): FarmFs {
+  let failed = false;
+  return {
+    ...realFarmFs,
+    writeFilePrivate: (file: string, contents: string): void => {
+      if (file === world.paths.usageAnchorsFile && !failed) {
+        failed = true;
+        throw new Error("disk full");
+      }
+      realFarmFs.writeFilePrivate(file, contents);
+    },
+  };
 }
