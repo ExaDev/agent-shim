@@ -172,3 +172,15 @@ export function removePool(paths: LayoutPaths, name: string): void {
   const remaining = Object.fromEntries(Object.entries(readPools(paths)).filter(([existing]) => existing !== name));
   writePools(paths, remaining);
 }
+
+/**
+ * The pools with every direct member `from` renamed `to`, and the names of the pools that changed. Undefined when no pool lists `from`. A `pool:<name>` member nests a pool and is never an identity, so it stays; a member in its object form keeps its `when`.
+ */
+export function renameIdentityInPools(pools: Readonly<Record<string, Pool>>, from: string, to: string): { readonly pools: Record<string, Pool>; readonly renamedIn: readonly string[] } | undefined {
+  const renamedIn = Object.entries(pools).filter(([, pool]) => pool.identities.some((member) => poolMemberIdentity(member) === from)).map(([name]) => name);
+  if (renamedIn.length === 0) {
+    return undefined;
+  }
+  const rename = (member: PoolMemberEntry): PoolMemberEntry => (poolMemberIdentity(member) !== from ? member : typeof member === "string" ? to : { ...member, identity: to });
+  return { pools: Object.fromEntries(Object.entries(pools).map(([name, pool]) => [name, { ...pool, identities: pool.identities.map(rename) }])), renamedIn };
+}

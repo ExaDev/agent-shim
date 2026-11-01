@@ -38,6 +38,8 @@ src/
     spawn.ts              # spawnClaude — spawns the real binary, propagates its exit code
   identityManager.ts      # the `identity` noun's commands: add/list/show/set/remove/use/resolve-conflicts, and the interactive wizard
   identityStore.ts        # the identity data layer: read/add/list/change identities and their errors, with no command-line dependencies, exported by the library
+  identityRename.ts, identitySessions.ts, keychainLogin.ts, realIdentityRename.ts   # `identity rename`: the ordered, reversible steps and the dry-run plan built from them (`identityRename.ts`); finding a session running on an identity's directory from the process table (`identitySessions.ts`); copying the macOS Keychain login to the new directory's service without the secret in an argument list (`keychainLogin.ts`); and the real ports behind them
+  modelRefs.ts            # rewriting every model ref in a `models` block, shared by `provider rename` (provider-qualified refs) and `identity rename` (`acct:` refs)
   identityAccounts.ts     # what `identity list` and `identity show` print about an identity's stored login: the account read without failing the listing, the key identities sharing a login have in common, the grouping by it (adjacent in `identity list`, and the groups of two or more that `doctor` warns about) and the one-line wording
   configProfiles.ts       # the `profile` noun's commands: add/set/list/show/remove/use, and the interactive wizard
   configProfilesStore.ts  # the configuration profile and global config data layer, with no command-line dependencies, exported by the library

@@ -67,3 +67,13 @@ export function removeJob(paths: LayoutPaths, name: string): void {
   requireJob(paths, name);
   writeJobs(paths, Object.fromEntries(Object.entries(readJobs(paths)).filter(([existing]) => existing !== name)));
 }
+
+/** The jobs with every job that runs as identity `from` running as `to`, and the names of the jobs that changed. Undefined when no job runs as `from`. A job that targets a pool is not an identity's. */
+export function renameIdentityInJobs(jobs: Readonly<Record<string, Job>>, from: string, to: string): { readonly jobs: Record<string, Job>; readonly renamed: readonly string[] } | undefined {
+  const runsAsFrom = (job: Job): boolean => "identity" in job.target && job.target.identity === from;
+  const renamed = Object.entries(jobs).filter(([, job]) => runsAsFrom(job)).map(([name]) => name);
+  if (renamed.length === 0) {
+    return undefined;
+  }
+  return { jobs: Object.fromEntries(Object.entries(jobs).map(([name, job]) => [name, runsAsFrom(job) ? { ...job, target: { identity: to } } : job])), renamed };
+}

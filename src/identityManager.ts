@@ -15,6 +15,8 @@ import { requireProviderExists } from "./providersStore";
 import { poolNameOf } from "./launcher/identity";
 import type { LayoutPaths } from "./paths";
 import { realFarmFs } from "./realPorts";
+import { describeIdentityRename, renameIdentity, type IdentityRenamePorts } from "./identityRename";
+import { realIdentityRenamePorts } from "./realIdentityRename";
 import { IdentityNotFoundError, InvalidIdentityNameError, identityExists, readIdentity, addIdentity, useIdentity, type IdentityListing, listIdentities, setDefaultConfigProfile, setIdentityLabel, setIdentityProvider, setAllowAmbientCredential, setIdentityCredential, setIdentityAnchors, removeIdentity } from "./identityStore";
 import { describeAccountHolder, describeIdentityAccount, groupByLogin, loginKeyOf, readIdentityAccount, summariseIdentityAccount, type IdentityAccountRead, type IdentityAccountSummary } from "./identityAccounts";
 import { describeAccountPlan } from "./usage/accountDescription";
@@ -213,8 +215,10 @@ interface IdentitySetOptions extends CredentialCacheOptions {
   readonly json?: boolean;
 }
 
-/** Registers the `agent-shim identity` subcommand tree onto `program`. */
-export function registerIdentityCommand(program: Command, deps: CommandDeps): void {
+/**
+ * Registers the `agent-shim identity` subcommand tree onto `program`. `renamePorts` is what `identity rename` reaches the machine through (the Keychain, the process table, the resync lock): the real ones unless a test passes fakes.
+ */
+export function registerIdentityCommand(program: Command, deps: CommandDeps, renamePorts: IdentityRenamePorts = realIdentityRenamePorts(deps.paths)): void {
   const { paths } = deps;
   const identity = withExamples(
     program.command("identity").description("Manage identities: each one is a separate Claude Code login with its own credentials."),
@@ -441,6 +445,29 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
         });
       }),
     ["agent-shim identity remove old-client --yes"],
+  );
+
+  withExamples(
+    identity
+      .command("rename <old> <new>")
+      .description("Rename an identity: move its directory, carry its login across and rewrite every reference to its name. Refused while a session is running on it.")
+      .option("--dry-run", "Print what would be moved and rewritten, and change nothing.")
+      .option("--json", "Print the result as JSON.")
+      .action((from: string, to: string, options: Readonly<{ dryRun?: boolean; json?: boolean }>) => {
+        const dryRun = options.dryRun === true;
+        const report = dryRun ? describeIdentityRename(paths, from, to, renamePorts) : renameIdentity(paths, from, to, renamePorts);
+        reportMutation(options.json, { action: dryRun ? "planned" : "renamed", kind: "identity", name: to, value: report }, () => {
+          console.log(dryRun ? `Would rename identity "${from}" to "${to}":` : `Renamed identity "${from}" to "${to}".`);
+          for (const step of report.steps) {
+            console.log(`  ${step}`);
+          }
+          for (const warning of report.warnings) {
+            console.warn(`warning: ${warning}`);
+          }
+          console.log(dryRun ? "Nothing was changed." : `A committed .agent-shim.json that names "${from}" is yours to update, and the usage log keeps its past records under that name.`);
+        });
+      }),
+    ["agent-shim identity rename work client", "agent-shim identity rename work client --dry-run"],
   );
 
   withExamples(

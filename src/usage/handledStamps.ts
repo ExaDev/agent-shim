@@ -43,3 +43,21 @@ export function writeHandled(fs: StampsFs, file: string, handled: Readonly<Recor
   fs.mkdirPrivate(path.dirname(file));
   fs.writeFilePrivate(file, `${JSON.stringify(next, null, 2)}\n`);
 }
+
+/**
+ * The stamps file's text with the stamp under key `from` moved to key `to`, replacing any stamp already there: an identity's stamp follows its rename, and one left under the new name by a removed identity of that name is stale. Undefined when `raw` is not a stamps file this release can read or holds no stamp for `from`.
+ */
+export function stampsWithKeyRenamed(raw: string, from: string, to: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  const result = StampsFileSchema.safeParse(parsed);
+  if (!result.success || !(from in result.data.handled)) {
+    return undefined;
+  }
+  const next: StampsFile = { ...result.data, handled: Object.fromEntries(Object.entries(result.data.handled).filter(([key]) => key !== to).map(([key, at]) => [key === from ? to : key, at])) };
+  return `${JSON.stringify(next, null, 2)}\n`;
+}

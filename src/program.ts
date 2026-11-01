@@ -15,6 +15,7 @@ import { registerDoctorCommand } from "./doctor";
 import { registerHeadroomCommand } from "./headroom/commands";
 import { registerSuperviseMarkCommand } from "./supervise/commands";
 import { registerIdentityCommand } from "./identityManager";
+import type { IdentityRenamePorts } from "./identityRename";
 import { registerProfileCommand } from "./configProfiles";
 import { registerHeadlessCommands } from "./headlessCommands";
 import { registerJobCommand } from "./jobs";
@@ -34,6 +35,8 @@ export interface ProgramDeps extends CommandDeps {
   readonly runClaude: (args: readonly string[]) => Promise<void>;
   /** Replaces the real Keychain, secret stores and `ssh` behind the `credential` commands. Omitted outside tests. */
   readonly credentialPorts?: CredentialCommandPorts;
+  /** Replaces the real Keychain, process table and resync lock behind `identity rename`. Omitted outside tests, so a test can rename an identity without touching the real Keychain or asking the real process table. */
+  readonly identityRenamePorts?: IdentityRenamePorts;
   /** Replaces the real network, filesystem and liveness ports behind `update`. Omitted outside tests, so a test can run the command without touching GitHub or the real `~/.local/bin`. */
   readonly updatePorts?: UpdatePorts;
 }
@@ -96,7 +99,7 @@ export function buildProgram(deps: ProgramDeps): Command {
     .enablePositionalOptions()
     .addHelpText("after", ROOT_HELP_AFTER);
 
-  registerIdentityCommand(program, deps);
+  registerIdentityCommand(program, deps, deps.identityRenamePorts);
   registerProfileCommand(program, deps);
   registerPoolCommand(program, deps);
   registerJobCommand(program, deps);

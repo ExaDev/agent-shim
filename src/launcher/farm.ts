@@ -32,6 +32,20 @@ const FarmManifestSchema = z.strictObject({
   links: z.array(z.strictObject({ rel: z.string(), target: z.string() })),
 });
 
+/**
+ * The manifest text with the identity it records changed to `identity`, written as a resync writes it, or undefined when `raw` is not a manifest this release can read (readers treat that as no manifest, so there is nothing to carry over). Used when an identity is renamed: the farm moves with its directory, and its record of whose farm it is must follow.
+ */
+export function manifestWithIdentity(raw: string, identity: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  const result = FarmManifestSchema.safeParse(parsed);
+  return result.success ? `${JSON.stringify({ ...result.data, identity }, null, 2)}\n` : undefined;
+}
+
 /** Reads and validates the manifest at a farm root, or undefined when it is missing, unparseable, or does not validate. */
 export function readFarmManifest(fs: FarmFs, farmRoot: string): FarmManifest | undefined {
   const raw = fs.readFileUtf8(path.join(farmRoot, FARM_MANIFEST_FILENAME)) ?? fs.readFileUtf8(path.join(farmRoot, LEGACY_FARM_MANIFEST_FILENAME));

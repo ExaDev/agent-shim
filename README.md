@@ -89,6 +89,7 @@ agent-shim identity set <name> [--label <text> | --no-label] [--default-profile 
 agent-shim identity set <name> [--credential <source>]... [--credential-target <bearer|apiKey|oauthToken>] [--no-credential] [--json]
 agent-shim identity set <name> [--anchor <days>@<HH:MM>[/<zone>]]... [--no-anchor] [--json]
 agent-shim identity remove <name> [--yes] [--json]
+agent-shim identity rename <old> <new> [--dry-run] [--json]   # move the directory, carry the login across and rewrite every reference to the name; refused while a session is running on the identity
 agent-shim identity use <name> [--json]
 agent-shim @<name>                          # shorthand for `identity use <name>`
 agent-shim identity resolve-conflicts <name>  # interactively resolve a retained superseded farm's conflicts
@@ -205,7 +206,7 @@ agent-shim run [@<identity>] [launch flags] [claude arguments]
 claude @<identity> ...                      # the same, once `agent-shim shim enable` has run
 ```
 
-Every `list`, `show`, `check`, `doctor` and `headroom status` prints text by default and JSON with `--json`, and so do the mutating commands (`add`, `set`, `remove` and `use` on identities, profiles, providers, pools and rules), which print one object naming the `action`, the `kind`, the `name` and, for a creation or update, the stored `value`. Prompts appear only when standard input is a terminal; without one, a command that needs input fails with the option that supplies it (a `remove` needs `--yes`). Failures print as `agent-shim: <message>` and exit 1, usage errors exit 2, a selected provider or identity whose credential block yields no token exits 64, and `AGENT_SHIM_DEBUG=1` adds stack traces to unexpected errors. `agent-shim completion <bash|zsh|fish>` prints a shell completion script.
+Every `list`, `show`, `check`, `doctor` and `headroom status` prints text by default and JSON with `--json`, and so do the mutating commands (`add`, `set`, `remove` and `use` on identities, profiles, providers, pools and rules), which print one object naming the `action`, the `kind`, the `name` and, for a creation or update, the stored `value`. `identity rename` prints its report of what it moved and rewrote as the `value`, with the `action` `planned` under `--dry-run`. Prompts appear only when standard input is a terminal; without one, a command that needs input fails with the option that supplies it (a `remove` needs `--yes`). Failures print as `agent-shim: <message>` and exit 1, usage errors exit 2, a selected provider or identity whose credential block yields no token exits 64, and `AGENT_SHIM_DEBUG=1` adds stack traces to unexpected errors. `agent-shim completion <bash|zsh|fish>` prints a shell completion script.
 
 `agent-shim check [path]` resolves the full cascade for a directory without touching the farm, and is the primary way to answer "why is X shared or hidden here". `agent-shim doctor` audits the whole `~/.agent-shim` config graph at once: every identity, profile, `extends` chain, provider (naming the exact replacement for a file still in the format before the credential block) and directory rule, plus whether the right `agent-shim` is the one actually on `PATH`.
 
