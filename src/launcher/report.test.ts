@@ -41,6 +41,14 @@ describe("renderReport", () => {
     ]);
   });
 
+  it("sets a notice row apart in yellow, label and value both, so a change the person must not miss is not read as one more fact", () => {
+    expect(renderReport([{ label: "moved", value: "a -> b", detail: "why", notice: true }, { label: "pool", value: "main" }], visible)).toEqual([
+      "<bold>agent-shim</>",
+      "  <yellow+bold>moved</>  <yellow+bold>a -> b</> <dim>(why)</>",
+      "  <dim>pool </>  main",
+    ]);
+  });
+
   it("pads each label to the longest one before styling it, so the column holds when the style adds codes", () => {
     const [, short, long] = renderReport([{ label: "a", value: "1" }, { label: "longer", value: "2" }], visible);
     expect(short).toBe("  <dim>a     </>  1");

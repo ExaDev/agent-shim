@@ -124,6 +124,8 @@ export interface ReportRow {
   readonly detail?: string;
   /** Further lines under the row, lined up under its value and dimmed. */
   readonly notes?: readonly string[];
+  /** True for a row that tells the person something changed beneath them (the account their session now bills to), set apart from the plain facts around it. */
+  readonly notice?: boolean;
 }
 
 /** Where the launcher reports what it decided and why — refusals, warnings about an identity that could not be loaded, and (per the "strictly-better than the legacy script" goal) which identity/profile ended up selected. */
