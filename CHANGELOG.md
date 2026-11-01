@@ -1,3 +1,15 @@
+## [11.82.0](https://github.com/ExaDev/agent-shim/compare/v11.81.0...v11.82.0) (2026-11-01)
+
+### Features
+
+* **doctor:** warn when a pool or job reads a window an identity does not receive ([bdcc543](https://github.com/ExaDev/agent-shim/commit/bdcc5438603433b53b7660d6f67e0ba43ed5e6f2))
+
+### Bug Fixes
+
+* **pools:** charge a resumed conversation's rewrite to every plan window a member has ([70926a8](https://github.com/ExaDev/agent-shim/commit/70926a876d2818e5de98ea96958d438049bd1764))
+* **supervise:** compact before the limit against the tightest plan window ([d20a7f0](https://github.com/ExaDev/agent-shim/commit/d20a7f0260f458761f161b20e7cd4e94231e7a43)), closes [#680](https://github.com/ExaDev/agent-shim/issues/680)
+* **window-keeper:** skip anchoring an account that has no five-hour window ([78e1766](https://github.com/ExaDev/agent-shim/commit/78e17666e19f38ad6e38cadf696969348a96b3c9))
+
 ## [11.81.0](https://github.com/ExaDev/agent-shim/compare/v11.80.0...v11.81.0) (2026-11-01)
 
 ### Features
