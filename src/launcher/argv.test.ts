@@ -13,6 +13,17 @@ describe("parseLauncherArgv", () => {
     expect(parseLauncherArgv(["--print"]).delay).toBeUndefined();
   });
 
+  it("reads --pick and --no-pick, taking the last", () => {
+    expect(parseLauncherArgv(["--pick"]).pick).toBe(true);
+    expect(parseLauncherArgv(["--pick", "--no-pick"]).pick).toBe(false);
+    expect(parseLauncherArgv(["--print"]).pick).toBeUndefined();
+  });
+
+  it("leaves --pick after the terminator for the command claude runs", () => {
+    expect(parseLauncherArgv(["mcp", "add", "n", "--", "cmd", "--pick"])).toMatchObject({ rest: ["mcp", "add", "n", "--", "cmd", "--pick"] });
+    expect(parseLauncherArgv(["mcp", "add", "n", "--", "cmd", "--pick"]).pick).toBeUndefined();
+  });
+
   it("reads --explain and --no-explain, taking the last", () => {
     expect(parseLauncherArgv(["--explain"]).explain).toBe(true);
     expect(parseLauncherArgv(["--explain", "--no-explain"]).explain).toBe(false);
