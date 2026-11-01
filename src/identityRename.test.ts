@@ -99,7 +99,7 @@ function createWorld(platform: NodeJS.Platform = "linux"): World {
   writeJson(paths.usageAnchorsFile, { schemaVersion: 1, handled: { work: "2026-10-30T10:00:00.000Z", personal: "2026-10-30T11:00:00.000Z" } }, PRIVATE_FILE_MODE);
   cache.set("file:identity work", { token: "a-made-up-cached-token", fetchedAt: 1, source: { env: "EXAMPLE_TOKEN" } });
   if (platform === "darwin") {
-    keychain.items.set(claudeCodeKeychainService(path.join(root, "identities", "work")), { account: "alex", secret: LOGIN_SECRET });
+    keychain.seed(claudeCodeKeychainService(path.join(root, "identities", "work")), "alex", LOGIN_SECRET);
   }
 
   const cachePort: CredentialCachePort = {
@@ -437,7 +437,8 @@ describe("renameIdentity with a macOS Keychain login", () => {
     const oldKey = oldService();
     const newKey = newService();
     const report = renameIdentity(world.paths, "work", "client", world.ports());
-    expect(world.keychain.items.get(newKey)).toEqual({ account: "alex", secret: LOGIN_SECRET });
+    expect(world.keychain.items.get(newKey)?.account).toBe("alex");
+    expect(world.keychain.secretOf(newKey)?.toString("utf8")).toBe(LOGIN_SECRET);
     expect(world.keychain.items.has(oldKey)).toBe(false);
     expect(report.steps[0]).toBe(`copy the Keychain login "${oldKey}" to "${newKey}"`);
     expect(report.steps.at(-1)).toBe(`delete the former Keychain login "${oldKey}"`);
@@ -489,11 +490,11 @@ describe("renameIdentity with a macOS Keychain login", () => {
   });
 
   it("refuses when a login is already filed under the new directory, without touching either", () => {
-    world.keychain.items.set(newService(), { account: "alex", secret: "left over" });
+    world.keychain.seed(newService(), "alex", "left over");
     const before = treeOf(world.root);
     expect(() => renameIdentity(world.paths, "work", "client", world.ports())).toThrow(/already holds a login/);
     expect(treeOf(world.root)).toEqual(before);
-    expect(world.keychain.items.get(newService())?.secret).toBe("left over");
+    expect(world.keychain.secretOf(newService())?.toString("utf8")).toBe("left over");
   });
 
   it("copies nothing for an identity with no login in the Keychain", () => {
