@@ -358,6 +358,22 @@ describe("rankPool", () => {
       ];
       expect(rank(unmeasured, { sticky: COLD, resuming: true, resumeContextTokens: 700_000 }).pick?.identity).toBe("old");
     });
+
+    it("charges the rewrite to the seven-day window of a member that has no five-hour window, naming it", () => {
+      const sevenDayReading = (agoMs: number, utilization: number): UsageRecord => ({
+        ...burnRecord("old", agoMs, utilization, SIX_DAYS_MS),
+        rateLimitHeaders: { "anthropic-ratelimit-unified-7d-utilization": String(utilization), "anthropic-ratelimit-unified-7d-reset": epochSeconds(SIX_DAYS_MS) },
+      });
+      // The first reading is days old, so the seven-day pace it implies leaves the window lasting past its reset: only the rewrite can make the member infeasible.
+      const sevenDayOnly = [
+        member("old", { seven: { utilization: U50, resetsInMs: SIX_DAYS_MS } }, MAX_20X, [sevenDayReading(THREE_DAYS_MS, FIVE_HOUR_U40), { ...sevenDayReading(MINUTE_MS, U50), usage: { inputTokens: BILLED_TOKENS } }]),
+        member("better", { seven: { utilization: U90, resetsInMs: SIX_DAYS_MS } }),
+      ];
+      const ranking = rank(sevenDayOnly, { sticky: COLD, resuming: true, resumeContextTokens: 700_000 });
+      expect(ranking.pick?.identity).toBe("better");
+      expect(ranking.movedOff?.reason).toContain("of the 7d window, which has 50% left");
+      expect(rank(sevenDayOnly, { sticky: COLD, resuming: true, resumeContextTokens: 100_000 }).pick?.identity).toBe("old");
+    });
   });
 
   it("does not keep a last pick that is refused or would run dry", () => {

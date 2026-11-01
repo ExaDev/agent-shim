@@ -437,17 +437,20 @@ export function rankPool(input: RankPoolInput): PoolRanking {
         drySpots.push(`7d window would run dry in ${formatAge(runsDryInMs)}, before it resets in ${formatAge(sevenDay.untilResetMs)}`);
       }
     }
-    // A resumed conversation's context has to be written again on any account that is not the one whose cache is still warm for it. A member that measurably cannot afford that within its five-hour window would end the session at its first turn.
+    // A resumed conversation's context has to be written again on any account that is not the one whose cache is still warm for it. A member that measurably cannot afford that within any of its plan windows would end the session at its first turn. Each window present is charged in its own units, so a member reporting only one of them is still held to it.
     const { sticky } = input;
     const warmHere = sticky?.identity === candidate.identity && nowMs - Date.parse(sticky.at) <= PROMPT_CACHE_TTL_MS;
-    if (input.resuming && input.resumeContextTokens !== undefined && fiveHour !== undefined && !warmHere) {
-      const perToken = utilisationPerBilledToken(assessment.member.records, "fiveHour");
+    const resumeTokens = input.resumeContextTokens;
+    if (input.resuming && resumeTokens !== undefined && !warmHere) {
       const committed = input.committedContextTokens?.[candidate.identity] ?? 0;
-      const cost = perToken === undefined ? undefined : (input.resumeContextTokens + committed) * perToken;
-      if (cost !== undefined && cost > fiveHour.remaining) {
-        dryAfterMs.push(0);
-        const alongside = committed === 0 ? "" : ` (with ${String(committed)} tokens of other conversations already moving here)`;
-        drySpots.push(`resuming a ${String(input.resumeContextTokens)}-token conversation here${alongside} would cost about ${percent(cost)} of the 5h window, which has ${percent(fiveHour.remaining)} left`);
+      const alongside = committed === 0 ? "" : ` (with ${String(committed)} tokens of other conversations already moving here)`;
+      for (const [name, label, window] of [["fiveHour", "5h", fiveHour], ["sevenDay", "7d", sevenDay]] as const) {
+        const perToken = window === undefined ? undefined : utilisationPerBilledToken(assessment.member.records, name);
+        const cost = perToken === undefined ? undefined : (resumeTokens + committed) * perToken;
+        if (window !== undefined && cost !== undefined && cost > window.remaining) {
+          dryAfterMs.push(0);
+          drySpots.push(`resuming a ${String(resumeTokens)}-token conversation here${alongside} would cost about ${percent(cost)} of the ${label} window, which has ${percent(window.remaining)} left`);
+        }
       }
     }
     if (drySpots.length === 0) {
