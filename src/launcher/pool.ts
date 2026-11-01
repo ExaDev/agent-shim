@@ -60,7 +60,7 @@ export type PoolResolution =
   | { readonly ok: false; readonly message: string };
 
 /** Whether the arguments claude will receive continue or resume a conversation. Only tokens before a `--` terminator count: after it they belong to a command claude runs. */
-function isResuming(passthrough: readonly string[]): boolean {
+export function isResuming(passthrough: readonly string[]): boolean {
   const end = passthrough.indexOf(TERMINATOR);
   return (end === -1 ? passthrough : passthrough.slice(0, end)).some((token) => RESUME_FLAGS.has(token));
 }

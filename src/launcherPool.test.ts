@@ -109,6 +109,23 @@ describe("the decision of a pool launch", () => {
     expect(decision.pool?.movedOff?.reason).toContain("continues as extra usage");
   });
 
+  it("runs as the identity the picker chose in place of the one the arguments named, and carries no pool", () => {
+    const base = fakeFarm(createFakeFarmFs(WORK_SOON));
+    const decision = prepareLaunch({
+      paths,
+      fs: fakeFs({}),
+      proc: fakeProc({}, ["@pool:main", "--print"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+      farm: base,
+      frontdoor: fakeFrontDoorPort(FRONTDOOR_PORT),
+      pools: POOLS,
+      pickedIdentity: "personal",
+    }).decision;
+    expect(decision).toMatchObject({ identity: "personal", configDir: `${paths.identitiesDir}/personal` });
+    expect(decision.pool).toBeUndefined();
+  });
+
   it("carries no pool for a launch that named an identity", () => {
     expect(decisionOf(createFakeFarmFs(WORK_SOON), ["@work", "--print"]).pool).toBeUndefined();
   });

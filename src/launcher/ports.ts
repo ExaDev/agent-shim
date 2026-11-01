@@ -177,3 +177,27 @@ export interface FrontDoorUp {
   /** This launch's capability token, injected alongside the session headers and required by the door before it routes anything. */
   readonly sessionToken: string;
 }
+
+/** One choice the identity picker offers. */
+export interface PickerEntry {
+  /** What choosing the entry selects: an identity name, or `pool:<name>`. */
+  readonly value: string;
+  /** The line the entry shows. */
+  readonly label: string;
+}
+
+/** The question the identity picker puts to the person. */
+export interface PickerRequest {
+  readonly message: string;
+  readonly entries: readonly PickerEntry[];
+  /** The value highlighted when the picker opens, when the launch has a natural choice. */
+  readonly initial?: string;
+}
+
+/** What the person did at the picker: chose an entry by its value, or cancelled (Ctrl-C). */
+export type PickerAnswer = { readonly kind: "picked"; readonly value: string } | { readonly kind: "cancelled" };
+
+/** Asks the person which identity a launch runs as, injected so no test needs a terminal and the launcher's decision of when to ask stays free of the prompt library. It waits for the answer for as long as the person takes: there is no timeout. */
+export interface IdentityPickerPort {
+  readonly pick: (request: PickerRequest) => Promise<PickerAnswer>;
+}

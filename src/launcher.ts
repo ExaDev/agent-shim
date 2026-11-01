@@ -84,6 +84,8 @@ export interface PrepareLaunchParams {
   readonly log: LogPort;
   /** Discovers the real `claude` binary to spawn. Injected so `runLauncher` never depends on `src/versionDiscovery.ts`'s own filesystem/PATH inputs directly — the caller (`src/cli.ts`) wires the real discovery, tests wire a fake that returns a fixed path. */
   readonly resolveClaudeBinary: ClaudeBinaryResolver;
+  /** The identity (or `pool:<name>`) the person chose at the identity picker, which takes the place of whatever the arguments named: the question was asked because that choice was not settled. */
+  readonly pickedIdentity?: string;
   /** An identity pinned to `$PWD` by a directory rule. Accepted as an already-resolved value — the rules-loading code that produces it lands in Phase 4/5. */
   readonly directoryPinnedIdentity?: string;
   /** A directory rule's `configProfile` selection for `$PWD`. Accepted as an already-resolved value for the same reason. */
@@ -303,7 +305,7 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
 
   const decidedIdentity = decideIdentity({
     env,
-    argv0Identity: parsedArgv.identity,
+    argv0Identity: params.pickedIdentity ?? parsedArgv.identity,
     directoryPinnedIdentity: params.directoryPinnedIdentity,
     readActiveIdentityFile: () => {
       const raw = fs.readFileUtf8(paths.activeIdentityFile);

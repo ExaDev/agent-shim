@@ -2,12 +2,14 @@ import { realPromptsPort, runProfileWizard } from "./configure";
 import { PromptCancelledError } from "./cliError";
 import { profileExists } from "./configProfilesStore";
 import { runIdentityWizard } from "./identityManager";
+import { pickLaunchIdentity } from "./launchPicker";
 import { buildFarmRuntime, realClaudeBinaryResolver, realPrepareLaunchParams } from "./launchWiring";
 import { resolveLayoutPaths } from "./paths";
 import { refreshPools } from "./poolUsageRefresh";
 import { runSupervised, supervisesLaunch } from "./supervise/launch";
 import { prepareLaunch, runLauncher } from "./launcher";
 import { parseLauncherArgv } from "./launcher/argv";
+import { IdentityPickerCancelledError } from "./launcher/runPicker";
 import { runNativeLaunch } from "./launcher/native";
 import { decideConfigProfile, decideIdentity, loadIdentity, readActiveIdentity } from "./launcher/identity";
 import { realFsPort, realLogPort, realProcPort, realSpawnPort, spawnDetachedSupervisor } from "./realPorts";
@@ -77,13 +79,24 @@ export async function runClaude(argvOverride?: readonly string[]): Promise<void>
   }
 
   // A pool pick ranks on recorded usage, which only moves when a request passes the front door; members whose record has gone stale are asked for current figures first.
-  await refreshPools({
-    paths,
-    cwd: process.cwd(),
-    poolNames: identityDecision.pool === undefined ? [] : [identityDecision.pool],
-    spawnDaemon: spawnDetachedSupervisor,
-    log: realLogPort.warn,
-  });
+  const refreshUsage = async (poolName: string | undefined): Promise<void> => {
+    await refreshPools({ paths, cwd: process.cwd(), poolNames: poolName === undefined ? [] : [poolName], spawnDaemon: spawnDetachedSupervisor, log: realLogPort.warn });
+  };
+  await refreshUsage(identityDecision.pool);
+
+  // On a terminal, a launch with no identity, a pool pick that would change account, or an identity that is refused right now asks which identity to run as (and `--pick` always does), after the usage it ranks on is current.
+  const picked = await pickLaunchIdentity({ paths, farm, parsed: nativeArgv, decision: identityDecision });
+  if (picked.kind === "cancelled") {
+    throw new IdentityPickerCancelledError();
+  }
+  const pickedIdentity = picked.kind === "selected" ? picked.selector : undefined;
+  const launchDecision =
+    pickedIdentity === undefined
+      ? identityDecision
+      : decideIdentity({ env: procForDecision.env, argv0Identity: pickedIdentity, readActiveIdentityFile: () => undefined });
+  if (launchDecision.pool !== identityDecision.pool) {
+    await refreshUsage(launchDecision.pool);
+  }
 
   const prepareParams = {
     ...realPrepareLaunchParams(paths, {
@@ -93,12 +106,13 @@ export async function runClaude(argvOverride?: readonly string[]): Promise<void>
       farm,
       allowMissingConfigProfile,
     }),
+    ...(pickedIdentity === undefined ? {} : { pickedIdentity }),
     // Wired here rather than in realPrepareLaunchParams because the port re-invokes this very binary: correct for the agent-shim command line, wrong for a library host whose own executable is not agent-shim.
     update: realLaunchUpdatePort(paths),
   };
 
   // A pool that resumes on a spent quota runs its interactive session launches under the supervisor, which moves the session to another member when its identity runs out. A launch it cannot supervise falls through to the ordinary one below.
-  const poolName = identityDecision.pool;
+  const poolName = launchDecision.pool;
   if (poolName !== undefined && farm.pools !== undefined && supervisesLaunch(farm.pools[poolName], nativeArgv.rest)) {
     const code = await runSupervised({
       paths,

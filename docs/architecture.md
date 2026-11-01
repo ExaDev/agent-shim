@@ -11,6 +11,7 @@ src/
   cli.ts                 # entrypoint and the only module with import-time side effects; dispatches on invoked name -> launcher vs the agent-shim command tree
   program.ts              # buildProgram: constructs the whole agent-shim Commander tree with no side effects, so the command surface is unit-testable
   runClaude.ts            # the launch pipeline wired to real ports, shared by the `claude` binary name and `agent-shim run`
+  launchPicker.ts         # pickLaunchIdentity: the identity picker wired to the real terminal, prompts and identity store, called by runClaude.ts
   cliError.ts             # CliError (and UsageError, MissingInputError, PromptCancelledError), the documented exit statuses, and reportFatalError, the one place a failure becomes output and an exit status
   completion.ts           # `agent-shim completion <shell>`: bash, zsh and fish scripts generated from the built command tree
   paths.ts               # AGENT_SHIM_HOME-aware layout paths — every other module resolves ~/.agent-shim/... paths through this, never inline
@@ -22,6 +23,10 @@ src/
   launcher/
     ports.ts              # FsPort, SpawnPort, RunPort, ClockPort, ProcPort, LogPort, FarmFs — injected, fakeable
     argv.ts               # parseLauncherArgv: @name only at argv[0], --identity, the launch flags, nothing after a `--` terminator
+    pickerDecision.ts     # decidePicker: whether a launch asks which identity to run as and why, a pure function over plain facts; isUnattendedLaunch
+    pickerEntries.ts      # pickerLabel: the one line a picker entry shows
+    pickerPrompt.ts       # promptsIdentityPicker: the IdentityPickerPort over a single-select prompt
+    runPicker.ts          # runIdentityPicker: reads the pool ranking and logins, decides, asks through the port and reports the outcome (unchanged, selected, cancelled)
     guard.ts              # the ambient-credential guard — six guarded vars, empty string counts as unset, the launching identity's own injected token exempt
     identity.ts           # decideIdentity, decideConfigProfile, loadIdentity
     flags.ts              # resolveLaunchFlags, buildFlagArgs, buildArgv, buildEnv
