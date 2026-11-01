@@ -42,8 +42,8 @@ describe("credential sources that name the moved login or path, held by other id
     fs.rmSync(world.root, { recursive: true, force: true });
   });
 
-  const commandNote = 'Identity "personal" has a command credential source that names a path this rename moves, which it cannot update. Change it by hand once the rename is done.';
-  const opNote = 'Provider "z" has an op credential source that names a path this rename moves, which it cannot update. Change it by hand once the rename is done.';
+  const commandNote = 'Identity "personal" has a command credential source that names a path or the Keychain login this rename moves, which it cannot update. Change it by hand once the rename is done.';
+  const opNote = 'Provider "z" has an op credential source that names a path or the Keychain login this rename moves, which it cannot update. Change it by hand once the rename is done.';
 
   it("re-points a keychain source naming exactly the old directory's login service, in another identity and in a provider, and leaves any other service alone", async () => {
     await renameIdentity(world.paths, "work", "client", world.ports());
@@ -80,6 +80,33 @@ describe("credential sources that name the moved login or path, held by other id
     expect(done.warnings).toEqual([commandNote, opNote]);
     expect(JSON.stringify(done)).not.toContain("secrets/token");
     expect(readIdentity(world.paths, "personal")?.credential?.sources[2]).toEqual({ command: ["cat", `${world.directory("work")}/secrets/token`] });
+  });
+
+  it("warns of a command or op source that reads the moved login by its service, which the rename deletes once it has copied it", async () => {
+    writeJson(`${world.directory("personal")}/identity.json`, {
+      name: "personal",
+      allowAmbientCredential: false,
+      credential: { sources: [{ command: ["security", "find-generic-password", "-s", oldService(), "-w"] }], target: "oauthToken" },
+    });
+    writeJson(`${world.paths.providersDir}/z.json`, { displayName: "z.ai", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ op: `op://Example/${oldService()}/token` }, { env: "Z_API_TOKEN" }] } });
+    const loginNotes = [
+      'Identity "personal" has a command credential source that names a path or the Keychain login this rename moves, which it cannot update. Change it by hand once the rename is done.',
+      'Provider "z" has an op credential source that names a path or the Keychain login this rename moves, which it cannot update. Change it by hand once the rename is done.',
+    ];
+    expect(describeIdentityRename(world.paths, "work", "client", world.ports()).warnings).toEqual(loginNotes);
+    const done = await renameIdentity(world.paths, "work", "client", world.ports());
+    expect(done.warnings).toEqual(loginNotes);
+    expect(done.warnings.join("\n")).not.toContain(oldService());
+  });
+
+  it("does not take a longer service name that starts like the moved login's for it", () => {
+    writeJson(`${world.directory("personal")}/identity.json`, {
+      name: "personal",
+      allowAmbientCredential: false,
+      credential: { sources: [{ command: ["security", "find-generic-password", "-s", `${oldService()}0`, "-w"] }], target: "oauthToken" },
+    });
+    writeJson(`${world.paths.providersDir}/z.json`, { displayName: "z.ai", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z_API_TOKEN" }] } });
+    expect(describeIdentityRename(world.paths, "work", "client", world.ports()).warnings).toEqual([]);
   });
 
   it("does not take the directory of another identity whose name starts with this one's for the moved path", () => {

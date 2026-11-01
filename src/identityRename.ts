@@ -264,15 +264,15 @@ function namesPath(text: string, target: string): boolean {
   return false;
 }
 
-/** Whether `text`, a file that could not be parsed or the arguments of a source, names a path that moved, in any spelling a source could take. */
+/** Whether `text`, a file that could not be read or the arguments of a source, names something the rename moves: the token file or directory in any spelling a source could take, or the Keychain service of the login, which is deleted once it has been copied. A service is a name ending in a hash, so it is told from a longer one by the same boundary as a path. */
 function namesMovedPath(text: string, moved: MovedPaths): boolean {
-  return [moved.fromToken, moved.fromDir].some((target) => namesPath(text, target) || (target.startsWith(`${moved.home}${path.sep}`) && namesPath(text, `~${target.slice(moved.home.length)}`)));
+  return namesPath(text, moved.fromService) || [moved.fromToken, moved.fromDir].some((target) => namesPath(text, target) || (target.startsWith(`${moved.home}${path.sep}`) && namesPath(text, `~${target.slice(moved.home.length)}`)));
 }
 
-/** Raised when a file that holds credential sources cannot be read and names a path the rename would move, so it cannot be re-pointed and would be left broken. Nothing has been changed. */
+/** Raised when a file that holds credential sources cannot be read and names a path or the Keychain login the rename would move, so it cannot be re-pointed and would be left broken. Nothing has been changed. */
 class UnreadableCredentialFileError extends CliError {
   constructor(file: string, detail: string) {
-    super(`Cannot rename: ${file} cannot be read (${detail}) and names a path this rename moves, so it could not be updated. Fix or remove it, then run the command again; nothing was changed.`);
+    super(`Cannot rename: ${file} cannot be read (${detail}) and names a path or the Keychain login this rename moves, so it could not be updated. Fix or remove it, then run the command again; nothing was changed.`);
     this.name = "UnreadableCredentialFileError";
   }
 }
@@ -523,12 +523,12 @@ function credentialHolderSteps(paths: LayoutPaths, ports: IdentityRenamePorts, f
 }
 
 /**
- * A note for each credential source the rename cannot update: a `command` source runs a program and an `op` source asks 1Password, and either may name a path the rename moves in its arguments or its reference. Program arguments are not rewritten, since nothing says which of them is the path, so the source is left as it is and the person is told which holder has it. The note names the holder and the kind, never the arguments, which may hold a secret.
+ * A note for each credential source the rename cannot update: a `command` source runs a program and an `op` source asks 1Password, and either may name a path the rename moves, or the service of the login it deletes, in its arguments or its reference. Program arguments are not rewritten, since nothing says which of them is the path, so the source is left as it is and the person is told which holder has it. The note names the holder and the kind, never the arguments, which may hold a secret.
  */
 function unrewritableSourceNotes(paths: LayoutPaths, from: string, to: string, moved: MovedPaths): readonly string[] {
   const noteFor = (holder: string, source: CredentialSource): readonly string[] => {
     const named = "command" in source ? namesMovedPath(source.command.join("\n"), moved) && "command" : "op" in source ? namesMovedPath(source.op, moved) && "op" : false;
-    return named === false ? [] : [`${holder} has ${named === "op" ? "an op" : "a command"} credential source that names a path this rename moves, which it cannot update. Change it by hand once the rename is done.`];
+    return named === false ? [] : [`${holder} has ${named === "op" ? "an op" : "a command"} credential source that names a path or the Keychain login this rename moves, which it cannot update. Change it by hand once the rename is done.`];
   };
   const identities = listIdentities(paths).flatMap((entry) => entry.identity?.credential?.sources.flatMap((source) => noteFor(`Identity "${entry.name === from ? to : entry.name}"`, source)) ?? []);
   const providers = listProviders(paths, () => undefined).flatMap(({ name, provider }) => (isRouterProvider(provider) ? [] : provider.credential.sources.flatMap((source) => noteFor(`Provider "${name}"`, source))));
