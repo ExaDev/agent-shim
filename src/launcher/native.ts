@@ -27,6 +27,7 @@ function otherLaunchFlags(parsed: ParsedLauncherArgv): string[] {
     ...(parsed.skipPermissions === undefined ? [] : ["--[no-]skip-permissions"]),
     ...(parsed.remoteControl === undefined ? [] : ["--[no-]remote-control"]),
     ...(parsed.wait === undefined ? [] : ["--[no-]wait"]),
+    ...(parsed.pick === undefined ? [] : ["--[no-]pick"]),
     ...(parsed.categoryFlags.length === 0 ? [] : ["--category"]),
     ...(parsed.shareFlags.length === 0 ? [] : ["--share"]),
     ...(parsed.hideFlags.length === 0 ? [] : ["--hide"]),

@@ -22,6 +22,8 @@ export interface ParsedLauncherArgv {
   readonly explain?: boolean;
   /** The last `--wait`/`--no-wait` occurrence, when either was given: with a pool selected and every member refused, sleep until the earliest returns instead of refusing the launch. */
   readonly wait?: boolean;
+  /** The last `--pick`/`--no-pick` occurrence, when either was given: `--pick` shows the identity picker on a terminal whatever the launch resolved to, `--no-pick` never shows it. */
+  readonly pick?: boolean;
   /** True when `--native` was given: run the real `claude` with nothing from agent-shim applied. It has no `--no-` form and cannot be combined with any other launch flag. */
   readonly native?: true;
   /** The last `--skip-permissions`/`--no-skip-permissions` occurrence, when either was given. */
@@ -58,6 +60,7 @@ const BOOLEAN_FLAGS = [
   { flag: "--wait", key: "wait" },
   { flag: "--pause", key: "pause" },
   { flag: "--explain", key: "explain" },
+  { flag: "--pick", key: "pick" },
 ] as const;
 type BooleanFlagKey = (typeof BOOLEAN_FLAGS)[number]["key"];
 
@@ -100,7 +103,7 @@ function matchBooleanFlag(token: string): { key: BooleanFlagKey; value: boolean 
 }
 
 /**
- * Parses the launcher's own argv for its identity selection and the one-off `agent-shim` launch flags (`--identity`, `--config-profile`, `--provider`/`--no-provider`, `--claude-version`, `--category`, `--share`, `--hide`, and the `--[no-]headroom`, `--[no-]track-usage`, `--[no-]skip-permissions`, `--[no-]remote-control`, `--[no-]wait` booleans, and `--native`). None of these are real Claude Code flags, so all are consumed here and never forwarded.
+ * Parses the launcher's own argv for its identity selection and the one-off `agent-shim` launch flags (`--identity`, `--config-profile`, `--provider`/`--no-provider`, `--claude-version`, `--category`, `--share`, `--hide`, and the `--[no-]headroom`, `--[no-]track-usage`, `--[no-]skip-permissions`, `--[no-]remote-control`, `--[no-]wait`, `--[no-]pick` booleans, and `--native`). None of these are real Claude Code flags, so all are consumed here and never forwarded.
  *
  * `name` in `@name` and `--identity <name>` may also be `pool:<pool>`, which the launcher resolves to a member of that pool. The `@name` form is consumed ONLY at argv[0], never mid-argument-list; `--identity <name>` is its explicit form, and naming two different identities through both throws `ConflictingIdentityError`. The flags are recognised only before a `--` terminator: from `--` onwards every token is forwarded verbatim, so `claude mcp add n -- cmd --provider x` keeps `--provider x` for `cmd`. Valued flags accept both `--flag value` and `--flag=value` and take exactly one value per occurrence; `--category`, `--share` and `--hide` repeat to supply several, and every other flag's later occurrence wins. A valued flag with no value after it (the last token, or directly before `--`) is left in place, untouched, since there is nothing to pair it with.
  */
