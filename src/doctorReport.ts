@@ -35,6 +35,7 @@ import { pushFrontDoor, pushFrontDoorListeners } from "./doctorFrontDoor";
 import { readFrontDoorListeners, realFrontDoorListenerProbes, type FrontDoorListenerReading } from "./frontdoor/listenerReadings";
 import { listFrontDoorSupervisors, type FrontDoorSupervisorListing } from "./frontdoor/supervisorProcesses";
 import { ENV_PREFIX, LEGACY_ENV_PREFIX, LEGACY_HOME_DIRNAME } from "./legacy";
+import { describeUnfinishedRename, listRenameJournals, type RenameJournalListing } from "./identityRenameJournal";
 import { aliasFindings, readProviderAliases, type ProviderAliases } from "./providerAliases";
 import { describeProviderEndpoint, legacyProviderConversion, LegacyProviderFileError } from "./providersStore";
 import { detectAmbientCredential, formatAmbientCredentialGuardMessage } from "./launcher/guard";
@@ -166,6 +167,8 @@ export interface RunDoctorParams {
   readonly providers: readonly DoctorProviderInput[];
   /** The recorded former names of renamed providers. Omit to leave them out of the findings. */
   readonly providerAliases?: ProviderAliases;
+  /** The journals of identity renames that were left unfinished, and the files in their directory that are not journals. Omit to leave renames out of the findings. */
+  readonly renameJournals?: RenameJournalListing;
   readonly directoryRules: DoctorFileInput;
   readonly globalConfig: DoctorFileInput;
   /** The parsed `models` block of the global config, when one is defined. Omit to skip the models checks. */
@@ -511,6 +514,12 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   // A recorded former name still resolves to the provider it became, so an identity may name a provider by either.
   const validProviderNames = new Set([...params.providers.map((entry) => entry.name), ...Object.keys(params.providerAliases ?? {})]);
 
+  for (const journal of params.renameJournals?.journals ?? []) {
+    push("identity", "fail", `There is ${describeUnfinishedRename(journal)}`, journal.from);
+  }
+  for (const { file, detail } of params.renameJournals?.unreadable ?? []) {
+    push("identity", "fail", `${file} is not a rename journal this agent-shim can read (${detail}), so no identity can be renamed until it is fixed or removed, and it may be the trace of a rename that was left unfinished.`, path.basename(file));
+  }
   const validIdentityNames = new Set<string>();
   /** Identities that authenticate with their stored login and have account metadata for it, in the order the loop below meets them. */
   const signedInAccounts: { readonly name: string; readonly account: AccountMetadata }[] = [];
@@ -1018,6 +1027,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
     configProfiles,
     providers,
     providerAliases: readProviderAliases(paths),
+    renameJournals: listRenameJournals(realFarmFs, paths.identityRenamesDir),
     directoryRules: { path: paths.directoryRulesFile, raw: realFsPort.readFileUtf8(paths.directoryRulesFile) },
     globalConfig: { path: paths.globalConfigFile, raw: realFsPort.readFileUtf8(paths.globalConfigFile) },
     models: parsedModelsOf(paths),
