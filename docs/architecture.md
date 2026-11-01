@@ -33,7 +33,7 @@ src/
     spawn.ts              # spawnClaude — spawns the real binary, propagates its exit code
   identityManager.ts      # the `identity` noun's commands: add/list/show/set/remove/use/resolve-conflicts, and the interactive wizard
   identityStore.ts        # the identity data layer: read/add/list/change identities and their errors, with no command-line dependencies, exported by the library
-  identityAccounts.ts     # what `identity list` and `identity show` print about an identity's stored login: the account read without failing the listing, the key identities sharing a login have in common, the grouping by it and the one-line wording
+  identityAccounts.ts     # what `identity list` and `identity show` print about an identity's stored login: the account read without failing the listing, the key identities sharing a login have in common, the grouping by it (adjacent in `identity list`, and the groups of two or more that `doctor` warns about) and the one-line wording
   configProfiles.ts       # the `profile` noun's commands: add/set/list/show/remove/use, and the interactive wizard
   configProfilesStore.ts  # the configuration profile and global config data layer, with no command-line dependencies, exported by the library
   pools.ts, poolStore.ts  # the `pool` noun (add/set/list/show/remove/use/pick) and the global-config `pools` map it edits, plus `collectPoolPick`, the read-only ranking `pool pick` and `check` print

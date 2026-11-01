@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { describeIdentityAccount, groupByLogin, loginKeyOf, readIdentityAccount, summariseIdentityAccount } from "./identityAccounts";
+import { describeIdentityAccount, groupByLogin, groupSharedLogins, loginKeyOf, readIdentityAccount, summariseIdentityAccount } from "./identityAccounts";
 import { createFakeFarmFs, paths } from "./test-helpers";
 import { claudeJsonPath } from "./usage/account";
 
@@ -43,6 +43,24 @@ describe("groupByLogin", () => {
   it("returns every item exactly once", () => {
     expect(groupByLogin([], () => undefined)).toEqual([]);
     expect(names(groupByLogin([item("a", "x"), item("b", "x")], (entry) => entry.login))).toEqual(["a", "b"]);
+  });
+});
+
+describe("groupSharedLogins", () => {
+  const item = (name: string, login: string | undefined) => ({ name, login });
+  const names = (groups: readonly (readonly { readonly name: string }[])[]) => groups.map((group) => group.map((entry) => entry.name));
+
+  it("returns each login held by two or more items, members in given order, groups by first member", () => {
+    const groups = groupSharedLogins([item("a", "x"), item("b", "y"), item("c", "x"), item("d", "y"), item("e", "z"), item("f", "x")], (entry) => entry.login);
+    expect(names(groups)).toEqual([["a", "c", "f"], ["b", "d"]]);
+  });
+
+  it("returns nothing when every login is held once", () => {
+    expect(groupSharedLogins([item("a", "x"), item("b", "y")], (entry) => entry.login)).toEqual([]);
+  });
+
+  it("never groups items without a login", () => {
+    expect(groupSharedLogins([item("a", undefined), item("b", undefined)], (entry) => entry.login)).toEqual([]);
   });
 });
 
