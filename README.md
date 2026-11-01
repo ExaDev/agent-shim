@@ -89,7 +89,7 @@ agent-shim identity set <name> [--label <text> | --no-label] [--default-profile 
 agent-shim identity set <name> [--credential <source>]... [--credential-target <bearer|apiKey|oauthToken>] [--no-credential] [--json]
 agent-shim identity set <name> [--anchor <days>@<HH:MM>[/<zone>]]... [--no-anchor] [--json]
 agent-shim identity remove <name> [--yes] [--json]
-agent-shim identity rename <old> <new> [--dry-run] [--json]   # move the directory, carry the login across and rewrite every reference to the name; refused while a session is running on the identity
+agent-shim identity rename <old> <new> [--dry-run] [--json]   # move the directory, carry the login across and rewrite every reference to the name; refused while a session is running or starting on the identity, and one left unfinished is finished by running it again
 agent-shim identity use <name> [--json]
 agent-shim @<name>                          # shorthand for `identity use <name>`
 agent-shim identity resolve-conflicts <name>  # interactively resolve a retained superseded farm's conflicts
