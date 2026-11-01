@@ -89,7 +89,7 @@ function loginAccountText(account: Readonly<AccountMetadata>): string | undefine
 }
 
 /** The account row: the login's account (the stored login, else the usage snapshot's copy of it, as the pool pick reads it) for an OAuth launch, or the account and level the provider's usage endpoint reported for a provider launch, whose billing the identity's login has no part in. Nothing when none is recorded. */
-function accountRows(billing: Readonly<BillingFacts> | undefined): readonly ReportRow[] {
+export function accountRows(billing: Readonly<BillingFacts> | undefined): readonly ReportRow[] {
   if (billing === undefined) {
     return [];
   }
@@ -110,7 +110,7 @@ function isInformative(window: Readonly<QuotaWindow>, nowMs: number): boolean {
 }
 
 /** The quota row: the windows the launch's provider last reported, worded as the pool pick words them, with how long ago that was recorded (a snapshot only changes when a request goes through the front door). Anthropic's five-hour and seven-day windows for an OAuth launch, the provider's own usage endpoint's windows for a provider launch. Nothing when no window is recorded. */
-function quotaRows(billing: Readonly<BillingFacts> | undefined): readonly ReportRow[] {
+export function quotaRows(billing: Readonly<BillingFacts> | undefined): readonly ReportRow[] {
   if (billing === undefined) {
     return [];
   }

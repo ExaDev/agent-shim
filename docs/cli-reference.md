@@ -181,6 +181,7 @@ agent-shim run [@<identity>] [launch flags] [claude arguments]
   #   --claude-version <version>   run exactly this installed Claude Code version
   #   --delay <duration>   wait this long after the launcher's own output before starting claude; --[no-]pause waits for a key press instead
   #   --[no-]explain   with @pool:<name>, list every member the pick ranked and why, not only the one picked
+  #   --[no-]pick   on a terminal, ask which identity to run as, even when one resolved (--no-pick never asks); a launch also asks by itself when no identity resolves, a pool pick would change account or organisation, or the identity is refused right now
   #   --native   run the real claude with nothing from agent-shim applied; cannot be combined with the flags above
 claude @<identity> ...                      # the same, once `agent-shim shim enable` has run
 ```
