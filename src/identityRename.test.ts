@@ -316,4 +316,30 @@ describe("IDENTITY_NAME_LOCATIONS", () => {
   it("decides every place the state root keeps files, so a new one cannot be forgotten by a rename", () => {
     expect(Object.keys(IDENTITY_NAME_LOCATIONS).sort()).toEqual(Object.keys(buildLayoutPaths("/example/root")).sort());
   });
+
+  it("marks as rewritten the place of every file a rename actually changes, so the table says what the rename does", async () => {
+    const world = createWorld("darwin");
+    try {
+      // A provider whose credential names the identity's token file is rewritten by the rename, which is what the table has to say of the providers directory.
+      writeJson(path.join(world.paths.providersDir, "z.json"), {
+        displayName: "z.ai",
+        baseUrl: "https://api.z.ai/api/anthropic",
+        credential: { sources: [{ file: identityTokenPath(world.paths, "work") }] },
+      });
+      const before = treeOf(world.root);
+      await renameIdentity(world.paths, "work", "client", world.ports());
+      const after = treeOf(world.root);
+      const isField = (key: string): key is keyof typeof world.paths => key in world.paths;
+      const places = Object.entries(IDENTITY_NAME_LOCATIONS).flatMap(([field, decision]) => (isField(field) ? [{ place: path.relative(world.root, world.paths[field]), decision }] : []));
+      const ownerOf = (file: string): string | undefined =>
+        places
+          .filter(({ place }) => place === "" || file === place || file.startsWith(`${place}/`))
+          .sort((left, right) => right.place.length - left.place.length)[0]?.decision;
+      const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])].filter((key) => !key.endsWith("/") && before[key] !== after[key]);
+      expect(changed.length).toBeGreaterThan(0);
+      expect(changed.filter((file) => ownerOf(file) !== "rewritten")).toEqual([]);
+    } finally {
+      fs.rmSync(world.root, { recursive: true, force: true });
+    }
+  });
 });
