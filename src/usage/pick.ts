@@ -1,11 +1,12 @@
 import type { WhenCondition } from "../config/schema";
 import { evaluateWhen, type ConditionContext, type PoolWindowFacts } from "../resolve/conditions";
+import { describeWindow, percent } from "./candidateText";
 import { planOf, type PlanClass } from "./plan";
 import { ANTHROPIC_PROVIDER } from "./middleware";
 import { effectiveWindow, formatAge, type EffectiveWindow } from "./preflight";
 import { quotaFactsOf } from "./quotaFacts";
 import { parseUnifiedRateLimit, soleOverageWindow } from "./rateLimit";
-import type { AccountMetadata, ProviderUsageState, QuotaWindow, UnifiedRateLimit, UsageRecord, UsageSnapshot } from "./schema";
+import type { AccountMetadata, ProviderUsageState, UnifiedRateLimit, UsageRecord, UsageSnapshot } from "./schema";
 
 /**
  * Ranks the members of a pool for a launch, from what the usage store recorded. Pure: snapshots, account metadata, log records and the clock all come in as values, so the launcher, `agent-shim pool pick` and the tests share one ranking.
@@ -18,7 +19,6 @@ const MS_PER_HOUR = 3_600_000;
 const HOURS_PER_DAY = 24;
 const FIVE_HOURS = 5;
 const PROMPT_CACHE_TTL_HOURS = 1;
-const PERCENT = 100;
 const SEVEN_DAYS = 7;
 
 /** The lengths of Anthropic's two subscription windows, used when a window reported no reset time of its own. */
@@ -220,19 +220,6 @@ function windowRatio(records: readonly UsageRecord[]): number | undefined {
     return undefined;
   }
   return (last.seven - first.seven) / (last.five - first.five);
-}
-
-function percent(fraction: number): string {
-  return `${String(Math.round(fraction * PERCENT))}%`;
-}
-
-function describeWindow(label: string, window: Readonly<QuotaWindow>, effective: EffectiveWindow, nowMs: number): string {
-  if (effective.reset) {
-    return `${label} window has reset`;
-  }
-  const used = effective.utilization === undefined ? "usage unknown" : `${percent(effective.utilization)} used`;
-  const resets = effective.resetsAtMs === undefined ? "" : `, resets in ${formatAge(effective.resetsAtMs - nowMs)}`;
-  return `${label} ${used}${resets}${window.status === "allowed_warning" ? " (nearly used)" : ""}`;
 }
 
 /** A candidate before the pool-wide feasibility pass settles `feasible`. */
