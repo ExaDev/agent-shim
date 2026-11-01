@@ -8,7 +8,7 @@ import type { CachedCredential, CredentialCachePort } from "./credentialCache";
 import { createFakeKeychain, type FakeKeychain } from "./keychainTestWorld";
 import type { SessionProcess } from "./identitySessions";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
-import { sameDirectory } from "./realIdentityRename";
+import { sameDirectory } from "./sameDirectory";
 import { realFarmFs } from "./realPorts";
 import { claudeCodeKeychainService } from "./usage/signIn";
 

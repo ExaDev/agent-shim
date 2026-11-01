@@ -7,6 +7,7 @@ import { liveLaunchesOn } from "./launcher/launchRecords";
 import type { LayoutPaths } from "./paths";
 import { realCredentialCacheEnv } from "./realCredentialCache";
 import { realFarmFs, realIsProcessRunning, realRunPort, realSleepSync } from "./realPorts";
+import { sameDirectory } from "./sameDirectory";
 
 /** What a read of another process's `/proc` entry gives when the process has exited since it was listed. */
 const GONE_PROCESS_CODES: ReadonlySet<string> = new Set(["ENOENT", "ESRCH"]);
@@ -54,16 +55,6 @@ function currentUid(): number {
     throw new Error(`no POSIX user id on ${process.platform}`);
   }
   return process.getuid();
-}
-
-/** Whether two paths are one directory on disk, by device and inode: true for a name that differs only in case on a filesystem that ignores case, and for a symlink to the directory. False when either does not exist. */
-export function sameDirectory(first: string, second: string): boolean {
-  const a = fs.statSync(first, { throwIfNoEntry: false });
-  const b = fs.statSync(second, { throwIfNoEntry: false });
-  if (a === undefined || b === undefined) {
-    return false;
-  }
-  return a.dev === b.dev && a.ino === b.ino;
 }
 
 /** The signals that ask a process to stop and are not a failure of its own. */

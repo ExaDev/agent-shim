@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { CliError } from "./cliError";
-import { describeUnfinishedRename, readRenameJournal, readRenameJournals, removeRenameJournal, renameJournalFile, unfinishedRenameFor, writeRenameJournal, type RenameJournal } from "./identityRenameJournal";
+import { describeUnfinishedRename, readRenameJournal, readRenameJournals, removeRenameJournal, renameJournalFile, requireNameFreeOfUnfinishedRename, unfinishedRenameFor, writeRenameJournal, type RenameJournal } from "./identityRenameJournal";
 import { createFakeFarmFs } from "./test-helpers";
 
 const DIR = "/home/testuser/.agent-shim/identity-renames";
@@ -95,5 +95,49 @@ describe("describeUnfinishedRename", () => {
     expect(describeUnfinishedRename(JOURNAL)).toBe(
       'an unfinished rename of identity "work" to "client" (2 of 3 steps recorded as done). Finish it with `agent-shim identity rename work client`; to put the name back afterwards, run `agent-shim identity rename client work`.',
     );
+  });
+});
+
+describe("requireNameFreeOfUnfinishedRename", () => {
+  /** What a filesystem that ignores case says of two names. */
+  const foldsCase = (first: string, second: string): boolean => first.toLowerCase() === second.toLowerCase();
+  const never = (): boolean => false;
+  const seeded = (journal: RenameJournal) => {
+    const fs = createFakeFarmFs();
+    writeRenameJournal(fs, renameJournalFile(DIR, journal.from, journal.to), journal);
+    return fs;
+  };
+
+  it("refuses either name of an unfinished rename, naming the command that finishes it", () => {
+    const fs = seeded(JOURNAL);
+    expect(() => {
+      requireNameFreeOfUnfinishedRename(fs, DIR, "work", "remove", never);
+    }).toThrow(describeUnfinishedRename(JOURNAL));
+    expect(() => {
+      requireNameFreeOfUnfinishedRename(fs, DIR, "client", "add", never);
+    }).toThrow(/Cannot add identity "client"/);
+  });
+
+  it("leaves a name the rename does not hold alone", () => {
+    expect(() => {
+      requireNameFreeOfUnfinishedRename(seeded(JOURNAL), DIR, "personal", "add", never);
+    }).not.toThrow();
+  });
+
+  it("refuses a name that is another spelling of either one when the names are told to be the same directory, as a case-insensitive filesystem does", () => {
+    const renamingFromUpper = seeded({ ...JOURNAL, from: "Work" });
+    expect(() => {
+      requireNameFreeOfUnfinishedRename(renamingFromUpper, DIR, "work", "remove", foldsCase);
+    }).toThrow(/Cannot remove identity "work"/);
+    const renamingToLower = seeded({ ...JOURNAL, from: "a", to: "b" });
+    expect(() => {
+      requireNameFreeOfUnfinishedRename(renamingToLower, DIR, "B", "add", foldsCase);
+    }).toThrow(/Cannot add identity "B"/);
+  });
+
+  it("does not take another spelling for the same name when the filesystem tells them apart", () => {
+    expect(() => {
+      requireNameFreeOfUnfinishedRename(seeded({ ...JOURNAL, from: "a", to: "b" }), DIR, "B", "add", never);
+    }).not.toThrow();
   });
 });
