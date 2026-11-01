@@ -4,6 +4,7 @@ import { DirectoryRulesSchema, POOL_SELECTOR_PREFIX, type DirectoryRule, type Di
 import { CliError } from "./cliError";
 import { IdentityNotFoundError, readIdentity } from "./identityStore";
 import { PoolNotFoundError, readPools } from "./poolStore";
+import { renameAccountModelRefs } from "./modelRefs";
 import type { LayoutPaths } from "./paths";
 
 /** Raised by `removeDirectoryRule`, `updateDirectoryRule` and `rule show` when no rule matches the given path exactly. */
@@ -143,4 +144,20 @@ export function requireRuleSelector(paths: LayoutPaths, selector: string): void 
   } else if (readIdentity(paths, selector) === undefined) {
     throw new IdentityNotFoundError(selector);
   }
+}
+
+/**
+ * The rules with every pin to identity `from` pinned to `to` instead and every `acct:<from>/...` model ref in a rule's `models` block requalified, and the paths of the rules that changed. Undefined when no rule names `from`.
+ */
+export function renameIdentityInRules(rules: DirectoryRules, from: string, to: string): { readonly rules: DirectoryRules; readonly renamedAt: readonly string[] } | undefined {
+  const renamedAt: string[] = [];
+  const next = rules.rules.map((rule) => {
+    const models = rule.models === undefined ? undefined : renameAccountModelRefs(rule.models, from, to);
+    if (rule.identity !== from && models === undefined) {
+      return rule;
+    }
+    renamedAt.push(rule.path);
+    return { ...rule, ...(rule.identity === from ? { identity: to } : {}), ...(models === undefined ? {} : { models }) };
+  });
+  return renamedAt.length === 0 ? undefined : { rules: { ...rules, rules: next }, renamedAt };
 }

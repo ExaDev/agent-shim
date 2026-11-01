@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { ConfigValidationError } from "./config/load";
+import { FileNameSchema } from "./config/names";
 import { applyPatch, readJson, writeJsonAtomic, writeTextAtomic } from "./config/store";
 import { IdentitySchema, type Anchor, type CredentialCache, type CredentialSource, type CredentialTarget, type Identity } from "./config/schema";
 import { CliError, UsageError } from "./cliError";
@@ -67,12 +68,10 @@ export function addIdentity(paths: LayoutPaths, name: string): Identity {
   if (identityExists(paths, name)) {
     throw new IdentityAlreadyExistsError(name);
   }
-  const parsed = IdentitySchema.safeParse({ name, allowAmbientCredential: false });
-  if (!parsed.success) {
-    throw new InvalidIdentityNameError(name);
-  }
-  writeJsonAtomic(identityJsonPath(paths, name), parsed.data);
-  return parsed.data;
+  requireNewIdentityName(name);
+  const identity = IdentitySchema.parse({ name, allowAmbientCredential: false });
+  writeJsonAtomic(identityJsonPath(paths, name), identity);
+  return identity;
 }
 
 /**
@@ -260,14 +259,31 @@ export function setIdentityCredential(paths: LayoutPaths, identityName: string, 
   });
 }
 
+/** Whether `entry` (a name directly under `identitiesDir`) is identity `name`'s farm, or a scratch or superseded farm a resync left behind. The resync lock is not one: it guards the farm and is never moved with it. */
+function isFarmEntry(entry: string, name: string): boolean {
+  return entry === name || entry.startsWith(`.${name}.scratch.`) || entry.startsWith(`.${name}.previous.`);
+}
+
 /** Whether `entry` (a name directly under `identitiesDir`) is part of identity `name`'s on-disk state: its farm, the resync lock, or a scratch or superseded farm a resync left behind. */
 function belongsToIdentity(entry: string, name: string): boolean {
-  return (
-    entry === name ||
-    entry === path.basename(identityLockPath("", name)) ||
-    entry.startsWith(`.${name}.scratch.`) ||
-    entry.startsWith(`.${name}.previous.`)
-  );
+  return isFarmEntry(entry, name) || entry === path.basename(identityLockPath("", name));
+}
+
+/** The entries directly under `identitiesDir` that make up identity `name`'s farm: its directory, and any scratch or superseded farm a resync left beside it. Sorted, and empty when there are none. */
+export function identityFarmEntries(paths: LayoutPaths, name: string): readonly string[] {
+  return fs.existsSync(paths.identitiesDir) ? fs.readdirSync(paths.identitiesDir).filter((entry) => isFarmEntry(entry, name)).sort() : [];
+}
+
+/** `entry`, one of identity `from`'s farm entries (`identityFarmEntries`), under identity `to`: the directory itself takes the new name, and a scratch or superseded farm keeps its suffix. */
+export function renamedFarmEntry(entry: string, from: string, to: string): string {
+  return entry === from ? to : `.${to}${entry.slice(from.length + 1)}`;
+}
+
+/** Throws `InvalidIdentityNameError` unless `name` has the shape a new identity is given: the rule `IdentitySchema` holds `name` to, which `identity add` and `identity rename` both apply. */
+export function requireNewIdentityName(name: string): void {
+  if (!FileNameSchema.safeParse(name).success) {
+    throw new InvalidIdentityNameError(name);
+  }
 }
 
 /**

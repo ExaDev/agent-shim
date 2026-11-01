@@ -249,6 +249,29 @@ function readPicksFile(fs: Pick<FarmFs, "readFileUtf8">, file: string): PicksRea
   return result.success ? { file: result.data } : { file: empty, problem: `${file} is not a picks file this agent-shim can read` };
 }
 
+/**
+ * The picks file's text with every pick of identity `from` recorded as `to`, and how many that was. Undefined when `raw` is not a picks file this release can read (the reader treats it as empty too) or records no pick of `from`.
+ */
+export function picksWithIdentityRenamed(raw: string, from: string, to: string): { readonly text: string; readonly renamed: number } | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  const result = PicksFileSchema.safeParse(parsed);
+  if (!result.success) {
+    return undefined;
+  }
+  const entries = Object.entries(result.data.picks);
+  const renamed = entries.filter(([, entry]) => entry.identity === from).length;
+  if (renamed === 0) {
+    return undefined;
+  }
+  const next: PicksFile = { ...result.data, picks: Object.fromEntries(entries.map(([directory, entry]) => [directory, entry.identity === from ? { ...entry, identity: to } : entry])) };
+  return { text: `${JSON.stringify(next, null, 2)}\n`, renamed };
+}
+
 /** The identity last picked from a pool for `directory`, with a note when the picks file was unreadable (a hint lost, never a launch blocked). */
 export function readStickyPick(fs: Pick<FarmFs, "readFileUtf8">, picksFile: string, directory: string): { readonly sticky?: StickyPick; readonly problem?: string } {
   const read = readPicksFile(fs, picksFile);
