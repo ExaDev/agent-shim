@@ -35,6 +35,8 @@ export interface KeychainLoginPlan {
   readonly fromService: string;
   readonly toService: string;
   readonly account: string;
+  /** True when the new service already holds the login: an earlier run of the same rename copied it, so there is nothing to read or write, only the old item to delete at the end. Only a plan made for a resumed rename says so; any other finds the item and refuses. */
+  readonly alreadyCopied: boolean;
 }
 
 /** The result of asking `security` about one service without asking for its secret. */
@@ -89,21 +91,22 @@ function accountOf(attributes: string, service: string): string {
 /**
  * Plans copying the login Claude Code keeps for configuration directory `fromDir` to `toDir`, or returns undefined when `fromDir` has none (an identity that authenticates by a token or a provider never signed in with one). Reads attributes only.
  *
- * Throws `KeychainLoginError` when `toDir` already has an item, which a copy would have to overwrite, and when the Keychain cannot be asked.
+ * Throws `KeychainLoginError` when `toDir` already has an item and this is not `resuming` a rename that was left unfinished, since a copy would have to overwrite it; when resuming, an item already there is the earlier run's copy and the plan says so (`alreadyCopied`). Also throws when the Keychain cannot be asked.
  */
-export function planKeychainLogin(run: RunPort, fromDir: string, toDir: string): KeychainLoginPlan | undefined {
+export function planKeychainLogin(run: RunPort, fromDir: string, toDir: string, resuming = false): KeychainLoginPlan | undefined {
   const fromService = claudeCodeKeychainService(fromDir);
   const toService = claudeCodeKeychainService(toDir);
   const from = lookup(run, fromService);
   if (!from.found) {
     return undefined;
   }
-  if (lookup(run, toService).found) {
+  const alreadyCopied = lookup(run, toService).found;
+  if (alreadyCopied && !resuming) {
     throw new KeychainLoginError(
-      `The Keychain already holds a login filed for ${toDir} (service ${toService}). It is left behind either by an identity of that name that was removed, since \`identity remove\` does not touch the Keychain, or by a rename that did not finish. If you do not need it, remove it with \`security delete-generic-password -s "${toService}"\`, or choose another name.`,
+      `The Keychain already holds a login filed for ${toDir} (service ${toService}). It is left behind by an identity of that name that was removed, since \`identity remove\` does not touch the Keychain. If you do not need it, remove it with \`security delete-generic-password -s "${toService}"\`, or choose another name.`,
     );
   }
-  return { fromService, toService, account: accountOf(from.attributes, fromService) };
+  return { fromService, toService, account: accountOf(from.attributes, fromService), alreadyCopied };
 }
 
 /**
@@ -111,7 +114,7 @@ export function planKeychainLogin(run: RunPort, fromDir: string, toDir: string):
  *
  * `-w` is not used because it prints a password that is not plain text as bare hex digits, with nothing to tell them from a password that happens to be hex, so a copy made from it stores the digits as the new password. `-g` says which form it printed.
  */
-export function passwordBytesOf(stderr: string): Buffer | undefined {
+function passwordBytesOf(stderr: string): Buffer | undefined {
   const groups = PASSWORD_LINE.exec(stderr)?.groups;
   if (groups === undefined) {
     return undefined;
