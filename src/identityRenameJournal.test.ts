@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import { CliError } from "./cliError";
-import { describeUnfinishedRename, readRenameJournal, readRenameJournals, removeRenameJournal, renameJournalFile, requireNameFreeOfUnfinishedRename, unfinishedRenameFor, writeRenameJournal, type RenameJournal } from "./identityRenameJournal";
+import { describeUnfinishedRename, finishabilityOf, readRenameJournal, readRenameJournals, removeRenameJournal, renameJournalFile, requireNameFreeOfUnfinishedRename, unfinishedRenameFor, writeRenameJournal, type RenameJournal } from "./identityRenameJournal";
 import { createFakeFarmFs } from "./test-helpers";
 
 const DIR = "/home/testuser/.agent-shim/identity-renames";
+
+/** The state a rename that can be finished is in. */
+const FINISHABLE = { finishable: true } as const;
+
+/** Which names are identities when only the old name is: a rename a run of the same command finishes. */
+const onlyOldName = (name: string): boolean => name === "work";
 const OWNER_ONLY_FILE = 0o600;
 const OWNER_ONLY_DIRECTORY = 0o700;
 
@@ -92,9 +98,36 @@ describe("unfinishedRenameFor", () => {
 
 describe("describeUnfinishedRename", () => {
   it("names the pair, how far it got and the command that finishes it, and how to put the name back afterwards", () => {
-    expect(describeUnfinishedRename(JOURNAL)).toBe(
+    expect(describeUnfinishedRename(JOURNAL, FINISHABLE)).toBe(
       'an unfinished rename of identity "work" to "client" (2 of 3 steps recorded as done). Finish it with `agent-shim identity rename work client`; to put the name back afterwards, run `agent-shim identity rename client work`.',
     );
+  });
+});
+
+describe("finishabilityOf and an unfinishable rename", () => {
+  it("is finishable when the identity is under exactly one of the two names", () => {
+    expect(finishabilityOf(JOURNAL, onlyOldName)).toEqual(FINISHABLE);
+    expect(finishabilityOf(JOURNAL, (name) => name === "client")).toEqual(FINISHABLE);
+  });
+
+  it("is not when it is under neither name or under both, and says which", () => {
+    expect(finishabilityOf(JOURNAL, () => false)).toEqual({ finishable: false, reason: "there is no identity under either name" });
+    expect(finishabilityOf(JOURNAL, () => true)).toEqual({ finishable: false, reason: "both names are identities" });
+  });
+
+  it("is described without the command that finishes it, which would fail, and with the one that discards its record", () => {
+    const described = describeUnfinishedRename(JOURNAL, finishabilityOf(JOURNAL, () => false));
+    expect(described).toContain("cannot be finished: there is no identity under either name");
+    expect(described).toContain("agent-shim identity rename work client --discard-journal");
+    expect(described).not.toContain("Finish it with");
+    expect(described).not.toContain("put the name back");
+  });
+
+  it("is described without the discarding command when it can be finished", () => {
+    const described = describeUnfinishedRename(JOURNAL, FINISHABLE);
+    expect(described).toContain("Finish it with `agent-shim identity rename work client`");
+    expect(described).not.toContain("--discard-journal");
+    expect(described).not.toContain("cannot be finished");
   });
 });
 
@@ -111,33 +144,46 @@ describe("requireNameFreeOfUnfinishedRename", () => {
   it("refuses either name of an unfinished rename, naming the command that finishes it", () => {
     const fs = seeded(JOURNAL);
     expect(() => {
-      requireNameFreeOfUnfinishedRename(fs, DIR, "work", "remove", never);
-    }).toThrow(describeUnfinishedRename(JOURNAL));
+      requireNameFreeOfUnfinishedRename(fs, DIR, "work", "remove", never, onlyOldName);
+    }).toThrow(describeUnfinishedRename(JOURNAL, FINISHABLE));
     expect(() => {
-      requireNameFreeOfUnfinishedRename(fs, DIR, "client", "add", never);
+      requireNameFreeOfUnfinishedRename(fs, DIR, "client", "add", never, onlyOldName);
     }).toThrow(/Cannot add identity "client"/);
+  });
+
+  it("names the command that discards the record, not one that finishes the rename, when nothing can finish it", () => {
+    const refusal = (() => {
+      try {
+        requireNameFreeOfUnfinishedRename(seeded(JOURNAL), DIR, "work", "remove", never, () => false);
+      } catch (error) {
+        return error instanceof Error ? error.message : "";
+      }
+      return "";
+    })();
+    expect(refusal).toContain("agent-shim identity rename work client --discard-journal");
+    expect(refusal).not.toContain("Finish it with");
   });
 
   it("leaves a name the rename does not hold alone", () => {
     expect(() => {
-      requireNameFreeOfUnfinishedRename(seeded(JOURNAL), DIR, "personal", "add", never);
+      requireNameFreeOfUnfinishedRename(seeded(JOURNAL), DIR, "personal", "add", never, onlyOldName);
     }).not.toThrow();
   });
 
   it("refuses a name that is another spelling of either one when the names are told to be the same directory, as a case-insensitive filesystem does", () => {
     const renamingFromUpper = seeded({ ...JOURNAL, from: "Work" });
     expect(() => {
-      requireNameFreeOfUnfinishedRename(renamingFromUpper, DIR, "work", "remove", foldsCase);
+      requireNameFreeOfUnfinishedRename(renamingFromUpper, DIR, "work", "remove", foldsCase, onlyOldName);
     }).toThrow(/Cannot remove identity "work"/);
     const renamingToLower = seeded({ ...JOURNAL, from: "a", to: "b" });
     expect(() => {
-      requireNameFreeOfUnfinishedRename(renamingToLower, DIR, "B", "add", foldsCase);
+      requireNameFreeOfUnfinishedRename(renamingToLower, DIR, "B", "add", foldsCase, onlyOldName);
     }).toThrow(/Cannot add identity "B"/);
   });
 
   it("does not take another spelling for the same name when the filesystem tells them apart", () => {
     expect(() => {
-      requireNameFreeOfUnfinishedRename(seeded({ ...JOURNAL, from: "a", to: "b" }), DIR, "B", "add", never);
+      requireNameFreeOfUnfinishedRename(seeded({ ...JOURNAL, from: "a", to: "b" }), DIR, "B", "add", never, onlyOldName);
     }).not.toThrow();
   });
 });

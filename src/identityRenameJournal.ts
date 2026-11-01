@@ -135,15 +135,18 @@ export function unfinishedRenameFor(journals: readonly RenameJournal[], from: st
   return involved === undefined ? undefined : { kind: "blocked", journal: involved };
 }
 
-/** The journal as a sentence for a refusal or for `doctor`: the pair, how far it got, and the command that finishes it. */
-export function describeUnfinishedRename(journal: Readonly<RenameJournal>): string {
-  const done = journal.steps.filter((step) => step.done).length;
-  return `an unfinished rename of identity "${journal.from}" to "${journal.to}" (${String(done)} of ${String(journal.steps.length)} steps recorded as done). Finish it with \`agent-shim identity rename ${journal.from} ${journal.to}\`; to put the name back afterwards, run \`agent-shim identity rename ${journal.to} ${journal.from}\`.`;
-}
+/** Whether a run of the rename can finish it, and when it cannot, why. */
+export type RenameFinishability = { readonly finishable: true } | { readonly finishable: false; readonly reason: string };
 
 /** Why no run of the rename can finish it: the identity is under neither name, or under both. */
 export function describeUnfinishable(bothExist: boolean): string {
   return bothExist ? "both names are identities" : "there is no identity under either name";
+}
+
+/** Whether the rename in `journal` can be finished, given which names are identities: it can when the identity is under exactly one of them, wherever the earlier run got it to. */
+export function finishabilityOf(journal: Readonly<Pick<RenameJournal, "from" | "to">>, exists: (name: string) => boolean): RenameFinishability {
+  const underFrom = exists(journal.from);
+  return underFrom === exists(journal.to) ? { finishable: false, reason: describeUnfinishable(underFrom) } : { finishable: true };
 }
 
 /** The command that removes the record of the unfinished rename in `journal`, and nothing else. */
@@ -151,10 +154,19 @@ export function discardJournalCommand(journal: Readonly<Pick<RenameJournal, "fro
   return `agent-shim identity rename ${journal.from} ${journal.to} --discard-journal`;
 }
 
+/** The journal as a sentence for a refusal or for `doctor`: the pair, how far it got, and what to do about it. A rename that can be finished is told the command that finishes it, and one that cannot is told why and the command that discards its record, never the command that would fail. */
+export function describeUnfinishedRename(journal: Readonly<RenameJournal>, finishability: RenameFinishability): string {
+  const done = journal.steps.filter((step) => step.done).length;
+  const progress = `an unfinished rename of identity "${journal.from}" to "${journal.to}" (${String(done)} of ${String(journal.steps.length)} steps recorded as done)`;
+  return finishability.finishable
+    ? `${progress}. Finish it with \`agent-shim identity rename ${journal.from} ${journal.to}\`; to put the name back afterwards, run \`agent-shim identity rename ${journal.to} ${journal.from}\`.`
+    : `${progress} that cannot be finished: ${finishability.reason}. If nothing is left of it to keep, discard its record with \`${discardJournalCommand(journal)}\`; that removes only the record and changes no identity.`;
+}
+
 /** Raised when an operation on an identity's name is refused because an unfinished rename names it: the identities are partly moved, and anything done to either name now would be done to a state nobody chose. */
 class NameHeldByUnfinishedRenameError extends CliError {
-  constructor(action: string, name: string, journal: Readonly<RenameJournal>) {
-    super(`Cannot ${action} identity "${name}": there is ${describeUnfinishedRename(journal)}`);
+  constructor(action: string, name: string, journal: Readonly<RenameJournal>, finishability: RenameFinishability) {
+    super(`Cannot ${action} identity "${name}": there is ${describeUnfinishedRename(journal, finishability)}`);
     this.name = "NameHeldByUnfinishedRenameError";
   }
 }
@@ -162,9 +174,9 @@ class NameHeldByUnfinishedRenameError extends CliError {
 /**
  * Throws `NameHeldByUnfinishedRenameError` when an unfinished rename in `directory` holds `name`, as its old name or its new one, so `action` (`add`, `remove`) is refused until the rename is finished or its journal discarded. A name holds the same identity as a held one when it is equal to it or `sameName` says the two are one directory, which a symlink makes them and a filesystem that ignores case makes two spellings of one name: either would reach the identity the rename is moving or create the one it will find at its target. A file that is not a journal names no identity and is left to `doctor`, which reports it.
  */
-export function requireNameFreeOfUnfinishedRename(fs: Pick<RenameJournalFs, "readFileUtf8" | "readdir">, directory: string, name: string, action: string, sameName: (first: string, second: string) => boolean): void {
+export function requireNameFreeOfUnfinishedRename(fs: Pick<RenameJournalFs, "readFileUtf8" | "readdir">, directory: string, name: string, action: string, sameName: (first: string, second: string) => boolean, exists: (name: string) => boolean): void {
   const held = listRenameJournals(fs, directory).journals.find((journal) => [journal.from, journal.to].some((heldName) => heldName === name || sameName(name, heldName)));
   if (held !== undefined) {
-    throw new NameHeldByUnfinishedRenameError(action, name, held);
+    throw new NameHeldByUnfinishedRenameError(action, name, held, finishabilityOf(held, exists));
   }
 }

@@ -31,13 +31,14 @@ describe("doctor and an unfinished rename", () => {
 
   it("fails for each one, naming the identity it moved from and the command that finishes it", () => {
     const report = runDoctor(baseParams({ identities: [identity("work")], renameJournals: { journals: [JOURNAL], unreadable: [] } }));
-    expect(findingsFor(report, "identity")).toContainEqual({ section: "identity", subject: "work", severity: "fail", message: `There is ${describeUnfinishedRename(JOURNAL)}` });
+    expect(findingsFor(report, "identity")).toContainEqual({ section: "identity", subject: "work", severity: "fail", message: `There is ${describeUnfinishedRename(JOURNAL, { finishable: true })}` });
   });
 
   it("says an unfinished rename whose identity is under neither name cannot be finished, and names the flag that discards its record", () => {
     const report = runDoctor(baseParams({ identities: [identity("personal")], renameJournals: { journals: [JOURNAL], unreadable: [] } }));
     const finding = findingsFor(report, "identity").find((entry) => entry.subject === "work" && entry.severity === "fail");
     expect(finding?.message).toContain("cannot be finished: there is no identity under either name");
+    expect(finding?.message).not.toContain("Finish it with");
     expect(finding?.message).toContain("agent-shim identity rename work client --discard-journal");
   });
 
@@ -45,6 +46,7 @@ describe("doctor and an unfinished rename", () => {
     const report = runDoctor(baseParams({ identities: [identity("work"), identity("client")], renameJournals: { journals: [JOURNAL], unreadable: [] } }));
     const finding = findingsFor(report, "identity").find((entry) => entry.subject === "work" && entry.severity === "fail");
     expect(finding?.message).toContain("cannot be finished: both names are identities");
+    expect(finding?.message).not.toContain("Finish it with");
     expect(finding?.message).toContain("agent-shim identity rename work client --discard-journal");
   });
 
@@ -87,7 +89,7 @@ describe("collectDoctorReport and an unfinished rename", () => {
     addIdentity(paths, "work");
     writeRenameJournal(realFarmFs, renameJournalFile(paths.identityRenamesDir, "work", "client"), JOURNAL);
     const report = collectDoctorReport({ paths, env: { PATH: "" } });
-    expect(findingsFor(report, "identity")).toContainEqual({ section: "identity", subject: "work", severity: "fail", message: `There is ${describeUnfinishedRename(JOURNAL)}` });
+    expect(findingsFor(report, "identity")).toContainEqual({ section: "identity", subject: "work", severity: "fail", message: `There is ${describeUnfinishedRename(JOURNAL, { finishable: true })}` });
   });
 
   it("agrees with the rename about which names exist: an empty directory is not an identity, and one holding an identity.json is", () => {
