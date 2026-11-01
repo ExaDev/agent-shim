@@ -132,6 +132,8 @@ export interface SupervisedLaunch {
   readonly conversation: ClaudeConversation;
   /** The pool member to run as, for a relaunch after the previous member ran out of quota. The pool pick is skipped. */
   readonly member?: string;
+  /** The pool member the session left, for a relaunch after it ran out of quota: what the launch report names as the account the session moved from. */
+  readonly from?: string;
   /** The model to resume with, named by a model move that brought the session onto its member: the model part of the `acct:` member the session picked. Replaces any model the caller's own arguments name. */
   readonly model?: string;
   /** Claude Code settings, as the JSON `--settings` takes, to add to the launch: the hooks that tell the supervisor when a turn begins and ends. */

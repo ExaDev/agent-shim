@@ -17,7 +17,7 @@ import { isClaudeSubcommand } from "./launcher/claudeSubcommand";
 import { diagnosticLines, printDiagnosticLines, reportDiagnostics, type DiagnosticLine } from "./launcher/diagnostics";
 import { holdBeforeLaunch, LAUNCH_CANCELLED_EXIT, type HoldOutcome, type HoldPort } from "./launcher/hold";
 import type { Candidate } from "./usage/pick";
-import { decisionRows, farmRow, noteRow, pinnedVersionRow, routingRows } from "./launcher/launchReport";
+import { decisionRows, farmRow, noteRow, pinnedVersionRow, routingRows, type BillingFacts, type LastRanAs } from "./launcher/launchReport";
 import { modelPickerSettingsFromRows, routedModelRows } from "./launcher/modelPicker";
 import { catalogueCachePath, parseCatalogueCache, type CatalogueModel } from "./providerCatalogue";
 import { listProviderNames, loadProvider } from "./providersStore";
@@ -36,8 +36,10 @@ import { GlobalConfigSchema } from "./config/schema";
 import { CREDENTIAL_UNAVAILABLE_EXIT, credentialVariables, describeSource, resolveCredential, summariseCredential, type CredentialPort, type CredentialSummary, type ResolvedCredential } from "./credential";
 import type { CascadeInput } from "./resolve/walk";
 import { ANTHROPIC_PROVIDER } from "./usage/middleware";
+import { AccountMetadataError, readAccountMetadata } from "./usage/account";
 import { quotaWarnings } from "./usage/preflight";
 import { readUsageSnapshot, UsageSnapshotError } from "./usage/read";
+import type { AccountMetadata, UsageSnapshot } from "./usage/schema";
 import type { ClaudeBinaryResolver } from "./versionDiscovery";
 import { resolveClaudeVersion, type PinnedClaudeVersion } from "./launcher/claudeVersion";
 import { runLaunchUpdateCheck, type UpdateLaunchPort } from "./update/launchHook";
@@ -195,7 +197,7 @@ function pickFromPool(
   params: PrepareLaunchParams,
   parsedArgv: ParsedLauncherArgv,
   readOnly: boolean,
-): { readonly identityDecision: IdentityDecision; readonly poolPick?: LaunchPoolDecision; readonly poolRanking?: readonly Candidate[] } {
+): { readonly identityDecision: IdentityDecision; readonly poolPick?: LaunchPoolDecision; readonly poolRanking?: readonly Candidate[]; readonly lastRanAs?: LastRanAs } {
   const { paths, fs, proc, log } = params;
   if (decided.pool === undefined) {
     return { identityDecision: decided };
@@ -236,6 +238,7 @@ function pickFromPool(
     identityDecision: { ...decided, name: resolution.identity },
     poolPick: { name: decided.pool, reasons: resolution.reasons, ...(resolution.movedOff === undefined ? {} : { movedOff: resolution.movedOff }) },
     poolRanking: resolution.candidates,
+    ...(resolution.lastRanAs === undefined ? {} : { lastRanAs: { identity: resolution.lastRanAs.identity, agoMs: farmRuntime.now() - Date.parse(resolution.lastRanAs.at) } }),
   };
 }
 
@@ -248,6 +251,10 @@ interface DecidedLaunch {
   readonly poolPick: LaunchPoolDecision | undefined;
   /** Every member the pool pick ranked, best first. Absent when the launch picked no member itself (no pool, or a supervisor already chose the member). */
   readonly poolRanking: readonly Candidate[] | undefined;
+  /** The identity this directory's pool pick last ran as, read before this launch's pick replaced the record. */
+  readonly lastRanAs: LastRanAs | undefined;
+  /** What the launch report's account and quota rows read; absent when the launch has no identity farm to read them for. */
+  readonly billing: BillingFacts | undefined;
   readonly configDirEscapeHatch: boolean;
   /** The identity whose farm this launch manages: absent when the caller named a configuration directory or no identity resolved. */
   readonly farmIdentity: string | undefined;
@@ -309,7 +316,7 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
   });
 
   // A pool selector is resolved to one member here, ahead of everything that reads the identity: farm recovery, loading, the credential and the resync all work on the chosen name exactly as if it had been typed.
-  const { identityDecision, poolPick, poolRanking } = pickFromPool(decidedIdentity, params, parsedArgv, readOnly);
+  const { identityDecision, poolPick, poolRanking, lastRanAs } = pickFromPool(decidedIdentity, params, parsedArgv, readOnly);
 
   // There is a farm to manage only when an identity resolved and the caller did not name a configuration directory itself.
   const farmIdentity = configDirEscapeHatchApplies ? undefined : identityDecision.name;
@@ -407,9 +414,11 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
   }
 
   // A launch is never blocked by quota: the warning only says what the front door last saw for the provider this launch will use.
+  let billing: BillingFacts | undefined;
   if (farm !== undefined && farmIdentity !== undefined) {
+    let snapshot: UsageSnapshot | undefined;
     try {
-      const snapshot = readUsageSnapshot(farm.fs, paths.usageSnapshotsDir, farmIdentity);
+      snapshot = readUsageSnapshot(farm.fs, paths.usageSnapshotsDir, farmIdentity);
       for (const warning of quotaWarnings(snapshot, selectedProvider?.name ?? ANTHROPIC_PROVIDER, farm.now())) {
         log.warn(warning);
       }
@@ -419,6 +428,17 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
       }
       log.warn(`agent-shim: ${error.message}`);
     }
+    // The report's account row reads the stored login, as the pool pick does; a login file that cannot be read is said so and leaves the row to the snapshot's copy.
+    let login: AccountMetadata | undefined;
+    try {
+      login = readAccountMetadata(farm.fs, paths.identitiesDir, farmIdentity);
+    } catch (error) {
+      if (!(error instanceof AccountMetadataError)) {
+        throw error;
+      }
+      log.warn(`agent-shim: ${error.message}`);
+    }
+    billing = { login, snapshot, provider: selectedProvider?.name, nowMs: farm.now() };
   }
 
   // The identity's own credential applies only when no provider was selected (the provider's credential authenticates against its endpoint instead) and the identity owns this launch's configuration directory (under the CLAUDE_CONFIG_DIR escape hatch, the directory and whatever login it holds are the caller's). A read-only decision reports the block and resolves nothing.
@@ -546,6 +566,8 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
     identityDecision,
     poolPick,
     poolRanking,
+    lastRanAs,
+    billing,
     notes,
     configDirEscapeHatch: configDirEscapeHatchApplies,
     farmIdentity,
@@ -578,7 +600,7 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
   const { paths, proc, log } = params;
   const { env } = proc;
   const decided = decideLaunch(params, false);
-  const { identityDecision, configProfileDecision, resolvedProvider, identityCredential, poolPick, poolRanking, notes, flags: resolvedFlags, args: finalArgv, configDirEscapeHatch: configDirEscapeHatchApplies, decision } = decided;
+  const { identityDecision, configProfileDecision, resolvedProvider, identityCredential, poolPick, poolRanking, lastRanAs, billing, notes, flags: resolvedFlags, args: finalArgv, configDirEscapeHatch: configDirEscapeHatchApplies, decision } = decided;
 
   // Everything the launch has to say about itself is collected as it is decided and printed as one block once the launch is ready to start, so what a person reads is a single table of facts and not lines scattered between the steps. Warnings follow it.
   const rows: ReportRow[] = [
@@ -590,6 +612,9 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
       profile: configProfileDecision.name === undefined ? undefined : { name: configProfileDecision.name, source: configProfileDecision.source },
       provider: resolvedProvider === undefined ? undefined : { name: resolvedProvider.name, credential: `${resolvedProvider.credential.target} from ${describeSource(resolvedProvider.credential.source)}` },
       identityCredential: identityCredential === undefined ? undefined : `${identityCredential.target} from ${describeSource(identityCredential.source)}`,
+      billing,
+      lastRanAs,
+      limitRelaunchFrom: params.supervised?.from,
     }),
   ];
   let warnings: readonly DiagnosticLine[] = [];
