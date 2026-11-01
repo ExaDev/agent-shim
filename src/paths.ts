@@ -102,6 +102,8 @@ export interface LayoutPaths {
   readonly usageJobsFile: string;
   /** Directory of one append-only `<job>.log` per job: the result of each unattended run. */
   readonly jobLogsDir: string;
+  /** Directory holding one journal per unfinished `identity rename`, written before its first step and removed when it ends: the trace a rename that was killed leaves, which a re-run resumes from and `doctor` reports. Runtime state, never configuration. */
+  readonly identityRenamesDir: string;
   /** Directory holding one `<launcher-pid>.<identity>.json` record per launch in progress, written before the identity's farm is resynced and removed once the child has exited. Runtime state, never configuration: it is what lets an identity rename see a launch that has resynced but not yet started its child. */
   readonly launchesDir: string;
   /** Directory of the supervised sessions' shared state, one subdirectory per pool: the live sessions each launcher registers, so sessions on one account see each other, and the lock that serialises their moves. Runtime state, never configuration. */
@@ -188,6 +190,7 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     usageAnchorsFile: path.join(root, "usage", "anchors.json"),
     usageJobsFile: path.join(root, "usage", "jobs.json"),
     jobLogsDir: path.join(root, "logs", "jobs"),
+    identityRenamesDir: path.join(root, "identity-renames"),
     launchesDir: path.join(root, "launches"),
     superviseDir: path.join(root, "supervise"),
     modelMovesDir: path.join(root, "model-moves"),
