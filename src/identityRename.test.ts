@@ -493,6 +493,44 @@ describe("renameIdentity with a new name that is the old directory under another
   });
 });
 
+describe("renameIdentity and the usage records of the current five-hour window", () => {
+  let world: World;
+  const NOW = Date.parse("2026-10-30T12:00:00.000Z");
+  const HOUR_MS = 3_600_000;
+  const OUTSIDE_WINDOW_HOURS_AGO = 6;
+  const ports = (): IdentityRenamePorts => world.ports({ lock: { nowMs: () => NOW, pid: OWN_PID, isRunning: () => true, sleep: () => undefined } });
+  const NOTE = 'Usage already logged for "work" in the last five hours stays filed under that name: the usage log is appended to by the running front door, so it is not rewritten. Until those hours pass, pool ranking has no burn rate or five-hour to seven-day ratio for "client" from them. Its quota windows come from its snapshot, which moved, and are unaffected.';
+
+  /** One logged request, as the front door writes it. */
+  const record = (identity: string, hoursAgo: number, provider = "anthropic"): string =>
+    JSON.stringify({ schemaVersion: 1, at: new Date(NOW - hoursAgo * HOUR_MS).toISOString(), identity, provider, route: "anthropic", method: "POST", endpoint: "/v1/messages", status: 200, latencyMs: 1, durationMs: 2, outcome: "completed" });
+  const log = (...lines: readonly string[]): void => {
+    writeFile(path.join(world.paths.usageLogDir, "2026-10-30.77.jsonl"), `${lines.join("\n")}\n`);
+  };
+
+  beforeEach(() => {
+    world = createWorld();
+  });
+
+  afterEach(() => {
+    fs.rmSync(world.root, { recursive: true, force: true });
+  });
+
+  it("is told in the dry run and the real run that those records keep the old name, since the log is not rewritten", () => {
+    log(record("work", 2), record("personal", 1));
+    const planned = describeIdentityRename(world.paths, "work", "client", ports());
+    expect(planned.warnings).toEqual([NOTE]);
+    expect(renameIdentity(world.paths, "work", "client", ports()).warnings).toEqual([NOTE]);
+    expect(fs.readFileSync(path.join(world.paths.usageLogDir, "2026-10-30.77.jsonl"), "utf8")).toContain('"identity":"work"');
+  });
+
+  it("says nothing when the identity has no record in the window: an older one, another identity's, or another provider's", () => {
+    log(record("work", OUTSIDE_WINDOW_HOURS_AGO), record("personal", 1), record("work", 1, "z"));
+    expect(describeIdentityRename(world.paths, "work", "client", ports()).warnings).toEqual([]);
+    expect(renameIdentity(world.paths, "work", "client", ports()).warnings).toEqual([]);
+  });
+});
+
 describe("renameIdentity locking", () => {
   let world: World;
 

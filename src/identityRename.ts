@@ -23,7 +23,9 @@ import { listProviders, providerJsonPath } from "./providersStore";
 import { renameIdentityInPools } from "./poolStore";
 import { stampsWithKeyRenamed } from "./usage/handledStamps";
 import { picksWithIdentityRenamed } from "./usage/poolPick";
-import { readUsageSnapshot, snapshotPath, UsageSnapshotError } from "./usage/read";
+import { ANTHROPIC_PROVIDER } from "./usage/middleware";
+import { FIVE_HOUR_WINDOW_MS } from "./usage/pick";
+import { readUsageLog, readUsageSnapshot, snapshotPath, UsageSnapshotError } from "./usage/read";
 import { UsageSnapshotSchema } from "./usage/schema";
 import { keychainHasItem } from "./usage/signIn";
 
@@ -53,7 +55,7 @@ export interface IdentityRenameReport {
   readonly dryRun: boolean;
   /** Every directory and file moved and every file and field rewritten, in the order done, one line each. */
   readonly steps: readonly string[];
-  /** Things that went wrong after the rename was complete and need a person's attention. */
+  /** What the person should know: a limit of the rename itself, or something that went wrong after it was complete. */
   readonly warnings: readonly string[];
 }
 
@@ -101,6 +103,8 @@ interface Finisher {
 interface Plan {
   readonly steps: readonly Step[];
   readonly finishers: readonly Finisher[];
+  /** Things the person should know that no step can do anything about, reported as warnings by the dry run and the real run alike. */
+  readonly notes: readonly string[];
 }
 
 /** `count` and `noun`, pluralised. */
@@ -381,6 +385,18 @@ function snapshotStep(paths: LayoutPaths, ports: IdentityRenamePorts, from: stri
   };
 }
 
+/**
+ * A note for the person when the usage log holds requests of identity `from` from the current five-hour window, which the rename leaves under that name. The log is append-only with one writer per segment, and the front door that writes it is running, so rewriting a segment from here would race its appends and lose records. Pool ranking reads those records for a member's burn rate and five-hour to seven-day ratio, so the renamed member has neither from them until the window passes; its quota windows come from its snapshot, which moves with it.
+ */
+function usageWindowNote(paths: LayoutPaths, ports: IdentityRenamePorts, from: string, to: string): string | undefined {
+  const windowStartMs = ports.lock.nowMs() - FIVE_HOUR_WINDOW_MS;
+  const { records } = readUsageLog(ports.fs, paths.usageLogDir, { sinceMs: windowStartMs });
+  const logged = records.some((record) => record.identity === from && record.provider === ANTHROPIC_PROVIDER && Date.parse(record.at) >= windowStartMs);
+  return logged
+    ? `Usage already logged for "${from}" in the last five hours stays filed under that name: the usage log is appended to by the running front door, so it is not rewritten. Until those hours pass, pool ranking has no burn rate or five-hour to seven-day ratio for "${to}" from them. Its quota windows come from its snapshot, which moved, and are unaffected.`
+    : undefined;
+}
+
 /** The steps that re-point the credential `file` sources of every identity but the renamed one, and of every provider, that name the token file or sit inside the directory being moved. A file that cannot be parsed and names a moved path is refused, since it can be neither updated nor trusted. */
 function credentialHolderSteps(paths: LayoutPaths, ports: IdentityRenamePorts, from: string, moved: MovedPaths): readonly (Step | undefined)[] {
   const refuseIfNamed = (file: string, detail: string): void => {
@@ -491,7 +507,8 @@ function planRename(paths: LayoutPaths, from: string, to: string, ports: Identit
       return text === undefined ? undefined : { text, summary: counted(1, "stamp") };
     }),
   ];
-  return { steps: steps.filter((step): step is Step => step !== undefined), finishers: keychain === undefined ? [] : [keychain.finisher] };
+  const note = usageWindowNote(paths, ports, from, to);
+  return { steps: steps.filter((step): step is Step => step !== undefined), finishers: keychain === undefined ? [] : [keychain.finisher], notes: note === undefined ? [] : [note] };
 }
 
 /** Raised when the rollback after a failed step could not undo everything: the first failure, and what was left. */
@@ -561,7 +578,8 @@ function descriptionsOf(plan: Plan): readonly string[] {
  */
 export function describeIdentityRename(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts): IdentityRenameReport {
   requireNames(from, to);
-  return { from, to, dryRun: true, steps: descriptionsOf(planRename(paths, from, to, ports)), warnings: [] };
+  const plan = planRename(paths, from, to, ports);
+  return { from, to, dryRun: true, steps: descriptionsOf(plan), warnings: plan.notes };
 }
 
 /**
@@ -579,7 +597,7 @@ export function renameIdentity(paths: LayoutPaths, from: string, to: string, por
     const plan = planRename(paths, from, to, ports);
     applyAll(plan.steps);
     const warnings = plan.finishers.flatMap((finisher) => finisher.finish() ?? []);
-    return { from, to, dryRun: false, steps: descriptionsOf(plan), warnings };
+    return { from, to, dryRun: false, steps: descriptionsOf(plan), warnings: [...plan.notes, ...warnings] };
   } finally {
     release();
   }
