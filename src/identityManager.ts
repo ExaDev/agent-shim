@@ -14,6 +14,8 @@ import { poolNameOf } from "./launcher/identity";
 import type { LayoutPaths } from "./paths";
 import { realFarmFs } from "./realPorts";
 import { IdentityNotFoundError, InvalidIdentityNameError, identityExists, readIdentity, addIdentity, useIdentity, type IdentityListing, listIdentities, setDefaultConfigProfile, setAllowAmbientCredential, setIdentityCredential, setIdentityAnchors, removeIdentity } from "./identityStore";
+import { describeAccountHolder, describeIdentityAccount, groupByLogin, loginKeyOf, readIdentityAccount, summariseIdentityAccount, type IdentityAccountRead, type IdentityAccountSummary } from "./identityAccounts";
+import { describeAccountPlan } from "./usage/accountDescription";
 import { ANCHOR_SYNTAX, formatAnchor } from "./usage/anchor";
 
 /**
@@ -120,10 +122,23 @@ interface IdentityView {
   readonly credential?: CredentialSummary;
   /** When the front door should have a five-hour window open for the identity; absent when it opens none on a schedule. */
   readonly anchors?: readonly Anchor[];
+  /** The email, organisation, role and plan of the identity's stored login; absent when it has none (a token or provider identity, or one never signed in). */
+  readonly account?: IdentityAccountSummary;
+  /** Why the stored login's profile could not be read, in place of `account`. */
+  readonly accountProblem?: string;
+  /** The other identities holding the same login (same account and organisation); absent when none does. */
+  readonly sharesLoginWith?: readonly string[];
   readonly problem?: string;
 }
 
-function toIdentityView(paths: LayoutPaths, entry: IdentityListing): IdentityView {
+/** One identity's listing entry with the stored login read for it. */
+interface IdentityWithAccount {
+  readonly entry: IdentityListing;
+  readonly read: IdentityAccountRead;
+}
+
+function toIdentityView(paths: LayoutPaths, { entry, read }: IdentityWithAccount, sharesLoginWith: readonly string[]): IdentityView {
+  const account = read?.account === undefined ? undefined : summariseIdentityAccount(read.account);
   return {
     name: entry.name,
     active: entry.isActive,
@@ -136,20 +151,44 @@ function toIdentityView(paths: LayoutPaths, entry: IdentityListing): IdentityVie
           ...(entry.identity.anchors === undefined ? {} : { anchors: entry.identity.anchors }),
         }
       : { problem: entry.problem }),
+    ...(account === undefined ? {} : { account }),
+    ...(read?.problem === undefined ? {} : { accountProblem: read.problem }),
+    ...(sharesLoginWith.length === 0 ? {} : { sharesLoginWith }),
   };
 }
 
-/** Renders one identity as the single line `identity list` prints for it. */
-function formatIdentityLine(entry: IdentityListing): string {
+/** One identity's listing entry with the view of it that `--json` prints. */
+interface IdentityRow {
+  readonly entry: IdentityListing;
+  readonly view: IdentityView;
+}
+
+/**
+ * Gathers every identity's row, reading each one's stored login and ordering the list so identities sharing a login (the same account in the same organisation) sit together. Data only: `identity list` and `identity show` render what this returns.
+ */
+function collectIdentityRows(paths: LayoutPaths, entries: readonly IdentityListing[]): readonly IdentityRow[] {
+  const items: readonly IdentityWithAccount[] = entries.map((entry) => ({ entry, read: readIdentityAccount(realFarmFs, paths.identitiesDir, entry.name) }));
+  const loginOf = (item: IdentityWithAccount): string | undefined => (item.read?.account === undefined ? undefined : loginKeyOf(item.read.account));
+  return groupByLogin(items, loginOf).map((item) => {
+    const login = loginOf(item);
+    const sharing = login === undefined ? [] : items.filter((other) => other !== item && loginOf(other) === login).map((other) => other.entry.name);
+    return { entry: item.entry, view: toIdentityView(paths, item, sharing) };
+  });
+}
+
+/** Renders one identity as the single line `identity list` prints for it, its account details last. */
+function formatIdentityLine(entry: IdentityListing, view: IdentityView): string {
   const marker = entry.isActive ? "* " : "  ";
+  const account = view.account === undefined ? "" : `  ${describeIdentityAccount(view.account)}`;
+  const accountProblem = view.accountProblem === undefined ? "" : `  [account unreadable: ${view.accountProblem}]`;
   if (entry.problem !== undefined) {
-    return `${marker}${entry.name} [unreadable: ${entry.problem}]`;
+    return `${marker}${entry.name} [unreadable: ${entry.problem}]${account}${accountProblem}`;
   }
   const defaultProfile =
     entry.identity.defaultConfigProfile === undefined ? "" : ` (default profile: ${entry.identity.defaultConfigProfile})`;
   const ambient = entry.identity.allowAmbientCredential ? " [allows ambient credential]" : "";
   const credential = entry.identity.credential === undefined ? "" : ` [credential ${describeCredential(entry.identity.credential)}]`;
-  return `${marker}${entry.name}${defaultProfile}${ambient}${credential}`;
+  return `${marker}${entry.name}${defaultProfile}${ambient}${credential}${account}${accountProblem}`;
 }
 
 /** Options `identity set` accepts. `defaultProfile` is `false` for `--no-default-profile`, `credential` is `false` for `--no-credential` and `anchor` is `false` for `--no-anchor`. */
@@ -191,16 +230,17 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
       .option("--json", "Print the identities as JSON.")
       .action((options: Readonly<{ json?: boolean }>) => {
         const entries = listIdentities(paths);
+        const rows = collectIdentityRows(paths, entries);
         if (options.json === true) {
-          printJson(entries.map((entry) => toIdentityView(paths, entry)));
+          printJson(rows.map((row) => row.view));
           return;
         }
-        if (entries.length === 0) {
+        if (rows.length === 0) {
           console.log("No identities yet. Run `agent-shim identity add <name>` to create one.");
           return;
         }
-        for (const entry of entries) {
-          console.log(formatIdentityLine(entry));
+        for (const row of rows) {
+          console.log(formatIdentityLine(row.entry, row.view));
         }
         if (entries.some((entry) => entry.problem !== undefined)) {
           console.log("\nRun `agent-shim doctor` for the full detail on every unreadable entry.");
@@ -215,17 +255,34 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
       .description("Show one identity's settings and directory.")
       .option("--json", "Print the identity as JSON.")
       .action((name: string, options: Readonly<{ json?: boolean }>) => {
-        const entry = listIdentities(paths).find((candidate) => candidate.name === name);
-        if (entry === undefined) {
+        const row = collectIdentityRows(paths, listIdentities(paths)).find((candidate) => candidate.entry.name === name);
+        if (row === undefined) {
           throw new IdentityNotFoundError(name);
         }
-        const view = toIdentityView(paths, entry);
+        const { entry, view } = row;
         if (options.json === true) {
           printJson(view);
           return;
         }
         console.log(`Identity: ${view.name}${view.active ? " (active)" : ""}`);
         console.log(`Directory: ${view.directory}`);
+        const holder = view.account === undefined ? undefined : describeAccountHolder(view.account);
+        if (holder !== undefined) {
+          console.log(`Account: ${holder}`);
+        }
+        if (view.account?.organizationRole !== undefined) {
+          console.log(`Role: ${view.account.organizationRole}`);
+        }
+        const plan = view.account === undefined ? undefined : describeAccountPlan(view.account);
+        if (plan !== undefined) {
+          console.log(`Plan: ${plan}`);
+        }
+        if (view.accountProblem !== undefined) {
+          console.log(`Account unreadable: ${view.accountProblem}`);
+        }
+        if (view.sharesLoginWith !== undefined) {
+          console.log(`Shares login with: ${view.sharesLoginWith.join(", ")}`);
+        }
         if (view.problem !== undefined) {
           console.log(`Unreadable: ${view.problem}`);
           return;
