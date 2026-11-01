@@ -18,7 +18,7 @@ export interface SessionProcess {
 
 /** Answers which processes are running against a configuration directory. Injected so the rename never reads the real process table in a test. */
 export interface IdentitySessionProbe {
-  /** The roots of every process tree that carries `configDir` as its configuration directory: a session, and whatever it started, counts once. Throws when the process table cannot be read, or shows a process of this user whose environment it cannot, since "none found" would then be a guess. */
+  /** The roots of every process tree that carries `configDir` as its configuration directory: a session, and whatever it started, counts once. Throws when the process table cannot be read, or on Linux when it shows a process of this user whose environment it cannot, since "none found" would then be a guess. On macOS `ps -E` prints no environment for a process of this user that it cannot read, and a row with none is indistinguishable from a process with an empty environment, so such a process is never counted: the probe sees exactly the sessions whose environment `ps` shows. Refusing on every row without one would refuse every rename, because a large share of ordinary same-user processes show none. */
   readonly sessionsOn: (configDir: string) => readonly SessionProcess[];
 }
 
