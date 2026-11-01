@@ -1,3 +1,10 @@
+## [11.78.0](https://github.com/ExaDev/agent-shim/compare/v11.77.0...v11.78.0) (2026-11-01)
+
+### Features
+
+* **doctor:** warn when identities share a login ([3c01c86](https://github.com/ExaDev/agent-shim/commit/3c01c86525f2bcf58ccfe1ae6995912aca15d7aa)), closes [#664](https://github.com/ExaDev/agent-shim/issues/664)
+* **identity:** group the identities that share a login ([5d7fe17](https://github.com/ExaDev/agent-shim/commit/5d7fe1766f5dfee093cb488ab3aba1fca7d3d8df))
+
 ## [11.77.0](https://github.com/ExaDev/agent-shim/compare/v11.76.0...v11.77.0) (2026-11-01)
 
 ### Features
