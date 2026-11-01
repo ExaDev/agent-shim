@@ -44,8 +44,8 @@ export function loginKeyOf(account: Readonly<AccountMetadata>): string | undefin
   return account.accountUuid === undefined ? undefined : JSON.stringify([account.accountUuid, account.organizationUuid ?? null]);
 }
 
-/** Reorders `items` so those sharing a login sit together, each group at the position of its first member, members in their given order. An item with no login keeps its place. */
-export function groupByLogin<T>(items: readonly T[], loginOf: (item: T) => string | undefined): readonly T[] {
+/** Collects `items` by the login `loginOf` names, in order of each login's first member. An item with no login gets a group of its own, so it never groups with another. */
+function collectByLogin<T>(items: readonly T[], loginOf: (item: T) => string | undefined): readonly (readonly T[])[] {
   const groups = new Map<string | symbol, T[]>();
   for (const item of items) {
     const key = loginOf(item) ?? Symbol("no login");
@@ -56,7 +56,17 @@ export function groupByLogin<T>(items: readonly T[], loginOf: (item: T) => strin
       group.push(item);
     }
   }
-  return [...groups.values()].flat();
+  return [...groups.values()];
+}
+
+/** Reorders `items` so those sharing a login sit together, the group at the position of its first member, members in given order. An item with no login keeps its place. */
+export function groupByLogin<T>(items: readonly T[], loginOf: (item: T) => string | undefined): readonly T[] {
+  return collectByLogin(items, loginOf).flat();
+}
+
+/** The groups of two or more `items` that share one login, each in given order and ordered by its first member. An item with no login, or the only one holding its login, is in no group. */
+export function groupSharedLogins<T>(items: readonly T[], loginOf: (item: T) => string | undefined): readonly (readonly T[])[] {
+  return collectByLogin(items, loginOf).filter((group) => group.length > 1);
 }
 
 /** Who an identity's login is, in the wording `account show` uses: `email (organisation)`, or the organisation alone when the login has no email. Undefined when it has neither. */
