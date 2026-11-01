@@ -61,6 +61,7 @@ describe("identity rename", () => {
       home: "/example/home",
       sameDirectory,
       sessions: { sessionsOn: () => sessions },
+      launches: { liveOn: () => [] },
       lock: { nowMs: () => NOW_MS, pid: OWN_PID, isRunning: () => true, sleep: () => undefined },
     };
   }
