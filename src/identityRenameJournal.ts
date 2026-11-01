@@ -141,6 +141,16 @@ export function describeUnfinishedRename(journal: Readonly<RenameJournal>): stri
   return `an unfinished rename of identity "${journal.from}" to "${journal.to}" (${String(done)} of ${String(journal.steps.length)} steps recorded as done). Finish it with \`agent-shim identity rename ${journal.from} ${journal.to}\`; to put the name back afterwards, run \`agent-shim identity rename ${journal.to} ${journal.from}\`.`;
 }
 
+/** Why no run of the rename can finish it: the identity is under neither name, or under both. */
+export function describeUnfinishable(bothExist: boolean): string {
+  return bothExist ? "both names are identities" : "there is no identity under either name";
+}
+
+/** The command that removes the record of the unfinished rename in `journal`, and nothing else. */
+export function discardJournalCommand(journal: Readonly<Pick<RenameJournal, "from" | "to">>): string {
+  return `agent-shim identity rename ${journal.from} ${journal.to} --discard-journal`;
+}
+
 /** Raised when an operation on an identity's name is refused because an unfinished rename names it: the identities are partly moved, and anything done to either name now would be done to a state nobody chose. */
 class NameHeldByUnfinishedRenameError extends CliError {
   constructor(action: string, name: string, journal: Readonly<RenameJournal>) {

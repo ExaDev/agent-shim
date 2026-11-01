@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { collectDoctorReport, runDoctor } from "./doctorReport";
 import { baseParams, findingsFor, identity } from "./doctorTestFixtures";
+import { addIdentity } from "./identityStore";
 import { describeUnfinishedRename, renameJournalFile, writeRenameJournal, type RenameJournal } from "./identityRenameJournal";
 import { buildLayoutPaths } from "./paths";
 import { realFarmFs } from "./realPorts";
@@ -33,6 +34,25 @@ describe("doctor and an unfinished rename", () => {
     expect(findingsFor(report, "identity")).toContainEqual({ section: "identity", subject: "work", severity: "fail", message: `There is ${describeUnfinishedRename(JOURNAL)}` });
   });
 
+  it("says an unfinished rename whose identity is under neither name cannot be finished, and names the flag that discards its record", () => {
+    const report = runDoctor(baseParams({ identities: [identity("personal")], renameJournals: { journals: [JOURNAL], unreadable: [] } }));
+    const finding = findingsFor(report, "identity").find((entry) => entry.subject === "work" && entry.severity === "fail");
+    expect(finding?.message).toContain("cannot be finished: there is no identity under either name");
+    expect(finding?.message).toContain("agent-shim identity rename work client --discard-journal");
+  });
+
+  it("says the same when both names are identities", () => {
+    const report = runDoctor(baseParams({ identities: [identity("work"), identity("client")], renameJournals: { journals: [JOURNAL], unreadable: [] } }));
+    const finding = findingsFor(report, "identity").find((entry) => entry.subject === "work" && entry.severity === "fail");
+    expect(finding?.message).toContain("cannot be finished: both names are identities");
+    expect(finding?.message).toContain("agent-shim identity rename work client --discard-journal");
+  });
+
+  it("does not offer to discard one that running the rename again finishes", () => {
+    const report = runDoctor(baseParams({ identities: [identity("work")], renameJournals: { journals: [JOURNAL], unreadable: [] } }));
+    expect(findingsFor(report, "identity").every((entry) => !entry.message.includes("--discard-journal"))).toBe(true);
+  });
+
   it("fails for a file in the journals directory that is not a journal, naming it and saying it blocks every rename", () => {
     const report = runDoctor(baseParams({ renameJournals: { journals: [], unreadable: [{ file: "/home/u/.agent-shim/identity-renames/damaged.json", detail: "not valid JSON" }] } }));
     const [finding] = findingsFor(report, "identity");
@@ -56,6 +76,7 @@ describe("collectDoctorReport and an unfinished rename", () => {
 
   it("reads the journals the state root holds", () => {
     const paths = buildLayoutPaths(root);
+    addIdentity(paths, "work");
     writeRenameJournal(realFarmFs, renameJournalFile(paths.identityRenamesDir, "work", "client"), JOURNAL);
     const report = collectDoctorReport({ paths, env: { PATH: "" } });
     expect(findingsFor(report, "identity")).toContainEqual({ section: "identity", subject: "work", severity: "fail", message: `There is ${describeUnfinishedRename(JOURNAL)}` });

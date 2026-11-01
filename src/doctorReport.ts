@@ -35,7 +35,7 @@ import { pushFrontDoor, pushFrontDoorListeners } from "./doctorFrontDoor";
 import { readFrontDoorListeners, realFrontDoorListenerProbes, type FrontDoorListenerReading } from "./frontdoor/listenerReadings";
 import { listFrontDoorSupervisors, type FrontDoorSupervisorListing } from "./frontdoor/supervisorProcesses";
 import { ENV_PREFIX, LEGACY_ENV_PREFIX, LEGACY_HOME_DIRNAME } from "./legacy";
-import { describeUnfinishedRename, listRenameJournals, type RenameJournalListing } from "./identityRenameJournal";
+import { describeUnfinishable, describeUnfinishedRename, discardJournalCommand, listRenameJournals, type RenameJournalListing } from "./identityRenameJournal";
 import { aliasFindings, readProviderAliases, type ProviderAliases } from "./providerAliases";
 import { describeProviderEndpoint, legacyProviderConversion, LegacyProviderFileError } from "./providersStore";
 import { detectAmbientCredential, formatAmbientCredentialGuardMessage } from "./launcher/guard";
@@ -514,8 +514,11 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   // A recorded former name still resolves to the provider it became, so an identity may name a provider by either.
   const validProviderNames = new Set([...params.providers.map((entry) => entry.name), ...Object.keys(params.providerAliases ?? {})]);
 
+  const identityNames = new Set(params.identities.map((entry) => entry.name));
   for (const journal of params.renameJournals?.journals ?? []) {
-    push("identity", "fail", `There is ${describeUnfinishedRename(journal)}`, journal.from);
+    const fromExists = identityNames.has(journal.from);
+    const unfinishable = fromExists === identityNames.has(journal.to) ? ` It cannot be finished: ${describeUnfinishable(fromExists)}. If nothing is left of it to keep, discard its record with \`${discardJournalCommand(journal)}\`; that removes only the record and changes no identity.` : "";
+    push("identity", "fail", `There is ${describeUnfinishedRename(journal)}${unfinishable}`, journal.from);
   }
   for (const { file, detail } of params.renameJournals?.unreadable ?? []) {
     push("identity", "fail", `${file} is not a rename journal this agent-shim can read (${detail}), so no identity can be renamed until it is fixed or removed, and it may be the trace of a rename that was left unfinished.`, path.basename(file));

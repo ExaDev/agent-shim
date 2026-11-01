@@ -13,7 +13,7 @@ import { IdentityAlreadyExistsError, IdentityNotFoundError, identityExists, iden
 import { identityTokenPath } from "./identityToken";
 import type { IdentitySessionProbe, SessionProcess } from "./identitySessions";
 import { renameIdentityInJobs } from "./jobStore";
-import { describeUnfinishedRename, readRenameJournal, readRenameJournals, removeRenameJournal, renameJournalFile, unfinishedRenameFor, writeRenameJournal, type RenameJournal } from "./identityRenameJournal";
+import { describeUnfinishable, describeUnfinishedRename, discardJournalCommand, readRenameJournal, readRenameJournals, removeRenameJournal, renameJournalFile, unfinishedRenameFor, writeRenameJournal, type RenameJournal } from "./identityRenameJournal";
 import { deleteKeychainLogin, planKeychainLogin, readKeychainLogin, writeKeychainLogin, type KeychainLoginPlan } from "./keychainLogin";
 import { FARM_MANIFEST_FILENAME, manifestWithIdentity } from "./launcher/farm";
 import { acquireIdentityLock, type AcquireIdentityLockParams, type IdentityLock } from "./launcher/lock";
@@ -156,15 +156,10 @@ class UnfinishedRenameError extends CliError {
   }
 }
 
-/** The command that discards the journal of the rename of `from` to `to`. */
-function discardCommand(from: string, to: string): string {
-  return `agent-shim identity rename ${from} ${to} --discard-journal`;
-}
-
 /** Raised when a rename was left unfinished and the identity is under neither name or under both, so no run of it can finish it and nothing else can clear it: the journal is discarded by hand with `--discard-journal`, which changes no identity. */
 class UnfinishableRenameError extends CliError {
   constructor(from: string, to: string, both: boolean) {
-    super(`The unfinished rename of "${from}" to "${to}" cannot be finished: ${both ? `both names are identities` : `there is no identity under either name`}. If nothing is left of it to keep, discard its record with \`${discardCommand(from, to)}\`; that removes only the record of the rename and changes no identity.`);
+    super(`The unfinished rename of "${from}" to "${to}" cannot be finished: ${describeUnfinishable(both)}. If nothing is left of it to keep, discard its record with \`${discardJournalCommand({ from, to })}\`; that removes only the record of the rename and changes no identity.`);
     this.name = "UnfinishableRenameError";
   }
 }
