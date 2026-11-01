@@ -12,6 +12,7 @@ import { UsageSnapshotSchema } from "./usage/schema";
 import { listUsageSnapshots, snapshotPath, type UsageReadFs } from "./usage/read";
 import { readDirectoryRules, writeDirectoryRules } from "./directoryRulesStore";
 import { requireNewProviderName } from "./config/names";
+import { listIdentities, setIdentityProvider } from "./identityStore";
 import type { LayoutPaths } from "./paths";
 import { aliasesAfterRename, readProviderAliases, writeProviderAliases } from "./providerAliases";
 import { ProviderAlreadyExistsError, ProviderNotFoundError, listProviders, providerExists, providerJsonPath, readProvider } from "./providersStore";
@@ -79,7 +80,7 @@ export interface ProviderRenamePorts {
 export interface ProviderRenameReport {
   readonly from: string;
   readonly to: string;
-  /** Everything that named the provider and now names its new name or holds its state under it: `config.json`, `profile <name>`, `rule <path>`, `provider <name> routes`, `usage <identity>`, `catalogue` and `credential cache`. */
+  /** Everything that named the provider and now names its new name or holds its state under it: `config.json`, `profile <name>`, `identity <name>`, `rule <path>`, `provider <name> routes`, `usage <identity>`, `catalogue` and `credential cache`. */
   readonly updated: readonly string[];
 }
 
@@ -159,6 +160,12 @@ function rewriteReferences(paths: LayoutPaths, from: string, to: string): readon
     if (launch !== undefined || models !== undefined) {
       applyPatch(path.join(paths.configProfilesDir, `${name}.json`), ConfigProfileSchema, { ...(launch === undefined ? {} : { launch }), ...(models === undefined ? {} : { models }) });
       rewritten.push(`profile ${name}`);
+    }
+  }
+  for (const entry of listIdentities(paths)) {
+    if (entry.identity?.provider === from) {
+      setIdentityProvider(paths, entry.name, to);
+      rewritten.push(`identity ${entry.name}`);
     }
   }
   const rules = readDirectoryRules(paths);

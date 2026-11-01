@@ -18,6 +18,7 @@ import {
   requireIdentityNames,
   setAllowAmbientCredential,
   setDefaultConfigProfile,
+  setIdentityProvider,
   setIdentityAnchors,
   setIdentityCredential,
   useIdentity,
@@ -26,7 +27,7 @@ import {
 import { poolNameOf } from "../launcher/identity";
 import type { LayoutPaths } from "../paths";
 import { addPool, changePool, isPoolChange, PoolAlreadyExistsError, PoolNotFoundError, readPools, removePool, requirePool } from "../poolStore";
-import { addProvider, ProviderAlreadyExistsError, ProviderNotFoundError, providerExists, readProvider, removeProvider, updateProvider } from "../providersStore";
+import { addProvider, ProviderAlreadyExistsError, ProviderNotFoundError, providerExists, readProvider, removeProvider, requireProviderExists, updateProvider } from "../providersStore";
 import {
   ConfigIdentityAddOutputSchema,
   ConfigNameInputSchema,
@@ -141,6 +142,7 @@ function identityValue(name: string, paths: LayoutPaths) {
   return {
     name: identity.name,
     ...(identity.defaultConfigProfile === undefined ? {} : { defaultConfigProfile: identity.defaultConfigProfile }),
+    ...(identity.provider === undefined ? {} : { provider: identity.provider }),
     allowAmbientCredential: identity.allowAmbientCredential,
     ...(identity.credential === undefined ? {} : { credential: summariseCredential(identity.credential) }),
     ...(identity.anchors === undefined ? {} : { anchors: identity.anchors }),
@@ -188,20 +190,26 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
               return { action: "created" as const, kind: "identity" as const, name: input.name, value: identityValue(input.name, paths) };
             }),
           ),
-        set: route("/rest/config/identity/set", "Update an identity's default profile, ambient-credential setting, credential or anchors")
+        set: route("/rest/config/identity/set", "Update an identity's default profile, provider, ambient-credential setting, credential or anchors")
           .input(ConfigIdentitySetInputSchema)
           .output(ConfigIdentitySetOutputSchema)
           .handler(({ input }) =>
             guarded(() => {
-              requireChange(input.defaultConfigProfile !== undefined || input.allowAmbientCredential !== undefined || input.credential !== undefined || input.anchors !== undefined, "defaultConfigProfile, allowAmbientCredential, credential or anchors");
+              requireChange(input.defaultConfigProfile !== undefined || input.provider !== undefined || input.allowAmbientCredential !== undefined || input.credential !== undefined || input.anchors !== undefined, "defaultConfigProfile, provider, allowAmbientCredential, credential or anchors");
               if (!identityExists(paths, input.name)) {
                 throw new IdentityNotFoundError(input.name);
               }
               if (typeof input.defaultConfigProfile === "string") {
                 requireProfileExists(paths, input.defaultConfigProfile);
               }
+              if (typeof input.provider === "string") {
+                requireProviderExists(paths, input.provider);
+              }
               if (input.defaultConfigProfile !== undefined) {
                 setDefaultConfigProfile(paths, input.name, input.defaultConfigProfile === false ? undefined : input.defaultConfigProfile);
+              }
+              if (input.provider !== undefined) {
+                setIdentityProvider(paths, input.name, input.provider === false ? undefined : input.provider);
               }
               if (input.allowAmbientCredential !== undefined) {
                 setAllowAmbientCredential(paths, input.name, input.allowAmbientCredential);

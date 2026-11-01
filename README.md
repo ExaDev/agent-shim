@@ -85,7 +85,7 @@ agent-shim <noun> <verb> [name] [options]      # nouns: identity, profile, pool,
 agent-shim identity add <name> [--json]
 agent-shim identity list [--json]
 agent-shim identity show <name> [--json]
-agent-shim identity set <name> [--default-profile <profile> | --no-default-profile] [--[no-]allow-ambient-credential] [--json]
+agent-shim identity set <name> [--default-profile <profile> | --no-default-profile] [--provider <provider> | --no-provider] [--[no-]allow-ambient-credential] [--json]
 agent-shim identity set <name> [--credential <source>]... [--credential-target <bearer|apiKey|oauthToken>] [--no-credential] [--json]
 agent-shim identity set <name> [--anchor <days>@<HH:MM>[/<zone>]]... [--no-anchor] [--json]
 agent-shim identity remove <name> [--yes] [--json]
