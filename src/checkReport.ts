@@ -23,7 +23,7 @@ import type { ConfigProfileDecisionSource, IdentityDecisionSource } from "./laun
 import type { FarmFs, RunPort } from "./launcher/ports";
 import type { LayoutPaths } from "./paths";
 import type { PoolPickReport } from "./usage/pickReportSchema";
-import { LegacyProviderFileError, readProvider } from "./providersStore";
+import { LegacyProviderFileError, ProviderFileNotJsonError, readProvider } from "./providersStore";
 import { detectEncodingAmbiguity, type EncodingAmbiguity } from "./resolve/projects";
 import { descendPolicyFor, resolveDecisions, type ResolvedState } from "./resolve/pipeline";
 import type { CascadeInput } from "./resolve/walk";
@@ -544,7 +544,7 @@ function loadCheckProvider(paths: LayoutPaths, name: string): CheckProviderInput
   try {
     definition = readProvider(paths, name);
   } catch (error) {
-    if (error instanceof ConfigValidationError || error instanceof LegacyProviderFileError) {
+    if (error instanceof ConfigValidationError || error instanceof LegacyProviderFileError || error instanceof ProviderFileNotJsonError) {
       return { name, problem: error.message };
     }
     throw error;
