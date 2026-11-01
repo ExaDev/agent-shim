@@ -7,6 +7,7 @@ import { EXIT_FAILURE, EXIT_USAGE } from "./cliError";
 import { reportFatalError } from "./cliReport";
 import type { CredentialCachePort } from "./credentialCache";
 import type { IdentityRenamePorts } from "./identityRename";
+import { readRenameJournal, renameJournalFile, writeRenameJournal } from "./identityRenameJournal";
 import type { SessionProcess } from "./identitySessions";
 import { addIdentity, identityExists, readActiveIdentity, useIdentity } from "./identityStore";
 import { createFakeKeychain } from "./keychainTestWorld";
@@ -151,5 +152,52 @@ describe("identity rename", () => {
     expect(identityExists(paths, "client")).toBe(true);
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("security delete-generic-password");
+  });
+
+  /** Leaves the journal of a rename of `work` to `client` that nothing applied, and removes `work`, so no identity is under either name. */
+  function leaveUnfinishable(): string {
+    seed();
+    const file = renameJournalFile(paths.identityRenamesDir, "work", "client");
+    writeRenameJournal(realFarmFs, file, { version: 1, from: "work", to: "client", startedAt: "2026-10-30T10:00:00.000Z", pid: OWN_PID, steps: [{ description: "move identities/work to identities/client", done: false }] });
+    fs.rmSync(path.join(paths.identitiesDir, "work"), { recursive: true, force: true });
+    return file;
+  }
+
+  it("says in its help what --discard-journal does and when it refuses", () => {
+    const program = buildProgram({ ...fakeCommandDeps(paths), runClaude: vi.fn(), identityRenamePorts: ports() });
+    const rename = program.commands.find((command) => command.name() === "identity")?.commands.find((command) => command.name() === "rename");
+    const discard = rename?.options.find((option) => option.long === "--discard-journal")?.description;
+    expect(discard).toContain("exists under neither name or under both");
+    expect(discard).toContain("changes no identity");
+    expect(discard).toContain("exists under only one of them");
+  });
+
+  it("with --discard-journal removes the record of a rename nothing can finish, and says so", async () => {
+    const file = leaveUnfinishable();
+    expect(await run(["identity", "rename", "work", "client"])).toBe(EXIT_FAILURE);
+    expect(out.join("\n")).toContain("agent-shim identity rename work client --discard-journal");
+    out.length = 0;
+    expect(await run(["identity", "rename", "work", "client", "--discard-journal"])).toBe(0);
+    expect(out).toEqual(['Discarded the record of the unfinished rename of "work" to "client".']);
+    expect(readRenameJournal(realFarmFs, file)).toBeUndefined();
+  });
+
+  it("prints the discard as JSON", async () => {
+    leaveUnfinishable();
+    expect(await run(["identity", "rename", "work", "client", "--discard-journal", "--json"])).toBe(0);
+    expect(JSON.parse(out.join("\n"))).toEqual({ action: "removed", kind: "rename-journal", name: "client", value: { from: "work", to: "client" } });
+  });
+
+  it("refuses --discard-journal with --dry-run, which would have nothing to preview, and keeps the record", async () => {
+    const file = leaveUnfinishable();
+    expect(await run(["identity", "rename", "work", "client", "--discard-journal", "--dry-run"])).toBe(EXIT_USAGE);
+    expect(out.join("\n")).toContain("no dry run");
+    expect(readRenameJournal(realFarmFs, file)).toBeDefined();
+  });
+
+  it("refuses identity remove for a name an unfinished rename holds before asking for confirmation", async () => {
+    leaveUnfinishable();
+    expect(await run(["identity", "remove", "client"])).toBe(EXIT_FAILURE);
+    expect(out.join("\n")).toContain("an unfinished rename of identity");
   });
 });

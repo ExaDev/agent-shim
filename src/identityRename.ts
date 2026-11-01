@@ -13,7 +13,7 @@ import { IdentityAlreadyExistsError, IdentityNotFoundError, identityExists, iden
 import { identityTokenPath } from "./identityToken";
 import type { IdentitySessionProbe, SessionProcess } from "./identitySessions";
 import { renameIdentityInJobs } from "./jobStore";
-import { describeUnfinishedRename, readRenameJournals, removeRenameJournal, renameJournalFile, unfinishedRenameFor, writeRenameJournal, type RenameJournal } from "./identityRenameJournal";
+import { describeUnfinishedRename, readRenameJournal, readRenameJournals, removeRenameJournal, renameJournalFile, unfinishedRenameFor, writeRenameJournal, type RenameJournal } from "./identityRenameJournal";
 import { deleteKeychainLogin, planKeychainLogin, readKeychainLogin, writeKeychainLogin, type KeychainLoginPlan } from "./keychainLogin";
 import { FARM_MANIFEST_FILENAME, manifestWithIdentity } from "./launcher/farm";
 import { acquireIdentityLock, type AcquireIdentityLockParams, type IdentityLock } from "./launcher/lock";
@@ -156,17 +156,44 @@ class UnfinishedRenameError extends CliError {
   }
 }
 
+/** The command that discards the journal of the rename of `from` to `to`. */
+function discardCommand(from: string, to: string): string {
+  return `agent-shim identity rename ${from} ${to} --discard-journal`;
+}
+
+/** Raised when a rename was left unfinished and the identity is under neither name or under both, so no run of it can finish it and nothing else can clear it: the journal is discarded by hand with `--discard-journal`, which changes no identity. */
+class UnfinishableRenameError extends CliError {
+  constructor(from: string, to: string, both: boolean) {
+    super(`The unfinished rename of "${from}" to "${to}" cannot be finished: ${both ? `both names are identities` : `there is no identity under either name`}. If nothing is left of it to keep, discard its record with \`${discardCommand(from, to)}\`; that removes only the record of the rename and changes no identity.`);
+    this.name = "UnfinishableRenameError";
+  }
+}
+
+/** Raised when the journal of a rename is asked to be discarded while the identity is under exactly one of its names, where running the rename again finishes it. */
+class FinishableRenameError extends CliError {
+  constructor(from: string, to: string) {
+    super(`The unfinished rename of "${from}" to "${to}" can be finished, so its record is kept: run \`agent-shim identity rename ${from} ${to}\` to finish it.`);
+    this.name = "FinishableRenameError";
+  }
+}
+
+/** Raised when there is no unfinished rename of the pair to discard. */
+class NoRenameToDiscardError extends CliError {
+  constructor(from: string, to: string) {
+    super(`There is no unfinished rename of "${from}" to "${to}" to discard.`);
+    this.name = "NoRenameToDiscardError";
+  }
+}
+
 /**
- * The checks that read the machine's state. `from` must exist and `to` must be free in every place its name would be filed. When `resuming` a rename that was left unfinished, the identity is wherever the earlier run got it to, under either name, and the places already moved are no clash.
+ * The checks that read the machine's state. `from` must exist and `to` must be free in every place its name would be filed. When `resuming` a rename that was left unfinished, the identity is wherever the earlier run got it to, under either name, and the places already moved are no clash; an identity under neither name or under both cannot be finished and throws `UnfinishableRenameError`.
  */
 function requireRenamable(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts, resuming: boolean): void {
   if (resuming) {
     const underFrom = identityExists(paths, from);
-    if (underFrom && identityExists(paths, to)) {
-      throw new IdentityAlreadyExistsError(to);
-    }
-    if (!underFrom && !identityExists(paths, to)) {
-      throw new IdentityNotFoundError(from);
+    const underTo = identityExists(paths, to);
+    if (underFrom === underTo) {
+      throw new UnfinishableRenameError(from, to, underFrom);
     }
     return;
   }
@@ -778,7 +805,7 @@ function resumeNote(journal: Readonly<RenameJournal>): string {
  *
  * A journal in the state root's `identity-renames` directory is written before the first step and marked as each completes. A rename that is killed, or whose rollback fails, leaves it behind, and running the same rename again plans from what is on disk, so it does only what is left, and removes the journal at the end. A rename of anything else that names either identity refuses until then.
  *
- * Throws `IdentityNotFoundError`, `IdentityAlreadyExistsError`, `InvalidIdentityNameError`, `UsageError` for equal names, `IdentityInUseError`, `UnfinishedRenameError`, `KeychainLoginError` and `IdentityLockBusyError`. A committed `.agent-shim.json` in a project is not reachable from here, and neither is the usage log, which keeps its records under the name they were written with.
+ * Throws `IdentityNotFoundError`, `IdentityAlreadyExistsError`, `InvalidIdentityNameError`, `UsageError` for equal names, `IdentityInUseError`, `UnfinishedRenameError`, `UnfinishableRenameError`, `KeychainLoginError` and `IdentityLockBusyError`. A committed `.agent-shim.json` in a project is not reachable from here, and neither is the usage log, which keeps its records under the name they were written with.
  */
 export async function renameIdentity(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts): Promise<IdentityRenameReport> {
   requireNames(from, to);
@@ -810,6 +837,34 @@ export async function renameIdentity(paths: LayoutPaths, from: string, to: strin
     return { from, to, dryRun: false, steps: descriptionsOf(applied.plan), warnings: [...notes, ...warnings] };
   } finally {
     stopListening();
+  }
+}
+
+/** What `discardRenameJournal` removed: the pair whose journal it was. */
+export interface DiscardedRenameJournal {
+  readonly from: string;
+  readonly to: string;
+}
+
+/**
+ * Removes the journal of an unfinished rename of `from` to `to` that nothing can finish: the identity is under neither name, or under both. It takes the resync lock of both names first, so a process still running that rename, which holds them, is never robbed of its journal, and it changes no identity, file or login. The journal is read again under the locks, so the verdict is of the state it removes.
+ *
+ * Throws a `CliError` saying there is nothing to discard when the pair has no journal, one saying the rename can be finished when the identity is under exactly one of the names, `IdentityLockBusyError` when the lock of either name is held, and what `readRenameJournal` throws for a journal it cannot read.
+ */
+export function discardRenameJournal(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts): DiscardedRenameJournal {
+  const held = holdLocks(paths, [from, to], ports);
+  try {
+    const file = renameJournalFile(paths.identityRenamesDir, from, to);
+    if (readRenameJournal(ports.fs, file) === undefined) {
+      throw new NoRenameToDiscardError(from, to);
+    }
+    if (identityExists(paths, from) !== identityExists(paths, to)) {
+      throw new FinishableRenameError(from, to);
+    }
+    removeRenameJournal(ports.fs, file);
+    return { from, to };
+  } finally {
+    held.release();
   }
 }
 

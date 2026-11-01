@@ -140,3 +140,21 @@ export function describeUnfinishedRename(journal: Readonly<RenameJournal>): stri
   const done = journal.steps.filter((step) => step.done).length;
   return `an unfinished rename of identity "${journal.from}" to "${journal.to}" (${String(done)} of ${String(journal.steps.length)} steps recorded as done). Finish it with \`agent-shim identity rename ${journal.from} ${journal.to}\`; to put the name back afterwards, run \`agent-shim identity rename ${journal.to} ${journal.from}\`.`;
 }
+
+/** Raised when an operation on an identity's name is refused because an unfinished rename names it: the identities are partly moved, and anything done to either name now would be done to a state nobody chose. */
+class NameHeldByUnfinishedRenameError extends CliError {
+  constructor(action: string, name: string, journal: Readonly<RenameJournal>) {
+    super(`Cannot ${action} identity "${name}": there is ${describeUnfinishedRename(journal)}`);
+    this.name = "NameHeldByUnfinishedRenameError";
+  }
+}
+
+/**
+ * Throws `NameHeldByUnfinishedRenameError` when an unfinished rename in `directory` names `name`, as its old name or its new one, so `action` (`add`, `remove`) is refused until the rename is finished or its journal discarded. A file that is not a journal names no identity and is left to `doctor`, which reports it.
+ */
+export function requireNameFreeOfUnfinishedRename(fs: Pick<RenameJournalFs, "readFileUtf8" | "readdir">, directory: string, name: string, action: string): void {
+  const held = listRenameJournals(fs, directory).journals.find((journal) => journal.from === name || journal.to === name);
+  if (held !== undefined) {
+    throw new NameHeldByUnfinishedRenameError(action, name, held);
+  }
+}

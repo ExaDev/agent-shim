@@ -15,9 +15,9 @@ import { requireProviderExists } from "./providersStore";
 import { poolNameOf } from "./launcher/identity";
 import type { LayoutPaths } from "./paths";
 import { realFarmFs } from "./realPorts";
-import { describeIdentityRename, renameIdentity, type IdentityRenamePorts } from "./identityRename";
+import { describeIdentityRename, discardRenameJournal, renameIdentity, type IdentityRenamePorts } from "./identityRename";
 import { realIdentityRenamePorts } from "./realIdentityRename";
-import { IdentityNotFoundError, InvalidIdentityNameError, identityExists, readIdentity, addIdentity, useIdentity, type IdentityListing, listIdentities, setDefaultConfigProfile, setIdentityLabel, setIdentityProvider, setAllowAmbientCredential, setIdentityCredential, setIdentityAnchors, removeIdentity } from "./identityStore";
+import { IdentityNotFoundError, InvalidIdentityNameError, identityExists, readIdentity, addIdentity, useIdentity, type IdentityListing, listIdentities, setDefaultConfigProfile, setIdentityLabel, setIdentityProvider, setAllowAmbientCredential, setIdentityCredential, setIdentityAnchors, removeIdentity, requireNoUnfinishedRenameNaming } from "./identityStore";
 import { describeAccountHolder, describeIdentityAccount, groupByLogin, loginKeyOf, readIdentityAccount, summariseIdentityAccount, type IdentityAccountRead, type IdentityAccountSummary } from "./identityAccounts";
 import { describeAccountPlan } from "./usage/accountDescription";
 import { ANCHOR_SYNTAX, formatAnchor } from "./usage/anchor";
@@ -214,6 +214,13 @@ interface IdentitySetOptions extends CredentialCacheOptions {
   readonly anchor?: Anchor[] | false;
   readonly json?: boolean;
 }
+
+/** What `identity rename --help` says it does. */
+const RENAME_DESCRIPTION = "Rename an identity: move its directory, carry its login across and rewrite every reference to its name. Refused while a session is running on it.";
+
+/** What `--discard-journal` does and when it refuses, exactly: it removes a record and nothing else. */
+const DISCARD_JOURNAL_DESCRIPTION =
+  "Remove the record of an unfinished rename of <old> to <new> that nothing can finish, because the identity exists under neither name or under both. It changes no identity, and is refused while the identity exists under only one of them, where running the rename again finishes it.";
 
 /**
  * Registers the `agent-shim identity` subcommand tree onto `program`. `renamePorts` is what `identity rename` reaches the machine through (the Keychain, the process table, the resync lock): the real ones unless a test passes fakes.
@@ -435,6 +442,7 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
       .option("--yes", "Remove without asking for confirmation (required when standard input is not a terminal).")
       .option("--json", "Print the result as JSON.")
       .action(async (name: string, options: Readonly<{ yes?: boolean; json?: boolean }>) => {
+        requireNoUnfinishedRenameNaming(paths, name, "remove");
         if (!identityExists(paths, name)) {
           throw new IdentityNotFoundError(name);
         }
@@ -450,11 +458,22 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
   withExamples(
     identity
       .command("rename <old> <new>")
-      .description("Rename an identity: move its directory, carry its login across and rewrite every reference to its name. Refused while a session is running on it.")
+      .description(RENAME_DESCRIPTION)
       .option("--dry-run", "Print what would be moved and rewritten, and change nothing.")
+      .option("--discard-journal", DISCARD_JOURNAL_DESCRIPTION)
       .option("--json", "Print the result as JSON.")
-      .action(async (from: string, to: string, options: Readonly<{ dryRun?: boolean; json?: boolean }>) => {
+      .action(async (from: string, to: string, options: Readonly<{ dryRun?: boolean; discardJournal?: boolean; json?: boolean }>) => {
         const dryRun = options.dryRun === true;
+        if (options.discardJournal === true) {
+          if (dryRun) {
+            throw new UsageError("--discard-journal removes a record and has no dry run; it changes no identity.");
+          }
+          const discarded = discardRenameJournal(paths, from, to, renamePorts);
+          reportMutation(options.json, { action: "removed", kind: "rename-journal", name: to, value: discarded }, () => {
+            console.log(`Discarded the record of the unfinished rename of "${from}" to "${to}".`);
+          });
+          return;
+        }
         const report = dryRun ? describeIdentityRename(paths, from, to, renamePorts) : await renameIdentity(paths, from, to, renamePorts);
         reportMutation(options.json, { action: dryRun ? "planned" : "renamed", kind: "identity", name: to, value: report }, () => {
           console.log(dryRun ? `Would rename identity "${from}" to "${to}":` : `Renamed identity "${from}" to "${to}".`);
