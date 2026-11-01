@@ -9,6 +9,7 @@ import type { CascadeInput } from "../resolve/walk";
 import type { Diagnostic, EntryFact, EntryFacts } from "../resolve/types";
 import type { FarmPlan } from "../resolve/plan";
 import type { DescendPolicy } from "../resolve/walkPolicy";
+import { CliError } from "../cliError";
 import { LEGACY_FARM_MANIFEST_FILENAME } from "../legacy";
 import { acquireIdentityLock, type IdentityLock } from "./lock";
 import type { FarmFs } from "./ports";
@@ -599,6 +600,10 @@ export interface ResyncFarmParams {
   readonly now: () => number;
   /** Distinguishes this resync's scratch and superseded directory names from any other process's. `${pid}.${uuid}` in real use; a fixed string in tests. */
   readonly uniqueSuffix: string;
+  /**
+   * Whether the identity still exists, asked once the lock is held and any interrupted swap recovered. A launch that waited for the lock while the identity was renamed or removed must not rebuild its directory, so a caller that can answer passes it and `resyncFarm` throws `IdentityGoneError` on `false`. Absent means the caller has no way to tell.
+   */
+  readonly identityExists?: () => boolean;
   readonly lock: {
     readonly pid: number;
     readonly isRunning: (pid: number) => boolean;
@@ -655,6 +660,14 @@ function farmAlreadyMatches(existing: FarmManifest, next: FarmManifest): boolean
   );
 }
 
+/** Raised by `resyncFarm` when its identity no longer exists once the lock is held: it was renamed or removed while the launch waited. The directory is not rebuilt, since that would leave a farm with no `identity.json` under the old name, to be launched into signed out. */
+export class IdentityGoneError extends CliError {
+  constructor(readonly identity: string) {
+    super(`Identity "${identity}" no longer exists: it was renamed or removed while this launch waited for it. Launch it under its current name.`);
+    this.name = "IdentityGoneError";
+  }
+}
+
 /**
  * Brings one identity's farm into line with the cascade resolved for the current directory, and hands back everything the launcher needs to go on and spawn the real binary.
  *
@@ -693,6 +706,10 @@ export function resyncFarm(params: ResyncFarmParams): ResyncFarmResult {
       farmRoot,
       classification: params.classification,
     });
+
+    if (params.identityExists?.() === false) {
+      throw new IdentityGoneError(params.identity);
+    }
 
     const previousManifest = readFarmManifest(params.fs, farmRoot);
     const scope = reconciliationScope(params.fs, farmRoot, previousManifest);

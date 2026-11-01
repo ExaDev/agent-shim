@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { createFakeFarmFs, fakeSleep, FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS, shippedClassification, type FakeFarmFs } from "../test-helpers";
 import type { CascadeInput } from "../resolve/walk";
-import { FARM_MANIFEST_FILENAME, readFarmManifest, recoveryDiagnostics, resyncFarm, type RecoveryResult, type ResyncFarmParams } from "./farm";
+import { FARM_MANIFEST_FILENAME, IdentityGoneError, readFarmManifest, recoveryDiagnostics, resyncFarm, type RecoveryResult, type ResyncFarmParams } from "./farm";
 import { IdentityLockBusyError, identityLockPath } from "./lock";
 
 const IDENTITIES_DIR = `${FAKE_HOME}/.agent-shim/identities`;
@@ -362,5 +362,36 @@ describe("recoveryDiagnostics", () => {
     );
     expect(diagnostic?.message).toContain("discarded 1 superseded runtime entry");
     expect(diagnostic?.message).toContain("agent-shim identity resolve-conflicts work");
+  });
+});
+
+describe("resyncFarm for an identity that is gone", () => {
+  const LOCK = identityLockPath(IDENTITIES_DIR, "work");
+
+  it("refuses, rebuilding nothing and leaving its lock free, when the identity was renamed while the launch waited for the lock", () => {
+    const fs = createFakeFarmFs(CANONICAL);
+    // A rename holds the identity's lock, and finishes while this launch waits: it releases the lock and the identity is gone.
+    fs.seed({ [LOCK]: `${JSON.stringify({ identity: "work", pid: 99, token: "the-rename", acquiredAtMs: FAKE_NOW_MS })}\n` });
+    let exists = true;
+    const finishRename = (): void => {
+      fs.removeRecursive(LOCK);
+      exists = false;
+    };
+    expect(() => resyncFarm(params(fs, { identityExists: () => exists, lock: { pid: 42, isRunning: () => true, sleep: finishRename } }))).toThrow(IdentityGoneError);
+    expect(fs.lstat(FARM)).toBeUndefined();
+    expect(farmWrites(fs)).toEqual([]);
+    expect(fs.lstat(LOCK)).toBeUndefined();
+  });
+
+  it("names the identity and says to launch it under its current name", () => {
+    const fs = createFakeFarmFs(CANONICAL);
+    expect(() => resyncFarm(params(fs, { identityExists: () => false }))).toThrow(/Identity "work" no longer exists.*renamed or removed/u);
+  });
+
+  it("asks only once the lock is held and a swap a crash interrupted has been recovered, so a farm left mid-swap is not mistaken for a missing identity", () => {
+    const fs = createFakeFarmFs({ ...CANONICAL, [`${IDENTITIES_DIR}/.work.previous.crashed/identity.json`]: '{"name":"work"}' });
+    const seen: boolean[] = [];
+    resyncFarm(params(fs, { identityExists: () => (seen.push(fs.lstat(`${FARM}/identity.json`) !== undefined), true) }));
+    expect(seen).toEqual([true]);
   });
 });
