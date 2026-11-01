@@ -11,6 +11,9 @@ import { realFarmFs, realFsPort } from "./realPorts";
 import { candidateHeading } from "./usage/candidateText";
 import { formatAge } from "./usage/preflight";
 import { collectPoolPick } from "./poolPickReport";
+import { describeSharedLoginMembers, sharedLoginMembers } from "./poolSharedLogins";
+import { readIdentityAccount } from "./identityAccounts";
+import type { LayoutPaths } from "./paths";
 import type { PoolPickReport } from "./usage/pickReportSchema";
 
 function formatPoolPick(report: PoolPickReport, nowMs: number): string[] {
@@ -22,6 +25,13 @@ function formatPoolPick(report: PoolPickReport, nowMs: number): string[] {
     return `  ${String(index + 1)}. ${candidate.identity} ${candidateHeading(candidate)}\n     ${candidate.reasons.join("; ")}`;
   });
   return [head, ...rows, ...report.missing.map((name) => `  (skipped: ${name} is not an identity)`), ...(report.stickyProblem === undefined ? [] : [`Note: ${report.stickyProblem}; the last-pick record was ignored.`])];
+}
+
+/** Warns on stderr, so `--json` output stays parseable, for each set of the pool's direct members that hold one login. The change is not refused: the pool is valid, only redundant. */
+function warnSharedLogins(paths: Pick<LayoutPaths, "identitiesDir">, poolName: string, members: readonly string[]): void {
+  for (const shared of sharedLoginMembers(members, (identity) => readIdentityAccount(realFsPort, paths.identitiesDir, identity)?.account)) {
+    console.error(`agent-shim: warning: ${describeSharedLoginMembers(poolName, shared)}`);
+  }
 }
 
 /** The settings a pool carries, as the parenthesised note after its members in `pool list`, or an empty string when it carries none. */
@@ -92,6 +102,7 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
         reportMutation(options.json, { action: "created", kind: "pool", name, value: created }, () => {
           console.log(`Created pool "${name}" with ${members.join(", ")}.`);
         });
+        warnSharedLogins(paths, name, created.identities.map(poolMemberIdentity));
       }),
     ["agent-shim pool add subs --identity work --identity personal", "agent-shim pool add client --identity client-main --identity spare --preference listed"],
   );
@@ -124,6 +135,7 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
         reportMutation(options.json, { action: "updated", kind: "pool", name, value: updated }, () => {
           console.log(`Pool "${name}" now has ${updated.identities.map(poolMemberIdentity).join(", ")}.`);
         });
+        warnSharedLogins(paths, name, updated.identities.map(poolMemberIdentity));
       }),
     ["agent-shim pool set subs --identity work --identity personal --identity spare", "agent-shim pool set subs --preference listed", "agent-shim pool set subs --resume-on-limit --compact-before-limit --compact-at-utilisation 85"],
   );

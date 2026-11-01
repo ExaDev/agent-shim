@@ -69,6 +69,12 @@ export function groupSharedLogins<T>(items: readonly T[], loginOf: (item: T) => 
   return collectByLogin(items, loginOf).filter((group) => group.length > 1);
 }
 
+/** `a`, `a and b` or `a, b and c`. */
+export function joinNames(names: readonly string[]): string {
+  const last = names.at(-1);
+  return names.length < 2 || last === undefined ? names.join("") : `${names.slice(0, -1).join(", ")} and ${last}`;
+}
+
 /** Who an identity's login is, in the wording `account show` uses: `email (organisation)`, or the organisation alone when the login has no email. Undefined when it has neither. */
 export function describeAccountHolder(summary: Readonly<IdentityAccountSummary>): string | undefined {
   const organisation = describeAccountOrganisation(summary);

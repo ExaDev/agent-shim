@@ -9,7 +9,7 @@ import path from "node:path";
 import type { z } from "zod";
 import { lookupKeychainService } from "./checkReport";
 import { credentialsFilePath, decideSignIn, keychainHasItem } from "./usage/signIn";
-import { describeAccountHolder, groupSharedLogins, loginKeyOf, readIdentityAccount, summariseIdentityAccount } from "./identityAccounts";
+import { describeAccountHolder, groupSharedLogins, joinNames, loginKeyOf, readIdentityAccount, summariseIdentityAccount } from "./identityAccounts";
 import type { AccountMetadata } from "./usage/schema";
 import { parseSiwcFile } from "./codex/siwcStore";
 import { SIWC_PLAN_SCOPE } from "./codex/siwc";
@@ -39,6 +39,7 @@ import { describeProviderEndpoint, legacyProviderConversion, LegacyProviderFileE
 import { detectAmbientCredential, formatAmbientCredentialGuardMessage } from "./launcher/guard";
 import { poolNameOf } from "./launcher/identity";
 import { poolCycleOf } from "./poolStore";
+import { describeSharedLoginMembers, sharedLoginMembers } from "./poolSharedLogins";
 import type { RunPort } from "./launcher/ports";
 import { lineariseProfile, type ProfileLoader, type ProfileSource } from "./resolve/extends";
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
@@ -74,12 +75,6 @@ interface DoctorFinding {
   readonly subject?: string;
   readonly severity: DoctorSeverity;
   readonly message: string;
-}
-
-/** `a`, `a and b` or `a, b and c`. */
-function joinNames(names: readonly string[]): string {
-  const last = names.at(-1);
-  return names.length < 2 || last === undefined ? names.join("") : `${names.slice(0, -1).join(", ")} and ${last}`;
 }
 
 /** The full result of `runDoctor`. `ok` is false iff any finding is a `fail` — a `warn` never fails the report on its own. */
@@ -588,6 +583,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
 
   const validatedGlobalConfig = params.globalConfig.raw === undefined ? undefined : validateJson(GlobalConfigSchema, params.globalConfig);
   const pools = validatedGlobalConfig?.ok === true ? (validatedGlobalConfig.data.pools ?? {}) : {};
+  const accountByIdentity = new Map(params.identities.flatMap((entry) => (validIdentityNames.has(entry.name) && entry.account !== undefined ? [[entry.name, entry.account] as const] : [])));
   for (const [poolName, pool] of Object.entries(pools)) {
     const missing = pool.identities.filter((member) => poolNameOf(poolMemberIdentity(member)) === undefined && !validIdentityNames.has(poolMemberIdentity(member)));
     const undefinedPools = pool.identities.flatMap((member) => {
@@ -602,6 +598,10 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
         ...undefinedPools.map((nested) => `pool "${nested}", which is not defined`),
       ];
       push("pool", "fail", `Pool "${poolName}" names ${problems.join(" and ")}.`, poolName);
+    }
+    // Members on one login draw on one quota window, so the pool ranks them as one candidate and never fails over between them.
+    for (const shared of sharedLoginMembers(pool.identities.map(poolMemberIdentity), (identityName) => accountByIdentity.get(identityName))) {
+      push("pool", "warn", describeSharedLoginMembers(poolName, shared), poolName);
     }
   }
   // A cycle can only appear by editing config.json by hand (add and set refuse one), and every pool on it is reported once.

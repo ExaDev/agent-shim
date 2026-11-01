@@ -290,3 +290,59 @@ describe("agent-shim pool", () => {
     });
   });
 });
+
+describe("agent-shim pool: members on one login", () => {
+  const SHARED_LOGIN = { accountUuid: "account-alex", organizationUuid: "org-example", emailAddress: "alex@example.com", organizationName: "Example Org" };
+
+  function signIn(identity: string, account: Readonly<Record<string, string>>): void {
+    fs.writeFileSync(path.join(paths.identitiesDir, identity, ".claude.json"), JSON.stringify({ oauthAccount: account }));
+  }
+
+  beforeEach(() => {
+    addIdentity(paths, "work");
+    addIdentity(paths, "personal");
+    addIdentity(paths, "spare");
+    signIn("work", SHARED_LOGIN);
+    signIn("personal", SHARED_LOGIN);
+    signIn("spare", { ...SHARED_LOGIN, accountUuid: "account-sam" });
+  });
+
+  it("warns when pool add lists two members that hold one login, and still creates the pool", async () => {
+    const result = await cli(["pool", "add", "subs", "--identity", "work", "--identity", "personal", "--identity", "spare"]);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain('Pool "subs" lists work and personal');
+    expect(result.stderr).toContain("alex@example.com (Example Org)");
+    expect(result.stdout).toContain('Created pool "subs"');
+  });
+
+  it("warns when pool set leaves the pool listing two members that hold one login", async () => {
+    await cli(["pool", "add", "subs", "--identity", "work", "--identity", "spare"]);
+    const result = await cli(["pool", "set", "subs", "--identity", "work", "--identity", "personal"]);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain('Pool "subs" lists work and personal');
+  });
+
+  it("keeps the JSON output on stdout clean while it warns", async () => {
+    const result = await cli(["pool", "add", "subs", "--identity", "work", "--identity", "personal", "--json"]);
+    expect(JSON.parse(result.stdout)).toMatchObject({ action: "created", name: "subs" });
+    expect(result.stderr).toContain("hold the same login");
+  });
+
+  it("does not warn for members on different logins", async () => {
+    const result = await cli(["pool", "add", "subs", "--identity", "work", "--identity", "spare"]);
+    expect(result.stderr).toBe("");
+  });
+
+  it("does not warn when pool set changes only a setting of a pool that lists no such pair", async () => {
+    await cli(["pool", "add", "subs", "--identity", "work", "--identity", "spare"]);
+    expect((await cli(["pool", "set", "subs", "--preference", "listed"])).stderr).toBe("");
+  });
+
+  it("shows the twin as the same login in pool pick", async () => {
+    await cli(["pool", "add", "subs", "--identity", "work", "--identity", "personal"]);
+    const report = JSON.parse((await cli(["pool", "pick", "subs", "--json"])).stdout) as { candidates: { identity: string; class: string; reasons: string[] }[] };
+    const twin = report.candidates.find((candidate) => candidate.class === "ineligible");
+    expect(twin?.reasons).toEqual(["same login as work"]);
+    expect((await cli(["pool", "pick", "subs"])).stdout).toContain("same login as work");
+  });
+});
