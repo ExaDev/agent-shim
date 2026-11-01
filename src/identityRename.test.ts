@@ -1,169 +1,15 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
 import { CliError } from "./cliError";
-import { readProvider } from "./providersStore";
 import { IdentityAlreadyExistsError, IdentityNotFoundError, InvalidIdentityNameError, readActiveIdentity, readIdentity } from "./identityStore";
-import { describeIdentityRename, IdentityInUseError, renameIdentity, type IdentityRenamePorts } from "./identityRename";
+import { describeIdentityRename, IdentityInUseError, renameIdentity } from "./identityRename";
 import { identityTokenPath, TOKEN_FILE_MODE } from "./identityToken";
-import type { CachedCredential, CredentialCachePort } from "./credentialCache";
+import type { CredentialCachePort } from "./credentialCache";
 import { IDENTITY_NAME_LOCATIONS } from "./identityNameLocations";
-import { createFakeKeychain, type FakeKeychain } from "./keychainTestWorld";
-import type { SessionProcess } from "./identitySessions";
-import { buildLayoutPaths, type LayoutPaths } from "./paths";
-import { registerLaunch } from "./launcher/launchRecords";
-import { realLaunchProbe, sameDirectory } from "./realIdentityRename";
+import { buildLayoutPaths } from "./paths";
 import { realFarmFs } from "./realPorts";
-import { claudeCodeKeychainService } from "./usage/signIn";
-
-/** The shape of the suffix a resync gives its superseded and scratch farms: the launcher's process id, then a UUID. */
-const SUFFIX = "4242.0f8fad5b-d9cb-469f-a165-70867728950e";
-const OTHER_SUFFIX = "17.7c9e6679-7425-40de-944b-e07fc1f90ae7";
-const NOW_MS = 1_000;
-const OWN_PID = 4242;
-const PERMISSION_BITS = 0o777;
-const OCTAL = 8;
-
-/** A made-up login blob; the tests assert it crosses the fake Keychain boundary only on standard input. */
-const LOGIN_SECRET = '{"claudeAiOauth":{"accessToken":"made-up-value-for-the-rename-test"}}';
-
-interface World {
-  readonly root: string;
-  readonly paths: LayoutPaths;
-  readonly keychain: FakeKeychain;
-  readonly cache: Map<string, CachedCredential>;
-  readonly sessions: Map<string, readonly SessionProcess[]>;
-  /** The launches in progress, by identity name: a launcher that has recorded itself and not yet exited. */
-  readonly launches: Map<string, readonly SessionProcess[]>;
-  readonly ports: (overrides?: Partial<IdentityRenamePorts>) => IdentityRenamePorts;
-  readonly read: (relative: string) => string;
-  readonly json: (relative: string) => unknown;
-  readonly directory: (name: string) => string;
-}
-
-function writeFile(file: string, contents: string, mode?: number): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, contents, mode === undefined ? undefined : { mode });
-}
-
-function writeJson(file: string, value: unknown, mode?: number): void {
-  writeFile(file, `${JSON.stringify(value, null, 2)}\n`, mode);
-}
-
-/** The owner-only mode the usage store gives the files it writes. */
-const PRIVATE_FILE_MODE = 0o600;
-
-/** A temporary state root holding an identity `work` that is referenced from every place a name is kept, and a second identity `personal` that must be left alone. */
-function createWorld(platform: NodeJS.Platform = "linux"): World {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "identity-rename-test-"));
-  const paths = buildLayoutPaths(root);
-  const keychain = createFakeKeychain();
-  const cache = new Map<string, CachedCredential>();
-  const sessions = new Map<string, readonly SessionProcess[]>();
-  const launches = new Map<string, readonly SessionProcess[]>();
-  const tokenFile = path.join(root, "credentials", "work.token");
-
-  writeJson(path.join(root, "identities", "work", "identity.json"), {
-    name: "work",
-    allowAmbientCredential: false,
-    label: "Example Org",
-    credential: { sources: [{ file: tokenFile }, { env: "EXAMPLE_TOKEN" }, { file: "/example/elsewhere/work.token" }], target: "oauthToken", cache: { store: "file" } },
-  });
-  writeJson(path.join(root, "identities", "work", ".agent-shim-farm.json"), { version: 1, builtAtMs: 1, identity: "work", cwd: "/example/project", claudeHome: "/example/claude", materialised: [], links: [] });
-  writeFile(path.join(root, "identities", "work", ".credentials.json"), "{}\n");
-  writeFile(path.join(root, "identities", `.work.previous.${SUFFIX}`, "left-over.txt"), "kept\n");
-  writeJson(path.join(root, "identities", "personal", "identity.json"), { name: "personal", allowAmbientCredential: false });
-  writeFile(tokenFile, "a-made-up-token-file-body\n", TOKEN_FILE_MODE);
-  writeJson(paths.globalConfigFile, {
-    pools: {
-      subs: { identities: ["work", "personal", "pool:fleet"] },
-      fleet: { identities: [{ identity: "work", when: { branch: "main" } }, "personal"] },
-      other: { identities: ["personal"] },
-    },
-    jobs: {
-      burn: { target: { identity: "work" }, trigger: { beforeReset: "fiveHour", lead: "1h" }, prompt: "go", cwd: "/work", timeout: "10m" },
-      pooled: { target: { pool: "subs" }, trigger: { beforeReset: "sevenDay", lead: "2h" }, prompt: "go", cwd: "/work", timeout: "10m" },
-    },
-    models: { virtual: { fast: { mode: "ordered", members: ["acct:work/opus", "z/glm-5.3"] } }, tiers: { opus: "acct:work/opus", sonnet: "acct:personal/sonnet" } },
-  });
-  writeJson(path.join(paths.configProfilesDir, "client.json"), { models: { hide: ["acct:work/haiku"], show: ["acct:personal/haiku"] } });
-  writeJson(path.join(paths.configProfilesDir, "plain.json"), { description: "no model refs" });
-  writeJson(paths.directoryRulesFile, {
-    rules: [
-      { path: "/example/project", identity: "work" },
-      { path: "/example/other", identity: "personal" },
-      { path: "/example/pooled", identity: "pool:subs", models: { tiers: { opus: "acct:work/opus" } } },
-    ],
-  });
-  writeFile(paths.activeIdentityFile, "work\n");
-  writeJson(path.join(paths.usageSnapshotsDir, "work.json"), { schemaVersion: 1, identity: "work", updatedAt: "2026-10-30T10:00:00.000Z", providers: {} }, PRIVATE_FILE_MODE);
-  writeJson(path.join(paths.usageSnapshotsDir, "personal.json"), { schemaVersion: 1, identity: "personal", updatedAt: "2026-10-30T10:00:00.000Z", providers: {} }, PRIVATE_FILE_MODE);
-  writeJson(
-    paths.usagePicksFile,
-    { schemaVersion: 1, picks: { "/example/project": { identity: "work", at: "2026-10-30T10:00:00.000Z" }, "/example/other": { identity: "personal", at: "2026-10-30T10:00:00.000Z" } } },
-    PRIVATE_FILE_MODE,
-  );
-  writeJson(paths.usageAnchorsFile, { schemaVersion: 1, handled: { work: "2026-10-30T10:00:00.000Z", personal: "2026-10-30T11:00:00.000Z" } }, PRIVATE_FILE_MODE);
-  cache.set("file:identity work", { token: "a-made-up-cached-token", fetchedAt: 1, source: { env: "EXAMPLE_TOKEN" } });
-  if (platform === "darwin") {
-    keychain.seed(claudeCodeKeychainService(path.join(root, "identities", "work")), "alex", LOGIN_SECRET);
-  }
-
-  const cachePort: CredentialCachePort = {
-    read: (store, owner) => cache.get(`${store}:${owner}`),
-    write: (store, owner, entry) => {
-      cache.set(`${store}:${owner}`, entry);
-    },
-    remove: (store, owner) => {
-      cache.delete(`${store}:${owner}`);
-    },
-  };
-  const world: World = {
-    root,
-    paths,
-    keychain,
-    cache,
-    sessions,
-    launches,
-    ports: (overrides = {}) => ({
-      fs: realFarmFs,
-      credentialCache: { port: cachePort, platform: "linux" },
-      run: keychain.run,
-      platform,
-      home: "/example/home",
-      sameDirectory,
-      sessions: { sessionsOn: (configDir) => sessions.get(configDir) ?? [] },
-      launches: { liveOn: (identity) => launches.get(identity) ?? [] },
-      lock: { nowMs: () => NOW_MS, pid: OWN_PID, isRunning: () => true, sleep: () => undefined },
-      ...overrides,
-    }),
-    read: (relative) => fs.readFileSync(path.join(root, relative), "utf8"),
-    json: (relative) => JSON.parse(fs.readFileSync(path.join(root, relative), "utf8")) as unknown,
-    directory: (name) => path.join(root, "identities", name),
-  };
-  return world;
-}
-
-/** Every file and directory under `root`, with the file contents and mode, so two trees compare byte for byte. */
-function treeOf(root: string): Record<string, string> {
-  const tree: Record<string, string> = {};
-  const walk = (directory: string): void => {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      const full = path.join(directory, entry.name);
-      const relative = path.relative(root, full);
-      if (entry.isDirectory()) {
-        tree[`${relative}/`] = "dir";
-        walk(full);
-      } else {
-        tree[relative] = `${(fs.statSync(full).mode & PERMISSION_BITS).toString(OCTAL)} ${fs.readFileSync(full, "utf8")}`;
-      }
-    }
-  };
-  walk(root);
-  return tree;
-}
+import { NOW_MS, OTHER_SUFFIX, OWN_PID, PERMISSION_BITS, PRIVATE_FILE_MODE, SUFFIX, type World, createWorld, treeOf, writeFile, writeJson } from "./identityRenameTestWorld";
 
 describe("renameIdentity", () => {
   let world: World;
@@ -176,8 +22,8 @@ describe("renameIdentity", () => {
     fs.rmSync(world.root, { recursive: true, force: true });
   });
 
-  it("moves the identity's directory, and any superseded farm beside it, to the new name", () => {
-    renameIdentity(world.paths, "work", "client", world.ports());
+  it("moves the identity's directory, and any superseded farm beside it, to the new name", async () => {
+    await renameIdentity(world.paths, "work", "client", world.ports());
     expect(fs.existsSync(world.directory("work"))).toBe(false);
     expect(fs.existsSync(world.directory("client"))).toBe(true);
     expect(fs.readFileSync(path.join(world.directory("client"), ".credentials.json"), "utf8")).toBe("{}\n");
@@ -185,24 +31,24 @@ describe("renameIdentity", () => {
     expect(fs.readFileSync(path.join(world.root, "identities", `.client.previous.${SUFFIX}`, "left-over.txt"), "utf8")).toBe("kept\n");
   });
 
-  it("leaves no lock behind and keeps no former name", () => {
-    renameIdentity(world.paths, "work", "client", world.ports());
+  it("leaves no lock behind and keeps no former name", async () => {
+    await renameIdentity(world.paths, "work", "client", world.ports());
     expect(fs.readdirSync(path.join(world.root, "identities")).sort()).toEqual([`.client.previous.${SUFFIX}`, "client", "personal"]);
     expect(fs.existsSync(path.join(world.root, "provider-aliases.json"))).toBe(false);
     expect(readIdentity(world.paths, "work")).toBeUndefined();
   });
 
-  it("leaves the farms of another identity whose name starts the same way where they are", () => {
+  it("leaves the farms of another identity whose name starts the same way where they are", async () => {
     writeJson(path.join(world.root, "identities", "work.previous.old", "identity.json"), { name: "work.previous.old", allowAmbientCredential: false });
     writeFile(path.join(world.root, "identities", `.work.previous.old.scratch.${OTHER_SUFFIX}`, "kept.txt"), "kept\n");
-    renameIdentity(world.paths, "work", "client", world.ports());
+    await renameIdentity(world.paths, "work", "client", world.ports());
     expect(fs.readFileSync(path.join(world.root, "identities", `.work.previous.old.scratch.${OTHER_SUFFIX}`, "kept.txt"), "utf8")).toBe("kept\n");
     expect(fs.existsSync(path.join(world.root, "identities", "work.previous.old", "identity.json"))).toBe(true);
     expect(fs.existsSync(path.join(world.root, "identities", `.client.scratch.${OTHER_SUFFIX}`))).toBe(false);
   });
 
-  it("rewrites the name in identity.json and points its credential file source at the moved token file", () => {
-    renameIdentity(world.paths, "work", "client", world.ports());
+  it("rewrites the name in identity.json and points its credential file source at the moved token file", async () => {
+    await renameIdentity(world.paths, "work", "client", world.ports());
     const identity = readIdentity(world.paths, "client");
     expect(identity?.name).toBe("client");
     expect(identity?.label).toBe("Example Org");
@@ -210,17 +56,17 @@ describe("renameIdentity", () => {
     expect(identity?.credential?.cache).toEqual({ store: "file" });
   });
 
-  it("re-roots a credential file source that sits inside the identity's own directory", () => {
+  it("re-roots a credential file source that sits inside the identity's own directory", async () => {
     const file = path.join(world.directory("work"), "identity.json");
     const stored = JSON.parse(fs.readFileSync(file, "utf8")) as { credential: { sources: unknown[] } };
     stored.credential.sources.push({ file: path.join(world.directory("work"), "secrets", "token") });
     fs.writeFileSync(file, JSON.stringify(stored));
-    renameIdentity(world.paths, "work", "client", world.ports());
+    await renameIdentity(world.paths, "work", "client", world.ports());
     expect(readIdentity(world.paths, "client")?.credential?.sources.at(-1)).toEqual({ file: path.join(world.directory("client"), "secrets", "token") });
   });
 
-  it("moves the stored token file, keeping its owner-only mode", () => {
-    renameIdentity(world.paths, "work", "client", world.ports());
+  it("moves the stored token file, keeping its owner-only mode", async () => {
+    await renameIdentity(world.paths, "work", "client", world.ports());
     expect(fs.existsSync(path.join(world.root, "credentials", "work.token"))).toBe(false);
     const moved = path.join(world.root, "credentials", "client.token");
     expect(fs.readFileSync(moved, "utf8")).toBe("a-made-up-token-file-body\n");
@@ -228,19 +74,19 @@ describe("renameIdentity", () => {
     expect(identityTokenPath(world.paths, "client")).toBe(moved);
   });
 
-  it("moves the cached credential to the new owner", () => {
-    renameIdentity(world.paths, "work", "client", world.ports());
+  it("moves the cached credential to the new owner", async () => {
+    await renameIdentity(world.paths, "work", "client", world.ports());
     expect(world.cache.has("file:identity work")).toBe(false);
     expect(world.cache.get("file:identity client")?.token).toBe("a-made-up-cached-token");
   });
 
-  it("rewrites the farm's own record of whose farm it is", () => {
-    renameIdentity(world.paths, "work", "client", world.ports());
+  it("rewrites the farm's own record of whose farm it is", async () => {
+    await renameIdentity(world.paths, "work", "client", world.ports());
     expect(world.json("identities/client/.agent-shim-farm.json")).toEqual({ version: 1, builtAtMs: 1, identity: "client", cwd: "/example/project", claudeHome: "/example/claude", materialised: [], links: [] });
   });
 
-  it("renames the member in every pool, nested and conditional ones included, and leaves pool selectors and other members alone", () => {
-    renameIdentity(world.paths, "work", "client", world.ports());
+  it("renames the member in every pool, nested and conditional ones included, and leaves pool selectors and other members alone", async () => {
+    await renameIdentity(world.paths, "work", "client", world.ports());
     expect(world.json("config.json")).toMatchObject({
       pools: {
         subs: { identities: ["client", "personal", "pool:fleet"] },
@@ -250,13 +96,13 @@ describe("renameIdentity", () => {
     });
   });
 
-  it("retargets the jobs that run as the identity, and not the ones that run as a pool", () => {
-    renameIdentity(world.paths, "work", "client", world.ports());
+  it("retargets the jobs that run as the identity, and not the ones that run as a pool", async () => {
+    await renameIdentity(world.paths, "work", "client", world.ports());
     expect(world.json("config.json")).toMatchObject({ jobs: { burn: { target: { identity: "client" } }, pooled: { target: { pool: "subs" } } } });
   });
 
-  it("requalifies account model refs in the global block, a profile and a directory rule, and no other identity's", () => {
-    renameIdentity(world.paths, "work", "client", world.ports());
+  it("requalifies account model refs in the global block, a profile and a directory rule, and no other identity's", async () => {
+    await renameIdentity(world.paths, "work", "client", world.ports());
     expect(world.json("config.json")).toMatchObject({ models: { virtual: { fast: { mode: "ordered", members: ["acct:client/opus", "z/glm-5.3"] } }, tiers: { opus: "acct:client/opus", sonnet: "acct:personal/sonnet" } } });
     expect(world.json("config-profiles/client.json")).toEqual({ models: { hide: ["acct:client/haiku"], show: ["acct:personal/haiku"] } });
     expect(world.json("config-profiles/plain.json")).toEqual({ description: "no model refs" });
@@ -269,27 +115,27 @@ describe("renameIdentity", () => {
     });
   });
 
-  it("selects the new name when the renamed identity was the active one, and leaves another active identity alone", () => {
-    renameIdentity(world.paths, "work", "client", world.ports());
+  it("selects the new name when the renamed identity was the active one, and leaves another active identity alone", async () => {
+    await renameIdentity(world.paths, "work", "client", world.ports());
     expect(readActiveIdentity(world.paths)).toBe("client");
     fs.writeFileSync(world.paths.activeIdentityFile, "personal\n");
-    renameIdentity(world.paths, "personal", "home", world.ports());
+    await renameIdentity(world.paths, "personal", "home", world.ports());
     expect(readActiveIdentity(world.paths)).toBe("home");
     fs.writeFileSync(world.paths.activeIdentityFile, "pool:subs\n");
-    renameIdentity(world.paths, "client", "work", world.ports());
+    await renameIdentity(world.paths, "client", "work", world.ports());
     expect(readActiveIdentity(world.paths)).toBe("pool:subs");
   });
 
-  it("moves the usage snapshot and rewrites the name inside it, replacing a stale one under the new name", () => {
+  it("moves the usage snapshot and rewrites the name inside it, replacing a stale one under the new name", async () => {
     writeJson(path.join(world.paths.usageSnapshotsDir, "client.json"), { schemaVersion: 1, identity: "client", updatedAt: "2025-01-01T00:00:00.000Z", providers: {} });
-    renameIdentity(world.paths, "work", "client", world.ports());
+    await renameIdentity(world.paths, "work", "client", world.ports());
     expect(fs.existsSync(path.join(world.paths.usageSnapshotsDir, "work.json"))).toBe(false);
     expect(world.json("usage/snapshots/client.json")).toEqual({ schemaVersion: 1, identity: "client", updatedAt: "2026-10-30T10:00:00.000Z", providers: {} });
     expect(world.json("usage/snapshots/personal.json")).toMatchObject({ identity: "personal" });
   });
 
-  it("rewrites the recorded pool picks and the anchor stamps", () => {
-    renameIdentity(world.paths, "work", "client", world.ports());
+  it("rewrites the recorded pool picks and the anchor stamps", async () => {
+    await renameIdentity(world.paths, "work", "client", world.ports());
     expect(world.json("usage/picks.json")).toEqual({
       schemaVersion: 1,
       picks: { "/example/project": { identity: "client", at: "2026-10-30T10:00:00.000Z" }, "/example/other": { identity: "personal", at: "2026-10-30T10:00:00.000Z" } },
@@ -297,8 +143,8 @@ describe("renameIdentity", () => {
     expect(world.json("usage/anchors.json")).toEqual({ schemaVersion: 1, handled: { client: "2026-10-30T10:00:00.000Z", personal: "2026-10-30T11:00:00.000Z" } });
   });
 
-  it("reports each thing it moved or rewrote, in order", () => {
-    const report = renameIdentity(world.paths, "work", "client", world.ports());
+  it("reports each thing it moved or rewrote, in order", async () => {
+    const report = await renameIdentity(world.paths, "work", "client", world.ports());
     expect(report).toEqual({
       from: "work",
       to: "client",
@@ -323,58 +169,58 @@ describe("renameIdentity", () => {
   });
 
   describe("refusals", () => {
-    it("refuses while a session is running on the identity, naming it, and changes nothing", () => {
+    it("refuses while a session is running on the identity, naming it, and changes nothing", async () => {
       world.sessions.set(world.directory("work"), [{ pid: 4711, program: "claude" }]);
       const before = treeOf(world.root);
-      expect(() => renameIdentity(world.paths, "work", "client", world.ports())).toThrow(IdentityInUseError);
-      expect(() => renameIdentity(world.paths, "work", "client", world.ports())).toThrow(/pid 4711 \(claude\)/);
+      await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow(IdentityInUseError);
+      await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow(/pid 4711 \(claude\)/);
       expect(treeOf(world.root)).toEqual(before);
     });
 
-    it("refuses while a launch is between its farm resync and its spawn, when no process carries the directory yet, naming the launcher", () => {
+    it("refuses while a launch is between its farm resync and its spawn, when no process carries the directory yet, naming the launcher", async () => {
       world.launches.set("work", [{ pid: 4712, program: "agent-shim launch" }]);
       const before = treeOf(world.root);
-      expect(() => renameIdentity(world.paths, "work", "client", world.ports())).toThrow(IdentityInUseError);
-      expect(() => renameIdentity(world.paths, "work", "client", world.ports())).toThrow(/pid 4712 \(agent-shim launch\)/);
+      await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow(IdentityInUseError);
+      await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow(/pid 4712 \(agent-shim launch\)/);
       expect(() => describeIdentityRename(world.paths, "work", "client", world.ports())).toThrow(IdentityInUseError);
       expect(treeOf(world.root)).toEqual(before);
     });
 
-    it("does not mind a launch of another identity", () => {
+    it("does not mind a launch of another identity", async () => {
       world.launches.set("personal", [{ pid: 4712, program: "agent-shim launch" }]);
-      expect(() => renameIdentity(world.paths, "work", "client", world.ports())).not.toThrow();
+      await expect(renameIdentity(world.paths, "work", "client", world.ports())).resolves.toBeDefined();
     });
 
-    it("refuses an unknown identity, a name it already has, an unusable name and an unchanged one, naming which", () => {
-      expect(() => renameIdentity(world.paths, "ghost", "client", world.ports())).toThrow(IdentityNotFoundError);
-      expect(() => renameIdentity(world.paths, "work", "personal", world.ports())).toThrow(IdentityAlreadyExistsError);
-      expect(() => renameIdentity(world.paths, "work", "-bad", world.ports())).toThrow(InvalidIdentityNameError);
-      expect(() => renameIdentity(world.paths, "work", "work", world.ports())).toThrow(CliError);
+    it("refuses an unknown identity, a name it already has, an unusable name and an unchanged one, naming which", async () => {
+      await expect(renameIdentity(world.paths, "ghost", "client", world.ports())).rejects.toThrow(IdentityNotFoundError);
+      await expect(renameIdentity(world.paths, "work", "personal", world.ports())).rejects.toThrow(IdentityAlreadyExistsError);
+      await expect(renameIdentity(world.paths, "work", "-bad", world.ports())).rejects.toThrow(InvalidIdentityNameError);
+      await expect(renameIdentity(world.paths, "work", "work", world.ports())).rejects.toThrow(CliError);
     });
 
-    it("refuses a name whose directory or superseded farm is already there, even without an identity.json", () => {
+    it("refuses a name whose directory or superseded farm is already there, even without an identity.json", async () => {
       fs.mkdirSync(world.directory("client"));
-      expect(() => renameIdentity(world.paths, "work", "client", world.ports())).toThrow(/already/);
+      await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow(/already/);
       fs.rmdirSync(world.directory("client"));
       fs.mkdirSync(path.join(world.root, "identities", `.client.previous.${OTHER_SUFFIX}`));
-      expect(() => renameIdentity(world.paths, "work", "client", world.ports())).toThrow(/already/);
+      await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow(/already/);
     });
 
-    it("refuses when the new name already has a token file", () => {
+    it("refuses when the new name already has a token file", async () => {
       writeFile(path.join(world.root, "credentials", "client.token"), "someone else's\n", TOKEN_FILE_MODE);
-      expect(() => renameIdentity(world.paths, "work", "client", world.ports())).toThrow(/token/);
+      await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow(/token/);
       expect(world.read("credentials/client.token")).toBe("someone else's\n");
     });
 
-    it("refuses while another resync holds the identity lock", () => {
+    it("refuses while another resync holds the identity lock", async () => {
       writeFile(path.join(world.root, "identities", ".work.lock"), `${JSON.stringify({ identity: "work", pid: 99, token: "t", acquiredAtMs: NOW_MS })}\n`);
-      expect(() => renameIdentity(world.paths, "work", "client", world.ports({ lock: { nowMs: () => NOW_MS, pid: OWN_PID, isRunning: () => true, sleep: () => undefined } }))).toThrow(/resync is already running/);
+      await expect(renameIdentity(world.paths, "work", "client", world.ports({ lock: { nowMs: () => NOW_MS, pid: OWN_PID, isRunning: () => true, sleep: () => undefined } }))).rejects.toThrow(/resync is already running/);
       expect(fs.existsSync(world.directory("work"))).toBe(true);
     });
   });
 
   describe("rollback", () => {
-    it("restores everything when a late step fails", () => {
+    it("restores everything when a late step fails", async () => {
       const before = treeOf(world.root);
       const failing = {
         ...realFarmFs,
@@ -385,13 +231,13 @@ describe("renameIdentity", () => {
           realFarmFs.writeFilePrivate(file, contents);
         },
       };
-      expect(() => renameIdentity(world.paths, "work", "client", world.ports({ fs: failing }))).toThrow(/disk full/);
+      await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: failing }))).rejects.toThrow(/disk full/);
       expect(treeOf(world.root)).toEqual(before);
       expect(world.cache.get("file:identity work")?.token).toBe("a-made-up-cached-token");
       expect(world.cache.has("file:identity client")).toBe(false);
     });
 
-    it("restores everything when a middle step fails", () => {
+    it("restores everything when a middle step fails", async () => {
       const before = treeOf(world.root);
       const cachePort: CredentialCachePort = {
         read: (store, owner) => world.cache.get(`${store}:${owner}`),
@@ -402,249 +248,16 @@ describe("renameIdentity", () => {
           world.cache.delete(`${store}:${owner}`);
         },
       };
-      expect(() => renameIdentity(world.paths, "work", "client", world.ports({ credentialCache: { port: cachePort, platform: "linux" } }))).toThrow(/cache store unavailable/);
+      await expect(renameIdentity(world.paths, "work", "client", world.ports({ credentialCache: { port: cachePort, platform: "linux" } }))).rejects.toThrow(/cache store unavailable/);
       expect(treeOf(world.root)).toEqual(before);
     });
 
-    it("stops before changing anything when a configuration file cannot be read", () => {
+    it("stops before changing anything when a configuration file cannot be read", async () => {
       writeFile(path.join(world.root, "config.json"), "{ not json");
       const before = treeOf(world.root);
-      expect(() => renameIdentity(world.paths, "work", "client", world.ports())).toThrow();
+      await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow();
       expect(treeOf(world.root)).toEqual(before);
     });
-  });
-});
-
-describe("renameIdentity credential file sources held elsewhere", () => {
-  let world: World;
-  const movedToken = (): string => path.join(world.root, "credentials", "work.token");
-  const insideDirectory = (): string => path.join(world.directory("work"), "secrets", "token");
-
-  beforeEach(() => {
-    world = createWorld();
-    writeJson(path.join(world.directory("personal"), "identity.json"), {
-      name: "personal",
-      allowAmbientCredential: false,
-      credential: { sources: [{ file: movedToken() }, { file: insideDirectory() }, { file: "/example/elsewhere/token" }, { env: "EXAMPLE_TOKEN" }], target: "oauthToken" },
-    });
-    writeJson(path.join(world.paths.providersDir, "z.json"), {
-      displayName: "z.ai",
-      baseUrl: "https://api.z.ai/api/anthropic",
-      credential: { sources: [{ file: movedToken() }, { env: "Z_API_TOKEN" }] },
-    });
-    writeJson(path.join(world.paths.providersDir, "router.json"), { kind: "router", displayName: "Router" });
-  });
-
-  afterEach(() => {
-    fs.rmSync(world.root, { recursive: true, force: true });
-  });
-
-  it("re-points another identity's file sources that name the moved token file or sit inside the moved directory, and leaves every other source alone", () => {
-    renameIdentity(world.paths, "work", "client", world.ports());
-    expect(readIdentity(world.paths, "personal")?.credential?.sources).toEqual([
-      { file: path.join(world.root, "credentials", "client.token") },
-      { file: path.join(world.directory("client"), "secrets", "token") },
-      { file: "/example/elsewhere/token" },
-      { env: "EXAMPLE_TOKEN" },
-    ]);
-  });
-
-  it("re-points a provider's file sources the same way, and leaves a provider with no credential alone", () => {
-    renameIdentity(world.paths, "work", "client", world.ports());
-    expect(readProvider(world.paths, "z")).toMatchObject({ credential: { sources: [{ file: path.join(world.root, "credentials", "client.token") }, { env: "Z_API_TOKEN" }] } });
-    expect(readProvider(world.paths, "router")).toEqual({ kind: "router", displayName: "Router" });
-  });
-
-  it("names those files among the steps, in the dry run and the real run alike", () => {
-    const planned = describeIdentityRename(world.paths, "work", "client", world.ports());
-    expect(planned.steps).toContain("rewrite identities/personal/identity.json: credential file source");
-    expect(planned.steps).toContain("rewrite providers/z.json: credential file source");
-    expect(renameIdentity(world.paths, "work", "client", world.ports()).steps).toEqual(planned.steps);
-  });
-
-  it("keeps the ~ spelling of a source that was written that way", () => {
-    writeJson(path.join(world.directory("personal"), "identity.json"), { name: "personal", allowAmbientCredential: false, credential: { sources: [{ file: "~/credentials/work.token" }, { file: "~/identities/work/secrets/token" }], target: "oauthToken" } });
-    renameIdentity(world.paths, "work", "client", world.ports({ home: world.root }));
-    expect(readIdentity(world.paths, "personal")?.credential?.sources).toEqual([{ file: "~/credentials/client.token" }, { file: "~/identities/client/secrets/token" }]);
-  });
-
-  it("refuses, naming the file, when a provider file it cannot read mentions the moved token, and ignores one that does not", () => {
-    writeFile(path.join(world.paths.providersDir, "old-format.json"), `{ "tokenFile": "${movedToken()}" }\n`);
-    const before = treeOf(world.root);
-    expect(() => describeIdentityRename(world.paths, "work", "client", world.ports())).toThrow(/providers\/old-format\.json/);
-    expect(() => renameIdentity(world.paths, "work", "client", world.ports())).toThrow(/providers\/old-format\.json/);
-    expect(treeOf(world.root)).toEqual(before);
-    fs.rmSync(path.join(world.paths.providersDir, "old-format.json"));
-    writeFile(path.join(world.paths.providersDir, "unrelated.json"), '{ "tokenFile": "/example/elsewhere/token" }\n');
-    expect(() => renameIdentity(world.paths, "work", "client", world.ports())).not.toThrow();
-  });
-});
-
-describe("renameIdentity with a new name that is the old directory under another spelling", () => {
-  let world: World;
-
-  beforeEach(() => {
-    world = createWorld();
-  });
-
-  afterEach(() => {
-    fs.rmSync(world.root, { recursive: true, force: true });
-  });
-
-  /** Makes `Work` resolve to the directory of `work`. A filesystem that ignores case (APFS and NTFS by default) does it already; elsewhere a symlink stands in for it. */
-  function aliasWork(): void {
-    if (!fs.existsSync(world.directory("Work"))) {
-      fs.symlinkSync(world.directory("work"), world.directory("Work"));
-    }
-  }
-
-  it("is refused in the dry run and the real run, saying the two names are one directory and how to change the case through a temporary name", () => {
-    aliasWork();
-    const before = treeOf(world.root);
-    for (const attempt of [() => describeIdentityRename(world.paths, "work", "Work", world.ports()), () => renameIdentity(world.paths, "work", "Work", world.ports())]) {
-      expect(attempt).toThrow(/same directory/);
-      expect(attempt).toThrow("agent-shim identity rename work Work-tmp && agent-shim identity rename Work-tmp Work");
-    }
-    expect(treeOf(world.root)).toEqual(before);
-  });
-
-  it("is still refused as already existing when the other identity is a different directory", () => {
-    expect(() => renameIdentity(world.paths, "work", "personal", world.ports())).toThrow(IdentityAlreadyExistsError);
-  });
-});
-
-describe("renameIdentity and the usage records of the current five-hour window", () => {
-  let world: World;
-  const NOW = Date.parse("2026-10-30T12:00:00.000Z");
-  const HOUR_MS = 3_600_000;
-  const OUTSIDE_WINDOW_HOURS_AGO = 6;
-  const ports = (): IdentityRenamePorts => world.ports({ lock: { nowMs: () => NOW, pid: OWN_PID, isRunning: () => true, sleep: () => undefined } });
-  const NOTE = 'Usage already logged for "work" in the last five hours stays filed under that name: the usage log is appended to by the running front door, so it is not rewritten. Until those hours pass, pool ranking has no burn rate or five-hour to seven-day ratio for "client" from them. Its quota windows come from its snapshot, which moved, and are unaffected.';
-
-  /** One logged request, as the front door writes it. */
-  const record = (identity: string, hoursAgo: number, provider = "anthropic"): string =>
-    JSON.stringify({ schemaVersion: 1, at: new Date(NOW - hoursAgo * HOUR_MS).toISOString(), identity, provider, route: "anthropic", method: "POST", endpoint: "/v1/messages", status: 200, latencyMs: 1, durationMs: 2, outcome: "completed" });
-  const log = (...lines: readonly string[]): void => {
-    writeFile(path.join(world.paths.usageLogDir, "2026-10-30.77.jsonl"), `${lines.join("\n")}\n`);
-  };
-
-  beforeEach(() => {
-    world = createWorld();
-  });
-
-  afterEach(() => {
-    fs.rmSync(world.root, { recursive: true, force: true });
-  });
-
-  it("is told in the dry run and the real run that those records keep the old name, since the log is not rewritten", () => {
-    log(record("work", 2), record("personal", 1));
-    const planned = describeIdentityRename(world.paths, "work", "client", ports());
-    expect(planned.warnings).toEqual([NOTE]);
-    expect(renameIdentity(world.paths, "work", "client", ports()).warnings).toEqual([NOTE]);
-    expect(fs.readFileSync(path.join(world.paths.usageLogDir, "2026-10-30.77.jsonl"), "utf8")).toContain('"identity":"work"');
-  });
-
-  it("says nothing when the identity has no record in the window: an older one, another identity's, or another provider's", () => {
-    log(record("work", OUTSIDE_WINDOW_HOURS_AGO), record("personal", 1), record("work", 1, "z"));
-    expect(describeIdentityRename(world.paths, "work", "client", ports()).warnings).toEqual([]);
-    expect(renameIdentity(world.paths, "work", "client", ports()).warnings).toEqual([]);
-  });
-});
-
-describe("renameIdentity against the launch records a launcher writes", () => {
-  let world: World;
-
-  beforeEach(() => {
-    world = createWorld();
-  });
-
-  afterEach(() => {
-    fs.rmSync(world.root, { recursive: true, force: true });
-  });
-
-  it("refuses while a running launcher's record names the identity, and goes ahead once the launcher has removed it", () => {
-    const ports = world.ports({ launches: realLaunchProbe(world.paths) });
-    const remove = registerLaunch(realFarmFs, world.paths.launchesDir, { pid: process.pid, identity: "work", startedAtMs: NOW_MS }, () => true);
-    expect(() => renameIdentity(world.paths, "work", "client", ports)).toThrow(/agent-shim launch/);
-    expect(fs.existsSync(world.directory("work"))).toBe(true);
-    remove();
-    renameIdentity(world.paths, "work", "client", ports);
-    expect(fs.existsSync(world.directory("client"))).toBe(true);
-  });
-
-  it("ignores the record of a launcher that is no longer running, as one that crashed leaves", () => {
-    const deadPid = 2_147_483_646;
-    registerLaunch(realFarmFs, world.paths.launchesDir, { pid: deadPid, identity: "work", startedAtMs: NOW_MS }, () => true);
-    renameIdentity(world.paths, "work", "client", world.ports({ launches: realLaunchProbe(world.paths) }));
-    expect(fs.existsSync(world.directory("client"))).toBe(true);
-  });
-});
-
-describe("renameIdentity locking", () => {
-  let world: World;
-
-  beforeEach(() => {
-    world = createWorld();
-  });
-
-  afterEach(() => {
-    fs.rmSync(world.root, { recursive: true, force: true });
-  });
-
-  /** Renames and returns the lock files taken, in the order they were created. */
-  function lockOrder(from: string, to: string): string[] {
-    const taken: string[] = [];
-    const recording = {
-      ...realFarmFs,
-      writeFileExclusive: (file: string, contents: string): boolean => {
-        taken.push(path.basename(file));
-        return realFarmFs.writeFileExclusive(file, contents);
-      },
-    };
-    renameIdentity(world.paths, from, to, world.ports({ fs: recording }));
-    return taken;
-  }
-
-  it("refreshes the locks it holds between steps, so a rename held up for longer than the staleness window is not taken for a crashed one", () => {
-    const STEP_MS = 50_000;
-    let now = NOW_MS;
-    const heldSince: number[] = [];
-    const timed = {
-      ...realFarmFs,
-      rename: (from: string, to: string): void => {
-        now += STEP_MS;
-        realFarmFs.rename(from, to);
-      },
-      writeFilePrivate: (file: string, contents: string): void => {
-        if (file === world.paths.usageAnchorsFile) {
-          const lock: unknown = JSON.parse(fs.readFileSync(path.join(world.root, "identities", ".client.lock"), "utf8"));
-          heldSince.push(typeof lock === "object" && lock !== null && "acquiredAtMs" in lock && typeof lock.acquiredAtMs === "number" ? lock.acquiredAtMs : -1);
-        }
-        realFarmFs.writeFilePrivate(file, contents);
-      },
-    };
-    renameIdentity(world.paths, "work", "client", world.ports({ fs: timed, lock: { nowMs: () => now, pid: OWN_PID, isRunning: () => true, sleep: () => undefined } }));
-    expect(heldSince).toHaveLength(1);
-    expect(heldSince[0]).toBeGreaterThan(NOW_MS + STEP_MS);
-  });
-
-  it("fails and rolls back when a lock it holds has been taken over, because nothing it guards can be assumed unchanged", () => {
-    const before = treeOf(world.root);
-    const takingOver = {
-      ...realFarmFs,
-      rename: (from: string, to: string): void => {
-        realFarmFs.rename(from, to);
-        fs.writeFileSync(path.join(world.root, "identities", ".client.lock"), `${JSON.stringify({ identity: "client", pid: 1, token: "someone-else", acquiredAtMs: NOW_MS })}\n`);
-      },
-    };
-    expect(() => renameIdentity(world.paths, "work", "client", world.ports({ fs: takingOver }))).toThrow(/taken over/);
-    fs.rmSync(path.join(world.root, "identities", ".client.lock"), { force: true });
-    expect(treeOf(world.root)).toEqual(before);
-  });
-
-  it("takes the two resync locks in name order whichever way round the names are given, so two opposite renames cannot each hold one and wait for the other", () => {
-    expect(lockOrder("work", "client")).toEqual([".client.lock", ".work.lock"]);
-    expect(lockOrder("client", "work")).toEqual([".client.lock", ".work.lock"]);
   });
 });
 
@@ -659,22 +272,22 @@ describe("describeIdentityRename (--dry-run)", () => {
     fs.rmSync(world.root, { recursive: true, force: true });
   });
 
-  it("lists exactly the steps a real rename takes, and changes nothing", () => {
+  it("lists exactly the steps a real rename takes, and changes nothing", async () => {
     const before = treeOf(world.root);
     const planned = describeIdentityRename(world.paths, "work", "client", world.ports());
     expect(treeOf(world.root)).toEqual(before);
     expect(planned.dryRun).toBe(true);
-    const done = renameIdentity(world.paths, "work", "client", world.ports());
+    const done = await renameIdentity(world.paths, "work", "client", world.ports());
     expect(done.dryRun).toBe(false);
     expect(done.steps).toEqual(planned.steps);
     expect(done.warnings).toEqual(planned.warnings);
   });
 
-  it("refuses a usage snapshot it cannot read in the plan, so a dry run that passes is not followed by a real run that fails after the Keychain copy", () => {
+  it("refuses a usage snapshot it cannot read in the plan, so a dry run that passes is not followed by a real run that fails after the Keychain copy", async () => {
     fs.writeFileSync(path.join(world.paths.usageSnapshotsDir, "work.json"), "{ not json");
     const before = treeOf(world.root);
     expect(() => describeIdentityRename(world.paths, "work", "client", world.ports())).toThrow(/usage\/snapshots\/work\.json/);
-    expect(() => renameIdentity(world.paths, "work", "client", world.ports())).toThrow(/usage\/snapshots\/work\.json/);
+    await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow(/usage\/snapshots\/work\.json/);
     expect(treeOf(world.root)).toEqual(before);
     expect(world.keychain.calls.every((call) => call.args[0] === "find-generic-password" && !call.args.includes("-g"))).toBe(true);
   });
@@ -700,158 +313,6 @@ describe("describeIdentityRename (--dry-run)", () => {
     world.sessions.set(world.directory("work"), [{ pid: 4711, program: "claude" }]);
     expect(() => describeIdentityRename(world.paths, "work", "client", world.ports())).toThrow(IdentityInUseError);
     expect(() => describeIdentityRename(world.paths, "work", "personal", world.ports())).toThrow(IdentityAlreadyExistsError);
-  });
-});
-
-describe("renameIdentity with a macOS Keychain login", () => {
-  let world: World;
-  const oldService = (): string => claudeCodeKeychainService(world.directory("work"));
-  const newService = (): string => claudeCodeKeychainService(world.directory("client"));
-
-  beforeEach(() => {
-    world = createWorld("darwin");
-  });
-
-  afterEach(() => {
-    fs.rmSync(world.root, { recursive: true, force: true });
-  });
-
-  it("carries the login to the service derived from the new directory and removes the old item last", () => {
-    const oldKey = oldService();
-    const newKey = newService();
-    const report = renameIdentity(world.paths, "work", "client", world.ports());
-    expect(world.keychain.items.get(newKey)?.account).toBe("alex");
-    expect(world.keychain.secretOf(newKey)?.toString("utf8")).toBe(LOGIN_SECRET);
-    expect(world.keychain.items.has(oldKey)).toBe(false);
-    expect(report.steps[0]).toBe(`copy the Keychain login "${oldKey}" to "${newKey}"`);
-    expect(report.steps.at(-1)).toBe(`delete the former Keychain login "${oldKey}"`);
-  });
-
-  it("never exposes the login in an argument list, a step, a warning or a thrown error", () => {
-    const report = renameIdentity(world.paths, "work", "client", world.ports());
-    const exposed = world.keychain.calls.map((call) => [call.command, ...call.args].join(" ")).join("\n");
-    expect(exposed).not.toContain("made-up-value-for-the-rename-test");
-    expect(exposed).not.toContain(Buffer.from(LOGIN_SECRET).toString("hex"));
-    expect(JSON.stringify(report)).not.toContain("made-up-value-for-the-rename-test");
-  });
-
-  it("deletes the old item only after the new one has been looked up and found", () => {
-    renameIdentity(world.paths, "work", "client", world.ports());
-    const calls = world.keychain.calls.map((call) => `${call.args[0] ?? ""} ${call.args.includes(newService()) ? "new" : call.args.includes(oldService()) ? "old" : ""}`.trim());
-    const deleteOld = calls.lastIndexOf("delete-generic-password old");
-    const lookupNew = calls.lastIndexOf("find-generic-password new");
-    expect(deleteOld).toBeGreaterThan(-1);
-    expect(lookupNew).toBeGreaterThan(-1);
-    expect(lookupNew).toBeLessThan(deleteOld);
-    expect(calls.slice(deleteOld + 1)).toEqual([]);
-  });
-
-  it("reads the login and the cached credential, which can wait on a person, once and before taking any lock", () => {
-    const events: string[] = [];
-    const recording = {
-      ...realFarmFs,
-      writeFileExclusive: (file: string, contents: string): boolean => {
-        events.push("lock");
-        return realFarmFs.writeFileExclusive(file, contents);
-      },
-    };
-    const run = {
-      run: (command: string, args: readonly string[], input?: string) => {
-        if (args.includes("-g")) {
-          events.push("read the login");
-        }
-        return world.keychain.run.run(command, args, input);
-      },
-    };
-    const cachePort: CredentialCachePort = {
-      read: (store, owner) => {
-        events.push("read the cache");
-        return world.cache.get(`${store}:${owner}`);
-      },
-      write: (store, owner, entry) => {
-        world.cache.set(`${store}:${owner}`, entry);
-      },
-      remove: (store, owner) => {
-        world.cache.delete(`${store}:${owner}`);
-      },
-    };
-    renameIdentity(world.paths, "work", "client", world.ports({ fs: recording, run, credentialCache: { port: cachePort, platform: "linux" } }));
-    expect(events.filter((event) => event === "read the login")).toHaveLength(1);
-    expect(events.filter((event) => event === "read the cache")).toHaveLength(1);
-    expect(events.indexOf("lock")).toBeGreaterThan(events.indexOf("read the login"));
-    expect(events.indexOf("lock")).toBeGreaterThan(events.indexOf("read the cache"));
-  });
-
-  it("asks for neither when a session is running, since it is going to refuse", () => {
-    world.sessions.set(world.directory("work"), [{ pid: 4711, program: "claude" }]);
-    expect(() => renameIdentity(world.paths, "work", "client", world.ports())).toThrow(IdentityInUseError);
-    expect(world.keychain.calls.some((call) => call.args.includes("-g"))).toBe(false);
-  });
-
-  it("keeps the old login and the old name when the new item cannot be created", () => {
-    world.keychain.failNextAdd(1);
-    const before = treeOf(world.root);
-    expect(() => renameIdentity(world.paths, "work", "client", world.ports())).toThrow(/Could not create the login/);
-    expect(treeOf(world.root)).toEqual(before);
-    expect(world.keychain.items.has(oldService())).toBe(true);
-    expect(world.keychain.items.has(newService())).toBe(false);
-  });
-
-  it("removes the new item and keeps the old one when a later step fails", () => {
-    const before = treeOf(world.root);
-    const failing = {
-      ...realFarmFs,
-      writeFilePrivate: (file: string, contents: string): void => {
-        if (file === world.paths.usageAnchorsFile) {
-          throw new Error("disk full");
-        }
-        realFarmFs.writeFilePrivate(file, contents);
-      },
-    };
-    expect(() => renameIdentity(world.paths, "work", "client", world.ports({ fs: failing }))).toThrow(/disk full/);
-    expect(treeOf(world.root)).toEqual(before);
-    expect(world.keychain.items.has(oldService())).toBe(true);
-    expect(world.keychain.items.has(newService())).toBe(false);
-  });
-
-  it("refuses when a login is already filed under the new directory, without touching either", () => {
-    world.keychain.seed(newService(), "alex", "left over");
-    const before = treeOf(world.root);
-    expect(() => renameIdentity(world.paths, "work", "client", world.ports())).toThrow(/already holds a login/);
-    expect(treeOf(world.root)).toEqual(before);
-    expect(world.keychain.secretOf(newService())?.toString("utf8")).toBe("left over");
-  });
-
-  it("copies nothing for an identity with no login in the Keychain", () => {
-    world.keychain.items.delete(oldService());
-    const report = renameIdentity(world.paths, "work", "client", world.ports());
-    expect(report.steps.some((step) => step.includes("Keychain"))).toBe(false);
-    expect(world.keychain.calls.some((call) => call.args[0] === "-i" || call.args[0] === "delete-generic-password")).toBe(false);
-  });
-
-  it("warns, rather than undoing a finished rename, when the old item cannot be deleted", () => {
-    const original = world.keychain.run;
-    const stubborn = {
-      run: (command: string, args: readonly string[], input?: string) => (args[0] === "delete-generic-password" && args.includes(oldService()) ? { status: 1, stdout: "", stderr: "denied" } : original.run(command, args, input)),
-    };
-    const report = renameIdentity(world.paths, "work", "client", world.ports({ run: stubborn }));
-    expect(fs.existsSync(world.directory("client"))).toBe(true);
-    expect(world.keychain.items.has(newService())).toBe(true);
-    expect(report.warnings).toHaveLength(1);
-    expect(report.warnings[0]).toContain(`security delete-generic-password -s "${oldService()}"`);
-  });
-});
-
-describe("renameIdentity off macOS", () => {
-  it("never calls security: the credentials file moves with the directory", () => {
-    const world = createWorld("linux");
-    try {
-      renameIdentity(world.paths, "work", "client", world.ports());
-      expect(world.keychain.calls).toEqual([]);
-      expect(fs.readFileSync(path.join(world.directory("client"), ".credentials.json"), "utf8")).toBe("{}\n");
-    } finally {
-      fs.rmSync(world.root, { recursive: true, force: true });
-    }
   });
 });
 

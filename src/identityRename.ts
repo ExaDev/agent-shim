@@ -1,3 +1,4 @@
+import os from "node:os";
 import path from "node:path";
 import type { z } from "zod";
 
@@ -44,10 +45,20 @@ export interface IdentityRenamePorts {
   readonly sameDirectory: (first: string, second: string) => boolean;
   /** Tells whether a session is running against the identity's directory. */
   readonly sessions: IdentitySessionProbe;
+  /** How the rename hears that the process was told to stop, and how it lets such a signal be heard. */
+  readonly signals: IdentityRenameSignals;
   /** The launches in progress for an identity: a launcher that has recorded itself and not yet exited, which is a session about to start when no process carries the directory yet. */
   readonly launches: IdentityLaunchProbe;
   /** What taking a resync lock needs from the machine. */
   readonly lock: Pick<AcquireIdentityLockParams, "nowMs" | "pid" | "isRunning" | "sleep">;
+}
+
+/** What the rename needs to stop cleanly when the process is told to: a handler for the signals, and a way to let one that arrived during synchronous work be delivered. */
+export interface IdentityRenameSignals {
+  /** Calls `handler` with the signal's name when the process is sent SIGINT or SIGTERM, until the returned function is called. */
+  readonly onInterrupt: (handler: (signal: NodeJS.Signals) => void) => () => void;
+  /** Resolves after the event loop has turned, which is when a signal that arrived during synchronous work reaches its handler. */
+  readonly turn: () => Promise<void>;
 }
 
 /** Tells which launches are in progress for an identity. Injected so the rename never reads the real launch records in a test. */
@@ -556,6 +567,20 @@ function planRename(paths: LayoutPaths, from: string, to: string, ports: Identit
   return { steps: steps.filter((step): step is Step => step !== undefined), finishers: keychain === undefined ? [] : [keychain.finisher], notes: note === undefined ? [] : [note] };
 }
 
+/** The shell's convention for the exit status of a process ended by a signal: this plus the signal's number. */
+const SIGNAL_EXIT_STATUS_BASE = 128;
+
+/** Raised when the process was sent SIGINT or SIGTERM while the rename was applying its steps. Everything done so far has been undone, so nothing has changed. The exit status is the shell's convention for a process ended by that signal. */
+class RenameInterruptedError extends CliError {
+  override readonly exitCode: number;
+
+  constructor(readonly signal: NodeJS.Signals) {
+    super(`Interrupted by ${signal}: the rename was rolled back and nothing was changed.`);
+    this.name = "RenameInterruptedError";
+    this.exitCode = SIGNAL_EXIT_STATUS_BASE + os.constants.signals[signal];
+  }
+}
+
 /** Raised when the rollback after a failed step could not undo everything: the first failure, and what was left. */
 class RollbackFailedError extends CliError {
   constructor(cause: string, leftovers: readonly string[]) {
@@ -568,14 +593,31 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Applies the steps in order, calling `afterStep` after each: the locks are refreshed there, and the call throws when one was taken over. If a step or `afterStep` fails, every step applied so far, the failing one included, is undone in reverse order and the failure is thrown. */
-function applyAll(steps: readonly Step[], afterStep: () => void): void {
+/** What the apply loop does between steps. */
+interface ApplyHooks {
+  /** Called after each step: the locks are refreshed here, and the call throws when one was taken over. */
+  readonly afterStep: () => void;
+  /** The signal the process received, if it has received one. */
+  readonly interrupted: () => NodeJS.Signals | undefined;
+  /** Lets the event loop turn, so that a signal that arrived during the last step is delivered to its handler. */
+  readonly turn: () => Promise<void>;
+}
+
+/**
+ * Applies the steps in order. Before each step the event loop is let turn and the process is checked for a SIGINT or SIGTERM, and after each the locks are refreshed; a signal during the last step lets the rename finish, since there is nothing left to undo. If a step, the refresh or an interrupt fails the rename, every step applied so far, the failing one included, is undone in reverse order and the failure is thrown.
+ */
+async function applyAll(steps: readonly Step[], hooks: ApplyHooks): Promise<void> {
   const started: Step[] = [];
   try {
     for (const step of steps) {
+      await hooks.turn();
+      const signal = hooks.interrupted();
+      if (signal !== undefined) {
+        throw new RenameInterruptedError(signal);
+      }
       started.push(step);
       step.apply();
-      afterStep();
+      hooks.afterStep();
     }
   } catch (error) {
     const leftovers: string[] = [];
@@ -649,17 +691,34 @@ export function describeIdentityRename(paths: LayoutPaths, from: string, to: str
  *
  * Throws `IdentityNotFoundError`, `IdentityAlreadyExistsError`, `InvalidIdentityNameError`, `UsageError` for equal names, `IdentityInUseError`, `KeychainLoginError` and `IdentityLockBusyError`. A committed `.agent-shim.json` in a project is not reachable from here, and neither is the usage log, which keeps its records under the name they were written with.
  */
-export function renameIdentity(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts): IdentityRenameReport {
+export async function renameIdentity(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts): Promise<IdentityRenameReport> {
   requireNames(from, to);
   // Every refusal that needs no secret comes first, so a person is never asked to approve a read for a rename that was going to fail. The plan is made again under the locks, from what is on disk by then.
   planRename(paths, from, to, ports, undefined);
-  const gathered = gather(paths, from, to, ports);
+  let received: NodeJS.Signals | undefined;
+  const stopListening = ports.signals.onInterrupt((signal) => {
+    received ??= signal;
+  });
+  try {
+    const gathered = gather(paths, from, to, ports);
+    if (received !== undefined) {
+      throw new RenameInterruptedError(received);
+    }
+    const plan = await applyUnderLocks(paths, from, to, ports, gathered, { interrupted: () => received, turn: ports.signals.turn });
+    const warnings = plan.finishers.flatMap((finisher) => finisher.finish() ?? []);
+    return { from, to, dryRun: false, steps: descriptionsOf(plan), warnings: [...plan.notes, ...warnings] };
+  } finally {
+    stopListening();
+  }
+}
+
+/** Takes the locks, plans again from what is on disk by then, applies the plan and releases the locks, which are not held while the old Keychain item is deleted since that can wait on a person too. Returns the plan that was applied. */
+async function applyUnderLocks(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts, gathered: Gathered, hooks: Pick<ApplyHooks, "interrupted" | "turn">): Promise<Plan> {
   const held = holdLocks(paths, [from, to], ports);
   try {
     const plan = planRename(paths, from, to, ports, gathered);
-    applyAll(plan.steps, held.refresh);
-    const warnings = plan.finishers.flatMap((finisher) => finisher.finish() ?? []);
-    return { from, to, dryRun: false, steps: descriptionsOf(plan), warnings: [...plan.notes, ...warnings] };
+    await applyAll(plan.steps, { ...hooks, afterStep: held.refresh });
+    return plan;
   } finally {
     held.release();
   }

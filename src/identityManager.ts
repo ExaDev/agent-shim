@@ -453,9 +453,9 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
       .description("Rename an identity: move its directory, carry its login across and rewrite every reference to its name. Refused while a session is running on it.")
       .option("--dry-run", "Print what would be moved and rewritten, and change nothing.")
       .option("--json", "Print the result as JSON.")
-      .action((from: string, to: string, options: Readonly<{ dryRun?: boolean; json?: boolean }>) => {
+      .action(async (from: string, to: string, options: Readonly<{ dryRun?: boolean; json?: boolean }>) => {
         const dryRun = options.dryRun === true;
-        const report = dryRun ? describeIdentityRename(paths, from, to, renamePorts) : renameIdentity(paths, from, to, renamePorts);
+        const report = dryRun ? describeIdentityRename(paths, from, to, renamePorts) : await renameIdentity(paths, from, to, renamePorts);
         reportMutation(options.json, { action: dryRun ? "planned" : "renamed", kind: "identity", name: to, value: report }, () => {
           console.log(dryRun ? `Would rename identity "${from}" to "${to}":` : `Renamed identity "${from}" to "${to}".`);
           for (const step of report.steps) {
