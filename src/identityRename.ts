@@ -23,7 +23,7 @@ import type { LayoutPaths } from "./paths";
 import { renameIdentityInPools } from "./poolStore";
 import { stampsWithKeyRenamed } from "./usage/handledStamps";
 import { picksWithIdentityRenamed } from "./usage/poolPick";
-import { readUsageSnapshot, snapshotPath } from "./usage/read";
+import { readUsageSnapshot, snapshotPath, UsageSnapshotError } from "./usage/read";
 import { UsageSnapshotSchema } from "./usage/schema";
 import { keychainHasItem } from "./usage/signIn";
 
@@ -70,6 +70,14 @@ class RenameTargetTakenError extends CliError {
   constructor(message: string) {
     super(message);
     this.name = "RenameTargetTakenError";
+  }
+}
+
+/** Raised when the identity's usage snapshot cannot be read, so it cannot be moved under the new name. Nothing has been changed. */
+class SnapshotUnreadableError extends CliError {
+  constructor(file: string, detail: string) {
+    super(`Cannot rename: ${file} is not a usage snapshot this agent-shim can read (${detail}). Fix it or remove it, then run the command again; nothing was changed.`);
+    this.name = "SnapshotUnreadableError";
   }
 }
 
@@ -287,9 +295,17 @@ function credentialCacheStep(ports: IdentityRenamePorts, from: string, to: strin
 function snapshotStep(paths: LayoutPaths, ports: IdentityRenamePorts, from: string, to: string): Step | undefined {
   const source = snapshotPath(paths.usageSnapshotsDir, from);
   const target = snapshotPath(paths.usageSnapshotsDir, to);
-  const raw = ports.fs.readFileUtf8(source);
-  if (raw === undefined) {
+  if (ports.fs.readFileUtf8(source) === undefined) {
     return undefined;
+  }
+  // Parsed here, not only when applied: a snapshot the step cannot read would pass a dry run and fail a real one after the Keychain copy.
+  try {
+    readUsageSnapshot(ports.fs, paths.usageSnapshotsDir, from);
+  } catch (error) {
+    if (error instanceof UsageSnapshotError) {
+      throw new SnapshotUnreadableError(path.relative(paths.root, source), error.message);
+    }
+    throw error;
   }
   let originalSource: string | undefined;
   let originalTarget: string | undefined;
