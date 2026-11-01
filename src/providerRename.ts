@@ -12,6 +12,7 @@ import { UsageSnapshotSchema } from "./usage/schema";
 import { listUsageSnapshots, snapshotPath, type UsageReadFs } from "./usage/read";
 import { readDirectoryRules, writeDirectoryRules } from "./directoryRulesStore";
 import { requireNewProviderName } from "./config/names";
+import { mapModelRefs } from "./modelRefs";
 import { listIdentities, setIdentityProvider } from "./identityStore";
 import type { LayoutPaths } from "./paths";
 import { aliasesAfterRename, readProviderAliases, writeProviderAliases } from "./providerAliases";
@@ -28,33 +29,7 @@ function renameRef(ref: string, from: string, to: string): string {
 export function renameModelRefs(models: ModelsConfig, from: string, to: string): ModelsConfig;
 export function renameModelRefs(models: ModelsLayer, from: string, to: string): ModelsLayer;
 export function renameModelRefs(models: ModelsLayer, from: string, to: string): ModelsLayer {
-  const rename = (ref: string): string => renameRef(ref, from, to);
-  const renamed: ModelsLayer = { ...models };
-  if (models.virtual !== undefined) {
-    renamed.virtual = Object.fromEntries(Object.entries(models.virtual).map(([name, definition]) => [name, definition === null ? null : { ...definition, members: definition.members.map(rename) }]));
-  }
-  if (models.tiers !== undefined) {
-    renamed.tiers = Object.fromEntries(Object.entries(models.tiers).map(([tier, ref]) => [tier, typeof ref === "string" ? rename(ref) : ref]));
-  }
-  if (models.prices !== undefined) {
-    renamed.prices = Object.fromEntries(Object.entries(models.prices).map(([ref, price]) => [rename(ref), price]));
-  }
-  if (models.hide !== undefined) {
-    renamed.hide = models.hide.map(rename);
-  }
-  if (models.show !== undefined) {
-    renamed.show = models.show.map(rename);
-  }
-  if (models.same !== undefined) {
-    renamed.same = models.same.map((group) => group.map(rename));
-  }
-  if (models.distinct !== undefined) {
-    renamed.distinct = models.distinct.map(([left, right]) => [rename(left), rename(right)]);
-  }
-  if (models.families !== undefined) {
-    renamed.families = Object.fromEntries(Object.entries(models.families).map(([key, settings]) => [key, settings?.names === undefined ? settings : { ...settings, names: settings.names.map(rename) }]));
-  }
-  return renamed;
+  return mapModelRefs(models, (ref) => renameRef(ref, from, to));
 }
 
 /** The launch flags with `provider` renamed, or undefined when they do not select `from`. */
