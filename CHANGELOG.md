@@ -1,3 +1,14 @@
+## [11.75.0](https://github.com/ExaDev/agent-shim/compare/v11.74.0...v11.75.0) (2026-11-01)
+
+### Features
+
+* **identity:** read, group and describe an identity's account details ([e0c9393](https://github.com/ExaDev/agent-shim/commit/e0c93933665e719d11b75ce981926af89ca4d252))
+* **identity:** show account, organisation, role and plan in list and show ([e527070](https://github.com/ExaDev/agent-shim/commit/e527070618656c1f4e9fc7b9a05ec76fb11ed770))
+
+### Documentation
+
+* describe the account details identity list and show print ([9ef8fdb](https://github.com/ExaDev/agent-shim/commit/9ef8fdbfbe116c827b205c5123e4bf0c79b6d1c8))
+
 ## [11.74.0](https://github.com/ExaDev/agent-shim/compare/v11.73.0...v11.74.0) (2026-10-31)
 
 ### Features
