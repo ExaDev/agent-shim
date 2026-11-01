@@ -172,7 +172,9 @@ export function treeOf(root: string): Record<string, string> {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
       const full = path.join(directory, entry.name);
       const relative = path.relative(root, full);
-      if (entry.isDirectory()) {
+      if (entry.isSymbolicLink()) {
+        tree[relative] = `symlink to ${fs.readlinkSync(full)}`;
+      } else if (entry.isDirectory()) {
         // The directory the rename's journals live in stays once created; empty, it is no state.
         if (entry.name === "identity-renames" && fs.readdirSync(full).length === 0) {
           continue;

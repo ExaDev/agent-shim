@@ -86,21 +86,22 @@ describe("renameIdentity with a new name that is the old directory under another
     fs.rmSync(world.root, { recursive: true, force: true });
   });
 
-  /** Makes `Work` resolve to the directory of `work`. A filesystem that ignores case (APFS and NTFS by default) does it already; elsewhere a symlink stands in for it. */
-  function aliasWork(): void {
-    if (!fs.existsSync(world.directory("Work"))) {
-      fs.symlinkSync(world.directory("work"), world.directory("Work"));
+  /** Makes `alias` resolve to the directory of `work`. A filesystem that ignores case (APFS and NTFS by default) does it already for `Work`; anywhere else a symlink stands in for it. */
+  function aliasWork(alias: string): void {
+    if (!fs.existsSync(world.directory(alias))) {
+      fs.symlinkSync(world.directory("work"), world.directory(alias));
     }
   }
 
-  it("is refused in the dry run and the real run, saying the two names are one directory and how to change the case through a temporary name", async () => {
-    aliasWork();
+  // `Work` is the case-only rename itself, and is a symlink on a filesystem that tells case apart; `work-alias` is a symlink everywhere, so the check runs the same on every host.
+  it.each(["Work", "work-alias"])("is refused in the dry run and the real run when %s is the same directory, saying so and how to change the name through a temporary one", async (alias) => {
+    aliasWork(alias);
     const before = treeOf(world.root);
-    const tmpAdvice = "agent-shim identity rename work Work-tmp && agent-shim identity rename Work-tmp Work";
-    expect(() => describeIdentityRename(world.paths, "work", "Work", world.ports())).toThrow(/same directory/);
-    expect(() => describeIdentityRename(world.paths, "work", "Work", world.ports())).toThrow(tmpAdvice);
-    await expect(renameIdentity(world.paths, "work", "Work", world.ports())).rejects.toThrow(/same directory/);
-    await expect(renameIdentity(world.paths, "work", "Work", world.ports())).rejects.toThrow(tmpAdvice);
+    const tmpAdvice = `agent-shim identity rename work ${alias}-tmp && agent-shim identity rename ${alias}-tmp ${alias}`;
+    expect(() => describeIdentityRename(world.paths, "work", alias, world.ports())).toThrow(/same directory/);
+    expect(() => describeIdentityRename(world.paths, "work", alias, world.ports())).toThrow(tmpAdvice);
+    await expect(renameIdentity(world.paths, "work", alias, world.ports())).rejects.toThrow(/same directory/);
+    await expect(renameIdentity(world.paths, "work", alias, world.ports())).rejects.toThrow(tmpAdvice);
     expect(treeOf(world.root)).toEqual(before);
   });
 
