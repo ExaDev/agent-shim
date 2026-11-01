@@ -556,6 +556,43 @@ describe("renameIdentity locking", () => {
     return taken;
   }
 
+  it("refreshes the locks it holds between steps, so a rename held up for longer than the staleness window is not taken for a crashed one", () => {
+    const STEP_MS = 50_000;
+    let now = NOW_MS;
+    const heldSince: number[] = [];
+    const timed = {
+      ...realFarmFs,
+      rename: (from: string, to: string): void => {
+        now += STEP_MS;
+        realFarmFs.rename(from, to);
+      },
+      writeFilePrivate: (file: string, contents: string): void => {
+        if (file === world.paths.usageAnchorsFile) {
+          const lock: unknown = JSON.parse(fs.readFileSync(path.join(world.root, "identities", ".client.lock"), "utf8"));
+          heldSince.push(typeof lock === "object" && lock !== null && "acquiredAtMs" in lock && typeof lock.acquiredAtMs === "number" ? lock.acquiredAtMs : -1);
+        }
+        realFarmFs.writeFilePrivate(file, contents);
+      },
+    };
+    renameIdentity(world.paths, "work", "client", world.ports({ fs: timed, lock: { nowMs: () => now, pid: OWN_PID, isRunning: () => true, sleep: () => undefined } }));
+    expect(heldSince).toHaveLength(1);
+    expect(heldSince[0]).toBeGreaterThan(NOW_MS + STEP_MS);
+  });
+
+  it("fails and rolls back when a lock it holds has been taken over, because nothing it guards can be assumed unchanged", () => {
+    const before = treeOf(world.root);
+    const takingOver = {
+      ...realFarmFs,
+      rename: (from: string, to: string): void => {
+        realFarmFs.rename(from, to);
+        fs.writeFileSync(path.join(world.root, "identities", ".client.lock"), `${JSON.stringify({ identity: "client", pid: 1, token: "someone-else", acquiredAtMs: NOW_MS })}\n`);
+      },
+    };
+    expect(() => renameIdentity(world.paths, "work", "client", world.ports({ fs: takingOver }))).toThrow(/taken over/);
+    fs.rmSync(path.join(world.root, "identities", ".client.lock"), { force: true });
+    expect(treeOf(world.root)).toEqual(before);
+  });
+
   it("takes the two resync locks in name order whichever way round the names are given, so two opposite renames cannot each hold one and wait for the other", () => {
     expect(lockOrder("work", "client")).toEqual([".client.lock", ".work.lock"]);
     expect(lockOrder("client", "work")).toEqual([".client.lock", ".work.lock"]);

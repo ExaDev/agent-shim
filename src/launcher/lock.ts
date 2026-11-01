@@ -23,7 +23,19 @@ interface LockRecord {
 export interface IdentityLock {
   readonly path: string;
   readonly token: string;
+  /**
+   * Restarts the lock's staleness clock. A holder that works for longer than the staleness window (a rename waiting on a person at a Keychain prompt, say) would otherwise be taken for a crashed one and have the lock taken from under it. Throws `IdentityLockLostError` when the lock is no longer this holder's, since the exclusion it stood for is gone.
+   */
+  readonly refresh: () => void;
   readonly release: () => void;
+}
+
+/** Raised by `IdentityLock.refresh` when another process has taken the lock: this holder was taken for a crashed one, and can no longer assume nothing else is rewriting what the lock guards. */
+export class IdentityLockLostError extends CliError {
+  constructor(readonly identity: string) {
+    super(`The lock on identity "${identity}" was taken over by another process while it was held, so nothing it guards can be assumed unchanged.`);
+    this.name = "IdentityLockLostError";
+  }
 }
 
 /** Raised when another process holds the identity's lock and did not release it within the retry budget. */
@@ -113,6 +125,13 @@ export function acquireIdentityLock(params: AcquireIdentityLockParams): Identity
       return {
         path: lockPath,
         token,
+        refresh: () => {
+          const current = parseLockRecord(params.fs.readFileUtf8(lockPath));
+          if (current?.token !== token) {
+            throw new IdentityLockLostError(params.identity);
+          }
+          params.fs.writeFileUtf8(lockPath, `${JSON.stringify({ ...current, acquiredAtMs: params.nowMs() })}\n`);
+        },
         release: () => {
           const current = parseLockRecord(params.fs.readFileUtf8(lockPath));
           if (current !== undefined && current.token !== token) {

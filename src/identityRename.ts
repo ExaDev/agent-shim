@@ -523,13 +523,14 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Applies the steps in order. If one fails, every step applied so far, the failing one included, is undone in reverse order and the failure is thrown. */
-function applyAll(steps: readonly Step[]): void {
+/** Applies the steps in order, calling `afterStep` after each: the locks are refreshed there, and the call throws when one was taken over. If a step or `afterStep` fails, every step applied so far, the failing one included, is undone in reverse order and the failure is thrown. */
+function applyAll(steps: readonly Step[], afterStep: () => void): void {
   const started: Step[] = [];
   try {
     for (const step of steps) {
       started.push(step);
       step.apply();
+      afterStep();
     }
   } catch (error) {
     const leftovers: string[] = [];
@@ -547,11 +548,18 @@ function applyAll(steps: readonly Step[]): void {
   }
 }
 
-/** Takes the resync lock of each identity in `names`, in name order, and returns what releases them all. The order does not depend on which name is the old one, so two renames running in opposite directions over the same pair ask for the locks in the same order and cannot each hold one and wait for the other. If one is busy, those already taken are released before its error is thrown. */
-function holdLocks(paths: LayoutPaths, names: readonly string[], ports: IdentityRenamePorts): () => void {
+/** The resync locks a rename holds. */
+interface HeldLocks {
+  /** Restarts each lock's staleness clock; throws `IdentityLockLostError` when one was taken over. */
+  readonly refresh: () => void;
+  readonly release: () => void;
+}
+
+/** Takes the resync lock of each identity in `names`, in name order, and returns what refreshes and releases them all. The order does not depend on which name is the old one, so two renames running in opposite directions over the same pair ask for the locks in the same order and cannot each hold one and wait for the other. If one is busy, those already taken are released before its error is thrown. */
+function holdLocks(paths: LayoutPaths, names: readonly string[], ports: IdentityRenamePorts): HeldLocks {
   const held: IdentityLock[] = [];
   const release = (): void => {
-    for (const lock of held.reverse()) {
+    for (const lock of [...held].reverse()) {
       lock.release();
     }
   };
@@ -563,7 +571,14 @@ function holdLocks(paths: LayoutPaths, names: readonly string[], ports: Identity
     release();
     throw error;
   }
-  return release;
+  return {
+    refresh: () => {
+      for (const lock of held) {
+        lock.refresh();
+      }
+    },
+    release,
+  };
 }
 
 /** What a plan reports: each step's description, then each finisher's. */
@@ -592,13 +607,13 @@ export function describeIdentityRename(paths: LayoutPaths, from: string, to: str
 export function renameIdentity(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts): IdentityRenameReport {
   requireNames(from, to);
   requireRenamable(paths, from, to, ports);
-  const release = holdLocks(paths, [from, to], ports);
+  const held = holdLocks(paths, [from, to], ports);
   try {
     const plan = planRename(paths, from, to, ports);
-    applyAll(plan.steps);
+    applyAll(plan.steps, held.refresh);
     const warnings = plan.finishers.flatMap((finisher) => finisher.finish() ?? []);
     return { from, to, dryRun: false, steps: descriptionsOf(plan), warnings: [...plan.notes, ...warnings] };
   } finally {
-    release();
+    held.release();
   }
 }
