@@ -25,8 +25,8 @@ function snapshotOf(five: number | undefined, seven: number | undefined, resetsI
   };
 }
 
-/** Two readings of the five-hour window, `BILLED` tokens apart: the window rose 0.1 over 100k billed tokens, so one token costs 1e-6 of it. */
-function measured(): UsageRecord[] {
+/** Two readings of one unified window (`5h` or `7d` in the header names), `BILLED` tokens apart: the window rose 0.1 over 100k billed tokens, so one token costs 1e-6 of it. */
+function measuredIn(header: "5h" | "7d"): UsageRecord[] {
   const record = (agoMs: number, utilization: number, billed: number): UsageRecord => ({
     schemaVersion: USAGE_SCHEMA_VERSION,
     at: iso(-agoMs),
@@ -40,10 +40,13 @@ function measured(): UsageRecord[] {
     durationMs: 1,
     outcome: "completed",
     usage: { inputTokens: billed },
-    rateLimitHeaders: { "anthropic-ratelimit-unified-5h-utilization": String(utilization), "anthropic-ratelimit-unified-5h-reset": String(Math.round((FAKE_NOW_MS + HOUR_MS) / MS_PER_SECOND)) },
+    rateLimitHeaders: { [`anthropic-ratelimit-unified-${header}-utilization`]: String(utilization), [`anthropic-ratelimit-unified-${header}-reset`]: String(Math.round((FAKE_NOW_MS + HOUR_MS) / MS_PER_SECOND)) },
   });
   return [record(HOUR_MS, FIRST_UTILISATION, 0), record(1, NOW_UTILISATION, BILLED)];
 }
+
+/** The five-hour window's readings, which every test of an account that has one measures by. */
+const measured = (): UsageRecord[] => measuredIn("5h");
 
 const idle = (contextTokens: number, extra: Readonly<Partial<SessionState>> = {}): SessionState => ({ mark: "idle", contextTokens, at: iso(0), ...extra });
 const session = (sessionId: string, state: SessionState | undefined): CompactionCandidate => ({ sessionId, state });
@@ -93,9 +96,31 @@ describe("decideCompaction by cost", () => {
     expect(decide({ snapshot: snapshotOf(COMFORTABLE, undefined), records: measured, sessions: [session("a", idle(BIG))] }).compact).toBe(false);
   });
 
-  it("does not compact on an identity whose cost per token has not been measured, or that reports no five-hour window", () => {
+  it("does not compact on an identity whose cost per token has not been measured in the window it measures against", () => {
     expect(decide({ snapshot: snapshotOf(NEARLY_SPENT_UTILISATION, undefined), records: () => [] }).compact).toBe(false);
+    // Five-hour readings say nothing about what a token costs the seven-day window.
     expect(decide({ snapshot: snapshotOf(undefined, NEARLY_SPENT_UTILISATION), records: measured }).compact).toBe(false);
+  });
+
+  it("does not compact on an identity that reports no plan window at all", () => {
+    expect(decide({ snapshot: snapshotOf(undefined, undefined), records: measured }).compact).toBe(false);
+  });
+
+  it("measures against the seven-day window of an account that has no five-hour window, naming it", () => {
+    const sessions = [session("a", idle(BIG)), session("b", idle(BILLED))];
+    const decision = decide({ snapshot: snapshotOf(undefined, NEARLY_SPENT_UTILISATION), records: () => measuredIn("7d"), sessions });
+    expect(decision).toMatchObject({ compact: true, contextTokens: BIG });
+    expect(decision.reason).toContain("the 7d window has 20% left, and compacting every session on this member would use about 25%");
+  });
+
+  it("measures against whichever window has the smaller share left", () => {
+    const sessions = [session("a", idle(BIG)), session("b", idle(BILLED))];
+    // The seven-day window is the tighter one, so its readings price the compaction even though the five-hour window has plenty left.
+    const sevenTighter = decide({ snapshot: snapshotOf(COMFORTABLE, NEARLY_SPENT_UTILISATION), records: () => [...measured(), ...measuredIn("7d")], sessions });
+    expect(sevenTighter.reason).toContain("the 7d window has 20% left");
+    // The five-hour window is the tighter one: the comfortable seven-day window does not hold it back.
+    const fiveTighter = decide({ snapshot: snapshotOf(NEARLY_SPENT_UTILISATION, COMFORTABLE), records: () => [...measured(), ...measuredIn("7d")], sessions });
+    expect(fiveTighter.reason).toContain("the 5h window has 20% left");
   });
 });
 

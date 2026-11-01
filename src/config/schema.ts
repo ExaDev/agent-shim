@@ -614,7 +614,7 @@ export const CompactAtUtilisationSchema = z.number().int().min(1).max(WHOLE_PERC
  *
  * A member entry may name another pool (`pool:<name>`), which is ranked with its own preference and contributes its pick at the entry's position; see `PoolMemberSchema`. The graph must stay acyclic, which `pool add`/`pool set` enforce and `doctor` re-checks.
  *
- * `compactBeforeLimit` makes the supervised sessions compact their context while their member can still afford it, at `compactAtUtilisation` percent of a window or, when that is absent, when compacting every session on the member would cost more than its five-hour window has left.
+ * `compactBeforeLimit` makes the supervised sessions compact their context while their member can still afford it, at `compactAtUtilisation` percent of a window or, when that is absent, when compacting every session on the member would cost more than the window it has the smallest share left of (the seven-day one for an account with no five-hour window) has left.
  *
  * `resumeOnLimit` makes an interactive launch from the pool supervised: when its identity runs out of quota, the launcher stops the session and resumes the same conversation under the next ranked member, on the same terminal. Absent means false.
  *
@@ -629,7 +629,7 @@ export const PoolSchema = z.strictObject({
   resumeOnLimit: z.boolean().optional(),
   /** Whether a supervised session's context is compacted before its identity's quota is spent, so the resume on the next member writes a small context instead of a large one. Needs `resumeOnLimit`. Absent means false. */
   compactBeforeLimit: z.boolean().optional(),
-  /** The share of a quota window, in whole percent, at which sessions are compacted. Absent means the launcher decides from what compacting every session on the member would cost against what its five-hour window has left. Needs `compactBeforeLimit`. */
+  /** The share of a quota window, in whole percent, at which sessions are compacted. Absent means the launcher decides from what compacting every session on the member would cost against what its tightest quota window has left. Needs `compactBeforeLimit`. */
   compactAtUtilisation: CompactAtUtilisationSchema.optional(),
 })
   .refine((pool) => pool.compactBeforeLimit !== true || pool.resumeOnLimit === true, { message: "compactBeforeLimit needs resumeOnLimit, since a session that is not moved has no cold cache to avoid", path: ["compactBeforeLimit"] })

@@ -73,7 +73,7 @@ function membersOf(options: Readonly<Pick<PoolMembersOptions, "identity">>): rea
 const RESUME_ON_LIMIT_DESCRIPTION = "Keep an interactive session of this pool going when its identity runs out of quota: the launcher stops it and resumes the same conversation under the next ranked member, on the same terminal.";
 
 const COMPACT_BEFORE_LIMIT_DESCRIPTION = "Compact each supervised session's context while its member can still afford it, so the resume on the next member writes a small context instead of a large one. Needs --resume-on-limit.";
-const COMPACT_AT_UTILISATION_DESCRIPTION = "Compact when either quota window of the member passes this share, in whole percent. Without it, a session is compacted when compacting every session on its member would cost more than the five-hour window has left. Needs --compact-before-limit.";
+const COMPACT_AT_UTILISATION_DESCRIPTION = "Compact when either quota window of the member passes this share, in whole percent. Without it, a session is compacted when compacting every session on its member would cost more than the member's tightest quota window has left. Needs --compact-before-limit.";
 
 const PREFERENCE_DESCRIPTION = "How a launch picks a member: score (the default) picks the member whose remaining quota expires soonest; listed tries the members in the order the pool lists them, skipping any that is refused right now.";
 
@@ -185,7 +185,7 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
           console.log("Resume on limit: yes");
         }
         if (entry.compactBeforeLimit === true) {
-          console.log(`Compact before limit: ${entry.compactAtUtilisation === undefined ? "when compacting would cost more than the five-hour window has left" : `at ${String(entry.compactAtUtilisation)}% of a window`}`);
+          console.log(`Compact before limit: ${entry.compactAtUtilisation === undefined ? "when compacting would cost more than the member's tightest quota window has left" : `at ${String(entry.compactAtUtilisation)}% of a window`}`);
         }
       }),
     ["agent-shim pool show subs"],
