@@ -422,7 +422,7 @@ function applyAll(steps: readonly Step[]): void {
   }
 }
 
-/** Takes the resync lock of each identity in `names`, in order, and returns what releases them all. If one is busy, those already taken are released before its error is thrown. */
+/** Takes the resync lock of each identity in `names`, in name order, and returns what releases them all. The order does not depend on which name is the old one, so two renames running in opposite directions over the same pair ask for the locks in the same order and cannot each hold one and wait for the other. If one is busy, those already taken are released before its error is thrown. */
 function holdLocks(paths: LayoutPaths, names: readonly string[], ports: IdentityRenamePorts): () => void {
   const held: IdentityLock[] = [];
   const release = (): void => {
@@ -431,7 +431,7 @@ function holdLocks(paths: LayoutPaths, names: readonly string[], ports: Identity
     }
   };
   try {
-    for (const identity of names) {
+    for (const identity of [...names].sort()) {
       held.push(acquireIdentityLock({ identity, dir: paths.identitiesDir, fs: ports.fs, ...ports.lock }));
     }
   } catch (error) {

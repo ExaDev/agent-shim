@@ -391,6 +391,37 @@ describe("renameIdentity", () => {
   });
 });
 
+describe("renameIdentity locking", () => {
+  let world: World;
+
+  beforeEach(() => {
+    world = createWorld();
+  });
+
+  afterEach(() => {
+    fs.rmSync(world.root, { recursive: true, force: true });
+  });
+
+  /** Renames and returns the lock files taken, in the order they were created. */
+  function lockOrder(from: string, to: string): string[] {
+    const taken: string[] = [];
+    const recording = {
+      ...realFarmFs,
+      writeFileExclusive: (file: string, contents: string): boolean => {
+        taken.push(path.basename(file));
+        return realFarmFs.writeFileExclusive(file, contents);
+      },
+    };
+    renameIdentity(world.paths, from, to, world.ports({ fs: recording }));
+    return taken;
+  }
+
+  it("takes the two resync locks in name order whichever way round the names are given, so two opposite renames cannot each hold one and wait for the other", () => {
+    expect(lockOrder("work", "client")).toEqual([".client.lock", ".work.lock"]);
+    expect(lockOrder("client", "work")).toEqual([".client.lock", ".work.lock"]);
+  });
+});
+
 describe("describeIdentityRename (--dry-run)", () => {
   let world: World;
 
