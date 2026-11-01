@@ -110,6 +110,20 @@ export function isIdentityDirectoryName(name: string): boolean {
   return !name.startsWith(".");
 }
 
+/**
+ * The names of the identity directories directly under `identitiesDir`, sorted: a directory, or a symlink that resolves to one, since `identityExists` follows a symlink and every command that reaches an identity does with it. A symlink to a file or to nothing is not an identity, and neither is a name `isIdentityDirectoryName` rejects. `listIdentities` and `doctor` both list identities through this, so they cannot disagree about which names exist.
+ */
+export function identityDirectoryNames(paths: LayoutPaths): readonly string[] {
+  if (!fs.existsSync(paths.identitiesDir)) {
+    return [];
+  }
+  return fs
+    .readdirSync(paths.identitiesDir, { withFileTypes: true })
+    .filter((entry) => isIdentityDirectoryName(entry.name) && (entry.isDirectory() || (entry.isSymbolicLink() && fs.statSync(path.join(paths.identitiesDir, entry.name), { throwIfNoEntry: false })?.isDirectory() === true)))
+    .map((entry) => entry.name)
+    .sort();
+}
+
 /** One identity as reported by `listIdentities`, whose `identity.json` parsed and validated cleanly. */
 export interface IdentityListEntry {
   readonly name: string;
@@ -164,14 +178,8 @@ export function listIdentities(paths: LayoutPaths): readonly IdentityListing[] {
     return [];
   }
   const active = readActiveIdentity(paths);
-  const names = fs
-    .readdirSync(paths.identitiesDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && isIdentityDirectoryName(entry.name))
-    .map((entry) => entry.name)
-    .sort();
-
   const result: IdentityListing[] = [];
-  for (const name of names) {
+  for (const name of identityDirectoryNames(paths)) {
     const read = readIdentityForListing(paths, name);
     if (read === undefined) {
       continue;
