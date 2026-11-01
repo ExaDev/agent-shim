@@ -65,7 +65,7 @@ agent-shim identity set <name> [--credential <source>]... [--credential-target <
 agent-shim identity set <name> [--anchor <days>@<HH:MM>[/<zone>]]... [--no-anchor]
 agent-shim identity set <name> [--credential-cache] [--credential-cache-ttl <ttl>] [--credential-cache-store <keychain|file>] [--no-credential-cache]
 agent-shim identity remove <name> [--yes]
-agent-shim identity rename <old> <new> [--dry-run] [--json]
+agent-shim identity rename <old> <new> [--dry-run | --discard-journal] [--json]
 agent-shim identity use <name>
 agent-shim @<name>                          # shorthand for `identity use <name>`
 agent-shim identity resolve-conflicts <name>  # interactively resolve a retained superseded farm's conflicts
