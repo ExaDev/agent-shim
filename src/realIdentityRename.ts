@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 
-import type { IdentityLaunchProbe, IdentityRenamePorts } from "./identityRename";
+import type { IdentityLaunchProbe, IdentityRenamePorts, IdentityRenameSignals } from "./identityRename";
 import { createIdentitySessionProbe, type ProcessTableFs, type ProcRead } from "./identitySessions";
 import { liveLaunchesOn } from "./launcher/launchRecords";
 import type { LayoutPaths } from "./paths";
@@ -66,6 +66,32 @@ export function sameDirectory(first: string, second: string): boolean {
   return a.dev === b.dev && a.ino === b.ino;
 }
 
+/** The signals that ask a process to stop and are not a failure of its own. */
+const INTERRUPT_SIGNALS = ["SIGINT", "SIGTERM"] as const;
+
+/**
+ * The real signal port. While a handler is installed Node no longer ends the process on the signal, which is what lets the rename roll back instead of leaving a half-moved identity. A signal that arrives during synchronous work is delivered when the loop next polls, so `turn` lets two iterations pass: the first immediate runs in a check phase, and one scheduled from it runs in the next iteration, after a poll phase.
+ */
+export const realSignals: IdentityRenameSignals = {
+  onInterrupt: (handler) => {
+    for (const signal of INTERRUPT_SIGNALS) {
+      process.on(signal, handler);
+    }
+    return () => {
+      for (const signal of INTERRUPT_SIGNALS) {
+        process.off(signal, handler);
+      }
+    };
+  },
+  turn: async () => {
+    await new Promise<void>((resolve) => {
+      setImmediate(() => {
+        setImmediate(resolve);
+      });
+    });
+  },
+};
+
 /** What a launch in progress is called when a refusal names it. */
 const LAUNCH_PROGRAM = "agent-shim launch";
 
@@ -84,6 +110,7 @@ export function realIdentityRenamePorts(paths: LayoutPaths): IdentityRenamePorts
     home: os.homedir(),
     sameDirectory,
     launches: realLaunchProbe(paths),
+    signals: realSignals,
     sessions: createIdentitySessionProbe(process.platform, { run: realRunPort, uid: currentUid, ownPid: process.pid, procFs: realProcessTableFs, realpath: realpathOrSelf }),
     lock: { nowMs: () => Date.now(), pid: process.pid, isRunning: realIsProcessRunning, sleep: realSleepSync },
   };

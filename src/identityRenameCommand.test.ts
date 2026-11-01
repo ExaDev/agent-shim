@@ -62,6 +62,12 @@ describe("identity rename", () => {
       sameDirectory,
       sessions: { sessionsOn: () => sessions },
       launches: { liveOn: () => [] },
+      signals: {
+        onInterrupt: () => () => undefined,
+        turn: async () => {
+          await Promise.resolve();
+        },
+      },
       lock: { nowMs: () => NOW_MS, pid: OWN_PID, isRunning: () => true, sleep: () => undefined },
     };
   }
