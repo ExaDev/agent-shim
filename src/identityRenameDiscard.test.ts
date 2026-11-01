@@ -2,11 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { CliError } from "./cliError";
+import { CliError, UsageError } from "./cliError";
+import { UnsafeNameError } from "./config/names";
 import { describeIdentityRename, discardRenameJournal, renameIdentity } from "./identityRename";
 import { describeUnfinishedRename, readRenameJournal, renameJournalFile, writeRenameJournal, type RenameJournal } from "./identityRenameJournal";
 import { NOW_MS, OWN_PID, createWorld, treeOf, type World } from "./identityRenameTestWorld";
-import { addIdentity, identityExists, removeIdentity } from "./identityStore";
+import { InvalidIdentityNameError, addIdentity, identityExists, removeIdentity } from "./identityStore";
 import { IdentityLockBusyError } from "./launcher/lock";
 import { realFarmFs } from "./realPorts";
 
@@ -120,6 +121,25 @@ describe("a rename left unfinished whose identity is under neither name, or unde
     expect(() => discardRenameJournal(world.paths, "work", "client", world.ports())).toThrow(IdentityLockBusyError);
     expect(journalOf(world, "work", "client")).toBeDefined();
     expect(fs.existsSync(path.join(world.root, "identities", ".work.lock"))).toBe(false);
+  });
+
+  it("refuses the same name twice without taking a lock, as a rename does", () => {
+    removeByHand(world, "work");
+    leaveJournal(world, "work", "client");
+    const before = treeOf(world.root);
+    expect(() => discardRenameJournal(world.paths, "work", "work", world.ports())).toThrow(UsageError);
+    expect(() => discardRenameJournal(world.paths, "work", "work", world.ports())).toThrow(/already the identity's name/);
+    expect(treeOf(world.root)).toEqual(before);
+  });
+
+  it("refuses a name that is not a valid new identity name, and takes no lock outside the state root", () => {
+    removeByHand(world, "work");
+    const before = treeOf(world.root);
+    const outside = path.join(world.root, "..", "evil-lock-probe");
+    expect(() => discardRenameJournal(world.paths, "work", "../../evil", world.ports())).toThrow(InvalidIdentityNameError);
+    expect(() => discardRenameJournal(world.paths, "../../evil", "client", world.ports())).toThrow(UnsafeNameError);
+    expect(treeOf(world.root)).toEqual(before);
+    expect(fs.existsSync(outside)).toBe(false);
   });
 
   it("reads a journal it cannot read as an error that names the file, rather than discarding what it cannot describe", () => {
