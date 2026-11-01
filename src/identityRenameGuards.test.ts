@@ -265,6 +265,51 @@ describe("renameIdentity and a signal to stop", () => {
     expect(taken).toEqual([]);
     expect(world.keychain.items.has(claudeCodeKeychainService(world.directory("client")))).toBe(false);
   });
+
+  /** A `security` that dies when the signal reaches it, as the terminal's whole foreground group does on Ctrl-C: it returns no status, and the process's own handler for the signal runs only once the event loop has turned. */
+  function killedWhileReading(signal: NodeJS.Signals | undefined) {
+    return {
+      run: (command: string, args: readonly string[], input?: string) => {
+        if (!args.includes("-g")) {
+          return world.keychain.run.run(command, args, input);
+        }
+        if (signal !== undefined) {
+          setImmediate(() => {
+            world.interrupt(signal);
+          });
+        }
+        return { status: null, stdout: "", stderr: "" };
+      },
+    };
+  }
+
+  /** The signal port as the real one behaves: a signal sent during synchronous work is delivered after two turns of the loop. */
+  function realisticTurns() {
+    return {
+      onInterrupt: world.ports().signals.onInterrupt,
+      turn: async (): Promise<void> => {
+        await new Promise<void>((resolve) => {
+          setImmediate(() => {
+            setImmediate(resolve);
+          });
+        });
+      },
+    };
+  }
+
+  it.each([
+    ["SIGINT", SIGINT_STATUS],
+    ["SIGTERM", SIGTERM_STATUS],
+  ] as const)("ends with the status of %s, not as a Keychain failure, when it killed the login read", async (signal, status) => {
+    const before = treeOf(world.root);
+    await expect(renameIdentity(world.paths, "work", "client", world.ports({ run: killedWhileReading(signal), signals: realisticTurns() }))).rejects.toMatchObject({ exitCode: status, message: expect.stringContaining(`Interrupted by ${signal}`) as unknown });
+    expect(treeOf(world.root)).toEqual(before);
+    expect(world.handlers()).toBe(0);
+  });
+
+  it("still reports a login read that ended with no status and no signal as a Keychain failure", async () => {
+    await expect(renameIdentity(world.paths, "work", "client", world.ports({ run: killedWhileReading(undefined), signals: realisticTurns() }))).rejects.toMatchObject({ exitCode: 1, message: expect.stringContaining("without a status") as unknown });
+  });
 });
 
 describe("renameIdentity locking", () => {
