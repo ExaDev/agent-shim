@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createFakeFarmFs } from "../test-helpers";
-import { acquireIdentityLock, identityLockPath, IdentityLockBusyError } from "./lock";
+import { acquireIdentityLock, identityLockPath, IdentityLockBusyError, IdentityLockLostError } from "./lock";
 
 const IDENTITIES_DIR = "/home/testuser/.agent-shim/identities";
 
@@ -217,5 +217,45 @@ describe("acquireIdentityLock", () => {
     first.release();
 
     expect(JSON.parse(fs.readFileUtf8(second.path) ?? "null")).toMatchObject({ pid: PID_WAITER, token: second.token });
+  });
+});
+
+describe("IdentityLock.refresh", () => {
+  /** The staleness window the lock uses when no override is given, which these tests stay inside or outside of on purpose. */
+  const WITHIN_WINDOW_MS = 100_000;
+  const NEARLY_A_WINDOW_LATER_MS = 150_000;
+
+  function acquire(fs: ReturnType<typeof createFakeFarmFs>, clock: Readonly<{ now: number }>, pid: number) {
+    return acquireIdentityLock({ identity: "work", dir: IDENTITIES_DIR, fs, nowMs: () => clock.now, pid, isRunning: () => true, sleep: () => undefined, maxAttempts: 2 });
+  }
+
+  it("restarts the staleness clock, so a holder that is alive and working is not taken for a crashed one", () => {
+    const fs = createFakeFarmFs();
+    const clock = { now: T0 };
+    const lock = acquire(fs, clock, PID_HOLDER);
+    clock.now = T0 + WITHIN_WINDOW_MS;
+    lock.refresh();
+    clock.now = T0 + NEARLY_A_WINDOW_LATER_MS;
+    expect(() => acquire(fs, clock, PID_WAITER)).toThrow(IdentityLockBusyError);
+    expect(fs.readFileUtf8(lock.path)).toContain(`"token":"${lock.token}"`);
+  });
+
+  it("does not, without a refresh, keep a lock past the staleness window: the control for the case above", () => {
+    const fs = createFakeFarmFs();
+    const clock = { now: T0 };
+    acquire(fs, clock, PID_HOLDER);
+    clock.now = T0 + NEARLY_A_WINDOW_LATER_MS;
+    expect(() => acquire(fs, clock, PID_WAITER)).not.toThrow();
+  });
+
+  it("throws once another process has taken the lock, because the exclusion it stood for is gone", () => {
+    const fs = createFakeFarmFs();
+    const clock = { now: T0 };
+    const lock = acquire(fs, clock, PID_HOLDER);
+    clock.now = T0 + NEARLY_A_WINDOW_LATER_MS;
+    acquire(fs, clock, PID_WAITER);
+    expect(() => {
+      lock.refresh();
+    }).toThrow(IdentityLockLostError);
   });
 });
