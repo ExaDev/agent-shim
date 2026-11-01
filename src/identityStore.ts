@@ -259,9 +259,24 @@ export function setIdentityCredential(paths: LayoutPaths, identityName: string, 
   });
 }
 
-/** Whether `entry` (a name directly under `identitiesDir`) is identity `name`'s farm, or a scratch or superseded farm a resync left behind. The resync lock is not one: it guards the farm and is never moved with it. */
+/** A UUID in its usual text form, as `randomUUID` writes it. */
+const UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+
+/** What follows an identity's name in the scratch and superseded farms a resync leaves beside it: `.scratch.` or `.previous.`, then the launcher's process id and a UUID, joined by a dot (`uniqueSuffix` in `launchWiring.ts`). */
+const FARM_SUFFIX_PATTERN = `\\.(?:scratch|previous)\\.\\d+\\.${UUID_PATTERN}`;
+
+/** `text` with every character a regular expression gives a meaning escaped, so a name matches only itself. */
+function escapedForPattern(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+/**
+ * Whether `entry` (a name directly under `identitiesDir`) is identity `name`'s farm, or a scratch or superseded farm a resync left behind. The resync lock is not one: it guards the farm and is never moved with it.
+ *
+ * The suffix is matched whole, not as a prefix, because a name may contain dots: the farms of an identity called `work.previous.old` start with `.work.previous.`, and are not the farms of `work`.
+ */
 function isFarmEntry(entry: string, name: string): boolean {
-  return entry === name || entry.startsWith(`.${name}.scratch.`) || entry.startsWith(`.${name}.previous.`);
+  return entry === name || new RegExp(`^\\.${escapedForPattern(name)}${FARM_SUFFIX_PATTERN}$`, "u").test(entry);
 }
 
 /** Whether `entry` (a name directly under `identitiesDir`) is part of identity `name`'s on-disk state: its farm, the resync lock, or a scratch or superseded farm a resync left behind. */

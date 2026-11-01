@@ -15,6 +15,9 @@ import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { realFarmFs } from "./realPorts";
 import { claudeCodeKeychainService } from "./usage/signIn";
 
+/** The shape of the suffix a resync gives its superseded and scratch farms: the launcher's process id, then a UUID. */
+const SUFFIX = "4242.0f8fad5b-d9cb-469f-a165-70867728950e";
+const OTHER_SUFFIX = "17.7c9e6679-7425-40de-944b-e07fc1f90ae7";
 const NOW_MS = 1_000;
 const OWN_PID = 4242;
 const PERMISSION_BITS = 0o777;
@@ -64,7 +67,7 @@ function createWorld(platform: NodeJS.Platform = "linux"): World {
   });
   writeJson(path.join(root, "identities", "work", ".agent-shim-farm.json"), { version: 1, builtAtMs: 1, identity: "work", cwd: "/example/project", claudeHome: "/example/claude", materialised: [], links: [] });
   writeFile(path.join(root, "identities", "work", ".credentials.json"), "{}\n");
-  writeFile(path.join(root, "identities", ".work.previous.1.abc", "left-over.txt"), "kept\n");
+  writeFile(path.join(root, "identities", `.work.previous.${SUFFIX}`, "left-over.txt"), "kept\n");
   writeJson(path.join(root, "identities", "personal", "identity.json"), { name: "personal", allowAmbientCredential: false });
   writeFile(tokenFile, "a-made-up-token-file-body\n", TOKEN_FILE_MODE);
   writeJson(paths.globalConfigFile, {
@@ -168,15 +171,24 @@ describe("renameIdentity", () => {
     expect(fs.existsSync(world.directory("work"))).toBe(false);
     expect(fs.existsSync(world.directory("client"))).toBe(true);
     expect(fs.readFileSync(path.join(world.directory("client"), ".credentials.json"), "utf8")).toBe("{}\n");
-    expect(fs.existsSync(path.join(world.root, "identities", ".work.previous.1.abc"))).toBe(false);
-    expect(fs.readFileSync(path.join(world.root, "identities", ".client.previous.1.abc", "left-over.txt"), "utf8")).toBe("kept\n");
+    expect(fs.existsSync(path.join(world.root, "identities", `.work.previous.${SUFFIX}`))).toBe(false);
+    expect(fs.readFileSync(path.join(world.root, "identities", `.client.previous.${SUFFIX}`, "left-over.txt"), "utf8")).toBe("kept\n");
   });
 
   it("leaves no lock behind and keeps no former name", () => {
     renameIdentity(world.paths, "work", "client", world.ports());
-    expect(fs.readdirSync(path.join(world.root, "identities")).sort()).toEqual([".client.previous.1.abc", "client", "personal"]);
+    expect(fs.readdirSync(path.join(world.root, "identities")).sort()).toEqual([`.client.previous.${SUFFIX}`, "client", "personal"]);
     expect(fs.existsSync(path.join(world.root, "provider-aliases.json"))).toBe(false);
     expect(readIdentity(world.paths, "work")).toBeUndefined();
+  });
+
+  it("leaves the farms of another identity whose name starts the same way where they are", () => {
+    writeJson(path.join(world.root, "identities", "work.previous.old", "identity.json"), { name: "work.previous.old", allowAmbientCredential: false });
+    writeFile(path.join(world.root, "identities", `.work.previous.old.scratch.${OTHER_SUFFIX}`, "kept.txt"), "kept\n");
+    renameIdentity(world.paths, "work", "client", world.ports());
+    expect(fs.readFileSync(path.join(world.root, "identities", `.work.previous.old.scratch.${OTHER_SUFFIX}`, "kept.txt"), "utf8")).toBe("kept\n");
+    expect(fs.existsSync(path.join(world.root, "identities", "work.previous.old", "identity.json"))).toBe(true);
+    expect(fs.existsSync(path.join(world.root, "identities", `.client.scratch.${OTHER_SUFFIX}`))).toBe(false);
   });
 
   it("rewrites the name in identity.json and points its credential file source at the moved token file", () => {
@@ -284,7 +296,7 @@ describe("renameIdentity", () => {
       steps: [
         "rewrite identities/work/identity.json: name, credential file source",
         "rewrite identities/work/.agent-shim-farm.json: identity",
-        "move identities/.work.previous.1.abc to identities/.client.previous.1.abc",
+        `move identities/.work.previous.${SUFFIX} to identities/.client.previous.${SUFFIX}`,
         "move identities/work to identities/client",
         "move credentials/work.token to credentials/client.token",
         "move the cached credential of identity work to identity client, if one is stored",
@@ -320,7 +332,7 @@ describe("renameIdentity", () => {
       fs.mkdirSync(world.directory("client"));
       expect(() => renameIdentity(world.paths, "work", "client", world.ports())).toThrow(/already/);
       fs.rmdirSync(world.directory("client"));
-      fs.mkdirSync(path.join(world.root, "identities", ".client.previous.9.zzz"));
+      fs.mkdirSync(path.join(world.root, "identities", `.client.previous.${OTHER_SUFFIX}`));
       expect(() => renameIdentity(world.paths, "work", "client", world.ports())).toThrow(/already/);
     });
 
