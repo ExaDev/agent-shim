@@ -7,7 +7,7 @@ import { parseEnvBool } from "./cli/envBool";
 import type { LayoutPaths } from "./paths";
 import { parseLauncherArgv, type ParsedLauncherArgv } from "./launcher/argv";
 import { buildCliOverride, type CliOverride } from "./launcher/cliOverride";
-import { recoverFarm, recoveryDiagnostics, resyncFarm } from "./launcher/farm";
+import { IdentityGoneError, recoverFarm, recoveryDiagnostics, resyncFarm } from "./launcher/farm";
 import { evaluateAmbientCredentialGuard } from "./launcher/guard";
 import { decideConfigProfile, decideIdentity, loadIdentity, type ConfigProfileDecisionSource, type IdentityDecision, type IdentityDecisionSource } from "./launcher/identity";
 import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedLaunchFlags, type ResolvedProvider } from "./launcher/flags";
@@ -653,10 +653,11 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
         classification: resyncFarmRuntime.classification,
         now: resyncFarmRuntime.now,
         uniqueSuffix: resyncFarmRuntime.uniqueSuffix,
+        identityExists: () => loadIdentity(paths.identitiesDir, resyncIdentity, params.fs) !== undefined,
         lock: resyncFarmRuntime.lock,
       });
     } catch (error) {
-      if (error instanceof IdentityLockBusyError) {
+      if (error instanceof IdentityLockBusyError || error instanceof IdentityGoneError) {
         log.error(error.message);
         proc.exit(1);
       }
