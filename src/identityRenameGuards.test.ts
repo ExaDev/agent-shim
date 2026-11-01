@@ -52,8 +52,8 @@ describe("renameIdentity credential file sources held elsewhere", () => {
 
   it("names those files among the steps, in the dry run and the real run alike", async () => {
     const planned = describeIdentityRename(world.paths, "work", "client", world.ports());
-    expect(planned.steps).toContain("rewrite identities/personal/identity.json: credential file source");
-    expect(planned.steps).toContain("rewrite providers/z.json: credential file source");
+    expect(planned.steps).toContain("rewrite identities/personal/identity.json: credential source");
+    expect(planned.steps).toContain("rewrite providers/z.json: credential source");
     expect((await renameIdentity(world.paths, "work", "client", world.ports())).steps).toEqual(planned.steps);
   });
 

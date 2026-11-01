@@ -29,7 +29,7 @@ import { ANTHROPIC_PROVIDER } from "./usage/middleware";
 import { FIVE_HOUR_WINDOW_MS } from "./usage/pick";
 import { readUsageLog, readUsageSnapshot, snapshotPath, UsageSnapshotError } from "./usage/read";
 import { UsageSnapshotSchema } from "./usage/schema";
-import { keychainHasItem } from "./usage/signIn";
+import { claudeCodeKeychainService, keychainHasItem } from "./usage/signIn";
 
 /** What `renameIdentity` reaches beyond the configuration files it reads through `LayoutPaths`. Injected so a test renames against a temporary root, a fake Keychain and a fake process table, and the library never imports the real ones. */
 export interface IdentityRenamePorts {
@@ -191,6 +191,9 @@ interface MovedPaths {
   readonly toDir: string;
   readonly fromToken: string;
   readonly toToken: string;
+  /** The Keychain service names Claude Code files the login of each directory under: a credential `keychain` source naming the old one names the login this rename moves. */
+  readonly fromService: string;
+  readonly toService: string;
   readonly home: string;
 }
 
@@ -205,9 +208,13 @@ function spelledLike(original: string, absolute: string, home: string): string {
 }
 
 /**
- * A credential source after the rename. A `file` source that names the identity's stored token file follows the file to its new name, and one that points inside the identity's directory follows the directory; any other path is the person's own and stays where it points. Sources of every other kind name things outside the directory and are untouched.
+ * A credential source after the rename. A `file` source that names the identity's stored token file follows the file to its new name, and one that points inside the identity's directory follows the directory; any other path is the person's own and stays where it points. A `keychain` source naming the Keychain service of the old directory's login follows the login to its new service. Sources of every other kind name things the rename does not move and are untouched.
  */
 function repointedSource(source: CredentialSource, moved: MovedPaths): CredentialSource {
+  if ("keychain" in source) {
+    // The login is copied to the new service and the old item deleted last, so a source still naming the old service would name an item that is gone.
+    return source.keychain.service === moved.fromService ? { ...source, keychain: { ...source.keychain, service: moved.toService } } : source;
+  }
   if (!("file" in source)) {
     return source;
   }
@@ -225,9 +232,19 @@ function repointedSources(sources: readonly CredentialSource[], moved: MovedPath
   return JSON.stringify(next) === JSON.stringify(sources) ? undefined : next;
 }
 
-/** Whether `text`, a file that could not be parsed, names a path that moved, in any spelling a source could take. */
+/** Whether `text` holds `target` as a whole path: not as the start of a longer name, so the directory of `work` is not found in that of `work-two`. */
+function namesPath(text: string, target: string): boolean {
+  for (let at = text.indexOf(target); at !== -1; at = text.indexOf(target, at + 1)) {
+    if (!/[A-Za-z0-9._@-]/u.test(text.charAt(at + target.length))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Whether `text`, a file that could not be parsed or the arguments of a source, names a path that moved, in any spelling a source could take. */
 function namesMovedPath(text: string, moved: MovedPaths): boolean {
-  return [moved.fromToken, moved.fromDir].some((target) => text.includes(target) || (target.startsWith(`${moved.home}${path.sep}`) && text.includes(`~${target.slice(moved.home.length)}`)));
+  return [moved.fromToken, moved.fromDir].some((target) => namesPath(text, target) || (target.startsWith(`${moved.home}${path.sep}`) && namesPath(text, `~${target.slice(moved.home.length)}`)));
 }
 
 /** Raised when a file that holds credential sources cannot be read and names a path the rename would move, so it cannot be re-pointed and would be left broken. Nothing has been changed. */
@@ -461,7 +478,7 @@ function credentialHolderSteps(paths: LayoutPaths, ports: IdentityRenamePorts, f
       }
       return jsonRewriteStep(paths, ports, file, IdentitySchema, (stored) => {
         const sources = stored.credential === undefined ? undefined : repointedSources(stored.credential.sources, moved);
-        return stored.credential === undefined || sources === undefined ? undefined : { value: { ...stored, credential: { ...stored.credential, sources } }, changes: ["credential file source"] };
+        return stored.credential === undefined || sources === undefined ? undefined : { value: { ...stored, credential: { ...stored.credential, sources } }, changes: ["credential source"] };
       });
     });
   const invalidProviders: { readonly name: string; readonly message: string }[] = [];
@@ -477,10 +494,23 @@ function credentialHolderSteps(paths: LayoutPaths, ports: IdentityRenamePorts, f
         return undefined;
       }
       const sources = repointedSources(stored.credential.sources, moved);
-      return sources === undefined ? undefined : { value: { ...stored, credential: { ...stored.credential, sources } }, changes: ["credential file source"] };
+      return sources === undefined ? undefined : { value: { ...stored, credential: { ...stored.credential, sources } }, changes: ["credential source"] };
     }),
   );
   return [...identitySteps, ...providerSteps];
+}
+
+/**
+ * A note for each credential source the rename cannot update: a `command` source runs a program and an `op` source asks 1Password, and either may name a path the rename moves in its arguments or its reference. Program arguments are not rewritten, since nothing says which of them is the path, so the source is left as it is and the person is told which holder has it. The note names the holder and the kind, never the arguments, which may hold a secret.
+ */
+function unrewritableSourceNotes(paths: LayoutPaths, from: string, to: string, moved: MovedPaths): readonly string[] {
+  const noteFor = (holder: string, source: CredentialSource): readonly string[] => {
+    const named = "command" in source ? namesMovedPath(source.command.join("\n"), moved) && "command" : "op" in source ? namesMovedPath(source.op, moved) && "op" : false;
+    return named === false ? [] : [`${holder} has ${named === "op" ? "an op" : "a command"} credential source that names a path this rename moves, which it cannot update. Change it by hand once the rename is done.`];
+  };
+  const identities = listIdentities(paths).flatMap((entry) => entry.identity?.credential?.sources.flatMap((source) => noteFor(`Identity "${entry.name === from ? to : entry.name}"`, source)) ?? []);
+  const providers = listProviders(paths, () => undefined).flatMap(({ name, provider }) => (isRouterProvider(provider) ? [] : provider.credential.sources.flatMap((source) => noteFor(`Provider "${name}"`, source))));
+  return [...identities, ...providers];
 }
 
 /** The login a dry run plans around: which services it would copy between, found from attributes alone, and no password. */
@@ -546,7 +576,7 @@ function planRename(paths: LayoutPaths, from: string, to: string, ports: Identit
     throw new IdentityNotFoundError(from);
   }
 
-  const moved: MovedPaths = { fromDir, toDir, fromToken, toToken, home: ports.home };
+  const moved: MovedPaths = { fromDir, toDir, fromToken, toToken, fromService: claudeCodeKeychainService(fromDir), toService: claudeCodeKeychainService(toDir), home: ports.home };
   const keychain = keychainPlan(ports, gathered === undefined ? dryRunLogin(ports, fromDir, toDir, resuming) : gathered.login, toDir);
   const farmFiles = [FARM_MANIFEST_FILENAME, LEGACY_FARM_MANIFEST_FILENAME].map((name) => path.join(identityDir, name));
   const steps: (Step | undefined)[] = [
@@ -558,7 +588,7 @@ function planRename(paths: LayoutPaths, from: string, to: string, ports: Identit
       }
       return {
         value: { ...stored, name: to, ...(stored.credential === undefined || sources === undefined ? {} : { credential: { ...stored.credential, sources } }) },
-        changes: ["name", ...(sources === undefined ? [] : ["credential file source"])],
+        changes: ["name", ...(sources === undefined ? [] : ["credential source"])],
       };
     }),
     ...farmFiles.map((file) => textRewriteStep(paths, ports, file, (target, text) => { ports.fs.writeFileUtf8(target, text); }, (raw) => {
@@ -599,8 +629,12 @@ function planRename(paths: LayoutPaths, from: string, to: string, ports: Identit
       return text === undefined ? undefined : { text, summary: counted(1, "stamp") };
     }),
   ];
-  const note = usageWindowNote(paths, ports, from, to);
-  return { steps: steps.filter((step): step is Step => step !== undefined), finishers: keychain === undefined ? [] : [keychain.finisher], notes: note === undefined ? [] : [note] };
+  const usageNote = usageWindowNote(paths, ports, from, to);
+  return {
+    steps: steps.filter((step): step is Step => step !== undefined),
+    finishers: keychain === undefined ? [] : [keychain.finisher],
+    notes: [...unrewritableSourceNotes(paths, from, to, moved), ...(usageNote === undefined ? [] : [usageNote])],
+  };
 }
 
 /** The shell's convention for the exit status of a process ended by a signal: this plus the signal's number. */

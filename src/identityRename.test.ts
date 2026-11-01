@@ -149,7 +149,7 @@ describe("renameIdentity", () => {
       to: "client",
       dryRun: false,
       steps: [
-        "rewrite identities/work/identity.json: name, credential file source",
+        "rewrite identities/work/identity.json: name, credential source",
         "rewrite identities/work/.agent-shim-farm.json: identity",
         `move identities/.work.previous.${SUFFIX} to identities/.client.previous.${SUFFIX}`,
         "move identities/work to identities/client",
