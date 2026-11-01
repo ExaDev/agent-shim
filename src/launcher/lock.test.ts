@@ -259,3 +259,90 @@ describe("IdentityLock.refresh", () => {
     }).toThrow(IdentityLockLostError);
   });
 });
+
+describe("a waiter reading the lock while its holder refreshes it", () => {
+  const CLOCK_MS = 1_000;
+  const LATER_MS = 2_000;
+  const BUDGET = 2;
+
+  function holdWith(fs: ReturnType<typeof createFakeFarmFs>) {
+    return acquireIdentityLock({ identity: "work", dir: IDENTITIES_DIR, fs, nowMs: () => CLOCK_MS, pid: PID_HOLDER, isRunning: () => true, sleep: () => undefined, maxAttempts: BUDGET });
+  }
+
+  function waitFor(fs: ReturnType<typeof createFakeFarmFs>): () => void {
+    return () => {
+      acquireIdentityLock({ identity: "work", dir: IDENTITIES_DIR, fs, nowMs: () => LATER_MS, pid: PID_WAITER, isRunning: () => true, sleep: () => undefined, maxAttempts: BUDGET });
+    };
+  }
+
+  it("never sees a half-written record, because the refreshed record replaces the file whole instead of truncating it first", () => {
+    const base = createFakeFarmFs();
+    let truncations = 0;
+    let waiterStole = false;
+    // A truncating write: the file is empty for a moment, which is when a waiter polling every few milliseconds can read it.
+    const truncating = {
+      ...base,
+      writeFileUtf8: (filePath: string, contents: string): void => {
+        truncations += 1;
+        base.writeFileUtf8(filePath, "");
+        try {
+          waitFor(base)();
+          waiterStole = true;
+        } catch (error) {
+          if (!(error instanceof IdentityLockBusyError)) {
+            throw error;
+          }
+        }
+        base.writeFileUtf8(filePath, contents);
+      },
+    };
+    const lock = holdWith(truncating);
+    lock.refresh();
+    expect(truncations).toBe(0);
+    expect(waiterStole).toBe(false);
+    expect(base.readFileUtf8(lock.path)).toContain(`"token":"${lock.token}"`);
+    expect(() => {
+      waitFor(base)();
+    }).toThrow(IdentityLockBusyError);
+  });
+
+  it("does not take a lock for abandoned on one empty read, which a second read of the same file contradicts", () => {
+    const base = createFakeFarmFs();
+    const lock = holdWith(base);
+    let reads = 0;
+    const torn = {
+      ...base,
+      readFileUtf8: (filePath: string): string | undefined => {
+        reads += 1;
+        return reads === 1 ? "" : base.readFileUtf8(filePath);
+      },
+    };
+    expect(() => {
+      waitFor(torn)();
+    }).toThrow(IdentityLockBusyError);
+    expect(base.readFileUtf8(lock.path)).toContain(`"token":"${lock.token}"`);
+  });
+
+  it("leaves alone a lock that is released between the failed create and the read, rather than deleting whatever has been put there since", () => {
+    const base = createFakeFarmFs();
+    holdWith(base);
+    let released = false;
+    const racing = {
+      ...base,
+      readFileUtf8: (filePath: string): string | undefined => {
+        if (!released) {
+          released = true;
+          // The holder lets go and a third process takes the lock, between this waiter's failed create and its read.
+          base.removeRecursive(filePath);
+          base.writeFileUtf8(filePath, `${JSON.stringify({ identity: "work", pid: PID_HOLDER_VERBOSE, token: "third", acquiredAtMs: CLOCK_MS })}\n`);
+          return undefined;
+        }
+        return base.readFileUtf8(filePath);
+      },
+    };
+    expect(() => {
+      waitFor(racing)();
+    }).toThrow(IdentityLockBusyError);
+    expect(base.readFileUtf8(identityLockPath(IDENTITIES_DIR, "work"))).toContain('"token":"third"');
+  });
+});
