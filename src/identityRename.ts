@@ -756,7 +756,17 @@ export async function renameIdentity(paths: LayoutPaths, from: string, to: strin
     received ??= signal;
   });
   try {
-    const gathered = gather(paths, from, to, ports, resuming);
+    let gathered: Gathered;
+    try {
+      gathered = gather(paths, from, to, ports, resuming);
+    } catch (error) {
+      // Ctrl-C reaches the terminal's whole foreground group, so it also kills the `security` child reading the login: the call returns no status, which reads as a Keychain failure. The handler for the signal runs only once the event loop has turned, so it is let turn before deciding which this was.
+      await ports.signals.turn();
+      if (received !== undefined) {
+        throw new RenameInterruptedError(received, resuming);
+      }
+      throw error;
+    }
     if (received !== undefined) {
       throw new RenameInterruptedError(received, resuming);
     }
