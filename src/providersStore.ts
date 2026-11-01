@@ -153,7 +153,7 @@ function parseProviderFile(filePath: string, raw: unknown): Provider {
 }
 
 /** Raised when a provider file is not JSON. It says so and nothing of the text, which the parser would quote and which may hold a credential. */
-class ProviderFileNotJsonError extends CliError {
+export class ProviderFileNotJsonError extends CliError {
   constructor(filePath: string) {
     super(`${filePath} is not valid JSON.`);
     this.name = "ProviderFileNotJsonError";
