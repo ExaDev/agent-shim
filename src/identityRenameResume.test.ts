@@ -138,11 +138,25 @@ describe("the journal a rename keeps", () => {
         () => undefined,
         (error: unknown) => error,
       );
-      expect(failure instanceof Error ? failure.message : "").toContain("no space left on device");
-      expect(failure instanceof Error ? failure.message : "").not.toContain("Rolling back also failed");
+      const message = failure instanceof Error ? failure.message : "";
+      expect(message).toContain("no space left on device");
+      expect(message).not.toContain("Rolling back also failed");
+      // The earlier run's work is still applied, so this run says the rename is unfinished, not that nothing is left half done.
+      expect(message).toContain("the steps this run applied were rolled back; the rename it was finishing is still unfinished, and running the same command again finishes it");
+      expect(message).not.toContain("nothing was changed");
       expect(journalOf(world)).toMatchObject({ from: "work", to: "client" });
       await expect(renameIdentity(world.paths, "work", "client", world.ports())).resolves.toBeDefined();
       expect(journalOf(world)).toBeUndefined();
+    });
+
+    it("says a rename that began here was rolled back and nothing was changed, once", async () => {
+      const failure: unknown = await renameIdentity(world.paths, "work", "client", world.ports({ fs: failingThenJournalFull() })).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      const message = failure instanceof Error ? failure.message : "";
+      expect(message.split("the rename was rolled back and nothing was changed")).toHaveLength(2);
+      expect(message).not.toContain("still unfinished");
     });
 
     it("still names the steps it could not undo, and the journal failure beside them, when both happen", async () => {

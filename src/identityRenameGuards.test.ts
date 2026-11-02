@@ -234,6 +234,8 @@ describe("renameIdentity and a signal to stop", () => {
     expect(failure).toMatchObject({ exitCode: SIGINT_STATUS });
     expect(failure instanceof Error ? failure.message : "").toContain("Interrupted by SIGINT");
     expect(failure instanceof Error ? failure.message : "").toContain("no space left on device");
+    // The interruption's own message already says the rename was rolled back, so it is not said a second time.
+    expect(failure instanceof Error ? failure.message : "").not.toContain("This run's rollback is complete");
   });
 
   it("rolls every step back, the Keychain copy included, and ends with the shell's status for SIGINT, when the signal arrives between steps", async () => {
