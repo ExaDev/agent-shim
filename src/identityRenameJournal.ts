@@ -7,9 +7,9 @@ import { CliError } from "./cliError";
 import type { FarmFs } from "./launcher/ports";
 
 /**
- * What a rename writes before its first step and keeps current until its last: the pair of names and each step with whether it is done. A rename that is killed, or whose rollback fails, leaves its journal behind, and that is the only trace it leaves of being unfinished: a re-run of the same pair finds it and carries on, `doctor` reports it, and a rename of anything else that names either identity refuses until it is dealt with.
+ * What a rename writes before its first step and keeps current until its last: the pair of names and each step with whether it was begun and whether it is done. A rename that is killed, or whose rollback fails, leaves its journal behind, and that is the only trace it leaves of being unfinished: a re-run of the same pair finds it and carries on, `doctor` reports it, and a rename of anything else that names either identity refuses until it is dealt with.
  *
- * The `done` marks say how far a rename got, for a person and for `doctor`; they are not what a re-run trusts. A re-run plans from what is on disk, so a step that was applied is simply no longer in its plan, and one that was applied but not marked is not applied twice.
+ * The marks say how far a rename got, for a person and for `doctor`; they are not what a re-run trusts. A re-run plans from what is on disk, so a step that was applied is simply no longer in its plan, and one that was applied but not marked is not applied twice. A step is marked as begun before it runs and as done after, so a record shows every step that may have taken effect, which is what discarding a record on the strength of it needs.
  */
 const RenameJournalSchema = z.strictObject({
   version: z.literal(1),
@@ -18,7 +18,15 @@ const RenameJournalSchema = z.strictObject({
   startedAt: z.iso.datetime(),
   /** The process that began the rename, for a person reading the file. Whether it is still running is told by the locks, not by this. */
   pid: z.number().int().positive(),
-  steps: z.array(z.strictObject({ description: z.string().min(1), done: z.boolean() })),
+  steps: z.array(
+    z.strictObject({
+      description: z.string().min(1),
+      /** Whether the step has been applied and marked so. */
+      done: z.boolean(),
+      /** Whether the step was begun: written ahead of the step, before it runs, so a process that dies after the step took effect and before `done` was written still leaves a record that it may have. Absent reads as not begun. */
+      started: z.boolean().optional(),
+    }),
+  ),
 });
 
 export type RenameJournal = z.infer<typeof RenameJournalSchema>;
@@ -135,12 +143,17 @@ export function unfinishedRenameFor(journals: readonly RenameJournal[], from: st
   return involved === undefined ? undefined : { kind: "blocked", journal: involved };
 }
 
-/** Whether a run of the rename can finish it, and when it cannot, why. A rename that can be finished is also `discardable` when its record can be removed without losing anything: no step is recorded as done and the identity has not left the old name, which is a rename that was rolled back completely or ended before it began. */
+/** Whether a run of the rename can finish it, and when it cannot, why. A rename that can be finished is also `discardable` when the journal records no step as begun or done and the identity is still under the old name: that is exactly what `--discard-journal` checks, and it is a rename that was rolled back completely or ended before its first step. A step is recorded as begun before it runs, so a process that died after a step took effect and before it was marked done is never taken for one that applied nothing. */
 export type RenameFinishability = { readonly finishable: true; readonly discardable?: true } | { readonly finishable: false; readonly reason: string };
 
-/** Whether `journal` records no step as done, which a run that rolled back completely, or was ended before its first step, leaves: nothing it describes is applied, so the record can be discarded without losing any work. */
+/** Whether a step may have been applied according to its marks: it is done, or it was begun, which is written before the step runs so that a process that died after the step took effect and before it was marked done is still counted. */
+function stepMayBeApplied(step: Readonly<RenameJournal["steps"][number]>): boolean {
+  return step.done || step.started === true;
+}
+
+/** Whether `journal` records no step as begun or done, which a run that rolled back completely, or was ended before its first step, leaves. Only then can the record be discarded on the strength of the journal: a step begun and not done may have taken effect. */
 export function recordsNothingApplied(journal: Readonly<Pick<RenameJournal, "steps">>): boolean {
-  return journal.steps.every((step) => !step.done);
+  return !journal.steps.some(stepMayBeApplied);
 }
 
 /** Why no run of the rename can finish it: the identity is under neither name, or under both. */
@@ -164,10 +177,10 @@ export function discardJournalCommand(journal: Readonly<Pick<RenameJournal, "fro
 
 /** The journal as a sentence for a refusal or for `doctor`: the pair, how far it got, and what to do about it. A rename that can be finished is told the command that finishes it, and the command that discards its record too when that loses nothing; one that cannot is told why and the command that discards its record, never the command that would fail. */
 export function describeUnfinishedRename(journal: Readonly<RenameJournal>, finishability: RenameFinishability): string {
-  const done = journal.steps.filter((step) => step.done).length;
-  const progress = `an unfinished rename of identity "${journal.from}" to "${journal.to}" (${String(done)} of ${String(journal.steps.length)} steps recorded as done)`;
+  const applied = journal.steps.filter(stepMayBeApplied).length;
+  const progress = `an unfinished rename of identity "${journal.from}" to "${journal.to}" (${String(applied)} of ${String(journal.steps.length)} steps recorded as begun or done)`;
   return finishability.finishable
-    ? `${progress}. Finish it with \`agent-shim identity rename ${journal.from} ${journal.to}\`; to put the name back afterwards, run \`agent-shim identity rename ${journal.to} ${journal.from}\`.${finishability.discardable === true ? ` Nothing it describes is applied, so discarding its record with \`${discardJournalCommand(journal)}\` loses nothing and leaves the identity as it is.` : ""}`
+    ? `${progress}. Finish it with \`agent-shim identity rename ${journal.from} ${journal.to}\`; to put the name back afterwards, run \`agent-shim identity rename ${journal.to} ${journal.from}\`.${finishability.discardable === true ? ` No step is recorded as begun or done and the identity is still under "${journal.from}", so its record can be discarded with \`${discardJournalCommand(journal)}\`; that removes only the record.` : ""}`
     : `${progress} that cannot be finished: ${finishability.reason}. If nothing is left of it to keep, discard its record with \`${discardJournalCommand(journal)}\`; that removes only the record and changes no identity.`;
 }
 

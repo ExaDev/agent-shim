@@ -670,9 +670,11 @@ function messageOf(error: unknown): string {
 
 /** What the apply loop does between steps. */
 interface ApplyHooks {
+  /** Called before each step runs, with its position in the plan: the journal records the step as begun here, ahead of it, so that a process that dies after the step took effect and before `afterStep` marks it leaves a record that it may have. The step does not run if this throws. */
+  readonly beforeStep: (index: number) => void;
   /** Called after each step with its position in the plan: the locks are refreshed and the journal marked here, and the call throws when a lock was taken over. */
   readonly afterStep: (index: number) => void;
-  /** Called after each step is undone during a rollback, with its position in the plan: the journal marks the step as not done here, so that what it records is what is still applied. */
+  /** Called after each step is undone during a rollback, with its position in the plan: the journal clears the step's marks here, so that what it records is what is still applied. */
   readonly afterUndo: (index: number) => void;
   /** Whether this run finishes a rename an earlier one left unfinished, which an interruption's message says. */
   readonly resuming: boolean;
@@ -694,6 +696,7 @@ async function applyAll(steps: readonly Step[], hooks: ApplyHooks): Promise<void
       if (signal !== undefined) {
         throw new RenameInterruptedError(signal, hooks.resuming);
       }
+      hooks.beforeStep(index);
       started.push({ step, index });
       step.apply();
       hooks.afterStep(index);
@@ -880,9 +883,9 @@ interface Applied {
 }
 
 /**
- * Takes the locks, plans again from what is on disk by then, writes the journal, applies the plan marking each step done, removes the journal and releases the locks. The locks are not held while the old Keychain item is deleted, since that can wait on a person too.
+ * Takes the locks, plans again from what is on disk by then, writes the journal, applies the plan marking each step as begun before it runs and as done after, removes the journal and releases the locks. The locks are not held while the old Keychain item is deleted, since that can wait on a person too.
  *
- * The journal is removed when the rename is over, and when a rename that began here has been rolled back completely, since nothing is then left half done. It stays when the rollback failed, and when the run was finishing an earlier rename and failed: the state is then the earlier run's unfinished one, which the journal still describes. A run that finishes an earlier rename keeps that run's done marks and adds its own steps after them, and a rollback marks each step it undoes as not done as it goes, so a journal kept after a failure records the steps still applied. A process killed between an undo and its journal write leaves that step marked, which a re-run is not misled by, since it plans from what is on disk.
+ * The journal is removed when the rename is over, and when a rename that began here has been rolled back completely, since nothing is then left half done. It stays when the rollback failed, and when the run was finishing an earlier rename and failed: the state is then the earlier run's unfinished one, which the journal still describes. A run that finishes an earlier rename keeps that run's done marks and adds its own steps after them, and a rollback clears the marks of each step it undoes as it goes, so a journal kept after a failure records the steps that may still be applied. A process killed between a step taking effect and its being marked done leaves it marked as begun, and one killed between an undo and its journal write leaves the step marked; a re-run is not misled by either, since it plans from what is on disk.
  */
 async function applyUnderLocks(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts, gathered: Gathered, hooks: Pick<ApplyHooks, "interrupted" | "turn">): Promise<Applied> {
   const held = holdLocks(paths, [from, to], ports);
@@ -890,32 +893,41 @@ async function applyUnderLocks(paths: LayoutPaths, from: string, to: string, por
     const resumed = unfinishedRename(paths, from, to, ports);
     const plan = planRename(paths, from, to, ports, gathered, resumed !== undefined);
     const file = renameJournalFile(paths.identityRenamesDir, from, to);
-    // The steps an earlier run applied stay in the journal marked done, ahead of the steps this run has left to do: they are still applied, and a journal kept after this run fails and rolls back must still say so.
-    const carried = (resumed?.steps ?? []).filter((step) => step.done);
-    const journal: RenameJournal = {
-      version: 1,
-      from,
-      to,
-      startedAt: resumed?.startedAt ?? new Date(ports.lock.nowMs()).toISOString(),
-      pid: ports.lock.pid,
-      steps: [...carried, ...plan.steps.map((step) => ({ description: step.description, done: false }))],
-    };
-    writeRenameJournal(ports.fs, file, journal);
-    const applied = new Set<number>(carried.keys());
+    // The steps an earlier run applied stay in the journal with their marks, ahead of the steps this run has left to do: they are still applied, and a journal kept after this run fails and rolls back must still say so. A step the earlier run began and did not mark done is kept only when this run's plan no longer lists it, which is when its effect is on disk; one the plan lists again is this run's to begin.
+    const planned = new Set(plan.steps.map((step) => step.description));
+    const carried = (resumed?.steps ?? []).filter((step) => step.done || (step.started === true && !planned.has(step.description)));
+    const marks: { started: boolean; done: boolean }[] = [...carried.map((step) => ({ started: true, done: step.done })), ...plan.steps.map(() => ({ started: false, done: false }))];
+    const descriptions = [...carried.map((step) => step.description), ...plan.steps.map((step) => step.description)];
+    const startedAt = resumed?.startedAt ?? new Date(ports.lock.nowMs()).toISOString();
     const record = (): void => {
-      writeRenameJournal(ports.fs, file, { ...journal, steps: journal.steps.map((step, position) => ({ ...step, done: applied.has(position) })) });
+      writeRenameJournal(ports.fs, file, { version: 1, from, to, startedAt, pid: ports.lock.pid, steps: descriptions.map((description, position) => ({ description, started: marks[position]?.started === true, done: marks[position]?.done === true })) });
+    };
+    record();
+    // A step's position in the journal is after the steps carried from the earlier run.
+    const markOf = (index: number): { started: boolean; done: boolean } => {
+      const mark = marks[carried.length + index];
+      if (mark === undefined) {
+        throw new Error(`no step at position ${String(index)}`);
+      }
+      return mark;
     };
     try {
       await applyAll(plan.steps, {
         ...hooks,
         resuming: resumed !== undefined,
+        beforeStep: (index) => {
+          markOf(index).started = true;
+          record();
+        },
         afterStep: (index) => {
           held.refresh();
-          applied.add(carried.length + index);
+          markOf(index).done = true;
           record();
         },
         afterUndo: (index) => {
-          applied.delete(carried.length + index);
+          const mark = markOf(index);
+          mark.started = false;
+          mark.done = false;
           record();
         },
       });
