@@ -174,16 +174,67 @@ describe("creating an identity while the Keychain still holds a login filed for 
     expect(failure).toBeInstanceOf(CliError);
   });
 
-  it("is refused by the wizard that creates an identity for use, before anything is created", async () => {
-    keychain.seed(service("work"), "alex", LOGIN_BLOB);
-    await expect(runIdentityWizard(scriptedPrompts(["create", "skip"]), paths, "work", darwin)).rejects.toThrow(KeychainLoginError);
-    expect(identityExists(paths, "work")).toBe(false);
-  });
+  describe("through the offer to create an identity that identity use, @name and a launch make", () => {
+    /** Prompts that record every question and answer as the person would, so a test can see whether one was asked. */
+    function askedPrompts(answers: readonly unknown[]) {
+      const asked = vi.fn();
+      const scripted = scriptedPrompts(answers);
+      return {
+        asked,
+        prompts: {
+          ...scripted,
+          select: async <Value extends string>(params: Parameters<typeof scripted.select<Value>>[0]) => {
+            asked(params.message);
+            return await scripted.select(params);
+          },
+        },
+      };
+    }
 
-  it("is refused by the @name shortcut that offers to create one", async () => {
-    keychain.seed(service("work"), "alex", LOGIN_BLOB);
-    await expect(tryRunAtIdentityShortcut(fakeCommandDeps(paths, { interactive: true, answers: ["create", "skip"] }), ["@work"], darwin)).rejects.toThrow(KeychainLoginError);
-    expect(identityExists(paths, "work")).toBe(false);
+    it("refuses before the question is put, so the person is not asked to create what would be refused", async () => {
+      keychain.seed(service("work"), "alex", LOGIN_BLOB);
+      const { asked, prompts } = askedPrompts(["create", "skip"]);
+      await expect(runIdentityWizard(prompts, paths, "work", darwin)).rejects.toThrow(KeychainLoginError);
+      expect(asked).not.toHaveBeenCalled();
+      expect(identityExists(paths, "work")).toBe(false);
+    });
+
+    it("names the delete command and the flag that keeps the login, since the offer has no flag of its own", async () => {
+      keychain.seed(service("work"), "alex", LOGIN_BLOB);
+      const failure: unknown = await runIdentityWizard(scriptedPrompts([]), paths, "work", darwin).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      const message = failure instanceof Error ? failure.message : "";
+      expect(message).toContain(`\`${deleteCommand("work")}\``);
+      expect(message).toContain("`agent-shim identity add work --keep-keychain-login`");
+    });
+
+    it("refuses before the question for the @name shortcut too", async () => {
+      keychain.seed(service("work"), "alex", LOGIN_BLOB);
+      const { asked, prompts } = askedPrompts(["create", "skip"]);
+      await expect(tryRunAtIdentityShortcut({ ...fakeCommandDeps(paths, { interactive: true }), prompts }, ["@work"], darwin)).rejects.toThrow(KeychainLoginError);
+      expect(asked).not.toHaveBeenCalled();
+    });
+
+    it("still asks, once, when the Keychain holds nothing for the directory, and creates the identity on a yes", async () => {
+      const { asked, prompts } = askedPrompts(["create", "skip"]);
+      expect(await runIdentityWizard(prompts, paths, "work", darwin)).toBe(true);
+      expect(asked.mock.calls.map((call: readonly unknown[]) => call[0])).toEqual(['No identity named "work" exists yet. Create it now?', 'Create a default configuration profile for "work"?']);
+      expect(identityExists(paths, "work")).toBe(true);
+    });
+
+    it("does not ask the Keychain a second time after the question, since the check was made before it", async () => {
+      const { prompts } = askedPrompts(["create", "skip"]);
+      await runIdentityWizard(prompts, paths, "work", darwin);
+      expect(keychain.calls).toEqual([{ command: "security", args: ["find-generic-password", "-s", service("work")] }]);
+    });
+
+    it("is not asked at all when the person declines, and creates nothing", async () => {
+      const { prompts } = askedPrompts(["cancel"]);
+      expect(await runIdentityWizard(prompts, paths, "work", darwin)).toBe(false);
+      expect(identityExists(paths, "work")).toBe(false);
+    });
   });
 
   describe("after a rename whose old Keychain item could not be deleted", () => {
