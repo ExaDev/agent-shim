@@ -698,12 +698,17 @@ function planRename(paths: LayoutPaths, from: string, to: string, ports: Identit
 /** The shell's convention for the exit status of a process ended by a signal: this plus the signal's number. */
 const SIGNAL_EXIT_STATUS_BASE = 128;
 
+/** What a rollback that undid every step this run applied leaves, as a sentence: nothing half done for a rename that began here, and for one that was finishing an earlier run the earlier run's state, which is still unfinished. */
+function rolledBackOutcome(resuming: boolean): string {
+  return resuming ? "the steps this run applied were rolled back; the rename it was finishing is still unfinished, and running the same command again finishes it" : "the rename was rolled back and nothing was changed";
+}
+
 /** Raised when the process was sent SIGINT or SIGTERM while the rename was applying its steps. Everything this run did has been undone. The exit status is the shell's convention for a process ended by that signal. */
 class RenameInterruptedError extends CliError {
   override readonly exitCode: number;
 
   constructor(readonly signal: NodeJS.Signals, resuming: boolean) {
-    super(`Interrupted by ${signal}: ${resuming ? "the steps this run applied were rolled back; the rename it was finishing is still unfinished, and running the same command again finishes it" : "the rename was rolled back and nothing was changed"}.`);
+    super(`Interrupted by ${signal}: ${rolledBackOutcome(resuming)}.`);
     this.name = "RenameInterruptedError";
     this.exitCode = SIGNAL_EXIT_STATUS_BASE + os.constants.signals[signal];
   }
@@ -722,13 +727,14 @@ class RollbackFailedError extends CliError {
   }
 }
 
-/** Raised when every step was undone but the journal could not be updated to say so: the rename is rolled back, and the failure is the record's. */
+/** Raised when every step this run applied was undone but the journal could not be updated to say so: the rollback is complete, and the failure is the record's. */
 class RollbackNotRecordedError extends CliError {
   override readonly exitCode: number;
 
-  /** `cause` is what failed the rename: its message leads, and its exit status is kept, since a signal that rolled the rename back still ends the process with the signal's status. */
-  constructor(cause: unknown, unrecorded: readonly string[]) {
-    super(`${messageOf(cause)}\nThe rename was rolled back, and nothing is left half done. ${unrecordedSentence(unrecorded)}`);
+  /** `cause` is what failed the rename: its message leads, and its exit status is kept, since a signal that rolled the rename back still ends the process with the signal's status. An interruption already says what the rollback left, so only another cause is followed by that outcome. */
+  constructor(cause: unknown, unrecorded: readonly string[], resuming: boolean) {
+    const outcome = cause instanceof RenameInterruptedError ? "" : `\nThis run's rollback is complete: ${rolledBackOutcome(resuming)}.`;
+    super(`${messageOf(cause)}${outcome}\n${unrecordedSentence(unrecorded)}`);
     this.name = "RollbackNotRecordedError";
     this.exitCode = cause instanceof CliError ? cause.exitCode : EXIT_FAILURE;
   }
@@ -789,7 +795,7 @@ async function applyAll(steps: readonly Step[], hooks: ApplyHooks): Promise<void
       throw new RollbackFailedError(messageOf(error), leftovers, unrecorded);
     }
     if (unrecorded.length > 0) {
-      throw new RollbackNotRecordedError(error, unrecorded);
+      throw new RollbackNotRecordedError(error, unrecorded, hooks.resuming);
     }
     throw error;
   }
