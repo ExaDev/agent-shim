@@ -1,3 +1,9 @@
+## [11.83.1](https://github.com/ExaDev/agent-shim/compare/v11.83.0...v11.83.1) (2026-11-02)
+
+### Bug Fixes
+
+* **usage:** read a day's segments without spreading records into push ([8ccff4d](https://github.com/ExaDev/agent-shim/commit/8ccff4d7c158cc174888ce6612da419e30d712a9))
+
 ## [11.83.0](https://github.com/ExaDev/agent-shim/compare/v11.82.0...v11.83.0) (2026-11-02)
 
 ### Features
