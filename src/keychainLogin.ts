@@ -111,12 +111,12 @@ export interface KeychainProbe {
 }
 
 /**
- * Throws `KeychainLoginError` when, on macOS, the Keychain already holds a Claude Code login filed for `configDir`: a new identity created there would start signed in as that account, because Claude Code finds its login by the hash of the directory and not by anything the identity owns. Such an item is left by an identity of that name that was renamed or removed, since `identity remove` does not touch the Keychain and a rename's last step can fail or be cut short. The message names the entry and the exact command that deletes it.
+ * Throws `KeychainLoginError` when, on macOS, the Keychain already holds a Claude Code login filed for `configDir`: a new identity created there would start signed in as that account, because Claude Code finds its login by the hash of the directory and not by anything the identity owns. Such an item is left by an identity of that name that was renamed or removed, since `identity remove` does not touch the Keychain and a rename's last step can fail or be cut short. The message names the entry, the exact command that deletes it, and the flag that keeps it on purpose.
  *
- * Asks for attributes only, so the login is never read and the Keychain is never asked for access to it. Off macOS there is no Keychain and nothing is asked.
+ * `keepLogin` is the person's statement that the login is wanted (`identity add --keep-keychain-login`): nothing is asked of the Keychain and nothing is refused. Otherwise only attributes are asked for, so the login is never read and the Keychain is never asked for access to it. Off macOS there is no Keychain and nothing is asked.
  */
-export function requireNoLeftoverKeychainLogin(keychain: KeychainProbe, configDir: string, name: string): void {
-  if (keychain.platform !== "darwin") {
+export function requireNoLeftoverKeychainLogin(keychain: KeychainProbe, configDir: string, name: string, keepLogin: boolean): void {
+  if (keepLogin || keychain.platform !== "darwin") {
     return;
   }
   const service = claudeCodeKeychainService(configDir);
@@ -126,7 +126,7 @@ export function requireNoLeftoverKeychainLogin(keychain: KeychainProbe, configDi
   }
   const account = plainAccountOf(found.attributes);
   throw new KeychainLoginError(
-    `Cannot create identity "${name}": the Keychain already holds a Claude Code login filed for ${configDir} (service ${service}${account === undefined ? "" : `, account ${account}`}), left behind by an identity of that name that was renamed or removed. A new identity there would start signed in as that account. If you do not need it, delete it with \`${keychainDeleteCommand(service, account)}\` and run the command again.`,
+    `Cannot create identity "${name}": the Keychain already holds a Claude Code login filed for ${configDir} (service ${service}${account === undefined ? "" : `, account ${account}`}), left behind by an identity of that name that was renamed or removed. A new identity there would start signed in as that account. If you do not need it, delete it with \`${keychainDeleteCommand(service, account)}\` and run the command again. To create the identity signed in as that account on purpose, run \`agent-shim identity add ${name} --keep-keychain-login\`.`,
   );
 }
 

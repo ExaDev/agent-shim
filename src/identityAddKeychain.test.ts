@@ -75,8 +75,31 @@ describe("creating an identity while the Keychain still holds a login filed for 
     expect(printed).toContain("account alex");
     expect(printed).toContain("would start signed in as that account");
     expect(printed).toContain(`\`${deleteCommand("work")}\``);
+    expect(printed).toContain("`agent-shim identity add work --keep-keychain-login`");
     expect(identityExists(paths, "work")).toBe(false);
     expect(fs.existsSync(path.join(paths.identitiesDir, "work"))).toBe(false);
+  });
+
+  it("is allowed with --keep-keychain-login, which says the login is wanted, without asking the Keychain anything", async () => {
+    keychain.seed(service("work"), "alex", LOGIN_BLOB);
+    expect(await run(["identity", "add", "work", "--keep-keychain-login"])).toBe(0);
+    expect(identityExists(paths, "work")).toBe(true);
+    expect(keychain.calls).toEqual([]);
+    expect(keychain.items.has(service("work"))).toBe(true);
+    expect(out).toContain('Created identity "work".');
+  });
+
+  it("is still refused with --keep-keychain-login for a name that exists or is not valid, which the flag does not excuse", async () => {
+    addNewIdentity(paths, "work", { run: keychain.run, platform: "linux" }, false);
+    expect(await run(["identity", "add", "work", "--keep-keychain-login"])).toBe(EXIT_FAILURE);
+    expect(out.join("\n")).toContain('An identity named "work" already exists.');
+    out.length = 0;
+    expect(await run(["identity", "add", "@bad", "--keep-keychain-login"])).toBe(EXIT_FAILURE);
+  });
+
+  it("does not need the flag, and does not mention it, when the Keychain holds nothing for the directory", async () => {
+    expect(await run(["identity", "add", "work"])).toBe(0);
+    expect(out.join("\n")).not.toContain("keep-keychain-login");
   });
 
   it.each([
@@ -124,16 +147,16 @@ describe("creating an identity while the Keychain still holds a login filed for 
 
   it("asks nothing of the Keychain off macOS", () => {
     keychain.seed(service("work"), "alex", LOGIN_BLOB);
-    addNewIdentity(paths, "work", { run: keychain.run, platform: "linux" });
+    addNewIdentity(paths, "work", { run: keychain.run, platform: "linux" }, false);
     expect(keychain.calls).toEqual([]);
     expect(identityExists(paths, "work")).toBe(true);
   });
 
   it("is a refusal of the name before it is a question to the Keychain: an identity that exists, which has a login of its own, and a name that is not valid", () => {
-    addNewIdentity(paths, "work", { run: keychain.run, platform: "linux" });
+    addNewIdentity(paths, "work", { run: keychain.run, platform: "linux" }, false);
     keychain.seed(service("work"), "alex", LOGIN_BLOB);
-    expect(() => addNewIdentity(paths, "work", darwin)).toThrow(IdentityAlreadyExistsError);
-    expect(() => addNewIdentity(paths, "@work", darwin)).toThrow(InvalidIdentityNameError);
+    expect(() => addNewIdentity(paths, "work", darwin, false)).toThrow(IdentityAlreadyExistsError);
+    expect(() => addNewIdentity(paths, "@work", darwin, false)).toThrow(InvalidIdentityNameError);
     expect(keychain.calls).toEqual([]);
   });
 
@@ -141,7 +164,7 @@ describe("creating an identity while the Keychain still holds a login filed for 
     keychain.seed(service("work"), "alex", LOGIN_BLOB);
     const failure: unknown = (() => {
       try {
-        addNewIdentity(paths, "work", darwin);
+        addNewIdentity(paths, "work", darwin, false);
       } catch (error) {
         return error;
       }
@@ -174,9 +197,9 @@ describe("creating an identity while the Keychain still holds a login filed for 
         expect(warning).toContain("could not be deleted");
         expect(warning).not.toContain("harmless");
         expect(warning).toContain('a new identity created under the name "work" would start signed in as that account');
-        expect(warning).toContain("`identity add work` refuses until it is deleted");
+        expect(warning).toContain("`identity add work` refuses until it is deleted, or until `identity add work --keep-keychain-login` says the login is wanted");
         expect(warning).toContain(`\`security delete-generic-password -s '${oldService}' -a 'alex'\``);
-        expect(() => addNewIdentity(renamed.paths, "work", { run: renamed.keychain.run, platform: "darwin" })).toThrow(`\`security delete-generic-password -s '${oldService}' -a 'alex'\``);
+        expect(() => addNewIdentity(renamed.paths, "work", { run: renamed.keychain.run, platform: "darwin" }, false)).toThrow(`\`security delete-generic-password -s '${oldService}' -a 'alex'\``);
       } finally {
         fs.rmSync(renamed.root, { recursive: true, force: true });
       }
