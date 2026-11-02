@@ -28,7 +28,7 @@ describe("creating an identity while the Keychain still holds a login filed for 
   let out: string[];
 
   const service = (name: string): string => claudeCodeKeychainService(path.join(paths.identitiesDir, name));
-  const deleteCommand = (name: string): string => `security delete-generic-password -s "${service(name)}" -a "alex"`;
+  const deleteCommand = (name: string): string => `security delete-generic-password -s '${service(name)}' -a 'alex'`;
 
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "identity-add-keychain-test-"));
@@ -77,6 +77,25 @@ describe("creating an identity while the Keychain still holds a login filed for 
     expect(printed).toContain(`\`${deleteCommand("work")}\``);
     expect(identityExists(paths, "work")).toBe(false);
     expect(fs.existsSync(path.join(paths.identitiesDir, "work"))).toBe(false);
+  });
+
+  it.each([
+    ["a single quote", "o'brien", `'o'\\''brien'`],
+    ["a command substitution", "$(touch evil)", "'$(touch evil)'"],
+    ["backticks", "`id`", "'`id`'"],
+    ["a semicolon and a space", "a; rm -rf x", "'a; rm -rf x'"],
+    ["a plain name", "alex", "'alex'"],
+  ])("prints the account in single quotes, so a shell takes it literally, for an account with %s", async (_case, account, quoted) => {
+    keychain.seed(service("work"), account, LOGIN_BLOB);
+    expect(await run(["identity", "add", "work"])).toBe(EXIT_FAILURE);
+    expect(out.join("\n")).toContain(`security delete-generic-password -s '${service("work")}' -a ${quoted}`);
+  });
+
+  it("prints the command without an account, rather than with a guessed one, when the item has no plain account name", async () => {
+    keychain.seed(service("work"), "", LOGIN_BLOB);
+    expect(await run(["identity", "add", "work"])).toBe(EXIT_FAILURE);
+    expect(out.join("\n")).toContain(`\`security delete-generic-password -s '${service("work")}'\``);
+    expect(out.join("\n")).not.toContain(" -a ");
   });
 
   it("asks the Keychain for attributes only, never for the login, and the message carries none of it", async () => {
@@ -156,8 +175,8 @@ describe("creating an identity while the Keychain still holds a login filed for 
         expect(warning).not.toContain("harmless");
         expect(warning).toContain('a new identity created under the name "work" would start signed in as that account');
         expect(warning).toContain("`identity add work` refuses until it is deleted");
-        expect(warning).toContain(`\`security delete-generic-password -s "${oldService}" -a "alex"\``);
-        expect(() => addNewIdentity(renamed.paths, "work", { run: renamed.keychain.run, platform: "darwin" })).toThrow(`\`security delete-generic-password -s "${oldService}" -a "alex"\``);
+        expect(warning).toContain(`\`security delete-generic-password -s '${oldService}' -a 'alex'\``);
+        expect(() => addNewIdentity(renamed.paths, "work", { run: renamed.keychain.run, platform: "darwin" })).toThrow(`\`security delete-generic-password -s '${oldService}' -a 'alex'\``);
       } finally {
         fs.rmSync(renamed.root, { recursive: true, force: true });
       }

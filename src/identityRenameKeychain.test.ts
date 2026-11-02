@@ -134,7 +134,7 @@ describe("renameIdentity with a macOS Keychain login", () => {
     expect(fs.existsSync(world.directory("client"))).toBe(true);
     expect(world.keychain.items.has(newService())).toBe(true);
     expect(report.warnings).toHaveLength(1);
-    expect(report.warnings[0]).toContain(`security delete-generic-password -s "${oldService()}"`);
+    expect(report.warnings[0]).toContain(`security delete-generic-password -s '${oldService()}'`);
   });
 });
 
