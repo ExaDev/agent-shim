@@ -23,8 +23,8 @@ const RenameJournalSchema = z.strictObject({
       description: z.string().min(1),
       /** Whether the step has been applied and marked so. */
       done: z.boolean(),
-      /** Whether the step was begun: written ahead of the step, before it runs, so a process that dies after the step took effect and before `done` was written still leaves a record that it may have. Absent reads as not begun. */
-      started: z.boolean().optional(),
+      /** Whether the step was begun: written ahead of the step, before it runs, so a process that dies after the step took effect and before `done` was written still leaves a record that it may have. */
+      started: z.boolean(),
     }),
   ),
 });
@@ -148,7 +148,7 @@ export type RenameFinishability = { readonly finishable: true; readonly discarda
 
 /** Whether a step may have been applied according to its marks: it is done, or it was begun, which is written before the step runs so that a process that died after the step took effect and before it was marked done is still counted. */
 function stepMayBeApplied(step: Readonly<RenameJournal["steps"][number]>): boolean {
-  return step.done || step.started === true;
+  return step.done || step.started;
 }
 
 /** Whether `journal` records no step as begun or done, which a run that rolled back completely, or was ended before its first step, leaves. Only then can the record be discarded on the strength of the journal: a step begun and not done may have taken effect. */

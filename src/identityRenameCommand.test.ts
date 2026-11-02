@@ -160,7 +160,7 @@ describe("identity rename", () => {
   function leaveUnfinishable(): string {
     seed();
     const file = renameJournalFile(paths.identityRenamesDir, "work", "client");
-    writeRenameJournal(realFarmFs, file, { version: 1, from: "work", to: "client", startedAt: "2026-10-30T10:00:00.000Z", pid: OWN_PID, steps: [{ description: "move identities/work to identities/client", done: false }] });
+    writeRenameJournal(realFarmFs, file, { version: 1, from: "work", to: "client", startedAt: "2026-10-30T10:00:00.000Z", pid: OWN_PID, steps: [{ description: "move identities/work to identities/client", started: false, done: false }] });
     fs.rmSync(path.join(paths.identitiesDir, "work"), { recursive: true, force: true });
     return file;
   }

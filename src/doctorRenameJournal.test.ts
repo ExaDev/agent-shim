@@ -17,8 +17,8 @@ const JOURNAL: RenameJournal = {
   startedAt: "2026-10-30T12:00:00.000Z",
   pid: 4242,
   steps: [
-    { description: "move identities/work to identities/client", done: true },
-    { description: "rewrite config.json: pool subs", done: false },
+    { description: "move identities/work to identities/client", started: true, done: true },
+    { description: "rewrite config.json: pool subs", started: false, done: false },
   ],
 };
 
@@ -103,6 +103,18 @@ describe("collectDoctorReport and an unfinished rename", () => {
     expect(hint()).toBeUndefined();
     fs.writeFileSync(path.join(paths.identitiesDir, "work", "identity.json"), `${JSON.stringify({ name: "work", allowAmbientCredential: false })}\n`);
     expect(hint()).toContain("both names are identities");
+  });
+
+  it("reports a journal whose steps lack the begun mark as one it cannot read, naming the field", () => {
+    const paths = buildLayoutPaths(root);
+    addIdentity(paths, "work");
+    fs.mkdirSync(paths.identityRenamesDir, { recursive: true });
+    const file = renameJournalFile(paths.identityRenamesDir, "work", "client");
+    fs.writeFileSync(file, JSON.stringify({ version: 1, from: "work", to: "client", startedAt: JOURNAL.startedAt, pid: JOURNAL.pid, steps: [{ description: "move identities/work to identities/client", done: true }] }));
+    const report = collectDoctorReport({ paths, env: { PATH: "" } });
+    const finding = findingsFor(report, "identity").find((entry) => entry.severity === "fail" && entry.subject === path.basename(file));
+    expect(finding?.message).toContain("is not a rename journal this agent-shim can read");
+    expect(finding?.message).toContain("steps.0.started");
   });
 
   it("reports a damaged journal instead of failing to produce a report", () => {

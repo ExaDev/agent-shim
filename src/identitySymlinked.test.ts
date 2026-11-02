@@ -43,7 +43,7 @@ describe("an identity whose directory is a symlink to a directory", () => {
       to: "client",
       startedAt: "2026-10-30T10:00:00.000Z",
       pid: 4242,
-      steps: [{ description: "move identities/work to identities/client", done: true }],
+      steps: [{ description: "move identities/work to identities/client", started: true, done: true }],
     });
   }
 
