@@ -6,10 +6,11 @@ import { CliError } from "./cliError";
 import { collectDoctorReport } from "./doctorReport";
 import { describeIdentityRename, discardRenameJournal, renameIdentity } from "./identityRename";
 import { readRenameJournal, renameJournalFile, writeRenameJournal, type RenameJournal } from "./identityRenameJournal";
-import { OWN_PID, createWorld, treeOf, type World } from "./identityRenameTestWorld";
+import { LOGIN_SECRET, OWN_PID, createWorld, failingOnce, treeOf, type World } from "./identityRenameTestWorld";
 import { removeIdentity } from "./identityStore";
 import type { FarmFs } from "./launcher/ports";
 import { realFarmFs } from "./realPorts";
+import { claudeCodeKeychainService } from "./usage/signIn";
 
 /** What a journal records of one step, in the order the steps are listed. */
 interface Marks {
@@ -283,5 +284,48 @@ describe("a journal write that fails", () => {
     expect(message).toContain("the steps this run applied were rolled back; the rename it was finishing is still unfinished");
     const journal = readRenameJournal(realFarmFs, renameJournalFile(world.paths.identityRenamesDir, "work", "client"));
     expect(journal?.steps.filter((step) => step.started || step.done).map((step) => step.description)).toEqual(["move identities/work to identities/client"]);
+  });
+});
+
+describe("a resumed run that fails and rolls back, after an earlier run's Keychain copy landed and was marked begun but not done", () => {
+  let world: World;
+  let oldService: string;
+  let newService: string;
+
+  beforeEach(() => {
+    world = createWorld("darwin");
+    oldService = claudeCodeKeychainService(world.directory("work"));
+    newService = claudeCodeKeychainService(world.directory("client"));
+    // What a process killed after the copy took effect and before it was marked done leaves: the login under the new service, and a journal that shows the copy as begun only.
+    world.keychain.seed(newService, "alex", LOGIN_SECRET);
+    writeRenameJournal(realFarmFs, renameJournalFile(world.paths.identityRenamesDir, "work", "client"), {
+      version: 1,
+      from: "work",
+      to: "client",
+      startedAt: "2026-10-30T10:00:00.000Z",
+      pid: OWN_PID,
+      steps: [{ description: `copy the Keychain login "${oldService}" to "${newService}"`, started: true, done: false }],
+    });
+  });
+
+  afterEach(() => {
+    fs.rmSync(world.root, { recursive: true, force: true });
+  });
+
+  it("keeps the copy marked begun in the journal it keeps, so --discard-journal still refuses a rename whose login is already under the new service", async () => {
+    // The step that fails does so once, so its undo works and the rollback is complete.
+    const message = await renameIdentity(world.paths, "work", "client", world.ports({ fs: failingOnce(world) })).then(
+      () => "",
+      (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    );
+    expect(message).toContain("disk full");
+    expect(message).not.toContain("Rolling back also failed");
+    const journal = readRenameJournal(realFarmFs, renameJournalFile(world.paths.identityRenamesDir, "work", "client"));
+    expect(journal?.steps.filter((step) => step.started || step.done).map((step) => step.description)).toEqual([`copy the Keychain login "${oldService}" to "${newService}"`]);
+    // The login is still under the new service, and the identity under the old name: the state a discard would walk away from.
+    expect(world.keychain.items.has(newService)).toBe(true);
+    expect(fs.existsSync(world.directory("work"))).toBe(true);
+    expect(() => discardRenameJournal(world.paths, "work", "client", world.ports())).toThrow(/can be finished/);
+    expect(readRenameJournal(realFarmFs, renameJournalFile(world.paths.identityRenamesDir, "work", "client"))).toBeDefined();
   });
 });
