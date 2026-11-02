@@ -35,6 +35,7 @@ describe("an identity whose directory is a symlink to a directory", () => {
     return target;
   }
 
+  /** A journal with a step done, so the rename has work applied and is not one whose record could simply be discarded. */
   function leaveJournal(): void {
     writeRenameJournal(realFarmFs, renameJournalFile(world.paths.identityRenamesDir, "work", "client"), {
       version: 1,
@@ -42,7 +43,7 @@ describe("an identity whose directory is a symlink to a directory", () => {
       to: "client",
       startedAt: "2026-10-30T10:00:00.000Z",
       pid: 4242,
-      steps: [{ description: "move identities/work to identities/client", done: false }],
+      steps: [{ description: "move identities/work to identities/client", done: true }],
     });
   }
 
