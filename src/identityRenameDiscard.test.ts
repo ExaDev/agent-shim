@@ -106,6 +106,7 @@ describe("a rename left unfinished whose identity is under neither name, or unde
     const before = treeOf(world.root);
     expect(() => discardRenameJournal(world.paths, "work", "client", world.ports())).toThrow("agent-shim identity rename work client");
     expect(() => discardRenameJournal(world.paths, "work", "client", world.ports())).toThrow(/can be finished/);
+    expect(() => discardRenameJournal(world.paths, "work", "client", world.ports())).toThrow("a step is recorded as begun or done");
     expect(treeOf(world.root)).toEqual(before);
   });
 
@@ -122,6 +123,7 @@ describe("a rename left unfinished whose identity is under neither name, or unde
     leaveJournal(world, "work", "client");
     const before = treeOf(world.root);
     expect(() => discardRenameJournal(world.paths, "work", "client", world.ports())).toThrow(/can be finished/);
+    expect(() => discardRenameJournal(world.paths, "work", "client", world.ports())).toThrow('the identity is already under "client"');
     expect(treeOf(world.root)).toEqual(before);
   });
 

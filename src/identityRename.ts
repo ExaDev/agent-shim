@@ -171,10 +171,11 @@ class UnfinishableRenameError extends CliError {
   }
 }
 
-/** Raised when the journal of a rename is asked to be discarded while the identity is under exactly one of its names and the journal shows work applied or the directory moved, where running the rename again finishes it. */
+/** Raised when the journal of a rename is asked to be discarded while the identity is under exactly one of its names and either a step is recorded as begun or done or the identity is under the new name, where running the rename again finishes it. `underNew` says which. */
 class FinishableRenameError extends CliError {
-  constructor(from: string, to: string) {
-    super(`The unfinished rename of "${from}" to "${to}" can be finished, so its record is kept: run \`agent-shim identity rename ${from} ${to}\` to finish it.`);
+  constructor(from: string, to: string, underNew: boolean) {
+    const why = underNew ? `the identity is already under "${to}"` : "a step is recorded as begun or done";
+    super(`The unfinished rename of "${from}" to "${to}" can be finished, so its record is kept: ${why}. Run \`agent-shim identity rename ${from} ${to}\` to finish it.`);
     this.name = "FinishableRenameError";
   }
 }
@@ -657,7 +658,7 @@ class JournalNotRemovedError extends CliError {
 
   constructor(cause: unknown, file: string, removal: unknown, discard: string | undefined) {
     const consequence = "so it still describes this rename as unfinished and stops any other rename of either name";
-    const way = discard === undefined ? "running the same command again finishes it" : `the rename was rolled back and nothing is applied, so discard the record with \`${discard}\`; running the rename again would perform it`;
+    const way = discard === undefined ? "running the same command again finishes it" : `the rename was rolled back and the journal records no step as begun or done, so discard the record with \`${discard}\`; running the rename again would perform it`;
     super(`${messageOf(cause)}\nThe journal ${path.join("identity-renames", path.basename(file))} could not be removed (${messageOf(removal)}), ${consequence}; ${way}.`);
     this.name = "JournalNotRemovedError";
     this.exitCode = cause instanceof CliError ? cause.exitCode : EXIT_FAILURE;
@@ -841,7 +842,7 @@ export interface DiscardedRenameJournal {
 }
 
 /**
- * Removes the journal of an unfinished rename of `from` to `to` that nothing can finish: the identity is under neither name, or under both. It takes the resync lock of both names first, so a process still running that rename, which holds them, is never robbed of its journal, and it changes no identity, file or login. The journal is read again under the locks, so the verdict is of the state it removes.
+ * Removes the journal of an unfinished rename of `from` to `to` when the identity is under neither name or under both, or when it is under `from` alone and the journal records no step as begun or done (a step is recorded as begun before it runs, so a process killed mid-step is not taken for one that applied nothing). It refuses when the identity is under exactly one name and either a step is recorded as begun or done or the identity is under `to`, where running the rename again finishes it. It takes the resync lock of both names first, so a process still running that rename, which holds them, is never robbed of its journal, and it changes no identity, file or login. The journal is read again under the locks, so the verdict is of the state it removes.
  *
  * Throws `UsageError` for equal names, `UnsafeNameError` for an old name that would leave the identities directory, `InvalidIdentityNameError` for a new name that is not valid, all before taking a lock, a `CliError` saying there is nothing to discard when the pair has no journal, one saying the rename can be finished when the identity is under exactly one of the names and the journal shows work applied or the directory has moved, `IdentityLockBusyError` when the lock of either name is held, and what `readRenameJournal` throws for a journal it cannot read.
  */
@@ -854,10 +855,10 @@ export function discardRenameJournal(paths: LayoutPaths, from: string, to: strin
     if (journal === undefined) {
       throw new NoRenameToDiscardError(from, to);
     }
-    // Under one name only, a re-run finishes the rename, unless the journal shows nothing applied and the directory has not left the old name: that is a rename rolled back completely, or ended before it began, and its record loses nothing.
+    // Under one name only, a re-run finishes the rename, unless the journal records no step as begun or done and the identity is still under the old name: that is a rename rolled back completely, or ended before its first step.
     const finishability = finishabilityOf(journal, (name) => identityExists(paths, name));
     if (finishability.finishable && finishability.discardable !== true) {
-      throw new FinishableRenameError(from, to);
+      throw new FinishableRenameError(from, to, identityExists(paths, to));
     }
     removeRenameJournal(ports.fs, file);
     return { from, to };
