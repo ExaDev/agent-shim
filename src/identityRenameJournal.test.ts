@@ -110,6 +110,21 @@ describe("finishabilityOf and an unfinishable rename", () => {
     expect(finishabilityOf(JOURNAL, (name) => name === "client")).toEqual(FINISHABLE);
   });
 
+  it("can also be discarded without losing anything when no step is recorded as done and the identity has not left the old name", () => {
+    const nothingApplied: RenameJournal = { ...JOURNAL, steps: JOURNAL.steps.map((step) => ({ ...step, done: false })) };
+    expect(finishabilityOf(nothingApplied, onlyOldName)).toEqual({ finishable: true, discardable: true });
+    expect(finishabilityOf(nothingApplied, (name) => name === "client")).toEqual(FINISHABLE);
+    expect(finishabilityOf(JOURNAL, onlyOldName)).toEqual(FINISHABLE);
+  });
+
+  it("offers the discarding command beside the finishing one when it can be discarded, and not otherwise", () => {
+    const nothingApplied: RenameJournal = { ...JOURNAL, steps: JOURNAL.steps.map((step) => ({ ...step, done: false })) };
+    const offered = describeUnfinishedRename(nothingApplied, finishabilityOf(nothingApplied, onlyOldName));
+    expect(offered).toContain("Finish it with `agent-shim identity rename work client`");
+    expect(offered).toContain("discarding its record with `agent-shim identity rename work client --discard-journal`");
+    expect(describeUnfinishedRename(JOURNAL, finishabilityOf(JOURNAL, onlyOldName))).not.toContain("--discard-journal");
+  });
+
   it("is not when it is under neither name or under both, and says which", () => {
     expect(finishabilityOf(JOURNAL, () => false)).toEqual({ finishable: false, reason: "there is no identity under either name" });
     expect(finishabilityOf(JOURNAL, () => true)).toEqual({ finishable: false, reason: "both names are identities" });

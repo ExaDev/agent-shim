@@ -179,6 +179,7 @@ describe("identity rename", () => {
     expect(discard).toContain("exists under neither name or under both");
     expect(discard).toContain("changes no identity");
     expect(discard).toContain("exists under only one of them");
+    expect(discard).toContain("no step of it was applied");
   });
 
   it("with --discard-journal removes the record of a rename nothing can finish, and says so", async () => {
