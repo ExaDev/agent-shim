@@ -17,7 +17,8 @@ import type { LayoutPaths } from "./paths";
 import { realFarmFs } from "./realPorts";
 import { describeIdentityRename, discardRenameJournal, renameIdentity, type IdentityRenamePorts } from "./identityRename";
 import { realIdentityRenamePorts } from "./realIdentityRename";
-import { IdentityNotFoundError, InvalidIdentityNameError, identityExists, readIdentity, addIdentity, useIdentity, type IdentityListing, listIdentities, setDefaultConfigProfile, setIdentityLabel, setIdentityProvider, setAllowAmbientCredential, setIdentityCredential, setIdentityAnchors, removeIdentity, requireNoUnfinishedRenameNaming } from "./identityStore";
+import type { KeychainProbe } from "./keychainLogin";
+import { IdentityNotFoundError, InvalidIdentityNameError, identityExists, readIdentity, addNewIdentity, useIdentity, type IdentityListing, listIdentities, setDefaultConfigProfile, setIdentityLabel, setIdentityProvider, setAllowAmbientCredential, setIdentityCredential, setIdentityAnchors, removeIdentity, requireNoUnfinishedRenameNaming } from "./identityStore";
 import { describeAccountHolder, describeIdentityAccount, groupByLogin, loginKeyOf, readIdentityAccount, summariseIdentityAccount, type IdentityAccountRead, type IdentityAccountSummary } from "./identityAccounts";
 import { describeAccountPlan } from "./usage/accountDescription";
 import { ANCHOR_SYNTAX, formatAnchor } from "./usage/anchor";
@@ -35,6 +36,7 @@ export async function runIdentityWizard(
   prompts: PromptsPort,
   paths: LayoutPaths,
   name: string,
+  keychain: KeychainProbe,
   options: Readonly<{ activate?: boolean }> = {},
 ): Promise<boolean> {
   if (!IdentitySchema.safeParse({ name, allowAmbientCredential: false }).success) {
@@ -51,7 +53,7 @@ export async function runIdentityWizard(
     return false;
   }
 
-  addIdentity(paths, name);
+  addNewIdentity(paths, name, keychain);
 
   const profileChoice = await prompts.select({
     message: `Create a default configuration profile for "${name}"?`,
@@ -81,11 +83,11 @@ export async function runIdentityWizard(
 /**
  * Makes `name` the active identity, the one behaviour `identity use <name>` and the `@<name>` shortcut share. An existing identity is selected directly. A missing one is offered to `runIdentityWizard` when standard input is a terminal (declining raises `PromptCancelledError`); with no terminal it raises `IdentityNotFoundError`, since there is nothing to prompt on.
  */
-async function selectIdentity(deps: CommandDeps, name: string, json?: boolean): Promise<void> {
+async function selectIdentity(deps: CommandDeps, name: string, keychain: KeychainProbe, json?: boolean): Promise<void> {
   if (poolNameOf(name) !== undefined || identityExists(deps.paths, name)) {
     useIdentity(deps.paths, name);
   } else if (deps.isInteractive()) {
-    if (!(await runIdentityWizard(deps.prompts, deps.paths, name))) {
+    if (!(await runIdentityWizard(deps.prompts, deps.paths, name, keychain))) {
       throw new PromptCancelledError();
     }
   } else {
@@ -103,7 +105,7 @@ async function selectIdentity(deps: CommandDeps, name: string, json?: boolean): 
  *
  * Returns `false` when `argv` doesn't match this exact one-argument `@name` shape at all, so the caller falls through to normal Commander subcommand dispatch (including its own "unknown command" error for anything else). Returns `true` once handled; the selection itself is `selectIdentity`, so a missing identity behaves exactly as it does under `identity use`.
  */
-export async function tryRunAtIdentityShortcut(deps: CommandDeps, argv: readonly string[]): Promise<boolean> {
+export async function tryRunAtIdentityShortcut(deps: CommandDeps, argv: readonly string[], keychain: KeychainProbe): Promise<boolean> {
   if (argv.length !== 1) {
     return false;
   }
@@ -111,7 +113,7 @@ export async function tryRunAtIdentityShortcut(deps: CommandDeps, argv: readonly
   if (token === undefined || !token.startsWith("@") || token.length === 1) {
     return false;
   }
-  await selectIdentity(deps, token.slice(1));
+  await selectIdentity(deps, token.slice(1), keychain);
   return true;
 }
 
@@ -239,7 +241,7 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
       .description("Create a new identity. Fails if one with this name already exists.")
       .option("--json", "Print the result as JSON.")
       .action((name: string, options: Readonly<{ json?: boolean }>) => {
-        const created = addIdentity(paths, name);
+        const created = addNewIdentity(paths, name, renamePorts);
         reportMutation(options.json, { action: "created", kind: "identity", name, value: created }, () => {
           console.log(`Created identity "${name}".`);
         });
@@ -496,7 +498,7 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
       .description("Select the active identity, used by every launch that names none. Offers to create it on a terminal if it does not exist.")
       .option("--json", "Print the result as JSON.")
       .action(async (name: string, options: Readonly<{ json?: boolean }>) => {
-        await selectIdentity(deps, name, options.json);
+        await selectIdentity(deps, name, renamePorts, options.json);
       }),
     ["agent-shim identity use work", "agent-shim @work"],
   );

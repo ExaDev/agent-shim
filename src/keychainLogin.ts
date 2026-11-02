@@ -77,15 +77,52 @@ function quoted(value: string): string {
   return `"${escaped(value)}"`;
 }
 
-/** The account name from an attribute listing, as the tool prints it: `"acct"<blob>="name"`. */
-function accountOf(attributes: string, service: string): string {
+/** The account name from an attribute listing, as the tool prints it: `"acct"<blob>="name"`, or undefined when there is no plain one: none, an empty one, or one with a control character in it. */
+function plainAccountOf(attributes: string): string | undefined {
   const line = attributes.split("\n").find((candidate) => candidate.includes('"acct"<blob>='));
   const value = line?.slice(line.indexOf("=") + 1).trim();
   const name = value === undefined ? undefined : /^"([^"\\]*)"$/u.exec(value)?.[1];
-  if (name === undefined || name === "" || CONTROL_CHARACTER.test(name)) {
+  return name === undefined || name === "" || CONTROL_CHARACTER.test(name) ? undefined : name;
+}
+
+/** The account name from an attribute listing, for a login that is to be copied, which needs one. */
+function accountOf(attributes: string, service: string): string {
+  const name = plainAccountOf(attributes);
+  if (name === undefined) {
     throw new KeychainLoginError(`The Keychain item ${service} has no plain account name, so its login cannot be copied.`);
   }
   return name;
+}
+
+/** The command that deletes the Keychain item filed under `service`, for a message that tells the person what to run. `account` narrows it to one item when the listing gave a plain one. */
+export function keychainDeleteCommand(service: string, account: string | undefined): string {
+  return `security delete-generic-password -s "${service}"${account === undefined ? "" : ` -a "${account}"`}`;
+}
+
+/** What a question to the Keychain needs: the runner of `security` and the platform, since only macOS has a Keychain. */
+export interface KeychainProbe {
+  readonly run: RunPort;
+  readonly platform: NodeJS.Platform;
+}
+
+/**
+ * Throws `KeychainLoginError` when, on macOS, the Keychain already holds a Claude Code login filed for `configDir`: a new identity created there would start signed in as that account, because Claude Code finds its login by the hash of the directory and not by anything the identity owns. Such an item is left by an identity of that name that was renamed or removed, since `identity remove` does not touch the Keychain and a rename's last step can fail or be cut short. The message names the entry and the exact command that deletes it.
+ *
+ * Asks for attributes only, so the login is never read and the Keychain is never asked for access to it. Off macOS there is no Keychain and nothing is asked.
+ */
+export function requireNoLeftoverKeychainLogin(keychain: KeychainProbe, configDir: string, name: string): void {
+  if (keychain.platform !== "darwin") {
+    return;
+  }
+  const service = claudeCodeKeychainService(configDir);
+  const found = lookup(keychain.run, service);
+  if (!found.found) {
+    return;
+  }
+  const account = plainAccountOf(found.attributes);
+  throw new KeychainLoginError(
+    `Cannot create identity "${name}": the Keychain already holds a Claude Code login filed for ${configDir} (service ${service}${account === undefined ? "" : `, account ${account}`}), left behind by an identity of that name that was renamed or removed. A new identity there would start signed in as that account. If you do not need it, delete it with \`${keychainDeleteCommand(service, account)}\` and run the command again.`,
+  );
 }
 
 /**
