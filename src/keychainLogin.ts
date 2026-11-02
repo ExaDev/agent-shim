@@ -211,12 +211,14 @@ export function readKeychainLogin(run: RunPort, plan: KeychainLoginPlan): Buffer
 /**
  * Writes `bytes`, as read by `readKeychainLogin`, to the new service, then checks the new item is there. The bytes go through `security -i` on standard input, so they are never in an argument list, where any local process could read them from the process table. The tool repeats the arguments it was given when a command fails, so a failure is reported by exit status and the step that failed, never by text the tool printed.
  *
- * On failure the new item is removed again if it was created, the old item is untouched, and `KeychainLoginError` is thrown. A login too large for one interactive line in either encoding is refused before anything is written. The old item is the caller's to delete once the whole rename has succeeded (`deleteKeychainLogin`).
+ * On failure the new item is removed again if it was created, the old item is untouched, and `KeychainLoginError` is thrown. A login too large for one interactive line in either encoding is refused before anything is written, and the message names the command that deletes the old item, which discards the login but lets the rename run, since with no item there is nothing to copy. The old item is the caller's to delete once the whole rename has succeeded (`deleteKeychainLogin`).
  */
 export function writeKeychainLogin(run: RunPort, plan: KeychainLoginPlan, bytes: Buffer): void {
   const command = addCommand(plan, bytes);
   if (command === undefined) {
-    throw new KeychainLoginError(`The login stored under ${plan.fromService} is too large to copy without putting it in a command's arguments, which \`security -i\` takes at most ${String(INTERACTIVE_LINE_LIMIT)} characters of. Sign in again under the new name instead.`);
+    throw new KeychainLoginError(
+      `The login stored under ${plan.fromService} is too large to copy through the input line of \`security -i\`, which takes at most ${String(INTERACTIVE_LINE_LIMIT)} characters of a line, in the hex form or the quoted form. Nothing has been changed. To rename anyway, delete that Keychain item with \`${keychainDeleteCommand(plan.fromService, plan.account)}\`, then run the rename again (with no item there, nothing is left to copy), then sign in under the new name. This discards the stored login.`,
+    );
   }
   const added = run.run("security", ["-i"], `${command}\n`);
   if (added.status !== 0) {
