@@ -14,7 +14,7 @@ import { realFarmFs } from "./realPorts";
 import { claudeCodeKeychainService } from "./usage/signIn";
 
 /** The real filesystem with the durable option dropped from private writes: the rename's journal is flushed to disk on every save, which a test that only needs the files does not need to wait for. The tests of the flushing itself pass `realFarmFs` or a wrapper that forwards the option. */
-export const unflushedFarmFs: FarmFs = {
+const unflushedFarmFs: FarmFs = {
   ...realFarmFs,
   writeFilePrivate: (file, contents) => {
     realFarmFs.writeFilePrivate(file, contents);
