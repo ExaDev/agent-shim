@@ -25,7 +25,7 @@ import type { FrontDoorSessionDetails } from "./frontdoor/state";
 /** The shipped classification map, parsed once, for use as the default in tests. */
 export const shippedClassification: CategoryClassification = CategoryClassificationSchema.parse(categoriesDefaultJson);
 
-/** A fake home directory. Deliberately not the real one: nothing in this project's tests may resolve to a path Joe actually uses. */
+/** A fake home directory. Deliberately not the real one: nothing in this project's tests may resolve to a path the maintainer actually uses. */
 export const FAKE_HOME = "/home/testuser";
 /** A fake `~/.claude`, matching FAKE_HOME. */
 export const FAKE_CLAUDE_HOME = `${FAKE_HOME}/.claude`;

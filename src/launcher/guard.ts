@@ -28,7 +28,7 @@ export interface InjectedCredential {
 /**
  * Detects whether any of `AMBIENT_CREDENTIAL_VARS` is set to a non-empty value in `env`, returning the first one found in declared order, or undefined when none are set.
  *
- * An empty string counts as unset, not set — confirmed load-bearing: one of Joe's real wrapper scripts (`o`, running Claude Code against OpenRouter) does `export ANTHROPIC_API_KEY=""` specifically to *clear* it so `ANTHROPIC_AUTH_TOKEN` takes effect instead, and this must never trip the guard.
+ * An empty string counts as unset, not set — confirmed load-bearing: one real wrapper script (`o`, running Claude Code against OpenRouter) does `export ANTHROPIC_API_KEY=""` specifically to *clear* it so `ANTHROPIC_AUTH_TOKEN` takes effect instead, and this must never trip the guard.
  *
  * `injected`, when given, is the credential this launch exports for its own identity. Its variable holding exactly that value is not ambient: it is what a agent-shim launch of the same identity left in the environment of the session this one starts from (a `claude @work` run inside a `claude @work` session). The same variable holding any other value still counts.
  */

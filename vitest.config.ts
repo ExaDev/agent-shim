@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { defineConfig } from "vitest/config";
 
-// Every test run gets its own throwaway AGENT_SHIM_HOME, well away from Joe's real, currently-in-daily-use identities at ~/.agent-shim/active and ~/.agent-shim/identities/<name>/. src/test-setup.ts asserts this env var is set and does not resolve to the real ~/.agent-shim before any test body runs, so no test in this project can ever touch real state.
+// Every test run gets its own throwaway AGENT_SHIM_HOME, well away from the maintainer's real, currently-in-daily-use identities at ~/.agent-shim/active and ~/.agent-shim/identities/<name>/. src/test-setup.ts asserts this env var is set and does not resolve to the real ~/.agent-shim before any test body runs, so no test in this project can ever touch real state.
 const testAgentShimHome = path.join(os.tmpdir(), `agent-shim-test-${String(process.pid)}-${String(Date.now())}`);
 
 /**
