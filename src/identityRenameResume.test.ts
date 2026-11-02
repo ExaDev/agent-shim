@@ -302,7 +302,7 @@ describe("running a rename again after one was left unfinished", () => {
     await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: failingOnce(world) }))).rejects.toThrow(/disk full/);
     const journal = journalOf(world);
     expect(journal?.steps.filter((step) => step.done).map((step) => step.description)).toEqual(applied);
-    expect(journal === undefined ? "" : describeUnfinishedRename(journal, { finishable: true })).toContain(`(1 of ${String(journal?.steps.length)} steps recorded as done)`);
+    expect(journal === undefined ? "" : describeUnfinishedRename(journal, { finishable: true })).toContain(`(1 of ${String(journal?.steps.length)} steps recorded as begun or done)`);
     await expect(renameIdentity(world.paths, "work", "client", world.ports())).resolves.toBeDefined();
     expect(journalOf(world)).toBeUndefined();
   });
