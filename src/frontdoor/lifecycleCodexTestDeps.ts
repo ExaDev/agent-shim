@@ -3,7 +3,7 @@ import type { CodexStatus } from "../codex/commands";
 /** The door's pid the lifecycle fakes report, a value no test process shares. */
 const FAKE_DOOR_PID = 424_242;
 
-/** Fakes for the lifecycle and Codex dependencies of the door's typed API, for suites that mount the whole door and exercise other procedures: nothing here restarts a process, reaches the network or touches a sign-in file. */
+/** Fakes for the lifecycle and Codex dependencies of the door's typed API, for suites that mount the whole door and exercise other procedures: nothing here restarts a process, reaches the network, touches a sign-in file or asks a Keychain. */
 export const LIFECYCLE_AND_CODEX_TEST_DEPS = {
   doorPid: FAKE_DOOR_PID,
   restartDoor: (): void => undefined,
@@ -20,4 +20,9 @@ export const LIFECYCLE_AND_CODEX_TEST_DEPS = {
     logExists: false,
   }),
   codexLogout: async () => await Promise.resolve({ hadGrant: false, revoked: false }),
+  // A platform without a Keychain, so the identity add procedure never asks, and a runner that fails the suite if it is asked anyway.
+  keychain: {
+    platform: "linux" as const,
+    runAsync: async (): Promise<never> => await Promise.reject(new Error("this suite mounts a door that has no Keychain to ask")),
+  },
 };

@@ -182,6 +182,7 @@ export {
 } from "./frontdoor/controlApi";
 export { createConfigApiRouter, type ConfigApiDeps, type ConfigApiRouter } from "./frontdoor/configApi";
 export {
+  ConfigIdentityAddInputSchema,
   ConfigIdentityAddOutputSchema,
   ConfigIdentityRemoveInputSchema,
   ConfigIdentityRemoveOutputSchema,

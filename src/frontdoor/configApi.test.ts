@@ -12,6 +12,7 @@ import { readProvider } from "../providersStore";
 import { listDirectoryRules } from "../directoryRulesStore";
 import { profileExists } from "../configProfilesStore";
 import { createConfigApiRouter } from "./configApi";
+import { LIFECYCLE_AND_CODEX_TEST_DEPS } from "./lifecycleCodexTestDeps";
 
 const TOKEN = "control-token-for-the-config-api-tests";
 const LITERAL_PLACEHOLDER = "never-echoed-placeholder-value";
@@ -30,7 +31,7 @@ afterEach(() => {
 
 /** The router under test as a typed client presenting `token` as its Bearer credential. */
 function clientWith(token: string | undefined) {
-  return createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths }), {
+  return createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: LIFECYCLE_AND_CODEX_TEST_DEPS.keychain }), {
     context: { headers: token === undefined ? {} : { authorization: `Bearer ${token}` }, afterResponse: () => undefined },
   });
 }
