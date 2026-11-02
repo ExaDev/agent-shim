@@ -24,7 +24,7 @@ export interface FarmStat {
 }
 
 /** How a private write is made safe against a crash. */
-export interface PrivateWriteOptions {
+interface PrivateWriteOptions {
   /** Flush the new contents to disk before they replace the old, and the directory after, so that once the call returns the file survives a power cut as far as the filesystem honours a flush. A record that is written ahead of an action, to say the action may have begun, needs this; an ordinary write does not and is not made slower by it. */
   readonly durable?: boolean;
 }
