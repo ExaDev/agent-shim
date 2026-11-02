@@ -26,7 +26,7 @@ import {
   useIdentity,
   type IdentityCredentialChange,
 } from "../identityStore";
-import { KeychainLoginError } from "../keychainLogin";
+import { KeychainLoginError, KeychainLookupError } from "../keychainLogin";
 import { poolNameOf } from "../launcher/identity";
 import type { LayoutPaths } from "../paths";
 import { resolveWithAsyncRuns, type AsyncRun } from "../replayRun";
@@ -91,8 +91,12 @@ export interface ConfigApiDeps {
 /** The OpenAPI tag the configuration procedures group under in the document. */
 const CONFIG_API_TAG = "config";
 
-/** Maps the stores' expected refusals onto the oRPC error a typed client reads: a missing name, a name already taken, and everything else the store rejects as a malformed request. Anything that is not an expected refusal is a bug and propagates as one. */
+/** Maps the stores' expected refusals onto the oRPC error a typed client reads: a missing name, a name or a Keychain login already in the way, a Keychain that could not be asked (a failure to retry, not a conflict), and everything else the store rejects as a malformed request. Anything that is not an expected refusal is a bug and propagates as one. */
 function refusal(error: unknown): never {
+  // Before the conflicts, because a `KeychainLookupError` is a `KeychainLoginError`: the Keychain could not be asked (`security` stopped after its time limit, a locked Keychain, no `security`), so nothing is known to be in the way and asking again may succeed.
+  if (error instanceof KeychainLookupError) {
+    throw new ORPCError("SERVICE_UNAVAILABLE", { message: error.message });
+  }
   if (
     error instanceof IdentityNotFoundError ||
     error instanceof ProfileNotFoundError ||
