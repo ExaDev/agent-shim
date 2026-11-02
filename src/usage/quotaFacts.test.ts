@@ -42,7 +42,7 @@ describe("quotaFactsOf", () => {
     const facts = quotaFactsOf(extraUsage, NOW_MS);
     const below = (key: string) => ({ kind: "compare", op: "lt", left: { kind: "reference", key }, right: { kind: "numberLiteral", value: 0.5 } }) as const;
     expect(evaluateWhen(below("quota.extraUsage.utilization"), { nowMs: NOW_MS, env: {}, pool: facts })).toMatchObject({ status: "definite", passed: true });
-    expect(evaluateWhen(below("provider.novus.extraUsage.utilization"), { nowMs: NOW_MS, env: {}, providerQuota: { novus: facts } })).toMatchObject({ status: "definite", passed: true });
+    expect(evaluateWhen(below("provider.example.extraUsage.utilization"), { nowMs: NOW_MS, env: {}, providerQuota: { example: facts } })).toMatchObject({ status: "definite", passed: true });
     expect(evaluateWhen(below("quota.extraUsage.utilization"), { nowMs: NOW_MS, env: {}, pool: {} })).toMatchObject({ status: "indeterminate" });
   });
 });
