@@ -10,7 +10,7 @@ import { nodeStoreFs, readJson, writeJsonAtomic, writeTextAtomic } from "./confi
 import { listProfiles } from "./configProfilesStore";
 import { effectiveStore, type CachedCredential, type CredentialCachePort } from "./credentialCache";
 import { renameIdentityInRules } from "./directoryRulesStore";
-import { IdentityAlreadyExistsError, IdentityNotFoundError, identityExists, identityFarmEntries, listIdentities, readActiveIdentity, readIdentity, renamedFarmEntry, requireNewIdentityName } from "./identityStore";
+import { IdentityAlreadyExistsError, IdentityNotFoundError, identityExists, identityFarmEntries, listIdentities, readActiveIdentity, readIdentity, renamedFarmEntry, requireNewIdentityName, requireNoUnreachableIdentities } from "./identityStore";
 import { identityTokenPath } from "./identityToken";
 import type { IdentitySessionProbe, SessionProcess } from "./identitySessions";
 import { renameIdentityInJobs } from "./jobStore";
@@ -519,7 +519,9 @@ function usageWindowNote(paths: LayoutPaths, ports: IdentityRenamePorts, from: s
 }
 
 /** The steps that re-point the credential `file` sources of every identity but the renamed one, and of every provider, that name the token file or sit inside the directory being moved. A file that cannot be parsed and names a moved path is refused, since it can be neither updated nor trusted. */
-function credentialHolderSteps(paths: LayoutPaths, ports: IdentityRenamePorts, from: string, moved: MovedPaths): readonly (Step | undefined)[] {
+function credentialHolderSteps(paths: LayoutPaths, ports: IdentityRenamePorts, from: string, to: string, moved: MovedPaths): readonly (Step | undefined)[] {
+  // An identity nobody can read is left out of the listing, so its credential sources could be neither re-pointed nor checked; refusing is what reading it did before it was reported apart.
+  requireNoUnreachableIdentities(paths, `rename "${from}" to "${to}"`, "a credential source in it that names what the rename moves could be neither updated nor warned about");
   const refuseIfNamed = (file: string, detail: string): void => {
     const text = ports.fs.readFileUtf8(file);
     if (text !== undefined && namesMovedPath(text, moved)) {
@@ -671,7 +673,7 @@ function planRename(paths: LayoutPaths, from: string, to: string, ports: Identit
         return models === undefined ? undefined : { value: { ...profile, models }, changes: ["models"] };
       }),
     ),
-    ...credentialHolderSteps(paths, ports, from, moved),
+    ...credentialHolderSteps(paths, ports, from, to, moved),
     jsonRewriteStep(paths, ports, paths.directoryRulesFile, DirectoryRulesSchema, (rules) => {
       const renamed = renameIdentityInRules(rules, from, to);
       return renamed === undefined ? undefined : { value: renamed.rules, changes: renamed.renamedAt.map((rulePath) => `rule ${rulePath}`) };
