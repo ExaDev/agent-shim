@@ -67,6 +67,22 @@ describe("the journal is written ahead of each step", () => {
     expect(report.steps.length).toBeGreaterThanOrEqual(stepCount);
   });
 
+  it("writes every save of the journal durably, and no other file of the rename", async () => {
+    const writes: { readonly file: string; readonly durable: boolean }[] = [];
+    const watching = {
+      ...realFarmFs,
+      writeFilePrivate: (file: string, contents: string, options?: { readonly durable?: boolean }): void => {
+        writes.push({ file, durable: options?.durable === true });
+        realFarmFs.writeFilePrivate(file, contents, options);
+      },
+    };
+    await renameIdentity(world.paths, "work", "client", world.ports({ fs: watching }));
+    const journalWrites = writes.filter((write) => write.file.startsWith(world.paths.identityRenamesDir));
+    expect(journalWrites.length).toBeGreaterThan(2);
+    expect(journalWrites.every((write) => write.durable)).toBe(true);
+    expect(writes.filter((write) => !write.file.startsWith(world.paths.identityRenamesDir)).some((write) => write.durable)).toBe(false);
+  });
+
   it("clears the marks of every step the rollback undoes, and keeps those of a step it could not undo, a failed one included, since that step may be applied", async () => {
     const failing = {
       ...realFarmFs,

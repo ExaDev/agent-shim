@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { realAsyncCredentialPort, realCredentialPort, realFarmFs, realFileSize, realReadFileTail, realRunningAmong, resolveContentSourcePath, resolveExecutableCandidate, resolveOwnExecutablePath } from "./realPorts";
 
@@ -351,6 +351,69 @@ describe("resolveOwnExecutablePath", () => {
       },
     });
     expect(result).toBe(directCandidate);
+  });
+});
+
+describe("realFarmFs durable private writes", () => {
+  /** Records, in order, what a durable write does to the disk: flushing a file, renaming it into place, and flushing a directory. */
+  function recordDiskCalls(): string[] {
+    const events: string[] = [];
+    const flush = fs.fsyncSync.bind(fs);
+    const rename = fs.renameSync.bind(fs);
+    vi.spyOn(fs, "fsyncSync").mockImplementation((descriptor) => {
+      events.push(fs.fstatSync(descriptor).isDirectory() ? "flush directory" : "flush file");
+      flush(descriptor);
+    });
+    vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
+      events.push("rename");
+      rename(from, to);
+    });
+    return events;
+  }
+
+  let root: string;
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "durable-fs-"));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it.skipIf(process.platform === "win32")("flushes the file before it is renamed into place and its directory after, in that order, and leaves the same owner-only file", () => {
+    const file = path.join(root, "journal.json");
+    const events = recordDiskCalls();
+    realFarmFs.writeFilePrivate(file, "{}\n", { durable: true });
+    expect(events).toEqual(["flush file", "rename", "flush directory"]);
+    expect(fs.readFileSync(file, "utf8")).toBe("{}\n");
+    expect(fs.statSync(file).mode & PERMISSION_BITS).toBe(OWNER_ONLY_PERMISSIONS);
+    expect(fs.readdirSync(root)).toEqual(["journal.json"]);
+  });
+
+  it.skipIf(process.platform === "win32")("replaces a file that is already there whole", () => {
+    const file = path.join(root, "journal.json");
+    fs.writeFileSync(file, "old contents that are longer than the new ones\n");
+    realFarmFs.writeFilePrivate(file, "new\n", { durable: true });
+    expect(fs.readFileSync(file, "utf8")).toBe("new\n");
+  });
+
+  it("does not flush anything for an ordinary private write, which every other caller keeps", () => {
+    const events = recordDiskCalls();
+    realFarmFs.writeFilePrivate(path.join(root, "plain.json"), "{}\n");
+    expect(events).toEqual(["rename"]);
+  });
+
+  it.skipIf(process.platform === "win32")("reports a flush that fails, leaves no temporary file behind and does not put the file in place", () => {
+    const file = path.join(root, "journal.json");
+    vi.spyOn(fs, "fsyncSync").mockImplementation(() => {
+      throw new Error("input/output error");
+    });
+    expect(() => {
+      realFarmFs.writeFilePrivate(file, "{}\n", { durable: true });
+    }).toThrow("input/output error");
+    expect(fs.readdirSync(root)).toEqual([]);
   });
 });
 

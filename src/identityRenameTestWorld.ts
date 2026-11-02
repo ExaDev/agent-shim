@@ -13,6 +13,14 @@ import { sameDirectory } from "./sameDirectory";
 import { realFarmFs } from "./realPorts";
 import { claudeCodeKeychainService } from "./usage/signIn";
 
+/** The real filesystem with the durable option dropped from private writes: the rename's journal is flushed to disk on every save, which a test that only needs the files does not need to wait for. The tests of the flushing itself pass `realFarmFs` or a wrapper that forwards the option. */
+export const unflushedFarmFs: FarmFs = {
+  ...realFarmFs,
+  writeFilePrivate: (file, contents) => {
+    realFarmFs.writeFilePrivate(file, contents);
+  },
+};
+
 /** The shape of the suffix a resync gives its superseded and scratch farms: the launcher's process id, then a UUID. */
 export const SUFFIX = "4242.0f8fad5b-d9cb-469f-a165-70867728950e";
 export const OTHER_SUFFIX = "17.7c9e6679-7425-40de-944b-e07fc1f90ae7";
@@ -134,7 +142,7 @@ export function createWorld(platform: NodeJS.Platform = "linux"): World {
     },
     handlers: () => handlers.size,
     ports: (overrides = {}) => ({
-      fs: realFarmFs,
+      fs: unflushedFarmFs,
       credentialCache: { port: cachePort, platform: "linux" },
       run: keychain.run,
       platform,
