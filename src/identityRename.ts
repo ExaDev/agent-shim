@@ -740,6 +740,17 @@ class RollbackNotRecordedError extends CliError {
   }
 }
 
+/** Raised when a rename was rolled back, or failed, and its journal could not be removed: the failure that ended the rename leads and keeps its exit status, and the journal is left, which a re-run of the same rename carries on from. */
+class JournalNotRemovedError extends CliError {
+  override readonly exitCode: number;
+
+  constructor(cause: unknown, file: string, removal: unknown) {
+    super(`${messageOf(cause)}\nThe journal ${path.join("identity-renames", path.basename(file))} could not be removed (${messageOf(removal)}), so it still describes this rename as unfinished and stops any other rename of either name; running the same command again finishes it.`);
+    this.name = "JournalNotRemovedError";
+    this.exitCode = cause instanceof CliError ? cause.exitCode : EXIT_FAILURE;
+  }
+}
+
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -983,9 +994,13 @@ async function applyUnderLocks(paths: LayoutPaths, from: string, to: string, por
         },
       });
     } catch (error) {
-      // Every step is undone unless the rollback itself failed, so a run that began here leaves nothing half done and its journal goes, whether or not the journal could be kept up to date while it rolled back.
+      // Every step is undone unless the rollback itself failed, so a run that began here leaves nothing half done and its journal goes, whether or not the journal could be kept up to date while it rolled back. A journal that cannot be removed is reported with the failure, never in place of it.
       if (resumed === undefined && !(error instanceof RollbackFailedError)) {
-        removeRenameJournal(ports.fs, file);
+        try {
+          removeRenameJournal(ports.fs, file);
+        } catch (removal) {
+          throw new JournalNotRemovedError(error, file, removal);
+        }
       }
       throw error;
     }

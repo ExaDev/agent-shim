@@ -238,6 +238,28 @@ describe("renameIdentity and a signal to stop", () => {
     expect(failure instanceof Error ? failure.message : "").not.toContain("This run's rollback is complete");
   });
 
+  it("ends with the shell's status for the signal when the journal then cannot be removed, and says so beside the interruption", async () => {
+    const sending = signalAfterFirstMove("SIGTERM");
+    const journalStuck = {
+      ...sending,
+      removeRecursive: (target: string): void => {
+        if (target.startsWith(world.paths.identityRenamesDir)) {
+          throw new Error("EACCES: permission denied");
+        }
+        realFarmFs.removeRecursive(target);
+      },
+    };
+    const failure: unknown = await renameIdentity(world.paths, "work", "client", world.ports({ fs: journalStuck })).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(CliError);
+    expect(failure).toMatchObject({ exitCode: SIGTERM_STATUS });
+    expect(failure instanceof Error ? failure.message : "").toContain("Interrupted by SIGTERM");
+    expect(failure instanceof Error ? failure.message : "").toContain("could not be removed");
+    expect(failure instanceof Error ? failure.message : "").toContain("EACCES: permission denied");
+  });
+
   it("rolls every step back, the Keychain copy included, and ends with the shell's status for SIGINT, when the signal arrives between steps", async () => {
     const before = treeOf(world.root);
     await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: signalAfterFirstMove("SIGINT") }))).rejects.toMatchObject({ exitCode: SIGINT_STATUS, message: "Interrupted by SIGINT: the rename was rolled back and nothing was changed." });

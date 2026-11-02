@@ -95,6 +95,37 @@ describe("the journal a rename keeps", () => {
     expect(journal?.steps.filter((step) => step.done).map((step) => step.description)).toEqual(["move identities/work to identities/client"]);
   });
 
+  describe("when the journal cannot be removed after the rename rolled back", () => {
+    /** A filesystem on which a step fails once and the journal then cannot be removed, as when its directory is not writable. */
+    function failingThenJournalStuck(): FarmFs {
+      return {
+        ...failingOnce(world),
+        removeRecursive: (target: string): void => {
+          if (target.startsWith(world.paths.identityRenamesDir)) {
+            throw new Error("EACCES: permission denied");
+          }
+          realFarmFs.removeRecursive(target);
+        },
+      };
+    }
+
+    it("reports it beside the failure that caused the rollback, not in place of it, and leaves the record to a re-run", async () => {
+      const failure: unknown = await renameIdentity(world.paths, "work", "client", world.ports({ fs: failingThenJournalStuck() })).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(failure).toBeInstanceOf(CliError);
+      const message = failure instanceof Error ? failure.message : "";
+      expect(message).toContain("disk full");
+      expect(message).toContain("could not be removed");
+      expect(message).toContain("EACCES: permission denied");
+      expect(message).toContain("running the same command again finishes it");
+      expect(journalOf(world)).toMatchObject({ from: "work", to: "client" });
+      await expect(renameIdentity(world.paths, "work", "client", world.ports())).resolves.toBeDefined();
+      expect(journalOf(world)).toBeUndefined();
+    });
+  });
+
   describe("when the journal cannot be written while the rename rolls back", () => {
     /** A filesystem on which a step fails once and, from then on, every write to the journal fails, as it does when the disk is full. */
     function failingThenJournalFull(): FarmFs {
