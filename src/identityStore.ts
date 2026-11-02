@@ -74,7 +74,7 @@ function requireIdentityCreatable(paths: LayoutPaths, name: string): void {
 /**
  * Creates a new identity: validates `name` against `IdentitySchema`'s own naming rule and writes a fresh `identity.json` with `allowAmbientCredential: false` and no `defaultConfigProfile`.
  *
- * Throws a `CliError` naming the command that finishes the rename when an unfinished rename names `name` (see `requireNoUnfinishedRenameNaming`), `IdentityAlreadyExistsError` if an identity with this name already has an `identity.json` — `add` never silently overwrites an existing identity. Throws `InvalidIdentityNameError` when `name` fails `IdentitySchema`'s naming rule, rather than letting the underlying `ZodError` escape as an unhandled crash.
+ * Throws a `CliError` naming the command that finishes the rename when an unfinished rename names `name` (see `requireNoUnfinishedRenameNaming`), `IdentityAlreadyExistsError` if an identity with this name already has an `identity.json`, since `add` never silently overwrites an existing identity. Throws `InvalidIdentityNameError` when `name` fails `IdentitySchema`'s naming rule, rather than letting the underlying `ZodError` escape as an unhandled crash.
  */
 export function addIdentity(paths: LayoutPaths, name: string): Identity {
   requireIdentityCreatable(paths, name);

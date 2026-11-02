@@ -104,7 +104,7 @@ function parseLockRecord(raw: string | undefined): LockRecord | undefined {
  *
  * Two terminals in two different client directories under one identity is exactly the pattern directory rules exist to support, and it is exactly the pattern that races: both launches resolve their own cascade and both want to rewrite the same identity's farm toward two different states. This serialises them.
  *
- * Mutual exclusion rests on one exclusive-create — a read-then-write pair would leave a window where both processes see no lock. A lock whose holder is no longer running, or whose record is older than the staleness window, or whose contents cannot be parsed on two reads a retry delay apart, is removed and retaken: a machine that crashed mid-resync must not need manual cleanup before `claude` works again. A lock genuinely held by a live process is waited on, and only after the full retry budget does this give up — loudly, with the holder's pid, rather than proceeding unsynchronised.
+ * Mutual exclusion rests on one exclusive-create: a read-then-write pair would leave a window where both processes see no lock. A lock whose holder is no longer running, or whose record is older than the staleness window, or whose contents cannot be parsed on two reads a retry delay apart, is removed and retaken: a machine that crashed mid-resync must not need manual cleanup before `claude` works again. A lock genuinely held by a live process is waited on, and only after the full retry budget does this give up, loudly, with the holder's pid, rather than proceeding unsynchronised.
  */
 export function acquireIdentityLock(params: AcquireIdentityLockParams): IdentityLock {
   const lockPath = identityLockPath(params.dir, params.identity);
