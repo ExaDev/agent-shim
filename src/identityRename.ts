@@ -628,7 +628,7 @@ class RenameInterruptedError extends CliError {
 
 /** What the sentence about the journal says when a rollback could not record that it undid steps: they were undone, and only the record of them is behind. */
 function unrecordedSentence(unrecorded: readonly string[]): string {
-  return `The journal under identity-renames/ could not be updated for ${unrecorded.join("; ")}, so it may still show steps as done that were undone; a run of the same rename plans from what is on disk and is not misled by it.`;
+  return `The journal under identity-renames/ could not be updated for ${unrecorded.join("; ")}, so it may still show steps as begun or done that were undone; a run of the same rename plans from what is on disk and is not misled by it.`;
 }
 
 /** Raised when the rollback after a failed step could not undo everything: the first failure, and what was left. `unrecorded` names the steps that were undone but whose journal update failed, when any. */
@@ -667,7 +667,7 @@ class RollbackNotRecordedError extends CliError {
   }
 }
 
-/** Raised when a rename was rolled back, or failed, and its journal could not be removed: the failure that ended the rename leads and keeps its exit status, and the journal is left. `discard` is the command that removes the record when the journal shows nothing applied, which is the case for a rollback that completed: running the rename again would then perform the rename that was just cancelled, so the way out is to discard the record. Otherwise a re-run of the same rename carries on from the journal. */
+/** Raised when a rename was rolled back, or failed, and its journal could not be removed: the failure that ended the rename leads and keeps its exit status, and the journal is left. `discard` is the command that removes the record when the journal records no step as begun or done, which is the case for a rollback that completed: running the rename again would then perform the rename that was just cancelled, so the way out is to discard the record. Otherwise a re-run of the same rename carries on from the journal. */
 class JournalNotRemovedError extends CliError {
   override readonly exitCode: number;
 
@@ -690,7 +690,7 @@ interface ApplyHooks {
   readonly beforeStep: (index: number) => void;
   /** Called after each step with its position in the plan: the locks are refreshed and the journal marked here, and the call throws when a lock was taken over. */
   readonly afterStep: (index: number) => void;
-  /** Called after each step is undone during a rollback, with its position in the plan: the journal clears the step's marks here, so that what it records is what is still applied. */
+  /** Called after each step is undone during a rollback, with its position in the plan: the journal clears both of the step's marks (begun and done) here, so that it records only the steps that may still be applied. */
   readonly afterUndo: (index: number) => void;
   /** Whether this run finishes a rename an earlier one left unfinished, which an interruption's message says. */
   readonly resuming: boolean;
@@ -813,7 +813,7 @@ function resumeNote(journal: Readonly<RenameJournal>): string {
  *
  * It is transactional up to the last step. If any step fails, or the process is sent SIGINT, SIGTERM or SIGHUP between steps, every earlier one is undone, the new Keychain item removed and the old one kept, and the failure is thrown. A failure in the last step only (deleting the old Keychain item) is a warning in the report, because the rename is complete by then. The leftover item is not used by the renamed identity, but a new identity created under the old name would start signed in as that account, so `identity add` refuses that name until the item is deleted, and the warning says so and gives the command.
  *
- * A journal in the state root's `identity-renames` directory is written before the first step and marked as each completes. A rename that is killed, or whose rollback fails, leaves it behind, and running the same rename again plans from what is on disk, so it does only what is left, and removes the journal at the end. A rename of anything else that names either identity refuses until then.
+ * A journal in the state root's `identity-renames` directory is written before the first step, each step is marked as begun before it runs and as done as it completes, and every save is flushed to disk. A rename that is killed, or whose rollback fails, leaves it behind, and running the same rename again plans from what is on disk, so it does only what is left, and removes the journal at the end. A rename of anything else that names either identity refuses until then.
  *
  * Throws `IdentityNotFoundError`, `IdentityAlreadyExistsError`, `InvalidIdentityNameError`, `UsageError` for equal names, `IdentityInUseError`, `UnfinishedRenameError`, `UnfinishableRenameError`, `KeychainLoginError` and `IdentityLockBusyError`. A committed `.agent-shim.json` in a project is not reachable from here, and neither is the usage log, which keeps its records under the name they were written with.
  */
@@ -859,7 +859,7 @@ export interface DiscardedRenameJournal {
 /**
  * Removes the journal of an unfinished rename of `from` to `to` when the identity is under neither name or under both, or when it is under `from` alone and the journal records no step as begun or done (a step is recorded as begun before it runs, so a process killed mid-step is not taken for one that applied nothing). It refuses when the identity is under exactly one name and either a step is recorded as begun or done or the identity is under `to`, where running the rename again finishes it. It takes the resync lock of both names first, so a process still running that rename, which holds them, is never robbed of its journal, and it changes no identity, file or login. The journal is read again under the locks, so the verdict is of the state it removes.
  *
- * Throws `UsageError` for equal names, `UnsafeNameError` for an old name that would leave the identities directory, `InvalidIdentityNameError` for a new name that is not valid, all before taking a lock, a `CliError` saying there is nothing to discard when the pair has no journal, one saying the rename can be finished when the identity is under exactly one of the names and the journal shows work applied or the directory has moved, `IdentityLockBusyError` when the lock of either name is held, and what `readRenameJournal` throws for a journal it cannot read.
+ * Throws `UsageError` for equal names, `UnsafeNameError` for an old name that would leave the identities directory, `InvalidIdentityNameError` for a new name that is not valid, all before taking a lock, a `CliError` saying there is nothing to discard when the pair has no journal, one saying the rename can be finished when the identity is under exactly one of the names and either a step is recorded as begun or done or the identity is under `to`, `IdentityLockBusyError` when the lock of either name is held, and what `readRenameJournal` throws for a journal it cannot read.
  */
 export function discardRenameJournal(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts): DiscardedRenameJournal {
   requireNames(from, to);
@@ -882,7 +882,7 @@ export function discardRenameJournal(paths: LayoutPaths, from: string, to: strin
   }
 }
 
-/** Whether the journal now in `file` records nothing as applied. A journal that cannot be read is not known to, since the failure being reported is the one that matters and this only chooses the words after it. */
+/** Whether the journal now in `file` records no step as begun or done. A journal that cannot be read is not known to, since the failure being reported is the one that matters and this only chooses the words after it. */
 function recordsNothingAppliedOn(ports: IdentityRenamePorts, file: string): boolean {
   try {
     const journal = readRenameJournal(ports.fs, file);
