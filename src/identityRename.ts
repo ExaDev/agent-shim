@@ -525,7 +525,7 @@ function requireNoSessions(paths: LayoutPaths, from: string, ports: IdentityRena
   }
 }
 
-/** Builds the plan: every check that can refuse, then every step in the order it is applied. The order puts what can fail for reasons outside the files first and the Keychain's old item last, and rewrites the identity's own files before the directory moves so each path is read where it is. */
+/** Builds the plan: every check that needs neither a lock nor a secret, then every step in the order it is applied. The order puts what can fail for reasons outside the files first and the Keychain's old item last, and rewrites the identity's own files before the directory moves so each path is read where it is. */
 function planRename(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts, gathered: Gathered | undefined, resuming: boolean): Plan {
   requireRenamable(paths, from, to, ports, resuming);
   const fromDir = path.join(paths.identitiesDir, from);
@@ -792,9 +792,9 @@ function unfinishedRename(paths: LayoutPaths, from: string, to: string, ports: I
 }
 
 /**
- * Says what `renameIdentity` would do, without doing it or taking a lock: the same checks, which refuse for the same reasons, and the same steps in the same order. The macOS Keychain is asked only for the attributes of the two items, never for a secret, and a cached credential is not read. When an earlier run of this rename was left unfinished it lists what is left, and says so.
+ * Says what `renameIdentity` would do, without doing it or taking a lock: it makes every check a rename makes that needs neither a lock nor a secret, so it refuses for those reasons, and it lists the same steps in the same order. The macOS Keychain is asked only for the attributes of the two items, never for a secret, and a cached credential is not read, so what only the real run can refuse on is not checked: a lock another process holds, a login that cannot be read or is too long for one `security -i` line, and a cached credential that cannot be read. When an earlier run of this rename was left unfinished it lists what is left, and says so.
  *
- * Throws what `renameIdentity` throws before it changes anything.
+ * Throws what `renameIdentity` throws for a refusal that needs neither a lock nor a secret.
  */
 export function describeIdentityRename(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts): IdentityRenameReport {
   requireNames(from, to);

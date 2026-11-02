@@ -8,6 +8,7 @@ import { identityTokenPath, TOKEN_FILE_MODE } from "./identityToken";
 import type { CredentialCachePort } from "./credentialCache";
 import { IDENTITY_NAME_LOCATIONS } from "./identityNameLocations";
 import { buildLayoutPaths } from "./paths";
+import { claudeCodeKeychainService } from "./usage/signIn";
 import { NOW_MS, OTHER_SUFFIX, OWN_PID, PERMISSION_BITS, PRIVATE_FILE_MODE, SUFFIX, type World, createWorld, treeOf, writeFile, writeJson, failingOnce } from "./identityRenameTestWorld";
 
 describe("renameIdentity", () => {
@@ -293,6 +294,44 @@ describe("describeIdentityRename (--dry-run)", () => {
     expect(() => describeIdentityRename(world.paths, "work", "client", world.ports())).toThrow(CliError);
   });
 
+  describe("what only the real run can refuse on, because it needs a lock or a secret", () => {
+    /** A password of printable text longer than a whole `security -i` line, so neither the hex form nor the quoted form of the copy command can carry it. */
+    const TOO_LARGE_FOR_ANY_FORM = 5000;
+
+    it("passes while another resync holds the identity lock, which the real run refuses on", async () => {
+      writeFile(path.join(world.root, "identities", ".work.lock"), `${JSON.stringify({ identity: "work", pid: 99, token: "t", acquiredAtMs: NOW_MS })}\n`);
+      const ports = world.ports({ lock: { nowMs: () => NOW_MS, pid: OWN_PID, isRunning: () => true, sleep: () => undefined } });
+      expect(describeIdentityRename(world.paths, "work", "client", ports).dryRun).toBe(true);
+      await expect(renameIdentity(world.paths, "work", "client", ports)).rejects.toThrow(/resync is already running/);
+    });
+
+    it("passes when the login cannot be read, which the real run refuses on", async () => {
+      const unreadable = { run: (command: string, args: readonly string[], input?: string) => (args.includes("-g") ? { status: 1, stdout: "", stderr: "" } : world.keychain.run.run(command, args, input)) };
+      const ports = world.ports({ run: unreadable });
+      expect(describeIdentityRename(world.paths, "work", "client", ports).dryRun).toBe(true);
+      await expect(renameIdentity(world.paths, "work", "client", ports)).rejects.toThrow(/Could not read the login/);
+    });
+
+    it("passes when the login is too long for one `security -i` line, which the real run refuses on", async () => {
+      world.keychain.seed(claudeCodeKeychainService(world.directory("work")), "alex", "a".repeat(TOO_LARGE_FOR_ANY_FORM));
+      expect(describeIdentityRename(world.paths, "work", "client", world.ports()).dryRun).toBe(true);
+      await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow(/too large to copy/);
+    });
+
+    it("passes when the cached credential cannot be read, which the real run refuses on", async () => {
+      const unreadable: CredentialCachePort = {
+        read: () => {
+          throw new Error("cache unreadable");
+        },
+        write: () => undefined,
+        remove: () => undefined,
+      };
+      const ports = world.ports({ credentialCache: { port: unreadable, platform: "linux" } });
+      expect(describeIdentityRename(world.paths, "work", "client", ports).dryRun).toBe(true);
+      await expect(renameIdentity(world.paths, "work", "client", ports)).rejects.toThrow(/cache unreadable/);
+    });
+  });
+
   it("asks the Keychain nothing that returns a secret, and writes nothing to it", () => {
     describeIdentityRename(world.paths, "work", "client", world.ports());
     expect(world.keychain.calls.length).toBeGreaterThan(0);
@@ -305,7 +344,7 @@ describe("describeIdentityRename (--dry-run)", () => {
     expect(fs.readdirSync(path.join(world.root, "identities")).some((entry) => entry.endsWith(".lock"))).toBe(false);
   });
 
-  it("refuses for the same reasons a rename does", () => {
+  it("refuses a running session and a name already taken, which need neither a lock nor a secret", () => {
     world.sessions.set(world.directory("work"), [{ pid: 4711, program: "claude" }]);
     expect(() => describeIdentityRename(world.paths, "work", "client", world.ports())).toThrow(IdentityInUseError);
     expect(() => describeIdentityRename(world.paths, "work", "personal", world.ports())).toThrow(IdentityAlreadyExistsError);
