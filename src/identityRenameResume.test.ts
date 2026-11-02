@@ -122,7 +122,7 @@ describe("the journal a rename keeps", () => {
       expect(message).toContain("EACCES: permission denied");
       // Every step was undone and the journal says so, so the way out is to discard it; running the command again would perform the rename that was just rolled back.
       expect(message).toContain("agent-shim identity rename work client --discard-journal");
-      expect(message).toContain("nothing is applied");
+      expect(message).toContain("the journal records no step as begun or done");
       expect(message).not.toContain("running the same command again finishes it");
       expect(journalOf(world)).toMatchObject({ from: "work", to: "client" });
       expect(journalOf(world)?.steps.filter((step) => step.done)).toEqual([]);

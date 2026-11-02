@@ -176,10 +176,13 @@ describe("identity rename", () => {
     const program = buildProgram({ ...fakeCommandDeps(paths), runClaude: vi.fn(), identityRenamePorts: ports() });
     const rename = program.commands.find((command) => command.name() === "identity")?.commands.find((command) => command.name() === "rename");
     const discard = rename?.options.find((option) => option.long === "--discard-journal")?.description;
-    expect(discard).toContain("exists under neither name or under both");
+    // The rule the code checks, in its words: accepted for an identity under neither name or under both, or under <old> alone with no step recorded as begun or done.
+    expect(discard).toContain("Accepted when the identity exists under neither name or under both, or under <old> alone and the record shows no step as begun or done");
+    expect(discard).toContain("refused when the identity exists under only one name and the record shows a step as begun or done or the identity is under <new>");
+    expect(discard).toContain("where running the rename again finishes it");
     expect(discard).toContain("changes no identity");
-    expect(discard).toContain("exists under only one of them");
-    expect(discard).toContain("no step of it was applied");
+    expect(discard).not.toContain("nothing can finish");
+    expect(discard).not.toContain("was applied");
   });
 
   it("with --discard-journal removes the record of a rename nothing can finish, and says so", async () => {
