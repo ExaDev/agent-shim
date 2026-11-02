@@ -912,7 +912,7 @@ interface Applied {
 /**
  * Takes the locks, plans again from what is on disk by then, writes the journal, applies the plan marking each step done, removes the journal and releases the locks. The locks are not held while the old Keychain item is deleted, since that can wait on a person too.
  *
- * The journal is removed when the rename is over, and when a rename that began here has been rolled back completely, since nothing is then left half done. It stays when the rollback failed, and when the run was finishing an earlier rename and failed: the state is then the earlier run's unfinished one, which the journal still describes. A rollback marks each step it undoes as not done as it goes, so what a kept journal records as done is exactly what is still applied.
+ * The journal is removed when the rename is over, and when a rename that began here has been rolled back completely, since nothing is then left half done. It stays when the rollback failed, and when the run was finishing an earlier rename and failed: the state is then the earlier run's unfinished one, which the journal still describes. A run that finishes an earlier rename keeps that run's done marks and adds its own steps after them, and a rollback marks each step it undoes as not done as it goes, so a journal kept after a failure records the steps still applied. A process killed between an undo and its journal write leaves that step marked, which a re-run is not misled by, since it plans from what is on disk.
  */
 async function applyUnderLocks(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts, gathered: Gathered, hooks: Pick<ApplyHooks, "interrupted" | "turn">): Promise<Applied> {
   const held = holdLocks(paths, [from, to], ports);
@@ -920,16 +920,18 @@ async function applyUnderLocks(paths: LayoutPaths, from: string, to: string, por
     const resumed = unfinishedRename(paths, from, to, ports);
     const plan = planRename(paths, from, to, ports, gathered, resumed !== undefined);
     const file = renameJournalFile(paths.identityRenamesDir, from, to);
+    // The steps an earlier run applied stay in the journal marked done, ahead of the steps this run has left to do: they are still applied, and a journal kept after this run fails and rolls back must still say so.
+    const carried = (resumed?.steps ?? []).filter((step) => step.done);
     const journal: RenameJournal = {
       version: 1,
       from,
       to,
       startedAt: resumed?.startedAt ?? new Date(ports.lock.nowMs()).toISOString(),
       pid: ports.lock.pid,
-      steps: plan.steps.map((step) => ({ description: step.description, done: false })),
+      steps: [...carried, ...plan.steps.map((step) => ({ description: step.description, done: false }))],
     };
     writeRenameJournal(ports.fs, file, journal);
-    const applied = new Set<number>();
+    const applied = new Set<number>(carried.keys());
     const record = (): void => {
       writeRenameJournal(ports.fs, file, { ...journal, steps: journal.steps.map((step, position) => ({ ...step, done: applied.has(position) })) });
     };
@@ -939,11 +941,11 @@ async function applyUnderLocks(paths: LayoutPaths, from: string, to: string, por
         resuming: resumed !== undefined,
         afterStep: (index) => {
           held.refresh();
-          applied.add(index);
+          applied.add(carried.length + index);
           record();
         },
         afterUndo: (index) => {
-          applied.delete(index);
+          applied.delete(carried.length + index);
           record();
         },
       });
