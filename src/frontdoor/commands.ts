@@ -13,13 +13,14 @@ import type { LayoutPaths } from "../paths";
 import { realSessionFs } from "../agents/realFs";
 import { collectSessionList, showSession } from "../agents/sessions";
 import { listIdentities } from "../identityStore";
-import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessAlive, realIsProcessRunning, realRunAsync, realRunningAmong, realAsyncCredentialPort, realOwnExecutablePath, selfInvocation, spawnDetachedSupervisor, spawnSelfDetached } from "../realPorts";
+import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessAlive, realIsProcessRunning, realRunAsyncWithin, realRunningAmong, realAsyncCredentialPort, realOwnExecutablePath, selfInvocation, spawnDetachedSupervisor, spawnSelfDetached } from "../realPorts";
 import { createHeadroomKeeper } from "../headroom/keeper";
 import { HEADROOM_POLL_MS } from "../headroom/supervisor";
 import { supervisedSessionOf, writeModelMove } from "../supervise/registry";
 import { createTargetObservationStore } from "../selection/targetStore";
 import { checkForUpdate } from "../update/commands";
 import { identityExists, listAnchoredIdentities } from "../identityStore";
+import { KEYCHAIN_LOOKUP_TIMEOUT_MS } from "../keychainLogin";
 import { readJobs } from "../jobStore";
 import { refreshStalePoolMembers } from "../launcher/poolRefresh";
 import { ANTHROPIC_USAGE_FRESHNESS_MS } from "../usage/anthropicUsageRefresh";
@@ -583,7 +584,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
             fanout: rcFanout,
             ...controlDeps,
             ...lifecycleAndCodexDeps,
-            keychain: { runAsync: realRunAsync, platform: process.platform },
+            keychain: { runAsync: realRunAsyncWithin(KEYCHAIN_LOOKUP_TIMEOUT_MS), platform: process.platform },
             events: doorEvents,
           }),
           // The self-hosted web client rides the same listener under the same per-generation token as the typed API it speaks: no extra process, no new trust surface.

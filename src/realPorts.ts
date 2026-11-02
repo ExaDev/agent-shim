@@ -18,6 +18,7 @@ import type { HeadroomSocketTrustPorts } from "./headroom/socket";
 import { removeSession } from "./headroom/state";
 import type { LayoutPaths } from "./paths";
 import type { FarmFs, FsPort, HeadroomPort, LogPort, ProcPort, RunPort, SpawnPort } from "./launcher/ports";
+import type { AsyncRun } from "./replayRun";
 import type { HoldPort } from "./launcher/hold";
 import { createLogPort, styleTextFor } from "./logStyle";
 
@@ -417,14 +418,23 @@ export const realRunPort: RunPort = {
   },
 };
 
-/** `realRunPort`'s `run` without blocking the calling thread: the exit status is the process's own, and null when it could not be started or was killed, as `spawnSync` reports it. */
-export async function realRunAsync(command: string, args: readonly string[]): Promise<{ readonly status: number | null; readonly stdout: string; readonly stderr: string }> {
-  return await new Promise((resolve) => {
-    execFile(command, [...args], { encoding: "utf8", timeout: PS_TIMEOUT_MS }, (error, stdout, stderr) => {
-      resolve({ status: error === null ? 0 : typeof error.code === "number" ? error.code : null, stdout, stderr });
+/** How long a command run through `realRunAsync` may take before it is killed: the commands it runs are read-only helpers (a `git` query, a process-table read) that answer from local state far inside this, and one that does not is stuck and must not hold a launch. */
+const ASYNC_RUN_TIMEOUT_MS = 2000;
+
+/**
+ * `realRunPort`'s `run` without blocking the calling thread, for a command that must be stopped if it takes longer than `timeoutMs`: the exit status is the process's own, and null when it could not be started or was killed, which includes being stopped at the limit, as `spawnSync` reports it. A stop at the limit and a command that could not be started look the same.
+ */
+export function realRunAsyncWithin(timeoutMs: number): AsyncRun {
+  return async (command, args) =>
+    await new Promise((resolve) => {
+      execFile(command, [...args], { encoding: "utf8", timeout: timeoutMs }, (error, stdout, stderr) => {
+        resolve({ status: error === null ? 0 : typeof error.code === "number" ? error.code : null, stdout, stderr });
+      });
     });
-  });
 }
+
+/** `realRunPort`'s `run` without blocking the calling thread, with the general limit `ASYNC_RUN_TIMEOUT_MS` on how long the command may run: one still running then is killed and reported with no exit status. A caller with a command that needs another limit uses `realRunAsyncWithin`. */
+export const realRunAsync: AsyncRun = realRunAsyncWithin(ASYNC_RUN_TIMEOUT_MS);
 
 /** Expands a leading `~` in a credential file path to the home directory; any other path is returned as written (the schema only admits absolute and `~`-rooted ones). */
 function expandHome(filePath: string): string {
