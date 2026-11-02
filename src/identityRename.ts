@@ -346,7 +346,7 @@ function keychainPlan(ports: IdentityRenamePorts, login: GatheredLogin | undefin
         try {
           deleteKeychainLogin(ports.run, plan.fromService, plan.account);
         } catch (error) {
-          return `The former Keychain login "${plan.fromService}" could not be deleted (${error instanceof Error ? error.message : String(error)}). The renamed identity does not use it, but a new identity created under the name "${from}" would start signed in as that account, so \`identity add ${from}\` refuses until it is deleted, or until \`identity add ${from} --keep-keychain-login\` says the login is wanted: delete it with \`${remove}\`.`;
+          return `The former Keychain login "${plan.fromService}" could not be deleted (${error instanceof Error ? error.message : String(error)}). The renamed identity does not use it, but a new identity created under the name "${from}" would start signed in as that account, so \`identity add ${from}\` refuses until it is deleted: delete it with \`${remove}\`.`;
         }
         return undefined;
       },

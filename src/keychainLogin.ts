@@ -125,6 +125,10 @@ function shellQuoted(value: string): string {
   return `'${value.replace(/'/gu, "'\\''")}'`;
 }
 
+/** What `identity add --keep-keychain-login`, and the door's `keepKeychainLogin`, do: the person says that a login the Keychain holds for the directory is wanted, which is otherwise refused because the new identity would start signed in as that account. One text, so the command line, the typed API and the MCP tool derived from it say the same. */
+export const KEEP_KEYCHAIN_LOGIN_DESCRIPTION =
+  "Create the identity even though the macOS Keychain already holds a Claude Code login filed for its directory (left by an identity of that name that was renamed or removed); the identity starts signed in as that account. If another identity holds that login, the two share it. Without it that login is refused and the command that deletes it is printed.";
+
 /** What a question to the Keychain needs: the runner of `security` and the platform, since only macOS has a Keychain. */
 export interface KeychainProbe {
   readonly run: RunPort;
@@ -132,7 +136,7 @@ export interface KeychainProbe {
 }
 
 /**
- * Throws `KeychainLoginError` when, on macOS, the Keychain already holds a Claude Code login filed for `configDir`: a new identity created there would start signed in as that account, because Claude Code finds its login by the hash of the directory and not by anything the identity owns. Such an item is left by an identity of that name that was renamed or removed, since `identity remove` does not touch the Keychain and a rename's last step can fail or be cut short. The message names the entry, the exact command that deletes it, and the flag that keeps it on purpose. Throws `KeychainLookupError` instead when the Keychain could not be asked, which says nothing about a leftover.
+ * Throws `KeychainLoginError` when, on macOS, the Keychain already holds a Claude Code login filed for `configDir`: a new identity created there would start signed in as that account, because Claude Code finds its login by the hash of the directory and not by anything the identity owns. Such an item is left by an identity of that name that was renamed or removed, since `identity remove` does not touch the Keychain and a rename's last step can fail or be cut short. The message names the entry, the exact command that deletes it, and the flag that keeps it on purpose, and says that keeping a login another identity holds shares it between the two. It cannot name that identity: the Keychain item carries the operating system account, not an identity, and a finished rename leaves no record of the pair. Throws `KeychainLookupError` instead when the Keychain could not be asked, which says nothing about a leftover.
  *
  * `keepLogin` is the person's statement that the login is wanted (`identity add --keep-keychain-login`): nothing is asked of the Keychain and nothing is refused. Otherwise only attributes are asked for, so the login is never read and the Keychain is never asked for access to it. Off macOS there is no Keychain and nothing is asked.
  */
@@ -147,7 +151,7 @@ export function requireNoLeftoverKeychainLogin(keychain: KeychainProbe, configDi
   }
   const account = plainAccountOf(found.attributes);
   throw new KeychainLoginError(
-    `Cannot create identity "${name}": the Keychain already holds a Claude Code login filed for ${configDir} (service ${service}${account === undefined ? "" : `, account ${account}`}), left behind by an identity of that name that was renamed or removed. A new identity there would start signed in as that account. If you do not need it, delete it with \`${keychainDeleteCommand(service, account)}\` and run the command again. To create the identity signed in as that account on purpose, run \`agent-shim identity add ${name} --keep-keychain-login\`.`,
+    `Cannot create identity "${name}": the Keychain already holds a Claude Code login filed for ${configDir} (service ${service}${account === undefined ? "" : `, account ${account}`}), left behind by an identity of that name that was renamed or removed. A new identity there would start signed in as that account. If you do not need it, delete it with \`${keychainDeleteCommand(service, account)}\` and run the command again. To create the identity signed in as that account on purpose, run \`agent-shim identity add ${name} --keep-keychain-login\`. If another identity holds a copy of that login, as a renamed identity does when its old item could not be deleted, keeping it makes the two share one login.`,
   );
 }
 

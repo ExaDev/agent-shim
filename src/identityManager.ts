@@ -17,7 +17,7 @@ import type { LayoutPaths } from "./paths";
 import { realFarmFs } from "./realPorts";
 import { describeIdentityRename, discardRenameJournal, renameIdentity, type IdentityRenamePorts } from "./identityRename";
 import { realIdentityRenamePorts } from "./realIdentityRename";
-import type { KeychainProbe } from "./keychainLogin";
+import { KEEP_KEYCHAIN_LOGIN_DESCRIPTION, type KeychainProbe } from "./keychainLogin";
 import { IdentityNotFoundError, InvalidIdentityNameError, identityExists, readIdentity, addIdentity, addNewIdentity, requireIdentityAddable, useIdentity, type IdentityListing, listIdentities, setDefaultConfigProfile, setIdentityLabel, setIdentityProvider, setAllowAmbientCredential, setIdentityCredential, setIdentityAnchors, removeIdentity, requireNoUnfinishedRenameNaming } from "./identityStore";
 import { describeAccountHolder, describeIdentityAccount, groupByLogin, loginKeyOf, readIdentityAccount, summariseIdentityAccount, type IdentityAccountRead, type IdentityAccountSummary } from "./identityAccounts";
 import { describeAccountPlan } from "./usage/accountDescription";
@@ -222,10 +222,6 @@ interface IdentitySetOptions extends CredentialCacheOptions {
 /** What `identity rename --help` says it does, as the README and the configuration model describe it: a running session and a starting launch both refuse it, and a rename that was interrupted is finished by running it again. */
 const RENAME_DESCRIPTION =
   "Rename an identity: move its directory, carry its login across and rewrite every reference to its name. Refused while a session is running on it or a launch is starting on it. A rename that was interrupted is finished by running the same command again.";
-
-/** What `identity add --keep-keychain-login` does: it is the person saying that a login the Keychain holds for the directory is wanted, which is otherwise refused because the new identity would start signed in as that account. */
-const KEEP_KEYCHAIN_LOGIN_DESCRIPTION =
-  "Create the identity even though the macOS Keychain already holds a Claude Code login filed for its directory (left by an identity of that name that was renamed or removed); the identity starts signed in as that account. Without it that login is refused and its delete command is printed.";
 
 /** What `--discard-journal` does and exactly when it accepts and refuses, as `discardRenameJournal` checks it: it removes a record and nothing else. */
 const DISCARD_JOURNAL_DESCRIPTION =

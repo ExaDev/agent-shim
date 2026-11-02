@@ -80,6 +80,22 @@ describe("creating an identity while the Keychain still holds a login filed for 
     expect(fs.existsSync(path.join(paths.identitiesDir, "work"))).toBe(false);
   });
 
+  it("says in the refusal that keeping a login another identity also holds shares it between the two, without claiming how the login behaves when shared", async () => {
+    keychain.seed(service("work"), "alex", LOGIN_BLOB);
+    await run(["identity", "add", "work"]);
+    const printed = out.join("\n");
+    expect(printed).toContain("If another identity holds a copy of that login");
+    expect(printed).toContain("keeping it makes the two share one login");
+    expect(printed).not.toMatch(/rotat|refresh token|invalidat/u);
+  });
+
+  it("says in the help of --keep-keychain-login that a login another identity holds is then shared with it", () => {
+    const program = buildProgram({ ...fakeCommandDeps(paths), runClaude: vi.fn(), identityRenamePorts: { ...world.ports(), run: keychain.run, platform: "darwin" } });
+    const add = program.commands.find((command) => command.name() === "identity")?.commands.find((command) => command.name() === "add");
+    const option = add?.options.find((candidate) => candidate.long === "--keep-keychain-login");
+    expect(option?.description).toContain("If another identity holds that login, the two share it");
+  });
+
   it("is allowed with --keep-keychain-login, which says the login is wanted, without asking the Keychain anything", async () => {
     keychain.seed(service("work"), "alex", LOGIN_BLOB);
     expect(await run(["identity", "add", "work", "--keep-keychain-login"])).toBe(0);
@@ -272,7 +288,8 @@ describe("creating an identity while the Keychain still holds a login filed for 
         expect(warning).toContain("could not be deleted");
         expect(warning).not.toContain("harmless");
         expect(warning).toContain('a new identity created under the name "work" would start signed in as that account');
-        expect(warning).toContain("`identity add work` refuses until it is deleted, or until `identity add work --keep-keychain-login` says the login is wanted");
+        expect(warning).toContain("`identity add work` refuses until it is deleted");
+        expect(warning).not.toContain("--keep-keychain-login");
         expect(warning).toContain(`\`security delete-generic-password -s '${oldService}' -a 'alex'\``);
         expect(() => addNewIdentity(renamed.paths, "work", { run: renamed.keychain.run, platform: "darwin" }, false)).toThrow(`\`security delete-generic-password -s '${oldService}' -a 'alex'\``);
       } finally {
