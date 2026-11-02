@@ -44,7 +44,7 @@ describe("identityOf", () => {
 
   it("derives it from the config directory a launch pins, whose parent is the identities directory", () => {
     expect(identityOf({ CLAUDE_CONFIG_DIR: "/root/identities/antigravity" })).toBe("antigravity");
-    expect(identityOf({ CLAUDE_CONFIG_DIR: "/home/joe/.claude" })).toBeUndefined();
+    expect(identityOf({ CLAUDE_CONFIG_DIR: "/home/alex/.claude" })).toBeUndefined();
     expect(identityOf({})).toBeUndefined();
   });
 });

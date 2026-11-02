@@ -601,7 +601,7 @@ describe("provider commands", () => {
       "--credential", "env:ANTHROPIC_KEY",
       "--credential", "file:~/.config/anthropic.key",
       "--credential", "op:op://vault/a/key",
-      "--credential", "keychain:anthropic:joe",
+      "--credential", "keychain:anthropic:alex",
       "--credential", "command:pass show anthropic",
       "--credential", '{"command":["my tool","--flag"],"interactive":true,"timeoutMs":5000}',
     ];
@@ -612,13 +612,13 @@ describe("provider commands", () => {
         { env: "ANTHROPIC_KEY" },
         { file: "~/.config/anthropic.key" },
         { op: "op://vault/a/key" },
-        { keychain: { service: "anthropic", account: "joe" } },
+        { keychain: { service: "anthropic", account: "alex" } },
         { command: ["pass", "show", "anthropic"] },
         { command: ["my tool", "--flag"], interactive: true, timeoutMs: 5000 },
       ],
     });
     expect((await cli(["provider", "show", "a"])).stdout).toContain(
-      "Credential: apiKey from env ANTHROPIC_KEY, then file ~/.config/anthropic.key, then op op://vault/a/key, then keychain anthropic (account joe), then command pass, then command my tool",
+      "Credential: apiKey from env ANTHROPIC_KEY, then file ~/.config/anthropic.key, then op op://vault/a/key, then keychain anthropic (account alex), then command pass, then command my tool",
     );
 
     expect((await cli(["provider", "set", "a", "--credential", "env:OTHER"])).code).toBe(0);

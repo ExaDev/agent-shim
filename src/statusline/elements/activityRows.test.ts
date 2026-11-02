@@ -126,7 +126,7 @@ describe("the tools row", () => {
     expect(run("Read", "/short/a.ts")).toBe("\u25D0 Read: /short/a.ts");
     expect(run("Read", "/a/long/directory/path/index.ts")).toBe("\u25D0 Read: .../index.ts");
     expect(run("Edit", `/a/b/${"x".repeat(TWENTY_FIVE)}.ts`)).toBe(`\u25D0 Edit: ${"x".repeat(TARGET_COLUMNS - "...".length)}...`);
-    expect(run("Read", "C:\\Users\\joe\\project\\src\\index.ts")).toBe("\u25D0 Read: .../index.ts");
+    expect(run("Read", "C:\\Users\\alex\\project\\src\\index.ts")).toBe("\u25D0 Read: .../index.ts");
     expect(run("Bash", "git status")).toBe("\u25D0 Bash: git status");
     expect(run("Bash", "npm run build -- --watch --verbose")).toBe(`\u25D0 Bash: npm run build -- --${ELLIPSIS}`);
     expect(run("Grep", "needle")).toBe("\u25D0 Grep: needle");

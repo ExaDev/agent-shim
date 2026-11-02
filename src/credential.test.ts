@@ -41,13 +41,13 @@ describe("resolveCredential", () => {
 
   it("compiles the op and keychain presets to their argv and runs a command source as given", () => {
     expect(commandArgv({ op: "op://vault/item/field" })).toEqual(["op", "read", "op://vault/item/field"]);
-    expect(commandArgv({ keychain: { service: "claude-work", account: "joe" } })).toEqual([
+    expect(commandArgv({ keychain: { service: "claude-work", account: "alex" } })).toEqual([
       "security",
       "find-generic-password",
       "-s",
       "claude-work",
       "-a",
-      "joe",
+      "alex",
       "-w",
     ]);
     expect(commandArgv({ keychain: { service: "claude-work" } })).toEqual(["security", "find-generic-password", "-s", "claude-work", "-w"]);

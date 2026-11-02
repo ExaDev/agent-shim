@@ -6,10 +6,10 @@ import { addedDirNames, formatProjectPath, MAX_ADDED_DIR_NAME_CHARS, MAX_ADDED_D
 
 describe("formatProjectPath", () => {
   it("shows the last levels of a POSIX path, or all of it", () => {
-    expect(formatProjectPath("/Users/joe/code/agent-shim", "1")).toBe("agent-shim");
-    expect(formatProjectPath("/Users/joe/code/agent-shim", "2")).toBe("code/agent-shim");
-    expect(formatProjectPath("/Users/joe/code/agent-shim", "3")).toBe("joe/code/agent-shim");
-    expect(formatProjectPath("/Users/joe/code/agent-shim", "full")).toBe("/Users/joe/code/agent-shim");
+    expect(formatProjectPath("/Users/alex/code/agent-shim", "1")).toBe("agent-shim");
+    expect(formatProjectPath("/Users/alex/code/agent-shim", "2")).toBe("code/agent-shim");
+    expect(formatProjectPath("/Users/alex/code/agent-shim", "3")).toBe("alex/code/agent-shim");
+    expect(formatProjectPath("/Users/alex/code/agent-shim", "full")).toBe("/Users/alex/code/agent-shim");
   });
 
   it("shows a path with fewer directories than levels whole, without the leading slash", () => {
@@ -22,8 +22,8 @@ describe("formatProjectPath", () => {
   });
 
   it("reads Windows drive and UNC paths with either separator and writes them with forward slashes", () => {
-    expect(formatProjectPath("C:\\Users\\joe\\project", "2")).toBe("joe/project");
-    expect(formatProjectPath("C:\\Users\\joe\\project", "full")).toBe("C:/Users/joe/project");
+    expect(formatProjectPath("C:\\Users\\alex\\project", "2")).toBe("alex/project");
+    expect(formatProjectPath("C:\\Users\\alex\\project", "full")).toBe("C:/Users/alex/project");
     expect(formatProjectPath("C:\\", "full")).toBe("C:/");
     expect(formatProjectPath("\\\\server\\share\\dir", "full")).toBe("//server/share/dir");
     expect(formatProjectPath("\\\\", "full")).toBe("//");

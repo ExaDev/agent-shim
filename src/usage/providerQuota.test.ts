@@ -336,7 +336,7 @@ describe("antigravityQuotaAdapter", () => {
       return { status: 200, text: JSON.stringify({ currentTier: { id: "free-tier", name: "Antigravity" }, paidTier: { id: "g1-pro-tier", name: "Google AI Pro" } }) };
     }
     if (url.startsWith("https://oauth2.googleapis.com/tokeninfo")) {
-      return { status: 200, text: JSON.stringify({ email: "joe@example.com", sub: "12345" }) };
+      return { status: 200, text: JSON.stringify({ email: "alex@example.com", sub: "12345" }) };
     }
     return { status: HTTP_SERVER_ERROR, text: "" };
   });
@@ -344,7 +344,7 @@ describe("antigravityQuotaAdapter", () => {
   it("maps the summary's buckets into windows with their known lengths, the token into the account and the tier into the plan", async () => {
     const quota = await antigravityQuotaAdapter.fetch("REDACTED", http, new AbortController().signal, NOW_MS);
     expect(quota.source).toBe("Cloud Code");
-    expect(quota.account).toEqual({ email: "joe@example.com", accountId: "12345" });
+    expect(quota.account).toEqual({ email: "alex@example.com", accountId: "12345" });
     expect(quota.level).toBe("Google AI Pro");
 
     const freeAccount = vi.fn<QuotaHttpGet>(async (url) => {
