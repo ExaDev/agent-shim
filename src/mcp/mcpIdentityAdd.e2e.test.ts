@@ -44,6 +44,8 @@ describe("the MCP tool that adds an identity, over the door's configuration rout
   let keychain: FakeKeychain;
   let origin: string;
   let close: () => Promise<void>;
+  /** When true, `security` gives no answer at all, as when it is killed after its time limit or cannot be started. */
+  let unanswering: boolean;
 
   const service = (name: string): string => claudeCodeKeychainService(path.join(paths.identitiesDir, name));
 
@@ -51,7 +53,8 @@ describe("the MCP tool that adds an identity, over the door's configuration rout
     root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-mcp-identity-add-"));
     paths = buildLayoutPaths(root);
     keychain = createFakeKeychain();
-    const runAsync: AsyncRun = async (command, args) => await Promise.resolve(keychain.run.run(command, args));
+    unanswering = false;
+    const runAsync: AsyncRun = async (command, args) => await Promise.resolve(unanswering ? { status: null, stdout: "", stderr: "" } : keychain.run.run(command, args));
     const mounted = await mountRouterClient(createConfigApiRouter({ expectedToken: CONTROL_TOKEN, paths, keychain: { runAsync, platform: "darwin" } }), CONTROL_TOKEN, CONTROL_TOKEN);
     origin = new URL(mounted.url).origin;
     close = mounted.close;
@@ -102,6 +105,22 @@ describe("the MCP tool that adds an identity, over the door's configuration rout
     expect(text).toContain("agent-shim identity add work --keep-keychain-login");
     expect(text).not.toContain(LOGIN_BLOB);
     expect(identityExists(paths, "work")).toBe(false);
+    await client.close();
+  });
+
+  it("reports a Keychain that could not be asked as a retryable SERVICE_UNAVAILABLE, not as the conflict a leftover login is", async () => {
+    unanswering = true;
+    const client = await connect(WRITES);
+    const failed = await client.callTool({ name: "config_identity_add", arguments: { name: "work" } });
+    expect(failed.isError).toBe(true);
+    const text = textOf(failed);
+    expect(text).toContain("SERVICE_UNAVAILABLE");
+    expect(text).not.toContain("CONFLICT");
+    expect(identityExists(paths, "work")).toBe(false);
+    unanswering = false;
+    const retried = await client.callTool({ name: "config_identity_add", arguments: { name: "work" } });
+    expect(retried.isError).not.toBe(true);
+    expect(identityExists(paths, "work")).toBe(true);
     await client.close();
   });
 

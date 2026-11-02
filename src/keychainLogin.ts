@@ -22,11 +22,21 @@ const CONTROL_CHARACTER = /\p{Cc}/u;
 /** The line `security find-generic-password -g` prints on standard error for the password: in the form `password: 0x<HEX>  "<rendering>"` when the bytes are not plain text (or hold a double quote or a backslash), and `password: "<text>"` otherwise. */
 const PASSWORD_LINE = /^password: (?:0x(?<hex>[0-9A-Fa-f]*)(?:\s.*)?|"(?<text>.*)")$/mu;
 
-/** A Keychain login could not be read, copied or removed. The message never holds the secret, nor any text the tool printed while the secret was in play. */
+/** A Keychain login could not be read, copied or removed, or one is in the way of what was asked. The message never holds the secret, nor any text the tool printed while the secret was in play. */
 export class KeychainLoginError extends CliError {
   constructor(message: string) {
     super(message);
     this.name = "KeychainLoginError";
+  }
+}
+
+/**
+ * The Keychain could not be asked at all: `security` gave no answer (it could not be started, or was stopped after its time limit) or failed in a way that is not an absence, a locked Keychain among them. It says nothing about whether an item is there, and asking again may succeed, which is what separates it from a `KeychainLoginError` that reports a login that was found.
+ */
+export class KeychainLookupError extends KeychainLoginError {
+  constructor(message: string) {
+    super(message);
+    this.name = "KeychainLookupError";
   }
 }
 
@@ -54,7 +64,7 @@ function describe(stderr: string): string {
 }
 
 /**
- * Looks one service up by attributes only. `find-generic-password` without `-w` or `-g` prints the item's attributes and never its secret, and never prompts for access to it.
+ * Looks one service up by attributes only. `find-generic-password` without `-w` or `-g` prints the item's attributes and never its secret, and never prompts for access to it. Throws `KeychainLookupError` when `security` did not answer or failed for a reason other than the item's absence.
  */
 function lookup(run: RunPort, service: string): Lookup {
   const result = run.run("security", ["find-generic-password", "-s", service]);
@@ -64,7 +74,7 @@ function lookup(run: RunPort, service: string): Lookup {
   if (result.status === ITEM_NOT_FOUND_STATUS) {
     return { found: false };
   }
-  throw new KeychainLoginError(`Could not look up the Keychain item ${service}: security exited ${statusPhrase(result.status)}${describe(result.stderr)}.`);
+  throw new KeychainLookupError(`Could not look up the Keychain item ${service}: security exited ${statusPhrase(result.status)}${describe(result.stderr)}.`);
 }
 
 /** `value` with a backslash before each quote and backslash, which is how the tool's own tokeniser reads a character back literally. */
@@ -111,7 +121,7 @@ export interface KeychainProbe {
 }
 
 /**
- * Throws `KeychainLoginError` when, on macOS, the Keychain already holds a Claude Code login filed for `configDir`: a new identity created there would start signed in as that account, because Claude Code finds its login by the hash of the directory and not by anything the identity owns. Such an item is left by an identity of that name that was renamed or removed, since `identity remove` does not touch the Keychain and a rename's last step can fail or be cut short. The message names the entry, the exact command that deletes it, and the flag that keeps it on purpose.
+ * Throws `KeychainLoginError` when, on macOS, the Keychain already holds a Claude Code login filed for `configDir`: a new identity created there would start signed in as that account, because Claude Code finds its login by the hash of the directory and not by anything the identity owns. Such an item is left by an identity of that name that was renamed or removed, since `identity remove` does not touch the Keychain and a rename's last step can fail or be cut short. The message names the entry, the exact command that deletes it, and the flag that keeps it on purpose. Throws `KeychainLookupError` instead when the Keychain could not be asked, which says nothing about a leftover.
  *
  * `keepLogin` is the person's statement that the login is wanted (`identity add --keep-keychain-login`): nothing is asked of the Keychain and nothing is refused. Otherwise only attributes are asked for, so the login is never read and the Keychain is never asked for access to it. Off macOS there is no Keychain and nothing is asked.
  */

@@ -44,8 +44,8 @@ describe("config.identity.add and a Keychain login left behind for the directory
     };
   }
 
-  function client(platform: NodeJS.Platform = "darwin") {
-    return createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync: asynchronously(), platform } }), {
+  function client(platform: NodeJS.Platform = "darwin", runAsync: AsyncRun = asynchronously()) {
+    return createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform } }), {
       context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
     }).config;
   }
@@ -112,6 +112,21 @@ describe("config.identity.add and a Keychain login left behind for the directory
     keychain.calls.length = 0;
     expect((await refusalOf(client().identity.add({ name: "work" })))?.code).toBe("CONFLICT");
     expect(keychain.calls).toEqual([]);
+  });
+
+  it.each([
+    { case: "security killed after its time limit, or never started (no exit status)", answer: { status: null, stdout: "", stderr: "" } },
+    { case: "a locked Keychain (an exit status that is not an absence)", answer: { status: 36, stdout: "", stderr: "User interaction is not allowed." } },
+  ])("is SERVICE_UNAVAILABLE, which a client may retry, and not CONFLICT, when the Keychain could not be asked: $case", async ({ answer }) => {
+    const refused = await refusalOf(client("darwin", async () => await Promise.resolve(answer)).identity.add({ name: "work" }));
+    expect(refused?.code).toBe("SERVICE_UNAVAILABLE");
+    expect(refused?.message).toContain(`Could not look up the Keychain item ${service("work")}`);
+    expect(identityExists(paths, "work")).toBe(false);
+  });
+
+  it("is still CONFLICT for a leftover login that was found, whatever the lookup failures do", async () => {
+    keychain.seed(service("work"), "alex", LOGIN_BLOB);
+    expect((await refusalOf(client().identity.add({ name: "work" })))?.code).toBe("CONFLICT");
   });
 
   it("asks nothing of the Keychain off macOS", async () => {

@@ -10,7 +10,7 @@ import { renameIdentity } from "./identityRename";
 import { createWorld, type World } from "./identityRenameTestWorld";
 import { IdentityAlreadyExistsError, InvalidIdentityNameError, addNewIdentity, identityExists } from "./identityStore";
 import { createFakeKeychain, type FakeKeychain } from "./keychainTestWorld";
-import { KeychainLoginError, type KeychainProbe } from "./keychainLogin";
+import { KeychainLoginError, KeychainLookupError, type KeychainProbe } from "./keychainLogin";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { buildProgram } from "./program";
 import { fakeCommandDeps, scriptedPrompts } from "./test-helpers";
@@ -172,6 +172,30 @@ describe("creating an identity while the Keychain still holds a login filed for 
     })();
     expect(failure).toBeInstanceOf(KeychainLoginError);
     expect(failure).toBeInstanceOf(CliError);
+  });
+
+  it("is not a KeychainLookupError when it is a leftover login that was found, which is the one case a caller may call a conflict", () => {
+    keychain.seed(service("work"), "alex", LOGIN_BLOB);
+    expect(() => addNewIdentity(paths, "work", darwin, false)).toThrow(KeychainLoginError);
+    expect(() => addNewIdentity(paths, "work", darwin, false)).not.toThrow(KeychainLookupError);
+  });
+
+  it.each([
+    { case: "security killed or never started (no exit status)", status: null },
+    { case: "a locked Keychain (an exit status that is not an absence)", status: 36 },
+  ])("is a KeychainLookupError, not a conflict, when the Keychain could not be asked: $case", ({ status }) => {
+    const unanswering: KeychainProbe = { run: { run: () => ({ status, stdout: "", stderr: "" }) }, platform: "darwin" };
+    const failure: unknown = (() => {
+      try {
+        addNewIdentity(paths, "work", unanswering, false);
+      } catch (error) {
+        return error;
+      }
+      return undefined;
+    })();
+    expect(failure).toBeInstanceOf(KeychainLookupError);
+    expect(failure).toBeInstanceOf(KeychainLoginError);
+    expect(identityExists(paths, "work")).toBe(false);
   });
 
   describe("through the offer to create an identity that identity use, @name and a launch make", () => {
