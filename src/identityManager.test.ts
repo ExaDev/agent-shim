@@ -50,9 +50,9 @@ describe("identityManager", () => {
     });
 
     it("creates an identity for an email-shaped name — `@` is valid in the body, so the `@name` shortcut's first-`@` split lands here intact", () => {
-      const identity = addIdentity(paths, "joseph.mearman@exadev.io");
-      expect(identity.name).toBe("joseph.mearman@exadev.io");
-      expect(readIdentity(paths, "joseph.mearman@exadev.io")?.name).toBe("joseph.mearman@exadev.io");
+      const identity = addIdentity(paths, "user@example.com");
+      expect(identity.name).toBe("user@example.com");
+      expect(readIdentity(paths, "user@example.com")?.name).toBe("user@example.com");
     });
 
     it("throws InvalidIdentityNameError for a leading `@` — the first character stays strictly alphanumeric so the `@name` selector syntax's first-`@` split stays unambiguous", () => {
@@ -99,9 +99,9 @@ describe("identityManager", () => {
     });
 
     it("splits an @<name> token at the first `@` only, so an email-shaped identity name survives intact", async () => {
-      addIdentity(paths, "joseph.mearman@exadev.io");
-      expect(await tryRunAtIdentityShortcut(fakeCommandDeps(paths), ["@joseph.mearman@exadev.io"], NO_KEYCHAIN)).toBe(true);
-      expect(readActiveIdentity(paths)).toBe("joseph.mearman@exadev.io");
+      addIdentity(paths, "user@example.com");
+      expect(await tryRunAtIdentityShortcut(fakeCommandDeps(paths), ["@user@example.com"], NO_KEYCHAIN)).toBe(true);
+      expect(readActiveIdentity(paths)).toBe("user@example.com");
     });
 
     it("propagates IdentityNotFoundError for an unknown @<name> in a non-interactive context", async () => {
@@ -170,11 +170,11 @@ describe("identityManager", () => {
 
     it("offers the wizard for an email-shaped name, whose `@` is valid in the body", async () => {
       const prompts = scriptedIdentityPrompts(["create", "skip"]);
-      const result = await runIdentityWizard(prompts, paths, "joseph.mearman@exadev.io", NO_KEYCHAIN);
+      const result = await runIdentityWizard(prompts, paths, "user@example.com", NO_KEYCHAIN);
 
       expect(result).toBe(true);
-      expect(readIdentity(paths, "joseph.mearman@exadev.io")).toBeDefined();
-      expect(readActiveIdentity(paths)).toBe("joseph.mearman@exadev.io");
+      expect(readIdentity(paths, "user@example.com")).toBeDefined();
+      expect(readActiveIdentity(paths)).toBe("user@example.com");
     });
 
     it("defaults the profile-creation prompt's cursor to skip, so a bare Enter creates no profile", async () => {
@@ -200,7 +200,7 @@ describe("identityManager", () => {
   describe("isIdentityDirectoryName", () => {
     it("accepts a name IdentitySchema itself would accept", () => {
       expect(isIdentityDirectoryName("work")).toBe(true);
-      expect(isIdentityDirectoryName("joseph.mearman@exadev.io")).toBe(true);
+      expect(isIdentityDirectoryName("user@example.com")).toBe(true);
     });
 
     it("rejects both farm-bookkeeping shapes, which an identity name could never take", () => {

@@ -404,7 +404,7 @@ describe("validateProfileName", () => {
   });
 
   it("accepts an at sign in the body, matching the identity-name shape the wizard defaults to for a new identity", () => {
-    expect(validateProfileName("joseph.mearman@exadev.io")).toBeUndefined();
+    expect(validateProfileName("user@example.com")).toBeUndefined();
   });
 
   it("rejects a name starting with an at sign", () => {
