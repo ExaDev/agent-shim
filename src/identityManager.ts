@@ -18,7 +18,7 @@ import { realFarmFs } from "./realPorts";
 import { describeIdentityRename, discardRenameJournal, renameIdentity, type IdentityRenamePorts } from "./identityRename";
 import { realIdentityRenamePorts } from "./realIdentityRename";
 import type { KeychainProbe } from "./keychainLogin";
-import { IdentityNotFoundError, InvalidIdentityNameError, identityExists, readIdentity, addNewIdentity, useIdentity, type IdentityListing, listIdentities, setDefaultConfigProfile, setIdentityLabel, setIdentityProvider, setAllowAmbientCredential, setIdentityCredential, setIdentityAnchors, removeIdentity, requireNoUnfinishedRenameNaming } from "./identityStore";
+import { IdentityNotFoundError, InvalidIdentityNameError, identityExists, readIdentity, addIdentity, addNewIdentity, requireIdentityAddable, useIdentity, type IdentityListing, listIdentities, setDefaultConfigProfile, setIdentityLabel, setIdentityProvider, setAllowAmbientCredential, setIdentityCredential, setIdentityAnchors, removeIdentity, requireNoUnfinishedRenameNaming } from "./identityStore";
 import { describeAccountHolder, describeIdentityAccount, groupByLogin, loginKeyOf, readIdentityAccount, summariseIdentityAccount, type IdentityAccountRead, type IdentityAccountSummary } from "./identityAccounts";
 import { describeAccountPlan } from "./usage/accountDescription";
 import { ANCHOR_SYNTAX, formatAnchor } from "./usage/anchor";
@@ -42,6 +42,8 @@ export async function runIdentityWizard(
   if (!IdentitySchema.safeParse({ name, allowAmbientCredential: false }).success) {
     throw new InvalidIdentityNameError(name);
   }
+  // Refused here, before the question, so that nobody is asked to create what would then be refused; the refusal names the flag of `identity add` that keeps a login on purpose, since this offer has none.
+  requireIdentityAddable(paths, name, keychain, false);
   const choice = await prompts.select({
     message: `No identity named "${name}" exists yet. Create it now?`,
     options: [
@@ -53,7 +55,7 @@ export async function runIdentityWizard(
     return false;
   }
 
-  addNewIdentity(paths, name, keychain, false);
+  addIdentity(paths, name);
 
   const profileChoice = await prompts.select({
     message: `Create a default configuration profile for "${name}"?`,
