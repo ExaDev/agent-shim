@@ -127,15 +127,39 @@ describe("running a rename again after one was left unfinished", () => {
     }
   });
 
-  it("is kept with every step marked undone when the run that finishes it fails and rolls back completely, since the state is the earlier run's again", async () => {
+  it("keeps the earlier run's done marks when the run that finishes it fails and rolls back completely, since the state is the earlier run's again", async () => {
     await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: leavingItHalfDone(world) }))).rejects.toThrow();
+    const earlier = journalOf(world);
+    const applied = earlier?.steps.filter((step) => step.done).map((step) => step.description);
+    expect(applied).toEqual(["move identities/work to identities/client"]);
     await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: failingOnce(world) }))).rejects.toThrow(/disk full/);
     const journal = journalOf(world);
-    expect(journal?.steps.length).toBeGreaterThan(0);
-    expect(journal?.steps.filter((step) => step.done)).toEqual([]);
-    expect(journal === undefined ? "" : describeUnfinishedRename(journal, { finishable: true })).toContain(`(0 of ${String(journal?.steps.length)} steps recorded as done)`);
+    expect(journal?.steps.filter((step) => step.done).map((step) => step.description)).toEqual(applied);
+    expect(journal === undefined ? "" : describeUnfinishedRename(journal, { finishable: true })).toContain(`(1 of ${String(journal?.steps.length)} steps recorded as done)`);
     await expect(renameIdentity(world.paths, "work", "client", world.ports())).resolves.toBeDefined();
     expect(journalOf(world)).toBeUndefined();
+  });
+
+  it("keeps the earlier run's done marks while the run that finishes it is applying its own steps, and adds its steps as they are applied", async () => {
+    await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: leavingItHalfDone(world) }))).rejects.toThrow();
+    const seen: RenameJournal[] = [];
+    const watching = {
+      ...realFarmFs,
+      writeFilePrivate: (file: string, contents: string): void => {
+        if (file === world.paths.usageAnchorsFile) {
+          const current = journalOf(world);
+          if (current !== undefined) {
+            seen.push(current);
+          }
+        }
+        realFarmFs.writeFilePrivate(file, contents);
+      },
+    };
+    await renameIdentity(world.paths, "work", "client", world.ports({ fs: watching }));
+    const [during] = seen;
+    const doneDuring = during?.steps.filter((step) => step.done).map((step) => step.description) ?? [];
+    expect(doneDuring).toContain("move identities/work to identities/client");
+    expect(doneDuring.length).toBeGreaterThan(1);
   });
 
   it("finishes a rename that was killed after moving the directory, which no rollback ran for", async () => {
