@@ -7,7 +7,18 @@ import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import type { PromptsPort, SelectParams } from "./configure";
 import { fakeCommandDeps, scriptedPrompts as scriptedIdentityPrompts } from "./test-helpers";
 import { runIdentityWizard, tryRunAtIdentityShortcut } from "./identityManager";
+import type { KeychainProbe } from "./keychainLogin";
 import { IdentityAlreadyExistsError, IdentityNotFoundError, InvalidIdentityNameError, addIdentity, isIdentityDirectoryName, listIdentities, readActiveIdentity, readIdentity, setAllowAmbientCredential, setDefaultConfigProfile, useIdentity } from "./identityStore";
+
+/** A machine with no Keychain, where creating an identity asks nothing of one. */
+const NO_KEYCHAIN: KeychainProbe = {
+  platform: "linux",
+  run: {
+    run: () => {
+      throw new Error("a machine without a Keychain must not be asked");
+    },
+  },
+};
 
 describe("identityManager", () => {
   let root: string;
@@ -83,49 +94,49 @@ describe("identityManager", () => {
   describe("tryRunAtIdentityShortcut", () => {
     it("switches the active identity for a bare @<name> argument", async () => {
       addIdentity(paths, "exadev");
-      expect(await tryRunAtIdentityShortcut(fakeCommandDeps(paths), ["@exadev"])).toBe(true);
+      expect(await tryRunAtIdentityShortcut(fakeCommandDeps(paths), ["@exadev"], NO_KEYCHAIN)).toBe(true);
       expect(readActiveIdentity(paths)).toBe("exadev");
     });
 
     it("splits an @<name> token at the first `@` only, so an email-shaped identity name survives intact", async () => {
       addIdentity(paths, "joseph.mearman@exadev.io");
-      expect(await tryRunAtIdentityShortcut(fakeCommandDeps(paths), ["@joseph.mearman@exadev.io"])).toBe(true);
+      expect(await tryRunAtIdentityShortcut(fakeCommandDeps(paths), ["@joseph.mearman@exadev.io"], NO_KEYCHAIN)).toBe(true);
       expect(readActiveIdentity(paths)).toBe("joseph.mearman@exadev.io");
     });
 
     it("propagates IdentityNotFoundError for an unknown @<name> in a non-interactive context", async () => {
-      await expect(tryRunAtIdentityShortcut(fakeCommandDeps(paths), ["@ghost"])).rejects.toThrow(IdentityNotFoundError);
+      await expect(tryRunAtIdentityShortcut(fakeCommandDeps(paths), ["@ghost"], NO_KEYCHAIN)).rejects.toThrow(IdentityNotFoundError);
     });
 
     it("returns false and touches nothing for a bare name with no @ prefix", async () => {
       addIdentity(paths, "exadev");
-      expect(await tryRunAtIdentityShortcut(fakeCommandDeps(paths), ["exadev"])).toBe(false);
+      expect(await tryRunAtIdentityShortcut(fakeCommandDeps(paths), ["exadev"], NO_KEYCHAIN)).toBe(false);
       expect(readActiveIdentity(paths)).toBeUndefined();
     });
 
     it("returns false for a lone @ with no name", async () => {
-      expect(await tryRunAtIdentityShortcut(fakeCommandDeps(paths), ["@"])).toBe(false);
+      expect(await tryRunAtIdentityShortcut(fakeCommandDeps(paths), ["@"], NO_KEYCHAIN)).toBe(false);
     });
 
     it("returns false when there is more than one argument, even if the first is @<name>", async () => {
       addIdentity(paths, "exadev");
-      expect(await tryRunAtIdentityShortcut(fakeCommandDeps(paths), ["@exadev", "extra"])).toBe(false);
+      expect(await tryRunAtIdentityShortcut(fakeCommandDeps(paths), ["@exadev", "extra"], NO_KEYCHAIN)).toBe(false);
       expect(readActiveIdentity(paths)).toBeUndefined();
     });
 
     it("returns false for no arguments at all", async () => {
-      expect(await tryRunAtIdentityShortcut(fakeCommandDeps(paths), [])).toBe(false);
+      expect(await tryRunAtIdentityShortcut(fakeCommandDeps(paths), [], NO_KEYCHAIN)).toBe(false);
     });
 
     it("returns false for a real subcommand name, leaving it to Commander's own dispatch", async () => {
-      expect(await tryRunAtIdentityShortcut(fakeCommandDeps(paths), ["identity"])).toBe(false);
+      expect(await tryRunAtIdentityShortcut(fakeCommandDeps(paths), ["identity"], NO_KEYCHAIN)).toBe(false);
     });
   });
 
   describe("runIdentityWizard", () => {
     it("creates the identity, a profile, and sets it as active when the user accepts every step", async () => {
       const prompts = scriptedIdentityPrompts(["create", "create", "work", ["history"]]);
-      const result = await runIdentityWizard(prompts, paths, "scienap");
+      const result = await runIdentityWizard(prompts, paths, "scienap", NO_KEYCHAIN);
 
       expect(result).toBe(true);
       expect(readIdentity(paths, "scienap")).toBeDefined();
@@ -135,7 +146,7 @@ describe("identityManager", () => {
 
     it("creates only the identity when the user skips profile creation", async () => {
       const prompts = scriptedIdentityPrompts(["create", "skip"]);
-      const result = await runIdentityWizard(prompts, paths, "personal");
+      const result = await runIdentityWizard(prompts, paths, "personal", NO_KEYCHAIN);
 
       expect(result).toBe(true);
       expect(readIdentity(paths, "personal")).toBeDefined();
@@ -145,7 +156,7 @@ describe("identityManager", () => {
 
     it("creates nothing and returns false when the user declines at the initial confirm", async () => {
       const prompts = scriptedIdentityPrompts(["cancel"]);
-      const result = await runIdentityWizard(prompts, paths, "ghost");
+      const result = await runIdentityWizard(prompts, paths, "ghost", NO_KEYCHAIN);
 
       expect(result).toBe(false);
       expect(readIdentity(paths, "ghost")).toBeUndefined();
@@ -154,12 +165,12 @@ describe("identityManager", () => {
 
     it("throws InvalidIdentityNameError before any prompt appears, not a raw ZodError after the user confirms, when the name fails IdentitySchema's own naming rule", async () => {
       const prompts = scriptedIdentityPrompts([]);
-      await expect(runIdentityWizard(prompts, paths, "@exadev")).rejects.toThrow(InvalidIdentityNameError);
+      await expect(runIdentityWizard(prompts, paths, "@exadev", NO_KEYCHAIN)).rejects.toThrow(InvalidIdentityNameError);
     });
 
     it("offers the wizard for an email-shaped name, whose `@` is valid in the body", async () => {
       const prompts = scriptedIdentityPrompts(["create", "skip"]);
-      const result = await runIdentityWizard(prompts, paths, "joseph.mearman@exadev.io");
+      const result = await runIdentityWizard(prompts, paths, "joseph.mearman@exadev.io", NO_KEYCHAIN);
 
       expect(result).toBe(true);
       expect(readIdentity(paths, "joseph.mearman@exadev.io")).toBeDefined();
@@ -177,7 +188,7 @@ describe("identityManager", () => {
         },
       };
 
-      await runIdentityWizard(spying, paths, "work");
+      await runIdentityWizard(spying, paths, "work", NO_KEYCHAIN);
 
       const profilePrompt = selectCalls.find((call) => call.message.includes("configuration profile"));
       expect(profilePrompt?.initialValue).toBe("skip");

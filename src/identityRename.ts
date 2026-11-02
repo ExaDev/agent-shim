@@ -15,7 +15,7 @@ import { identityTokenPath } from "./identityToken";
 import type { IdentitySessionProbe, SessionProcess } from "./identitySessions";
 import { renameIdentityInJobs } from "./jobStore";
 import { describeUnfinishable, describeUnfinishedRename, discardJournalCommand, finishabilityOf, readRenameJournal, recordsNothingApplied, readRenameJournals, removeRenameJournal, renameJournalFile, unfinishedRenameFor, writeRenameJournal, type RenameFinishability, type RenameJournal } from "./identityRenameJournal";
-import { deleteKeychainLogin, planKeychainLogin, readKeychainLogin, writeKeychainLogin, type KeychainLoginPlan } from "./keychainLogin";
+import { deleteKeychainLogin, keychainDeleteCommand, planKeychainLogin, readKeychainLogin, writeKeychainLogin, type KeychainLoginPlan } from "./keychainLogin";
 import { FARM_MANIFEST_FILENAME, manifestWithIdentity } from "./launcher/farm";
 import { acquireIdentityLock, type AcquireIdentityLockParams, type IdentityLock } from "./launcher/lock";
 import type { FarmFs, RunPort } from "./launcher/ports";
@@ -316,7 +316,7 @@ function moveStep(paths: LayoutPaths, ports: IdentityRenamePorts, source: string
 /**
  * The Keychain steps: copy the macOS login to the service the new directory hashes to now, and delete the old item once everything else has succeeded. `login` is the plan and the password bytes read before the locks were taken; a dry run reads no password, so the step it plans has no bytes and is never applied.
  */
-function keychainPlan(ports: IdentityRenamePorts, login: GatheredLogin | undefined, toDir: string): { readonly step: Step | undefined; readonly finisher: Finisher } | undefined {
+function keychainPlan(ports: IdentityRenamePorts, login: GatheredLogin | undefined, toDir: string, from: string): { readonly step: Step | undefined; readonly finisher: Finisher } | undefined {
   if (login === undefined) {
     return undefined;
   }
@@ -339,14 +339,14 @@ function keychainPlan(ports: IdentityRenamePorts, login: GatheredLogin | undefin
     finisher: {
       description: `delete the former Keychain login "${plan.fromService}"`,
       finish: () => {
-        const remove = `security delete-generic-password -s "${plan.fromService}" -a "${plan.account}"`;
+        const remove = keychainDeleteCommand(plan.fromService, plan.account);
         if (!keychainHasItem(ports.run, toDir)) {
           return `The new Keychain login "${plan.toService}" could not be found after the rename, so the former one "${plan.fromService}" was kept. Look at the new one before deleting the old with \`${remove}\`.`;
         }
         try {
           deleteKeychainLogin(ports.run, plan.fromService, plan.account);
         } catch (error) {
-          return `The former Keychain login "${plan.fromService}" could not be deleted (${error instanceof Error ? error.message : String(error)}). It is harmless: delete it with \`${remove}\`.`;
+          return `The former Keychain login "${plan.fromService}" could not be deleted (${error instanceof Error ? error.message : String(error)}). The renamed identity does not use it, but a new identity created under the name "${from}" would start signed in as that account, so \`identity add ${from}\` refuses until it is deleted: delete it with \`${remove}\`.`;
         }
         return undefined;
       },
@@ -547,7 +547,7 @@ function planRename(paths: LayoutPaths, from: string, to: string, ports: Identit
   }
 
   const moved: MovedPaths = { tokens: placesThroughRealParent({ from: fromToken, to: toToken }, ports.realpath), directories: placesThroughRealParent({ from: fromDir, to: toDir }, ports.realpath), fromService: claudeCodeKeychainService(fromDir), toService: claudeCodeKeychainService(toDir), home: ports.home };
-  const keychain = keychainPlan(ports, gathered === undefined ? dryRunLogin(ports, fromDir, toDir, resuming) : gathered.login, toDir);
+  const keychain = keychainPlan(ports, gathered === undefined ? dryRunLogin(ports, fromDir, toDir, resuming) : gathered.login, toDir, from);
   const farmFiles = [FARM_MANIFEST_FILENAME, LEGACY_FARM_MANIFEST_FILENAME].map((name) => path.join(identityDir, name));
   const steps: (Step | undefined)[] = [
     keychain?.step,
@@ -811,7 +811,7 @@ function resumeNote(journal: Readonly<RenameJournal>): string {
 /**
  * Renames identity `from` to `to` without losing its login or anything kept under its name. Takes the resync lock of both names, refuses while a session runs against the identity's directory, then applies, in order: the macOS Keychain login is copied to the service the new directory hashes to; the identity's own `identity.json` and farm record are rewritten; the directory (and any superseded farm beside it) and the stored token file move; the cached credential follows; every reference to the old name is rewritten (pools, jobs, account model refs, directory rules, the active selection, the usage snapshot, recorded picks, anchor stamps); and last, the old Keychain item is deleted once the new one is found. The old name is not kept as an alias: nothing can be running under it, and a stale name would only hide a mistake.
  *
- * It is transactional up to the last step. If any step fails, or the process is sent SIGINT, SIGTERM or SIGHUP between steps, every earlier one is undone, the new Keychain item removed and the old one kept, and the failure is thrown. A failure in the last step only (deleting the old Keychain item) is a warning in the report, because the rename is complete by then and the leftover item is harmless.
+ * It is transactional up to the last step. If any step fails, or the process is sent SIGINT, SIGTERM or SIGHUP between steps, every earlier one is undone, the new Keychain item removed and the old one kept, and the failure is thrown. A failure in the last step only (deleting the old Keychain item) is a warning in the report, because the rename is complete by then. The leftover item is not used by the renamed identity, but a new identity created under the old name would start signed in as that account, so `identity add` refuses that name until the item is deleted, and the warning says so and gives the command.
  *
  * A journal in the state root's `identity-renames` directory is written before the first step and marked as each completes. A rename that is killed, or whose rollback fails, leaves it behind, and running the same rename again plans from what is on disk, so it does only what is left, and removes the journal at the end. A rename of anything else that names either identity refuses until then.
  *

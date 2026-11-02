@@ -10,6 +10,7 @@ import { requirePool } from "./poolStore";
 import type { LayoutPaths } from "./paths";
 import { identityLockPath } from "./launcher/lock";
 import { requireNameFreeOfUnfinishedRename } from "./identityRenameJournal";
+import { requireNoLeftoverKeychainLogin, type KeychainProbe } from "./keychainLogin";
 import { ignoresCase, sameDirectory } from "./sameDirectory";
 
 /** Raised by any operation that requires an identity to already exist, when it does not. */
@@ -61,17 +62,22 @@ export function readIdentity(paths: LayoutPaths, name: string): Identity | undef
   return readJson(identityJsonPath(paths, name), IdentitySchema);
 }
 
+/** Throws unless `name` can be given to a new identity: no unfinished rename holds it, no identity has it, and it has the shape a new identity is given. */
+function requireIdentityCreatable(paths: LayoutPaths, name: string): void {
+  requireNoUnfinishedRenameNaming(paths, name, "add");
+  if (identityExists(paths, name)) {
+    throw new IdentityAlreadyExistsError(name);
+  }
+  requireNewIdentityName(name);
+}
+
 /**
  * Creates a new identity: validates `name` against `IdentitySchema`'s own naming rule and writes a fresh `identity.json` with `allowAmbientCredential: false` and no `defaultConfigProfile`.
  *
  * Throws a `CliError` naming the command that finishes the rename when an unfinished rename names `name` (see `requireNoUnfinishedRenameNaming`), `IdentityAlreadyExistsError` if an identity with this name already has an `identity.json` — `add` never silently overwrites an existing identity. Throws `InvalidIdentityNameError` when `name` fails `IdentitySchema`'s naming rule, rather than letting the underlying `ZodError` escape as an unhandled crash.
  */
 export function addIdentity(paths: LayoutPaths, name: string): Identity {
-  requireNoUnfinishedRenameNaming(paths, name, "add");
-  if (identityExists(paths, name)) {
-    throw new IdentityAlreadyExistsError(name);
-  }
-  requireNewIdentityName(name);
+  requireIdentityCreatable(paths, name);
   const identity = IdentitySchema.parse({ name, allowAmbientCredential: false });
   writeJsonAtomic(identityJsonPath(paths, name), identity);
   return identity;
@@ -279,6 +285,17 @@ export function listAnchoredIdentities(paths: LayoutPaths): readonly { readonly 
     const anchors = readIdentity(paths, name)?.anchors;
     return anchors === undefined ? [] : [{ identity: name, anchors }];
   });
+}
+
+/**
+ * Creates a new identity as a person asks for one (`identity add`, and the offer to create one that `identity use` and `@name` make): everything `addIdentity` refuses, and additionally a name whose directory the Keychain still holds a Claude Code login for, which a new identity there would start signed in as. The name is checked first, so an existing identity, which has a login of its own, is told it exists and not that a login is in the way.
+ *
+ * Throws what `addIdentity` throws, and `KeychainLoginError` (see `requireNoLeftoverKeychainLogin`).
+ */
+export function addNewIdentity(paths: LayoutPaths, name: string, keychain: KeychainProbe): Identity {
+  requireIdentityCreatable(paths, name);
+  requireNoLeftoverKeychainLogin(keychain, path.join(paths.identitiesDir, name), name);
+  return addIdentity(paths, name);
 }
 
 /**

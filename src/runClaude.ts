@@ -12,7 +12,7 @@ import { parseLauncherArgv } from "./launcher/argv";
 import { IdentityPickerCancelledError } from "./launcher/runPicker";
 import { runNativeLaunch } from "./launcher/native";
 import { decideConfigProfile, decideIdentity, loadIdentity, readActiveIdentity } from "./launcher/identity";
-import { realFsPort, realLogPort, realProcPort, realSpawnPort, spawnDetachedSupervisor } from "./realPorts";
+import { realFsPort, realLogPort, realProcPort, realRunPort, realSpawnPort, spawnDetachedSupervisor } from "./realPorts";
 import { realLaunchUpdatePort } from "./update/commands";
 
 /** Runs the launcher pipeline. `argvOverride`, when given, replaces `realProcPort`'s own `process.argv.slice(2)`; this is what lets `agent-shim run [args...]` reach the identical pipeline the `claude` binary name uses, fed the args Commander collected instead of the real argv. */
@@ -38,7 +38,7 @@ export async function runClaude(argvOverride?: readonly string[]): Promise<void>
     if (
       identityDecision.name !== undefined &&
       loadIdentity(paths.identitiesDir, identityDecision.name, realFsPort) === undefined &&
-      !(await runIdentityWizard(realPromptsPort, paths, identityDecision.name, { activate: false }))
+      !(await runIdentityWizard(realPromptsPort, paths, identityDecision.name, { run: realRunPort, platform: process.platform }, { activate: false }))
     ) {
       throw new PromptCancelledError();
     }

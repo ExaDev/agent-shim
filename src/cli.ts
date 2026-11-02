@@ -7,6 +7,7 @@ import { aliasLegacyEnv } from "./legacy";
 import { realPromptsPort } from "./configure";
 import { tryRunAtIdentityShortcut } from "./identityManager";
 import { resolveLayoutPaths } from "./paths";
+import { realRunPort } from "./realPorts";
 import { buildProgram } from "./program";
 import { runClaude } from "./runClaude";
 
@@ -34,7 +35,7 @@ async function main(): Promise<void> {
     isInteractive: () => process.stdin.isTTY,
     exit: (code) => process.exit(code),
   };
-  if (await tryRunAtIdentityShortcut(deps, process.argv.slice(2))) {
+  if (await tryRunAtIdentityShortcut(deps, process.argv.slice(2), { run: realRunPort, platform: process.platform })) {
     return;
   }
   await buildProgram({ ...deps, runClaude }).parseAsync(process.argv);
