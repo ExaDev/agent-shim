@@ -70,6 +70,16 @@ jobs:
           path: coverage/
           retention-days: 7
 
+  # The same suite on macOS, in parallel with the Linux job: several behaviours differ there and the Linux runner cannot show them (a case-insensitive default filesystem, the system `sh` collating globs by locale where dash sorts bytes, the macOS process table and Keychain tool shapes the tests fake). Runs without coverage, because the Linux job already reports it and a second report would only repeat it. Free for this public repo like every standard runner.
+  test-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-and-run
+        with:
+          task: test-macos
+          command: pnpm test
+
   # Blocks release on any moderate+ severity vulnerability in the dependency tree — the live advisory database changes independently of source content, so this is never turbo-wrapped/cached (see turbo.json).
   audit:
     runs-on: ubuntu-latest
@@ -98,7 +108,7 @@ jobs:
   semantic-release:
     name: Semantic Release
     if: github.ref == 'refs/heads/main'
-    needs: [lint, typecheck, test, audit, knip]
+    needs: [lint, typecheck, test, test-macos, audit, knip]
     runs-on: ubuntu-latest
     # The deploy key lives in this environment, whose deployment branches are limited to main, so no other branch's workflow can read it.
     environment: release
@@ -1316,7 +1326,7 @@ jobs:
   required-checks:
     name: Required checks
     if: always()
-    needs: [lint, typecheck, test, audit, knip, semantic-release, build-arm64, build-x64-best-effort, build-linux-x64, build-linux-arm64, build-windows-x64, build-windows-arm64, smoke-test-macos-arm64, smoke-test-macos-x64-best-effort, smoke-test-linux-x64, smoke-test-linux-arm64, smoke-test-windows-x64, smoke-test-windows-arm64, publish-npm, publish-npm-alias, publish-github-packages, release, update-tap, update-scoop, verify-tap-macos, verify-tap-macos-x64, verify-tap-linux, verify-scoop, verify-npm, verify-install-script, verify-install-script-macos-x64]
+    needs: [lint, typecheck, test, test-macos, audit, knip, semantic-release, build-arm64, build-x64-best-effort, build-linux-x64, build-linux-arm64, build-windows-x64, build-windows-arm64, smoke-test-macos-arm64, smoke-test-macos-x64-best-effort, smoke-test-linux-x64, smoke-test-linux-arm64, smoke-test-windows-x64, smoke-test-windows-arm64, publish-npm, publish-npm-alias, publish-github-packages, release, update-tap, update-scoop, verify-tap-macos, verify-tap-macos-x64, verify-tap-linux, verify-scoop, verify-npm, verify-install-script, verify-install-script-macos-x64]
     runs-on: ubuntu-latest
     steps:
       - name: Fail unless every job succeeded or was skipped
