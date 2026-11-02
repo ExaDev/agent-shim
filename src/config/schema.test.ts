@@ -434,7 +434,7 @@ describe("CredentialSourceSchema", () => {
       { file: "/etc/agent-shim/z.token" },
       { command: ["pass", "show", "z"], interactive: true, timeoutMs: 5000 },
       { op: "op://vault/item/field" },
-      { keychain: { service: "claude-work", account: "joe" }, interactive: false },
+      { keychain: { service: "claude-work", account: "alex" }, interactive: false },
       { keychain: { service: "claude-work" } },
       { literal: "codex-local" },
     ]) {

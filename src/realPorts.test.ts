@@ -297,11 +297,11 @@ describe("resolveOwnExecutablePath", () => {
   });
 
   it("falls back to the direct candidate when its directory isn't on PATH and no PATH-visible entry exists either -- a fresh, not-yet-installed local build", () => {
-    const directCandidate = "/Users/joe/dev/agent-shim/dist/agent-shim-sea";
+    const directCandidate = "/Users/alex/dev/agent-shim/dist/agent-shim-sea";
     const result = resolveOwnExecutablePath({
       argv1: directCandidate,
       execPath,
-      cwd: "/Users/joe/dev/agent-shim",
+      cwd: "/Users/alex/dev/agent-shim",
       pathDirs: ["/usr/bin", "/opt/homebrew/bin"],
       findExecutableInDir: () => undefined,
     });
