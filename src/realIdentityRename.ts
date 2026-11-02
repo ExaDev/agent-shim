@@ -57,8 +57,8 @@ function currentUid(): number {
   return process.getuid();
 }
 
-/** The signals that ask a process to stop and are not a failure of its own. */
-const INTERRUPT_SIGNALS = ["SIGINT", "SIGTERM"] as const;
+/** The signals that ask a process to stop and are not a failure of its own: Ctrl-C, a termination request, and the hang-up a closed terminal sends. */
+const INTERRUPT_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 
 /**
  * The real signal port. While a handler is installed Node no longer ends the process on the signal, which is what lets the rename roll back instead of leaving a half-moved identity. A signal that arrives during synchronous work is delivered when the loop next polls, so `turn` lets two iterations pass: the first immediate runs in a check phase, and one scheduled from it runs in the next iteration, after a poll phase.

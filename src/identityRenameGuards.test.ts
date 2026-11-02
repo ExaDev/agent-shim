@@ -182,6 +182,7 @@ describe("renameIdentity and a signal to stop", () => {
   let world: World;
   const SIGINT_STATUS = 130;
   const SIGTERM_STATUS = 143;
+  const SIGHUP_STATUS = 129;
 
   beforeEach(() => {
     world = createWorld("darwin");
@@ -267,6 +268,13 @@ describe("renameIdentity and a signal to stop", () => {
     expect(world.keychain.items.has(claudeCodeKeychainService(world.directory("client")))).toBe(false);
     expect(world.keychain.items.has(claudeCodeKeychainService(world.directory("work")))).toBe(true);
     expect(world.cache.get("file:identity work")?.token).toBe("a-made-up-cached-token");
+  });
+
+  it("rolls every step back and ends with the shell's status for SIGHUP, which a closed terminal sends", async () => {
+    const before = treeOf(world.root);
+    await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: signalAfterFirstMove("SIGHUP") }))).rejects.toMatchObject({ exitCode: SIGHUP_STATUS, message: "Interrupted by SIGHUP: the rename was rolled back and nothing was changed." });
+    expect(treeOf(world.root)).toEqual(before);
+    expect(world.keychain.items.has(claudeCodeKeychainService(world.directory("client")))).toBe(false);
   });
 
   it("ends with the shell's status for SIGTERM when that is the signal", async () => {
@@ -355,6 +363,7 @@ describe("renameIdentity and a signal to stop", () => {
   it.each([
     ["SIGINT", SIGINT_STATUS],
     ["SIGTERM", SIGTERM_STATUS],
+    ["SIGHUP", SIGHUP_STATUS],
   ] as const)("ends with the status of %s, not as a Keychain failure, when it killed the login read", async (signal, status) => {
     const before = treeOf(world.root);
     await expect(renameIdentity(world.paths, "work", "client", world.ports({ run: killedWhileReading(signal), signals: realisticTurns() }))).rejects.toMatchObject({ exitCode: status, message: expect.stringContaining(`Interrupted by ${signal}`) as unknown });
