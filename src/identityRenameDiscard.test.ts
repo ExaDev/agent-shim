@@ -13,15 +13,15 @@ import { IdentityLockBusyError } from "./launcher/lock";
 import { realFarmFs } from "./realPorts";
 import { ignoresCase } from "./sameDirectory";
 
-/** Writes the journal of a rename of `from` to `to` that nothing has applied yet, as one left by a run that was killed would be. */
-function leaveJournal(world: World, from: string, to: string): RenameJournal {
+/** Writes the journal of a rename of `from` to `to`, with its one step marked `done` or not: not done is what a run that was killed before its first step, or one that rolled back completely, leaves. */
+function leaveJournal(world: World, from: string, to: string, done = false): RenameJournal {
   const journal: RenameJournal = {
     version: 1,
     from,
     to,
     startedAt: "2026-10-30T10:00:00.000Z",
     pid: OWN_PID,
-    steps: [{ description: `move identities/${from} to identities/${to}`, done: false }],
+    steps: [{ description: `move identities/${from} to identities/${to}`, done }],
   };
   writeRenameJournal(realFarmFs, renameJournalFile(world.paths.identityRenamesDir, from, to), journal);
   return journal;
@@ -101,10 +101,26 @@ describe("a rename left unfinished whose identity is under neither name, or unde
     expect(addIdentity(world.paths, "work").name).toBe("work");
   });
 
-  it("is not discarded while the identity is under exactly one of the two names, where running the rename again finishes it", () => {
-    leaveJournal(world, "work", "client");
+  it("is not discarded while a step is marked done and the identity is under exactly one of the two names, where running the rename again finishes it", () => {
+    leaveJournal(world, "work", "client", true);
     const before = treeOf(world.root);
     expect(() => discardRenameJournal(world.paths, "work", "client", world.ports())).toThrow("agent-shim identity rename work client");
+    expect(() => discardRenameJournal(world.paths, "work", "client", world.ports())).toThrow(/can be finished/);
+    expect(treeOf(world.root)).toEqual(before);
+  });
+
+  it("is discarded when no step is marked done and the identity is still under the old name, since nothing was applied and discarding loses nothing", () => {
+    const baseline = treeOf(world.root);
+    leaveJournal(world, "work", "client");
+    expect(discardRenameJournal(world.paths, "work", "client", world.ports())).toEqual({ from: "work", to: "client" });
+    expect(journalOf(world, "work", "client")).toBeUndefined();
+    expect(treeOf(world.root)).toEqual(baseline);
+  });
+
+  it("is not discarded when no step is marked done but the directory is already under the new name, which the marks may have lagged behind", () => {
+    fs.renameSync(world.directory("work"), world.directory("client"));
+    leaveJournal(world, "work", "client");
+    const before = treeOf(world.root);
     expect(() => discardRenameJournal(world.paths, "work", "client", world.ports())).toThrow(/can be finished/);
     expect(treeOf(world.root)).toEqual(before);
   });
@@ -168,8 +184,8 @@ describe("identity add and identity remove while a rename is unfinished", () => 
   it("add refuses either name of the pair, naming the command that finishes the rename, and writes nothing", () => {
     const journal = leaveJournal(world, "work", "client");
     const before = treeOf(world.root);
-    expect(() => addIdentity(world.paths, "client")).toThrow(describeUnfinishedRename(journal, { finishable: true }));
-    expect(() => addIdentity(world.paths, "work")).toThrow(describeUnfinishedRename(journal, { finishable: true }));
+    expect(() => addIdentity(world.paths, "client")).toThrow(describeUnfinishedRename(journal, { finishable: true, discardable: true }));
+    expect(() => addIdentity(world.paths, "work")).toThrow(describeUnfinishedRename(journal, { finishable: true, discardable: true }));
     expect(() => addIdentity(world.paths, "client")).toThrow(/Cannot add identity "client"/);
     expect(treeOf(world.root)).toEqual(before);
   });
@@ -179,10 +195,10 @@ describe("identity add and identity remove while a rename is unfinished", () => 
     const before = treeOf(world.root);
     expect(() => {
       removeIdentity(world.paths, "work");
-    }).toThrow(describeUnfinishedRename(journal, { finishable: true }));
+    }).toThrow(describeUnfinishedRename(journal, { finishable: true, discardable: true }));
     expect(() => {
       removeIdentity(world.paths, "client");
-    }).toThrow(describeUnfinishedRename(journal, { finishable: true }));
+    }).toThrow(describeUnfinishedRename(journal, { finishable: true, discardable: true }));
     expect(() => {
       removeIdentity(world.paths, "work");
     }).toThrow(/Cannot remove identity "work"/);

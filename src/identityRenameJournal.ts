@@ -135,8 +135,13 @@ export function unfinishedRenameFor(journals: readonly RenameJournal[], from: st
   return involved === undefined ? undefined : { kind: "blocked", journal: involved };
 }
 
-/** Whether a run of the rename can finish it, and when it cannot, why. */
-export type RenameFinishability = { readonly finishable: true } | { readonly finishable: false; readonly reason: string };
+/** Whether a run of the rename can finish it, and when it cannot, why. A rename that can be finished is also `discardable` when its record can be removed without losing anything: no step is recorded as done and the identity has not left the old name, which is a rename that was rolled back completely or ended before it began. */
+export type RenameFinishability = { readonly finishable: true; readonly discardable?: true } | { readonly finishable: false; readonly reason: string };
+
+/** Whether `journal` records no step as done, which a run that rolled back completely, or was ended before its first step, leaves: nothing it describes is applied, so the record can be discarded without losing any work. */
+export function recordsNothingApplied(journal: Readonly<Pick<RenameJournal, "steps">>): boolean {
+  return journal.steps.every((step) => !step.done);
+}
 
 /** Why no run of the rename can finish it: the identity is under neither name, or under both. */
 export function describeUnfinishable(bothExist: boolean): string {
@@ -144,9 +149,12 @@ export function describeUnfinishable(bothExist: boolean): string {
 }
 
 /** Whether the rename in `journal` can be finished, given which names are identities: it can when the identity is under exactly one of them, wherever the earlier run got it to. */
-export function finishabilityOf(journal: Readonly<Pick<RenameJournal, "from" | "to">>, exists: (name: string) => boolean): RenameFinishability {
+export function finishabilityOf(journal: Readonly<Pick<RenameJournal, "from" | "to" | "steps">>, exists: (name: string) => boolean): RenameFinishability {
   const underFrom = exists(journal.from);
-  return underFrom === exists(journal.to) ? { finishable: false, reason: describeUnfinishable(underFrom) } : { finishable: true };
+  if (underFrom === exists(journal.to)) {
+    return { finishable: false, reason: describeUnfinishable(underFrom) };
+  }
+  return underFrom && recordsNothingApplied(journal) ? { finishable: true, discardable: true } : { finishable: true };
 }
 
 /** The command that removes the record of the unfinished rename in `journal`, and nothing else. */
@@ -154,12 +162,12 @@ export function discardJournalCommand(journal: Readonly<Pick<RenameJournal, "fro
   return `agent-shim identity rename ${journal.from} ${journal.to} --discard-journal`;
 }
 
-/** The journal as a sentence for a refusal or for `doctor`: the pair, how far it got, and what to do about it. A rename that can be finished is told the command that finishes it, and one that cannot is told why and the command that discards its record, never the command that would fail. */
+/** The journal as a sentence for a refusal or for `doctor`: the pair, how far it got, and what to do about it. A rename that can be finished is told the command that finishes it, and the command that discards its record too when that loses nothing; one that cannot is told why and the command that discards its record, never the command that would fail. */
 export function describeUnfinishedRename(journal: Readonly<RenameJournal>, finishability: RenameFinishability): string {
   const done = journal.steps.filter((step) => step.done).length;
   const progress = `an unfinished rename of identity "${journal.from}" to "${journal.to}" (${String(done)} of ${String(journal.steps.length)} steps recorded as done)`;
   return finishability.finishable
-    ? `${progress}. Finish it with \`agent-shim identity rename ${journal.from} ${journal.to}\`; to put the name back afterwards, run \`agent-shim identity rename ${journal.to} ${journal.from}\`.`
+    ? `${progress}. Finish it with \`agent-shim identity rename ${journal.from} ${journal.to}\`; to put the name back afterwards, run \`agent-shim identity rename ${journal.to} ${journal.from}\`.${finishability.discardable === true ? ` Nothing it describes is applied, so discarding its record with \`${discardJournalCommand(journal)}\` loses nothing and leaves the identity as it is.` : ""}`
     : `${progress} that cannot be finished: ${finishability.reason}. If nothing is left of it to keep, discard its record with \`${discardJournalCommand(journal)}\`; that removes only the record and changes no identity.`;
 }
 

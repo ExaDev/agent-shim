@@ -221,7 +221,7 @@ const RENAME_DESCRIPTION =
 
 /** What `--discard-journal` does and when it refuses, exactly: it removes a record and nothing else. */
 const DISCARD_JOURNAL_DESCRIPTION =
-  "Remove the record of an unfinished rename of <old> to <new> that nothing can finish, because the identity exists under neither name or under both. It changes no identity, and is refused while the identity exists under only one of them, where running the rename again finishes it.";
+  "Remove the record of an unfinished rename of <old> to <new> that nothing can finish, because the identity exists under neither name or under both, or whose rollback completed so that no step of it was applied and the identity is still under <old>. It changes no identity, and is refused while the identity exists under only one of them with work applied, where running the rename again finishes it.";
 
 /**
  * Registers the `agent-shim identity` subcommand tree onto `program`. `renamePorts` is what `identity rename` reaches the machine through (the Keychain, the process table, the resync lock): the real ones unless a test passes fakes.

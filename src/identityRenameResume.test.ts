@@ -3,11 +3,12 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { CliError } from "./cliError";
-import { describeIdentityRename, renameIdentity } from "./identityRename";
+import { describeIdentityRename, discardRenameJournal, renameIdentity } from "./identityRename";
 import { describeUnfinishedRename, readRenameJournal, renameJournalFile, writeRenameJournal, type RenameJournal } from "./identityRenameJournal";
 import { LOGIN_SECRET, NOW_MS, OWN_PID, createWorld, treeOf, type World, failingOnce } from "./identityRenameTestWorld";
 import { realFarmFs } from "./realPorts";
 import type { FarmFs } from "./launcher/ports";
+import { addIdentity } from "./identityStore";
 import { claudeCodeKeychainService } from "./usage/signIn";
 
 /** The tree of the world with its random root replaced, so two worlds that ended in the same state compare equal. */
@@ -109,7 +110,7 @@ describe("the journal a rename keeps", () => {
       };
     }
 
-    it("reports it beside the failure that caused the rollback, not in place of it, and leaves the record to a re-run", async () => {
+    it("reports it beside the failure that caused the rollback, not in place of it, and names the command that discards the record of a rename that was rolled back", async () => {
       const failure: unknown = await renameIdentity(world.paths, "work", "client", world.ports({ fs: failingThenJournalStuck() })).then(
         () => undefined,
         (error: unknown) => error,
@@ -119,10 +120,56 @@ describe("the journal a rename keeps", () => {
       expect(message).toContain("disk full");
       expect(message).toContain("could not be removed");
       expect(message).toContain("EACCES: permission denied");
-      expect(message).toContain("running the same command again finishes it");
+      // Every step was undone and the journal says so, so the way out is to discard it; running the command again would perform the rename that was just rolled back.
+      expect(message).toContain("agent-shim identity rename work client --discard-journal");
+      expect(message).toContain("nothing is applied");
+      expect(message).not.toContain("running the same command again finishes it");
       expect(journalOf(world)).toMatchObject({ from: "work", to: "client" });
-      await expect(renameIdentity(world.paths, "work", "client", world.ports())).resolves.toBeDefined();
+      expect(journalOf(world)?.steps.filter((step) => step.done)).toEqual([]);
+    });
+
+    it("leaves a record that --discard-journal accepts, after which the names are free again", async () => {
+      await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: failingThenJournalStuck() }))).rejects.toBeInstanceOf(CliError);
+      expect(() => addIdentity(world.paths, "client")).toThrow(/Cannot add identity "client"/);
+      expect(discardRenameJournal(world.paths, "work", "client", world.ports())).toEqual({ from: "work", to: "client" });
       expect(journalOf(world)).toBeUndefined();
+      expect(addIdentity(world.paths, "client").name).toBe("client");
+    });
+
+    it("keeps telling the person to run the command again when the journal still shows a step as done, since discarding it is refused", async () => {
+      // The journal cannot be written once the step has failed, so the steps undone after it stay marked done, and it cannot be removed either.
+      const failing = failingOnce(world);
+      let failed = false;
+      const bothBroken: FarmFs = {
+        ...failing,
+        writeFilePrivate: (file: string, contents: string): void => {
+          if (failed && file.startsWith(world.paths.identityRenamesDir)) {
+            throw new Error("no space left on device");
+          }
+          try {
+            failing.writeFilePrivate(file, contents);
+          } catch (error) {
+            failed = true;
+            throw error;
+          }
+        },
+        removeRecursive: (target: string): void => {
+          if (target.startsWith(world.paths.identityRenamesDir)) {
+            throw new Error("EACCES: permission denied");
+          }
+          realFarmFs.removeRecursive(target);
+        },
+      };
+      const failure: unknown = await renameIdentity(world.paths, "work", "client", world.ports({ fs: bothBroken })).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      const message = failure instanceof Error ? failure.message : "";
+      expect(message).toContain("could not be removed");
+      expect(message).toContain("running the same command again finishes it");
+      expect(message).not.toContain("--discard-journal");
+      expect(journalOf(world)?.steps.some((step) => step.done)).toBe(true);
+      expect(() => discardRenameJournal(world.paths, "work", "client", world.ports())).toThrow(/can be finished/);
     });
   });
 
