@@ -896,7 +896,7 @@ async function applyUnderLocks(paths: LayoutPaths, from: string, to: string, por
     const file = renameJournalFile(paths.identityRenamesDir, from, to);
     // The steps an earlier run applied stay in the journal with their marks, ahead of the steps this run has left to do: they are still applied, and a journal kept after this run fails and rolls back must still say so. A step the earlier run began and did not mark done is kept only when this run's plan no longer lists it, which is when its effect is on disk; one the plan lists again is this run's to begin.
     const planned = new Set(plan.steps.map((step) => step.description));
-    const carried = (resumed?.steps ?? []).filter((step) => step.done || (step.started === true && !planned.has(step.description)));
+    const carried = (resumed?.steps ?? []).filter((step) => step.done || (step.started && !planned.has(step.description)));
     const marks: { started: boolean; done: boolean }[] = [...carried.map((step) => ({ started: true, done: step.done })), ...plan.steps.map(() => ({ started: false, done: false }))];
     const descriptions = [...carried.map((step) => step.description), ...plan.steps.map((step) => step.description)];
     const startedAt = resumed?.startedAt ?? new Date(ports.lock.nowMs()).toISOString();

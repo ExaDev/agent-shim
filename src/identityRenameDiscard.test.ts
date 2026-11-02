@@ -21,7 +21,7 @@ function leaveJournal(world: World, from: string, to: string, done = false): Ren
     to,
     startedAt: "2026-10-30T10:00:00.000Z",
     pid: OWN_PID,
-    steps: [{ description: `move identities/${from} to identities/${to}`, done }],
+    steps: [{ description: `move identities/${from} to identities/${to}`, started: done, done }],
   };
   writeRenameJournal(realFarmFs, renameJournalFile(world.paths.identityRenamesDir, from, to), journal);
   return journal;

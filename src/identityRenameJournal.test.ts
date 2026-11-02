@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { CliError } from "./cliError";
-import { describeUnfinishedRename, finishabilityOf, readRenameJournal, recordsNothingApplied, readRenameJournals, removeRenameJournal, renameJournalFile, requireNameFreeOfUnfinishedRename, unfinishedRenameFor, writeRenameJournal, type RenameJournal } from "./identityRenameJournal";
+import { describeUnfinishedRename, finishabilityOf, listRenameJournals, readRenameJournal, recordsNothingApplied, readRenameJournals, removeRenameJournal, renameJournalFile, requireNameFreeOfUnfinishedRename, unfinishedRenameFor, writeRenameJournal, type RenameJournal } from "./identityRenameJournal";
 import { createFakeFarmFs } from "./test-helpers";
 
 const DIR = "/home/testuser/.agent-shim/identity-renames";
@@ -21,9 +21,9 @@ const JOURNAL: RenameJournal = {
   startedAt: "2026-10-30T12:00:00.000Z",
   pid: 4242,
   steps: [
-    { description: "copy the Keychain login", done: true },
-    { description: "move identities/work to identities/client", done: true },
-    { description: "rewrite config.json: pool subs", done: false },
+    { description: "copy the Keychain login", started: true, done: true },
+    { description: "move identities/work to identities/client", started: true, done: true },
+    { description: "rewrite config.json: pool subs", started: false, done: false },
   ],
 };
 
@@ -111,14 +111,14 @@ describe("finishabilityOf and an unfinishable rename", () => {
   });
 
   it("can also be discarded without losing anything when no step is recorded as done and the identity has not left the old name", () => {
-    const nothingApplied: RenameJournal = { ...JOURNAL, steps: JOURNAL.steps.map((step) => ({ ...step, done: false })) };
+    const nothingApplied: RenameJournal = { ...JOURNAL, steps: JOURNAL.steps.map((step) => ({ ...step, started: false, done: false })) };
     expect(finishabilityOf(nothingApplied, onlyOldName)).toEqual({ finishable: true, discardable: true });
     expect(finishabilityOf(nothingApplied, (name) => name === "client")).toEqual(FINISHABLE);
     expect(finishabilityOf(JOURNAL, onlyOldName)).toEqual(FINISHABLE);
   });
 
   it("offers the discarding command beside the finishing one when it can be discarded, and says exactly what that rests on", () => {
-    const nothingApplied: RenameJournal = { ...JOURNAL, steps: JOURNAL.steps.map((step) => ({ ...step, done: false })) };
+    const nothingApplied: RenameJournal = { ...JOURNAL, steps: JOURNAL.steps.map((step) => ({ ...step, started: false, done: false })) };
     const offered = describeUnfinishedRename(nothingApplied, finishabilityOf(nothingApplied, onlyOldName));
     expect(offered).toContain("Finish it with `agent-shim identity rename work client`");
     expect(offered).toContain("No step is recorded as begun or done and the identity is still under \"work\"");
@@ -128,7 +128,7 @@ describe("finishabilityOf and an unfinishable rename", () => {
   });
 
   it("does not offer to discard a journal with a step begun but not recorded as done, since the process may have died after the step was applied", () => {
-    const begun: RenameJournal = { ...JOURNAL, steps: JOURNAL.steps.map((step, index) => ({ ...step, done: false, ...(index === 0 ? { started: true } : {}) })) };
+    const begun: RenameJournal = { ...JOURNAL, steps: JOURNAL.steps.map((step, index) => ({ ...step, started: index === 0, done: false })) };
     expect(recordsNothingApplied(begun)).toBe(false);
     expect(finishabilityOf(begun, onlyOldName)).toEqual(FINISHABLE);
     const described = describeUnfinishedRename(begun, finishabilityOf(begun, onlyOldName));
@@ -137,16 +137,29 @@ describe("finishabilityOf and an unfinishable rename", () => {
   });
 
   it("counts a step as applied when it is begun or done, and as not when neither is recorded", () => {
-    expect(recordsNothingApplied({ steps: [{ description: "a", done: false }, { description: "b", done: false, started: false }] })).toBe(true);
-    expect(recordsNothingApplied({ steps: [{ description: "a", done: false }, { description: "b", done: false, started: true }] })).toBe(false);
-    expect(recordsNothingApplied({ steps: [{ description: "a", done: true }] })).toBe(false);
+    expect(recordsNothingApplied({ steps: [{ description: "a", started: false, done: false }, { description: "b", started: false, done: false }] })).toBe(true);
+    expect(recordsNothingApplied({ steps: [{ description: "a", started: false, done: false }, { description: "b", started: true, done: false }] })).toBe(false);
+    expect(recordsNothingApplied({ steps: [{ description: "a", started: true, done: true }] })).toBe(false);
+  });
+
+  it("cannot be read when a step lacks the begun mark, since a record that does not say whether a step began cannot be trusted to say it did not", () => {
+    const fs = createFakeFarmFs();
+    const file = renameJournalFile(DIR, "work", "client");
+    const { startedAt, pid } = JOURNAL;
+    fs.seed({ [file]: JSON.stringify({ version: 1, from: "work", to: "client", startedAt, pid, steps: [{ description: "copy the Keychain login", done: false }] }) });
+    expect(() => readRenameJournal(fs, file)).toThrow(CliError);
+    expect(() => readRenameJournal(fs, file)).toThrow(/steps\.0\.started/);
+    expect(() => readRenameJournal(fs, file)).toThrow("If no rename was left unfinished, remove it; otherwise look at what it names before renaming anything.");
+    expect(() => readRenameJournals(fs, DIR)).toThrow(file);
+    expect(listRenameJournals(fs, DIR).unreadable.map((entry) => entry.file)).toEqual([file]);
+    expect(listRenameJournals(fs, DIR).journals).toEqual([]);
   });
 
   it("reads back the begun mark it wrote", () => {
     const fs = createFakeFarmFs();
     const file = renameJournalFile(DIR, "work", "client");
-    writeRenameJournal(fs, file, { ...JOURNAL, steps: [{ description: "copy the Keychain login", done: false, started: true }] });
-    expect(readRenameJournal(fs, file)?.steps).toEqual([{ description: "copy the Keychain login", done: false, started: true }]);
+    writeRenameJournal(fs, file, { ...JOURNAL, steps: [{ description: "copy the Keychain login", started: true, done: false }] });
+    expect(readRenameJournal(fs, file)?.steps).toEqual([{ description: "copy the Keychain login", started: true, done: false }]);
   });
 
   it("is not when it is under neither name or under both, and says which", () => {

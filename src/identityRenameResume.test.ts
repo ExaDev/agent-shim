@@ -340,7 +340,7 @@ describe("running a rename again after one was left unfinished", () => {
       to: "client",
       startedAt: new Date(NOW_MS).toISOString(),
       pid: OWN_PID,
-      steps: [{ description: "move identities/work to identities/client", done: false }],
+      steps: [{ description: "move identities/work to identities/client", started: false, done: false }],
     });
     await renameIdentity(world.paths, "work", "client", world.ports());
     expect(journalOf(world)).toBeUndefined();
@@ -412,7 +412,7 @@ describe("running a rename again with a macOS login already copied", () => {
       to: "client",
       startedAt: new Date(NOW_MS).toISOString(),
       pid: OWN_PID,
-      steps: [{ description: `copy the Keychain login "${oldService}" to "${newService}"`, done: true }],
+      steps: [{ description: `copy the Keychain login "${oldService}" to "${newService}"`, started: true, done: true }],
     });
     const report = await renameIdentity(world.paths, "work", "client", world.ports());
     expect(world.keychain.secretOf(newService)?.toString("utf8")).toBe(LOGIN_SECRET);
