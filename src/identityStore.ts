@@ -110,66 +110,83 @@ export function isIdentityDirectoryName(name: string): boolean {
   return !name.startsWith(".");
 }
 
-/** An entry directly under `identitiesDir` that is a symlink the filesystem would not follow, and why: `code` is the error `stat` gave. */
-export interface UnfollowableIdentityEntry {
+/** An entry directly under `identitiesDir` that cannot be reached, and why: `code` is the error the filesystem gave. */
+export interface UnreachableIdentityEntry {
   readonly name: string;
   readonly code: string;
 }
 
-/** The identity directories under `identitiesDir`, and the symlinks among its entries that could not be followed. */
+/** The identity directories under `identitiesDir`, and the entries among them that could not be reached. */
 export interface IdentityDirectoryListing {
   readonly names: readonly string[];
-  readonly unfollowable: readonly UnfollowableIdentityEntry[];
+  readonly unreachable: readonly UnreachableIdentityEntry[];
 }
 
-/** The errors `stat` gives for a link that cannot be resolved because of what it points through, not because of a fault in the machine: a cycle, a directory that cannot be searched, a path through a file. */
-const UNFOLLOWABLE_LINK_CODES: ReadonlySet<string> = new Set(["ELOOP", "EACCES", "ENOTDIR"]);
+/** The errors the filesystem gives for a path that cannot be reached because of what it points through or its permissions, not because of a fault in the machine: a cycle of links, a directory that cannot be searched, a path through a file. */
+const UNREACHABLE_CODES: ReadonlySet<string> = new Set(["ELOOP", "EACCES", "ENOTDIR"]);
 
 /** The `code` of a system error, or undefined for anything else. */
 function systemErrorCode(error: unknown): string | undefined {
   return typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code : undefined;
 }
 
-/** What following a symlink under `identitiesDir` finds: a directory, something else (a file, or nothing at all), or a refusal that names its code. Any other fault is thrown, since it is the machine's and not the link's. */
+/** The code of the refusal when `error` is one the entry's own state gives, or undefined for a missing target; any other fault is thrown, since it is the machine's and not the entry's. */
+function unreachableCodeOf(error: unknown): string | undefined {
+  const code = systemErrorCode(error);
+  if (code === "ENOENT") {
+    return undefined;
+  }
+  if (code !== undefined && UNREACHABLE_CODES.has(code)) {
+    return code;
+  }
+  throw error;
+}
+
+/** What following a symlink under `identitiesDir` finds: a directory, something else (a file, or nothing at all), or a refusal that names its code. */
 function followedLink(link: string): "directory" | "other" | { readonly code: string } {
   try {
     return fs.statSync(link).isDirectory() ? "directory" : "other";
   } catch (error) {
-    const code = systemErrorCode(error);
-    if (code === "ENOENT") {
-      return "other";
-    }
-    if (code !== undefined && UNFOLLOWABLE_LINK_CODES.has(code)) {
-      return { code };
-    }
-    throw error;
+    const code = unreachableCodeOf(error);
+    return code === undefined ? "other" : { code };
+  }
+}
+
+/** The code of the refusal when the files in `directory` cannot be reached, which a directory nobody can enter gives although the directory itself can be seen; undefined when they can. */
+function entryRefusal(directory: string): string | undefined {
+  try {
+    fs.accessSync(directory, fs.constants.X_OK);
+    return undefined;
+  } catch (error) {
+    return unreachableCodeOf(error);
   }
 }
 
 /**
- * The identity directories directly under `identitiesDir`, sorted: a directory, or a symlink that resolves to one, since `identityExists` follows a symlink and every command that reaches an identity does with it. A symlink to a file or to nothing is not an identity, and neither is a name `isIdentityDirectoryName` rejects. A symlink that cannot be followed (a cycle, an unsearchable directory, a path through a file) is not an identity either, and is listed apart so that `doctor` can say so instead of the whole listing failing. `listIdentities` and `doctor` both list identities through this, so they cannot disagree about which names exist.
+ * The identity directories directly under `identitiesDir`, sorted: a directory, or a symlink that resolves to one, since `identityExists` follows a symlink and every command that reaches an identity does with it. A symlink to a file or to nothing is not an identity, and neither is a name `isIdentityDirectoryName` rejects. An entry that cannot be reached (a symlink that cannot be followed, which a cycle, a directory that cannot be searched or a path through a file gives, or a directory nobody can enter, so that its `identity.json` cannot be read) is not an identity either, and is listed apart so that `doctor` can say so instead of the whole listing failing. `listIdentities` and `doctor` both list identities through this, so they cannot disagree about which names exist.
  */
 export function listIdentityDirectories(paths: LayoutPaths): IdentityDirectoryListing {
   const names: string[] = [];
-  const unfollowable: UnfollowableIdentityEntry[] = [];
+  const unreachable: UnreachableIdentityEntry[] = [];
   if (fs.existsSync(paths.identitiesDir)) {
     for (const entry of fs.readdirSync(paths.identitiesDir, { withFileTypes: true })) {
       if (!isIdentityDirectoryName(entry.name)) {
         continue;
       }
-      if (entry.isDirectory()) {
+      const entryPath = path.join(paths.identitiesDir, entry.name);
+      const followed = entry.isDirectory() ? "directory" : entry.isSymbolicLink() ? followedLink(entryPath) : "other";
+      if (followed === "other") {
+        continue;
+      }
+      const code = followed === "directory" ? entryRefusal(entryPath) : followed.code;
+      if (code === undefined) {
         names.push(entry.name);
-      } else if (entry.isSymbolicLink()) {
-        const followed = followedLink(path.join(paths.identitiesDir, entry.name));
-        if (followed === "directory") {
-          names.push(entry.name);
-        } else if (followed !== "other") {
-          unfollowable.push({ name: entry.name, code: followed.code });
-        }
+      } else {
+        unreachable.push({ name: entry.name, code });
       }
     }
   }
-  return { names: names.sort(), unfollowable: unfollowable.sort((a, b) => a.name.localeCompare(b.name)) };
+  return { names: names.sort(), unreachable: unreachable.sort((a, b) => a.name.localeCompare(b.name)) };
 }
 
 /** One identity as reported by `listIdentities`, whose `identity.json` parsed and validated cleanly. */

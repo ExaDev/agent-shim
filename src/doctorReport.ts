@@ -2,7 +2,7 @@ import { ClaudeShimStateSchema, commandFilename, findPathShadow, resolveOwnBinar
 import type { LayoutPaths } from "./paths";
 import { FILE_NAME_RULE, isFileName, isStoredName } from "./config/names";
 import { readJson } from "./config/store";
-import { listIdentityDirectories, type UnfollowableIdentityEntry } from "./identityStore";
+import { listIdentityDirectories, type UnreachableIdentityEntry } from "./identityStore";
 import { findExecutableInDir, realContentSourcePath, realFarmFs, realFsPort, realHeadroomSocketTrust, realInstalledClaudeVersions, realFrontDoorLiveness, realIsProcessRunning, realOwnExecutablePath, realProcessCommandLine, realResolveClaudeBinary, realRunPort } from "./realPorts";
 import fs from "node:fs";
 import path from "node:path";
@@ -169,8 +169,8 @@ export interface RunDoctorParams {
   readonly providerAliases?: ProviderAliases;
   /** The journals of identity renames that were left unfinished, and the files in their directory that are not journals. Omit to leave renames out of the findings. */
   readonly renameJournals?: RenameJournalListing;
-  /** The entries of the identities directory that are symlinks the filesystem would not follow, which are not counted as identities. Omit to leave them out of the findings. */
-  readonly unfollowableIdentities?: readonly UnfollowableIdentityEntry[];
+  /** The entries of the identities directory that cannot be reached (a symlink the filesystem would not follow, or a directory nobody can enter), which are not counted as identities. Omit to leave them out of the findings. */
+  readonly unreachableIdentities?: readonly UnreachableIdentityEntry[];
   readonly directoryRules: DoctorFileInput;
   readonly globalConfig: DoctorFileInput;
   /** The parsed `models` block of the global config, when one is defined. Omit to skip the models checks. */
@@ -522,8 +522,8 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   for (const journal of params.renameJournals?.journals ?? []) {
     push("identity", "fail", `There is ${describeUnfinishedRename(journal, finishabilityOf(journal, (name) => identityNames.has(name)))}`, journal.from);
   }
-  for (const { name, code } of params.unfollowableIdentities ?? []) {
-    push("identity", "warn", `identities/${name} is a symlink that cannot be followed (${code}), so it is not counted as an identity. Remove it, or repair what it points through.`, name);
+  for (const { name, code } of params.unreachableIdentities ?? []) {
+    push("identity", "warn", `identities/${name} cannot be reached (${code}), so it is not counted as an identity. Repair the permissions of the directory or of what a symlink points through, or remove the entry.`, name);
   }
   for (const { file, detail } of params.renameJournals?.unreadable ?? []) {
     push("identity", "fail", `${file} is not a rename journal this agent-shim can read (${detail}), so no identity can be renamed until it is fixed or removed, and it may be the trace of a rename that was left unfinished.`, path.basename(file));
@@ -937,7 +937,7 @@ function servingDoorListeners(paths: LayoutPaths): readonly FrontDoorListenerRea
  */
 export function collectDoctorReport(params: CollectDoctorReportParams): DoctorReport {
   const { paths } = params;
-  const { names: identityNames, unfollowable: unfollowableIdentities } = listIdentityDirectories(paths);
+  const { names: identityNames, unreachable: unreachableIdentities } = listIdentityDirectories(paths);
   const identities: DoctorIdentityInput[] = identityNames.map((name) => {
     const farmRoot = path.join(paths.identitiesDir, name);
     const identityPath = path.join(farmRoot, "identity.json");
@@ -1030,7 +1030,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
     providers,
     providerAliases: readProviderAliases(paths),
     renameJournals: listRenameJournals(realFarmFs, paths.identityRenamesDir),
-    unfollowableIdentities,
+    unreachableIdentities,
     directoryRules: { path: paths.directoryRulesFile, raw: realFsPort.readFileUtf8(paths.directoryRulesFile) },
     globalConfig: { path: paths.globalConfigFile, raw: realFsPort.readFileUtf8(paths.globalConfigFile) },
     models: parsedModelsOf(paths),
