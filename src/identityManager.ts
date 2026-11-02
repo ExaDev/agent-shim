@@ -53,7 +53,7 @@ export async function runIdentityWizard(
     return false;
   }
 
-  addNewIdentity(paths, name, keychain);
+  addNewIdentity(paths, name, keychain, false);
 
   const profileChoice = await prompts.select({
     message: `Create a default configuration profile for "${name}"?`,
@@ -221,6 +221,10 @@ interface IdentitySetOptions extends CredentialCacheOptions {
 const RENAME_DESCRIPTION =
   "Rename an identity: move its directory, carry its login across and rewrite every reference to its name. Refused while a session is running on it or a launch is starting on it. A rename that was interrupted is finished by running the same command again.";
 
+/** What `identity add --keep-keychain-login` does: it is the person saying that a login the Keychain holds for the directory is wanted, which is otherwise refused because the new identity would start signed in as that account. */
+const KEEP_KEYCHAIN_LOGIN_DESCRIPTION =
+  "Create the identity even though the macOS Keychain already holds a Claude Code login filed for its directory (left by an identity of that name that was renamed or removed); the identity starts signed in as that account. Without it that login is refused and its delete command is printed.";
+
 /** What `--discard-journal` does and exactly when it accepts and refuses, as `discardRenameJournal` checks it: it removes a record and nothing else. */
 const DISCARD_JOURNAL_DESCRIPTION =
   "Remove the record of an unfinished rename of <old> to <new>. Accepted when the identity exists under neither name or under both, or under <old> alone and the record shows no step as begun or done; refused when the identity exists under only one name and the record shows a step as begun or done or the identity is under <new>, where running the rename again finishes it. It changes no identity.";
@@ -239,9 +243,10 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
     identity
       .command("add <name>")
       .description("Create a new identity. Fails if one with this name already exists.")
+      .option("--keep-keychain-login", KEEP_KEYCHAIN_LOGIN_DESCRIPTION)
       .option("--json", "Print the result as JSON.")
-      .action((name: string, options: Readonly<{ json?: boolean }>) => {
-        const created = addNewIdentity(paths, name, renamePorts);
+      .action((name: string, options: Readonly<{ keepKeychainLogin?: boolean; json?: boolean }>) => {
+        const created = addNewIdentity(paths, name, renamePorts, options.keepKeychainLogin === true);
         reportMutation(options.json, { action: "created", kind: "identity", name, value: created }, () => {
           console.log(`Created identity "${name}".`);
         });

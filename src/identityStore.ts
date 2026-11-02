@@ -288,13 +288,18 @@ export function listAnchoredIdentities(paths: LayoutPaths): readonly { readonly 
 }
 
 /**
- * Creates a new identity as a person asks for one (`identity add`, and the offer to create one that `identity use` and `@name` make): everything `addIdentity` refuses, and additionally a name whose directory the Keychain still holds a Claude Code login for, which a new identity there would start signed in as. The name is checked first, so an existing identity, which has a login of its own, is told it exists and not that a login is in the way.
+ * Throws unless a new identity can be created as a person asks for one (`identity add`, and the offer to create one that `identity use`, `@name` and a launch make): everything `addIdentity` refuses, and additionally a name whose directory the Keychain still holds a Claude Code login for, which a new identity there would start signed in as. The name is checked first, so an existing identity, which has a login of its own, is told it exists and not that a login is in the way. It changes nothing, so an offer can make it before it asks anything and a caller that must not block can run it over an asynchronous probe (`resolveWithAsyncRuns`).
  *
- * Throws what `addIdentity` throws, and `KeychainLoginError` (see `requireNoLeftoverKeychainLogin`).
+ * `keepKeychainLogin` says the login is wanted. Throws what `addIdentity` throws, and `KeychainLoginError` (see `requireNoLeftoverKeychainLogin`).
  */
-export function addNewIdentity(paths: LayoutPaths, name: string, keychain: KeychainProbe): Identity {
+export function requireIdentityAddable(paths: LayoutPaths, name: string, keychain: KeychainProbe, keepKeychainLogin: boolean): void {
   requireIdentityCreatable(paths, name);
-  requireNoLeftoverKeychainLogin(keychain, path.join(paths.identitiesDir, name), name);
+  requireNoLeftoverKeychainLogin(keychain, path.join(paths.identitiesDir, name), name, keepKeychainLogin);
+}
+
+/** Creates a new identity as a person asks for one: `requireIdentityAddable`, then `addIdentity`. */
+export function addNewIdentity(paths: LayoutPaths, name: string, keychain: KeychainProbe, keepKeychainLogin: boolean): Identity {
+  requireIdentityAddable(paths, name, keychain, keepKeychainLogin);
   return addIdentity(paths, name);
 }
 
