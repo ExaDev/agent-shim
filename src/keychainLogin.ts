@@ -40,6 +40,17 @@ export class KeychainLookupError extends KeychainLoginError {
   }
 }
 
+/** How many milliseconds make a second. */
+const MS_PER_SECOND = 1000;
+
+/** The longest the door waits for the attributes of one Keychain item, in seconds: the lookup reads the local Keychain database and answers in a fraction of this, so the bound leaves a loaded host room while still ending a stuck `security` long before a client gives up. It is the bound a credential source of the `keychain` kind has for the same tool, which also answers at once or fails at once ("User interaction is not allowed") and never waits on a person. */
+const KEYCHAIN_LOOKUP_SECONDS = 10;
+
+/**
+ * The limit the door runs the Keychain lookup under (`realRunAsyncWithin`), so a `security` that does not answer ends as a `KeychainLookupError` instead of holding the request. The command line has no limit: a person is at the terminal and can interrupt it.
+ */
+export const KEYCHAIN_LOOKUP_TIMEOUT_MS = KEYCHAIN_LOOKUP_SECONDS * MS_PER_SECOND;
+
 /** What copying one directory's Keychain login to another's takes: both service names, and the account the item is filed under (the operating system user, for a login Claude Code wrote). */
 export interface KeychainLoginPlan {
   readonly fromService: string;

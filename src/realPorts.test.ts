@@ -4,12 +4,35 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { realAsyncCredentialPort, realCredentialPort, realFarmFs, realFileSize, realReadFileTail, realRunningAmong, resolveContentSourcePath, resolveExecutableCandidate, resolveOwnExecutablePath } from "./realPorts";
+import { realAsyncCredentialPort, realCredentialPort, realFarmFs, realFileSize, realReadFileTail, realRunAsyncWithin, realRunningAmong, resolveContentSourcePath, resolveExecutableCandidate, resolveOwnExecutablePath } from "./realPorts";
 
 /** Owner read and write only: the mode a secret file is written with here. */
 const OWNER_ONLY_PERMISSIONS = 0o600;
 /** The permission bits of a file mode, without its type bits. */
 const PERMISSION_BITS = 0o777;
+
+/** A limit the commands of the next tests finish well inside, even on a loaded host. */
+const GENEROUS_LIMIT_MS = 30_000;
+/** A limit a command that never ends is cut off at, so the test does not wait for it. */
+const SHORT_LIMIT_MS = 200;
+
+describe("realRunAsyncWithin", () => {
+  it("gives a command that finishes inside the limit its own exit status and output", async () => {
+    const finished = await realRunAsyncWithin(GENEROUS_LIMIT_MS)(process.execPath, ["-e", "process.stdout.write('out'); process.stderr.write('err'); process.exit(3)"]);
+    expect(finished).toEqual({ status: 3, stdout: "out", stderr: "err" });
+    expect(await realRunAsyncWithin(GENEROUS_LIMIT_MS)(process.execPath, ["-e", "process.stdout.write('ok')"])).toEqual({ status: 0, stdout: "ok", stderr: "" });
+  });
+
+  it("stops a command that is still running at the limit and reports it with no exit status", async () => {
+    const stopped = await realRunAsyncWithin(SHORT_LIMIT_MS)(process.execPath, ["-e", "setInterval(() => undefined, 1000)"]);
+    expect(stopped.status).toBeNull();
+  });
+
+  it("reports a command that cannot be started with no exit status", async () => {
+    const missing = await realRunAsyncWithin(GENEROUS_LIMIT_MS)("agent-shim-test-no-such-command", []);
+    expect(missing.status).toBeNull();
+  });
+});
 
 describe("realCredentialPort", () => {
   it("reads a secret file with its permission bits, and reports a missing one as not found", () => {
