@@ -38,7 +38,7 @@ export function summariseIdentityAccount(account: Readonly<AccountMetadata>): Id
 }
 
 /**
- * The key two identities share exactly when they hold the same login: the same account in the same organisation. Undefined without an account uuid, since nothing then says whose login it is. A login with no organisation uuid keys on the account alone, so it matches only another organisation-less login of that account.
+ * The key two identities share exactly when they hold the same login: the same account in the same organisation. Undefined without an account uuid, since nothing then says whose login it is. A login with no organisation uuid keys on the account alone, so it matches only another organisation-less login of that account. One email can hold a personal subscription and a team seat, which share an account uuid and differ in organisation uuid, so grouping on the account uuid alone would merge two usage windows. The key is opaque: compare two for equality, never parse one.
  */
 export function loginKeyOf(account: Readonly<AccountMetadata>): string | undefined {
   return account.accountUuid === undefined ? undefined : JSON.stringify([account.accountUuid, account.organizationUuid ?? null]);
