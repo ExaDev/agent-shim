@@ -7,6 +7,7 @@ import { describeIdentityRename, renameIdentity } from "./identityRename";
 import { describeUnfinishedRename, readRenameJournal, renameJournalFile, writeRenameJournal, type RenameJournal } from "./identityRenameJournal";
 import { LOGIN_SECRET, NOW_MS, OWN_PID, createWorld, treeOf, type World, failingOnce } from "./identityRenameTestWorld";
 import { realFarmFs } from "./realPorts";
+import type { FarmFs } from "./launcher/ports";
 import { claudeCodeKeychainService } from "./usage/signIn";
 
 /** The tree of the world with its random root replaced, so two worlds that ended in the same state compare equal. */
@@ -92,6 +93,80 @@ describe("the journal a rename keeps", () => {
     const journal = journalOf(world);
     expect(journal?.steps.length).toBeGreaterThan(1);
     expect(journal?.steps.filter((step) => step.done).map((step) => step.description)).toEqual(["move identities/work to identities/client"]);
+  });
+
+  describe("when the journal cannot be written while the rename rolls back", () => {
+    /** A filesystem on which a step fails once and, from then on, every write to the journal fails, as it does when the disk is full. */
+    function failingThenJournalFull(): FarmFs {
+      const failing = failingOnce(world);
+      let failed = false;
+      return {
+        ...failing,
+        writeFilePrivate: (file: string, contents: string): void => {
+          if (failed && file.startsWith(world.paths.identityRenamesDir)) {
+            throw new Error("no space left on device");
+          }
+          try {
+            failing.writeFilePrivate(file, contents);
+          } catch (error) {
+            failed = true;
+            throw error;
+          }
+        },
+      };
+    }
+
+    it("reports it apart from the steps it could not undo, says the rename was rolled back, and removes the record of a run that began here", async () => {
+      const before = treeOf(world.root);
+      const failure: unknown = await renameIdentity(world.paths, "work", "client", world.ports({ fs: failingThenJournalFull() })).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(failure).toBeInstanceOf(CliError);
+      const message = failure instanceof Error ? failure.message : "";
+      expect(message).toContain("disk full");
+      expect(message).toContain("rolled back");
+      expect(message).toContain("no space left on device");
+      expect(message).not.toContain("Rolling back also failed");
+      expect(journalOf(world)).toBeUndefined();
+      expect(treeOf(world.root)).toEqual(before);
+    });
+
+    it("keeps the record of a run that was finishing an earlier one, which still describes the earlier run's state", async () => {
+      await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: leavingItHalfDone(world) }))).rejects.toThrow();
+      const failure: unknown = await renameIdentity(world.paths, "work", "client", world.ports({ fs: failingThenJournalFull() })).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(failure instanceof Error ? failure.message : "").toContain("no space left on device");
+      expect(failure instanceof Error ? failure.message : "").not.toContain("Rolling back also failed");
+      expect(journalOf(world)).toMatchObject({ from: "work", to: "client" });
+      await expect(renameIdentity(world.paths, "work", "client", world.ports())).resolves.toBeDefined();
+      expect(journalOf(world)).toBeUndefined();
+    });
+
+    it("still names the steps it could not undo, and the journal failure beside them, when both happen", async () => {
+      const failing = failingThenJournalFull();
+      const both: FarmFs = {
+        ...failing,
+        rename: (from: string, to: string): void => {
+          if (to === world.directory("work")) {
+            throw new Error("the directory is busy");
+          }
+          realFarmFs.rename(from, to);
+        },
+      };
+      const failure: unknown = await renameIdentity(world.paths, "work", "client", world.ports({ fs: both })).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      const message = failure instanceof Error ? failure.message : "";
+      expect(message).toContain("Rolling back also failed");
+      expect(message).toContain("the directory is busy");
+      expect(message).toContain("could not be updated");
+      expect(message).toContain("no space left on device");
+      expect(journalOf(world)).toMatchObject({ from: "work", to: "client" });
+    });
   });
 
   it("is not written by a dry run, which only says what a rename would do", () => {
