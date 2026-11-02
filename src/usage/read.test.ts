@@ -184,6 +184,8 @@ describe("readRecentUsageRecords", () => {
   const CORRUPT_LINE_ONE_IN = 5;
   const SECOND_MS = 1_000;
   const HALF_SECOND_MS = SECOND_MS / 2;
+  /** Far above the number of arguments V8 accepts in one call on a default stack (about a hundred thousand), so a spread of this many records overflows it. */
+  const SPREAD_OVERFLOW_RECORDS = 400_000;
 
   function randomLayout(next: () => number): Record<string, string> {
     const files: Record<string, string> = {};
@@ -228,6 +230,16 @@ describe("readRecentUsageRecords", () => {
 
     expect(recent).toHaveLength(2);
     expect(opened).toEqual([`${LOG_DIR}/${segmentDay(DAY_START + (LAYOUT_DAYS - 1) * DAY_MS)}.${String(WRITER_PID)}.jsonl`]);
+  });
+
+  it("reads a segment holding more records than a call's spread arguments can carry", () => {
+    // Built line by line, because `lines(...records)` would itself overflow on this many.
+    const content = Array.from({ length: SPREAD_OVERFLOW_RECORDS }, (_, index) => `${JSON.stringify(anonymousRecordAt(DAY_START + index))}\n`).join("");
+    const fs = createFakeFarmFs({ [`${LOG_DIR}/2026-01-15.1.jsonl`]: content });
+
+    const recent = readRecentUsageRecords(fs, LOG_DIR, 1);
+
+    expect(recent.map((record) => record.at)).toEqual([new Date(DAY_START + SPREAD_OVERFLOW_RECORDS - 1).toISOString()]);
   });
 
   it("reads the older day when a record in it is later than the newest day's records, stamped before midnight and written after", () => {

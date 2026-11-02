@@ -127,10 +127,8 @@ export function readRecentUsageRecords(fs: UsageReadFs, logDir: string, count: n
   // Oldest segment first, as `readUsageLog` concatenates, so the stable sort below breaks ties the same way.
   let records: UsageRecord[] = [];
   for (let index = days.length - 1; index >= 0; index -= 1) {
-    const dayRecords: UsageRecord[] = [];
-    for (const segment of days[index] ?? []) {
-      dayRecords.push(...(readSegment(fs, logDir, segment)?.records ?? []));
-    }
+    // flatMap, not `push(...segmentRecords)`: spreading an array into call arguments throws a RangeError once a segment holds more records than the engine's argument limit, and a busy day's segment does.
+    const dayRecords = (days[index] ?? []).flatMap((segment) => readSegment(fs, logDir, segment)?.records ?? []);
     records = [...dayRecords, ...records];
     records.sort((left, right) => left.at.localeCompare(right.at));
     const olderDay = days[index - 1]?.[0];
