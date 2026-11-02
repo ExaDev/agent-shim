@@ -13,14 +13,13 @@ import type { LayoutPaths } from "../paths";
 import { realSessionFs } from "../agents/realFs";
 import { collectSessionList, showSession } from "../agents/sessions";
 import { listIdentities } from "../identityStore";
-import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessAlive, realIsProcessRunning, realRunAsyncWithin, realRunningAmong, realAsyncCredentialPort, realOwnExecutablePath, selfInvocation, spawnDetachedSupervisor, spawnSelfDetached } from "../realPorts";
+import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessAlive, realIsProcessRunning, realRunningAmong, realAsyncCredentialPort, realOwnExecutablePath, selfInvocation, spawnDetachedSupervisor, spawnSelfDetached } from "../realPorts";
 import { createHeadroomKeeper } from "../headroom/keeper";
 import { HEADROOM_POLL_MS } from "../headroom/supervisor";
 import { supervisedSessionOf, writeModelMove } from "../supervise/registry";
 import { createTargetObservationStore } from "../selection/targetStore";
 import { checkForUpdate } from "../update/commands";
 import { identityExists, listAnchoredIdentities } from "../identityStore";
-import { KEYCHAIN_LOOKUP_TIMEOUT_MS } from "../keychainLogin";
 import { readJobs } from "../jobStore";
 import { refreshStalePoolMembers } from "../launcher/poolRefresh";
 import { ANTHROPIC_USAGE_FRESHNESS_MS } from "../usage/anthropicUsageRefresh";
@@ -38,6 +37,7 @@ import { machineTimeZone } from "../usage/anchor";
 import { runWindowKeeper } from "../usage/windowKeeper";
 import { realAsyncCredentialCacheEnv } from "../realCredentialCache";
 import { createDoorPipelines } from "./assembly";
+import { doorKeychainProbe } from "./keychainProbe";
 import { appendDoorLog } from "./doorLog";
 import { handOverOnSignal, retireOnSignals, type DoorExitFacts } from "./replacement";
 import { createRoutingSettingReader } from "../headroom/routingSetting";
@@ -584,7 +584,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
             fanout: rcFanout,
             ...controlDeps,
             ...lifecycleAndCodexDeps,
-            keychain: { runAsync: realRunAsyncWithin(KEYCHAIN_LOOKUP_TIMEOUT_MS), platform: process.platform },
+            keychain: doorKeychainProbe(process.platform),
             events: doorEvents,
           }),
           // The self-hosted web client rides the same listener under the same per-generation token as the typed API it speaks: no extra process, no new trust surface.
