@@ -11,7 +11,7 @@ function profile(oauthAccount: unknown): string {
 }
 
 describe("isIdentityName", () => {
-  it.each(["work", "joseph.mearman@exadev.io", "a", "team-1_x"])("accepts %s", (name) => {
+  it.each(["work", "user@example.com", "a", "team-1_x"])("accepts %s", (name) => {
     expect(isIdentityName(name)).toBe(true);
   });
 
