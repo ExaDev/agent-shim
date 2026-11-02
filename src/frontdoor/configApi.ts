@@ -73,7 +73,7 @@ import { doorApiAuth } from "./rcApi";
 /**
  * The door's configuration management as a typed oRPC API: the writes the CLI's `identity`, `profile`, `pool`, `provider` and `rule` verbs make, as `config.<noun>.<verb>` procedures, every one behind the same per-generation control token as the rest of the mount.
  *
- * Each procedure makes the checks its verb makes and calls the store function it calls (and the shared rules extracted beside them), so a write through the API and a write through the CLI are the same write: the same validation, the same atomic store write, the same refusals. The one check that reaches outside the stores is `config.identity.add`'s question to the macOS Keychain, asked through the asynchronous runner in `deps.keychain` so the door's event loop is never held, by the function the CLI asks it with. A refusal is the CLI's own message carried as an oRPC error (`NOT_FOUND` for a name that does not exist, `CONFLICT` for one that already does or for a Keychain login in the way, `BAD_REQUEST` for anything else the store refuses), and every outcome is the `--json` object the verb prints.
+ * Each procedure makes the checks its verb makes and calls the store function it calls (and the shared rules extracted beside them), so a write through the API and a write through the CLI are the same write: the same validation, the same atomic store write, the same refusals. The one check that reaches outside the stores is `config.identity.add`'s question to the macOS Keychain, asked through the asynchronous runner in `deps.keychain` so the door's event loop is never held, by the function the CLI asks it with. A refusal is the CLI's own message carried as an oRPC error (`NOT_FOUND` for a name that does not exist, `CONFLICT` for one that already does or for a Keychain login in the way, `BAD_REQUEST` for anything else the store refuses, and the retryable `SERVICE_UNAVAILABLE` for a Keychain that could not be asked), and every outcome is the `--json` object the verb prints.
  *
  * What the API deliberately does not accept: a credential source of the `command` kind, a provider's `env` block and a statusline patch setting the `extra` group, all of which would let a holder of the control token run a program of their choosing at the next launch; the interactive wizards and `configure`, which need a terminal; a removal without `confirm: true`, and a change of an existing provider's `baseUrl` that does not restate its credential block. Those stay on the CLI.
  */
@@ -84,7 +84,7 @@ export interface ConfigApiDeps {
   readonly expectedToken: string;
   /** The configuration tree the stores operate on. */
   readonly paths: LayoutPaths;
-  /** How the door asks the macOS Keychain whether a login is already filed for a directory an identity is about to be created in: `security` run without blocking the event loop, and the platform, since only macOS has a Keychain. */
+  /** How the door asks the macOS Keychain whether a login is already filed for a directory an identity is about to be created in: `security` run without blocking the event loop, and the platform, since only macOS has a Keychain. The door builds it with `doorKeychainProbe`. */
   readonly keychain: { readonly runAsync: AsyncRun; readonly platform: NodeJS.Platform };
 }
 
