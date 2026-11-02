@@ -87,6 +87,13 @@ describe("the journal a rename keeps", () => {
     expect(fs.existsSync(world.directory("client"))).toBe(true);
   });
 
+  it("marks as done only the steps the rollback could not undo, so the count doctor reports is what is left", async () => {
+    await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: leavingItHalfDone(world) }))).rejects.toThrow(/Rolling back also failed/);
+    const journal = journalOf(world);
+    expect(journal?.steps.length).toBeGreaterThan(1);
+    expect(journal?.steps.filter((step) => step.done).map((step) => step.description)).toEqual(["move identities/work to identities/client"]);
+  });
+
   it("is not written by a dry run, which only says what a rename would do", () => {
     describeIdentityRename(world.paths, "work", "client", world.ports());
     expect(fs.existsSync(world.paths.identityRenamesDir)).toBe(false);
@@ -118,6 +125,17 @@ describe("running a rename again after one was left unfinished", () => {
     } finally {
       fs.rmSync(clean.root, { recursive: true, force: true });
     }
+  });
+
+  it("is kept with every step marked undone when the run that finishes it fails and rolls back completely, since the state is the earlier run's again", async () => {
+    await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: leavingItHalfDone(world) }))).rejects.toThrow();
+    await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: failingOnce(world) }))).rejects.toThrow(/disk full/);
+    const journal = journalOf(world);
+    expect(journal?.steps.length).toBeGreaterThan(0);
+    expect(journal?.steps.filter((step) => step.done)).toEqual([]);
+    expect(journal === undefined ? "" : describeUnfinishedRename(journal, { finishable: true })).toContain(`(0 of ${String(journal?.steps.length)} steps recorded as done)`);
+    await expect(renameIdentity(world.paths, "work", "client", world.ports())).resolves.toBeDefined();
+    expect(journalOf(world)).toBeUndefined();
   });
 
   it("finishes a rename that was killed after moving the directory, which no rollback ran for", async () => {

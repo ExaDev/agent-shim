@@ -693,6 +693,8 @@ function messageOf(error: unknown): string {
 interface ApplyHooks {
   /** Called after each step with its position in the plan: the locks are refreshed and the journal marked here, and the call throws when a lock was taken over. */
   readonly afterStep: (index: number) => void;
+  /** Called after each step is undone during a rollback, with its position in the plan: the journal marks the step as not done here, so that what it records is what is still applied. */
+  readonly afterUndo: (index: number) => void;
   /** Whether this run finishes a rename an earlier one left unfinished, which an interruption's message says. */
   readonly resuming: boolean;
   /** The signal the process received, if it has received one. */
@@ -705,7 +707,7 @@ interface ApplyHooks {
  * Applies the steps in order. Before each step the event loop is let turn and the process is checked for a SIGINT or SIGTERM, and after each the locks are refreshed; a signal during the last step lets the rename finish, since there is nothing left to undo. If a step, the refresh or an interrupt fails the rename, every step applied so far, the failing one included, is undone in reverse order and the failure is thrown.
  */
 async function applyAll(steps: readonly Step[], hooks: ApplyHooks): Promise<void> {
-  const started: Step[] = [];
+  const started: { readonly step: Step; readonly index: number }[] = [];
   try {
     for (const [index, step] of steps.entries()) {
       await hooks.turn();
@@ -713,15 +715,16 @@ async function applyAll(steps: readonly Step[], hooks: ApplyHooks): Promise<void
       if (signal !== undefined) {
         throw new RenameInterruptedError(signal, hooks.resuming);
       }
-      started.push(step);
+      started.push({ step, index });
       step.apply();
       hooks.afterStep(index);
     }
   } catch (error) {
     const leftovers: string[] = [];
-    for (const step of started.reverse()) {
+    for (const { step, index } of started.reverse()) {
       try {
         step.undo();
+        hooks.afterUndo(index);
       } catch (undoError) {
         leftovers.push(`${step.description} (${messageOf(undoError)})`);
       }
@@ -877,7 +880,7 @@ interface Applied {
 /**
  * Takes the locks, plans again from what is on disk by then, writes the journal, applies the plan marking each step done, removes the journal and releases the locks. The locks are not held while the old Keychain item is deleted, since that can wait on a person too.
  *
- * The journal is removed when the rename is over, and when a rename that began here has been rolled back completely, since nothing is then left half done. It stays when the rollback failed, and when the run was finishing an earlier rename and failed: the state is then the earlier run's unfinished one, which the journal still describes.
+ * The journal is removed when the rename is over, and when a rename that began here has been rolled back completely, since nothing is then left half done. It stays when the rollback failed, and when the run was finishing an earlier rename and failed: the state is then the earlier run's unfinished one, which the journal still describes. A rollback marks each step it undoes as not done as it goes, so what a kept journal records as done is exactly what is still applied.
  */
 async function applyUnderLocks(paths: LayoutPaths, from: string, to: string, ports: IdentityRenamePorts, gathered: Gathered, hooks: Pick<ApplyHooks, "interrupted" | "turn">): Promise<Applied> {
   const held = holdLocks(paths, [from, to], ports);
@@ -894,13 +897,22 @@ async function applyUnderLocks(paths: LayoutPaths, from: string, to: string, por
       steps: plan.steps.map((step) => ({ description: step.description, done: false })),
     };
     writeRenameJournal(ports.fs, file, journal);
+    const applied = new Set<number>();
+    const record = (): void => {
+      writeRenameJournal(ports.fs, file, { ...journal, steps: journal.steps.map((step, position) => ({ ...step, done: applied.has(position) })) });
+    };
     try {
       await applyAll(plan.steps, {
         ...hooks,
         resuming: resumed !== undefined,
         afterStep: (index) => {
           held.refresh();
-          writeRenameJournal(ports.fs, file, { ...journal, steps: journal.steps.map((step, position) => ({ ...step, done: position <= index })) });
+          applied.add(index);
+          record();
+        },
+        afterUndo: (index) => {
+          applied.delete(index);
+          record();
         },
       });
     } catch (error) {
