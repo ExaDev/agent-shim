@@ -8,6 +8,7 @@ import type { CachedCredential, CredentialCachePort } from "./credentialCache";
 import { createFakeKeychain, type FakeKeychain } from "./keychainTestWorld";
 import type { SessionProcess } from "./identitySessions";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
+import { realpathOrSelf } from "./realIdentityRename";
 import { sameDirectory } from "./sameDirectory";
 import { realFarmFs } from "./realPorts";
 import { claudeCodeKeychainService } from "./usage/signIn";
@@ -139,6 +140,7 @@ export function createWorld(platform: NodeJS.Platform = "linux"): World {
       platform,
       home: "/example/home",
       sameDirectory,
+      realpath: realpathOrSelf,
       sessions: { sessionsOn: (configDir) => sessions.get(configDir) ?? [] },
       launches: { liveOn: (identity) => launches.get(identity) ?? [] },
       signals: {

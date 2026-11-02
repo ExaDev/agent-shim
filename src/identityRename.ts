@@ -45,6 +45,8 @@ export interface IdentityRenamePorts {
   readonly home: string;
   /** Whether two paths are one directory on disk, which is how a rename that only changes the case of a name is told on a filesystem that ignores case. */
   readonly sameDirectory: (first: string, second: string) => boolean;
+  /** Where a path really is, following symlinks; a path that does not exist answers as itself. A source may name a moved path through a symlinked directory above it, and this is how the rename finds that spelling. */
+  readonly realpath: (target: string) => string;
   /** Tells whether a session is running against the identity's directory. */
   readonly sessions: IdentitySessionProbe;
   /** How the rename hears that the process was told to stop, and how it lets such a signal be heard. */
@@ -211,12 +213,18 @@ function requireRenamable(paths: LayoutPaths, from: string, to: string, ports: I
   }
 }
 
+/** One path that moves: where it is, and where it goes. */
+interface MovedPlace {
+  readonly from: string;
+  readonly to: string;
+}
+
 /** Where the renamed identity's files go, as the credential `file` sources that name them must follow. */
 interface MovedPaths {
-  readonly fromDir: string;
-  readonly toDir: string;
-  readonly fromToken: string;
-  readonly toToken: string;
+  /** The stored token file: where it is and where it goes, spelled directly and, when a directory above it is a symlink, through the real path of the directory that holds it, since a source can name it either way. */
+  readonly tokens: readonly MovedPlace[];
+  /** The identity's directory, spelled the same ways. */
+  readonly directories: readonly MovedPlace[];
   /** The Keychain service names Claude Code files the login of each directory under: a credential `keychain` source naming the old one names the login this rename moves. */
   readonly fromService: string;
   readonly toService: string;
@@ -245,11 +253,35 @@ function repointedSource(source: CredentialSource, moved: MovedPaths): Credentia
     return source;
   }
   const file = expandHome(source.file, moved.home);
-  if (file === moved.fromToken) {
-    return { file: spelledLike(source.file, moved.toToken, moved.home) };
+  for (const { from, to } of moved.tokens) {
+    if (file === from) {
+      return { file: spelledLike(source.file, to, moved.home) };
+    }
   }
-  const inside = file === moved.fromDir || file.startsWith(`${moved.fromDir}${path.sep}`);
-  return inside ? { file: spelledLike(source.file, `${moved.toDir}${file.slice(moved.fromDir.length)}`, moved.home) } : source;
+  for (const { from, to } of moved.directories) {
+    if (file === from || file.startsWith(`${from}${path.sep}`)) {
+      return { file: spelledLike(source.file, `${to}${file.slice(from.length)}`, moved.home) };
+    }
+  }
+  return source;
+}
+
+/**
+ * `place` and, when it differs, the same place spelled through the real path of the directory that holds it: a state root reached through a symlink can be named by either. The place itself is not resolved, since when it is a symlink only the link moves and what it points at stays where it is.
+ */
+function placesThroughRealParent(place: MovedPlace, realpath: (target: string) => string): readonly MovedPlace[] {
+  const through = (target: string): string => path.join(realpath(path.dirname(target)), path.basename(target));
+  const real = { from: through(place.from), to: through(place.to) };
+  return real.from === place.from && real.to === place.to ? [place] : [place, real];
+}
+
+/** `target` as a person or a shell script could write it: in full, and when it is under the home directory also with a leading `~`, `$HOME` or `${HOME}`. */
+function spellingsOf(target: string, home: string): readonly string[] {
+  if (!target.startsWith(`${home}${path.sep}`)) {
+    return [target];
+  }
+  const rest = target.slice(home.length);
+  return [target, `~${rest}`, `$HOME${rest}`, `\${HOME}${rest}`];
 }
 
 /** `sources` with each one re-pointed, or undefined when none of them names anything that moved. */
@@ -270,7 +302,7 @@ function namesPath(text: string, target: string): boolean {
 
 /** Whether `text`, a file that could not be read or the arguments of a source, names something the rename moves: the token file or directory in any spelling a source could take, or the Keychain service of the login, which is deleted once it has been copied. A service is a name ending in a hash, so it is told from a longer one by the same boundary as a path. */
 function namesMovedPath(text: string, moved: MovedPaths): boolean {
-  return namesPath(text, moved.fromService) || [moved.fromToken, moved.fromDir].some((target) => namesPath(text, target) || (target.startsWith(`${moved.home}${path.sep}`) && namesPath(text, `~${target.slice(moved.home.length)}`)));
+  return namesPath(text, moved.fromService) || [...moved.tokens, ...moved.directories].some(({ from }) => spellingsOf(from, moved.home).some((spelling) => namesPath(text, spelling)));
 }
 
 /** Raised when a file that holds credential sources cannot be read and names a path or the Keychain login the rename would move, so it cannot be re-pointed and would be left broken. Nothing has been changed. */
@@ -602,7 +634,7 @@ function planRename(paths: LayoutPaths, from: string, to: string, ports: Identit
     throw new IdentityNotFoundError(from);
   }
 
-  const moved: MovedPaths = { fromDir, toDir, fromToken, toToken, fromService: claudeCodeKeychainService(fromDir), toService: claudeCodeKeychainService(toDir), home: ports.home };
+  const moved: MovedPaths = { tokens: placesThroughRealParent({ from: fromToken, to: toToken }, ports.realpath), directories: placesThroughRealParent({ from: fromDir, to: toDir }, ports.realpath), fromService: claudeCodeKeychainService(fromDir), toService: claudeCodeKeychainService(toDir), home: ports.home };
   const keychain = keychainPlan(ports, gathered === undefined ? dryRunLogin(ports, fromDir, toDir, resuming) : gathered.login, toDir);
   const farmFiles = [FARM_MANIFEST_FILENAME, LEGACY_FARM_MANIFEST_FILENAME].map((name) => path.join(identityDir, name));
   const steps: (Step | undefined)[] = [

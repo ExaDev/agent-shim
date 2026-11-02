@@ -38,7 +38,7 @@ const realProcessTableFs: ProcessTableFs = {
 };
 
 /** Where a path really is, following symlinks. A path that does not exist is its own place, which is how a directory that is not there yet is compared. */
-function realpathOrSelf(target: string): string {
+export function realpathOrSelf(target: string): string {
   try {
     return fs.realpathSync(target);
   } catch (error) {
@@ -100,6 +100,7 @@ export function realIdentityRenamePorts(paths: LayoutPaths): IdentityRenamePorts
     platform: process.platform,
     home: os.homedir(),
     sameDirectory,
+    realpath: realpathOrSelf,
     launches: realLaunchProbe(paths),
     signals: realSignals,
     sessions: createIdentitySessionProbe(process.platform, { run: realRunPort, uid: currentUid, ownPid: process.pid, procFs: realProcessTableFs, realpath: realpathOrSelf }),
