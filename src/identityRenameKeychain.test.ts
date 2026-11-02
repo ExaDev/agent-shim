@@ -101,6 +101,62 @@ describe("renameIdentity with a macOS Keychain login", () => {
     expect(world.keychain.items.has(newService())).toBe(false);
   });
 
+  describe("with a login too large to copy through one `security -i` line", () => {
+    /** Printable text longer than a whole line, so neither the hex form nor the quoted form of the copy command can carry it. */
+    const TOO_LARGE_FOR_ANY_FORM = 5000;
+
+    /** The text of the refusal the real rename ends with, and the tree and Keychain it left behind. */
+    async function refusal(): Promise<{ readonly message: string; readonly unchanged: boolean }> {
+      world.keychain.seed(oldService(), "alex", "a".repeat(TOO_LARGE_FOR_ANY_FORM));
+      const before = treeOf(world.root);
+      const failure: unknown = await renameIdentity(world.paths, "work", "client", world.ports()).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      const unchanged = JSON.stringify(treeOf(world.root)) === JSON.stringify(before) && world.keychain.items.has(oldService()) && !world.keychain.items.has(newService());
+      return { message: failure instanceof Error ? failure.message : "", unchanged };
+    }
+
+    it("changes nothing: the directory, every file and the old Keychain item stay as they were, and no new item is made", async () => {
+      expect((await refusal()).unchanged).toBe(true);
+    });
+
+    it("does not tell the person to sign in under a name that the refusal means does not exist", async () => {
+      const { message } = await refusal();
+      expect(message).not.toContain("under the new name instead");
+      expect(message).not.toMatch(/sign in again/iu);
+    });
+
+    it("says what is true: the login is too large for the input line, with its limit, and that nothing was changed", async () => {
+      const { message } = await refusal();
+      expect(message).toContain("too large to copy through the input line of `security -i`");
+      expect(message).toMatch(/at most \d+ characters/u);
+      expect(message).toContain("Nothing has been changed");
+    });
+
+    it("names the exact command that deletes the old item, the rename to run again, and that this discards the stored login", async () => {
+      const { message } = await refusal();
+      expect(message).toContain(`\`security delete-generic-password -s '${oldService()}' -a 'alex'\``);
+      expect(message).toContain("then run the rename again");
+      expect(message).toContain("nothing is left to copy");
+      expect(message).toContain("discards the stored login");
+    });
+
+    it("gives a route that works: with the old item deleted as the message says, the rename runs again and copies nothing", async () => {
+      await refusal();
+      world.keychain.items.delete(oldService());
+      const report = await renameIdentity(world.paths, "work", "client", world.ports());
+      expect(report.steps.some((step) => step.startsWith("copy the Keychain login"))).toBe(false);
+      expect(fs.existsSync(world.directory("client"))).toBe(true);
+      expect(world.keychain.items.has(newService())).toBe(false);
+    });
+
+    it("carries none of the login", async () => {
+      const { message } = await refusal();
+      expect(message).not.toContain("aaaaaaaaaa");
+    });
+  });
+
   it("removes the new item and keeps the old one when a later step fails", async () => {
     const before = treeOf(world.root);
     const failing = failingOnce(world);
