@@ -14,6 +14,7 @@ import { createFakeKeychain } from "./keychainTestWorld";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { buildProgram } from "./program";
 import { realFarmFs } from "./realPorts";
+import { realpathOrSelf } from "./realIdentityRename";
 import { sameDirectory } from "./sameDirectory";
 import { fakeCommandDeps } from "./test-helpers";
 import { claudeCodeKeychainService } from "./usage/signIn";
@@ -61,6 +62,7 @@ describe("identity rename", () => {
       platform: "darwin",
       home: "/example/home",
       sameDirectory,
+      realpath: realpathOrSelf,
       sessions: { sessionsOn: () => sessions },
       launches: { liveOn: () => [] },
       signals: {
