@@ -11,6 +11,7 @@ import { buildLayoutPaths, type LayoutPaths } from "../paths";
 import type { AsyncRun } from "../replayRun";
 import { claudeCodeKeychainService } from "../usage/signIn";
 import { createConfigApiRouter } from "./configApi";
+import { ConfigIdentityAddInputSchema } from "./configSchemas";
 
 const TOKEN = "control-token-for-the-config-api-keychain-tests";
 
@@ -127,6 +128,10 @@ describe("config.identity.add and a Keychain login left behind for the directory
   it("is still CONFLICT for a leftover login that was found, whatever the lookup failures do", async () => {
     keychain.seed(service("work"), "alex", LOGIN_BLOB);
     expect((await refusalOf(client().identity.add({ name: "work" })))?.code).toBe("CONFLICT");
+  });
+
+  it("describes keepKeychainLogin, to the typed client and the MCP tool derived from it, as sharing a login another identity holds", () => {
+    expect(ConfigIdentityAddInputSchema.shape.keepKeychainLogin.description).toContain("If another identity holds that login, the two share it");
   });
 
   it("asks nothing of the Keychain off macOS", async () => {

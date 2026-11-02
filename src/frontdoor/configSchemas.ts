@@ -16,6 +16,7 @@ import {
   RemoteCredentialSourceSchema,
 } from "../config/schema";
 import { IdentityLabelSchema } from "../config/names";
+import { KEEP_KEYCHAIN_LOGIN_DESCRIPTION } from "../keychainLogin";
 import { STATUSLINE_EXTRA_GROUP } from "../config/statusline";
 
 /**
@@ -88,7 +89,7 @@ const ProviderValueSchema = z.strictObject({
 export const ConfigNameInputSchema = z.strictObject({ name: z.string().min(1) });
 
 /** The input of `config.identity.add`: the name, and `keepKeychainLogin`, the API's form of `identity add --keep-keychain-login`: the caller's statement that a login the macOS Keychain holds for the identity's directory is wanted, which is otherwise refused because the new identity would start signed in as that account. */
-export const ConfigIdentityAddInputSchema = z.strictObject({ name: z.string().min(1), keepKeychainLogin: z.boolean().optional() });
+export const ConfigIdentityAddInputSchema = z.strictObject({ name: z.string().min(1), keepKeychainLogin: z.boolean().optional().describe(KEEP_KEYCHAIN_LOGIN_DESCRIPTION) });
 
 export const ConfigIdentityAddOutputSchema = storedMutationOutput("identity", "created", IdentityValueSchema);
 
