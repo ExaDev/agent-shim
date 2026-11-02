@@ -189,6 +189,24 @@ export function listIdentityDirectories(paths: LayoutPaths): IdentityDirectoryLi
   return { names: names.sort(), unreachable: unreachable.sort((a, b) => a.name.localeCompare(b.name)) };
 }
 
+/** Raised when a command that has to read every identity to change what names something finds an entry it cannot reach, since that entry may hold a reference the command would leave stale. */
+class UnreachableIdentitiesError extends CliError {
+  constructor(cannot: string, because: string, entries: readonly UnreachableIdentityEntry[]) {
+    super(`Cannot ${cannot}: ${entries.map((entry) => `identities/${entry.name} (${entry.code})`).join(", ")} cannot be reached, so ${because}. Repair or remove ${entries.length === 1 ? "it" : "them"} first; nothing was changed.`);
+    this.name = "UnreachableIdentitiesError";
+  }
+}
+
+/**
+ * Throws when an entry under `identitiesDir` cannot be reached (see `listIdentityDirectories`): it is left out of the listing, so a command that rewrites what the identities hold would skip it, and leave it pointing at the name it changed. `cannot` completes "Cannot ...", and `because` says what could not be done for the entry. `doctor` does not use this: it reports such an entry and carries on.
+ */
+export function requireNoUnreachableIdentities(paths: LayoutPaths, cannot: string, because: string): void {
+  const { unreachable } = listIdentityDirectories(paths);
+  if (unreachable.length > 0) {
+    throw new UnreachableIdentitiesError(cannot, because, unreachable);
+  }
+}
+
 /** One identity as reported by `listIdentities`, whose `identity.json` parsed and validated cleanly. */
 export interface IdentityListEntry {
   readonly name: string;

@@ -13,7 +13,7 @@ import { listUsageSnapshots, snapshotPath, type UsageReadFs } from "./usage/read
 import { readDirectoryRules, writeDirectoryRules } from "./directoryRulesStore";
 import { requireNewProviderName } from "./config/names";
 import { mapModelRefs } from "./modelRefs";
-import { listIdentities, setIdentityProvider } from "./identityStore";
+import { listIdentities, requireNoUnreachableIdentities, setIdentityProvider } from "./identityStore";
 import type { LayoutPaths } from "./paths";
 import { aliasesAfterRename, readProviderAliases, writeProviderAliases } from "./providerAliases";
 import { ProviderAlreadyExistsError, ProviderNotFoundError, listProviders, providerExists, providerJsonPath, readProvider } from "./providersStore";
@@ -75,6 +75,8 @@ export function renameProvider(paths: LayoutPaths, from: string, to: string, por
   if (providerExists(paths, to)) {
     throw new ProviderAlreadyExistsError(to);
   }
+  // An identity nobody can read is left out of the listing, so one that names this provider would keep the old name.
+  requireNoUnreachableIdentities(paths, `rename provider "${from}" to "${to}"`, "an identity there that names the provider could not be updated");
   const previousAliases = readProviderAliases(paths);
   writeProviderAliases(paths, aliasesAfterRename(previousAliases, from, to));
   try {
