@@ -57,7 +57,7 @@ Every failure prints as `agent-shim: <message>` on standard error. An unexpected
 ```
 agent-shim <noun> <verb> [name] [options]      # nouns: identity, profile, pool, provider, rule (credential acts on the credentials they use)
 
-agent-shim identity add <name>
+agent-shim identity add <name> [--keep-keychain-login] [--json]
 agent-shim identity list [--json]
 agent-shim identity show <name> [--json]
 agent-shim identity set <name> [--label <text> | --no-label] [--default-profile <profile> | --no-default-profile] [--provider <provider> | --no-provider] [--[no-]allow-ambient-credential]
@@ -186,6 +186,8 @@ agent-shim run [@<identity>] [launch flags] [claude arguments]
   #   --native   run the real claude with nothing from agent-shim applied; cannot be combined with the flags above
 claude @<identity> ...                      # the same, once `agent-shim shim enable` has run
 ```
+
+`identity add` refuses, on macOS, a name whose directory the Keychain already holds a Claude Code login for (left by an identity of that name that was renamed or removed), because the new identity would start signed in as that account; the message names the entry and the `security delete-generic-password` command that removes it. `--keep-keychain-login` creates the identity signed in as that account on purpose, and if another identity holds that login the two share it.
 
 ### `agent-shim configure`: which file it writes to
 

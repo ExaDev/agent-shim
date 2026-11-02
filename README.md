@@ -82,7 +82,7 @@ The full mechanics, including the credential block, the merge algorithm, conditi
 ```
 agent-shim <noun> <verb> [name] [options]      # nouns: identity, profile, pool, provider, rule, job
 
-agent-shim identity add <name> [--json]
+agent-shim identity add <name> [--keep-keychain-login] [--json]   # on macOS refused while the Keychain holds a Claude Code login filed for the directory (left by a renamed or removed identity of that name); --keep-keychain-login creates the identity signed in as that account on purpose, sharing the login with any identity that holds it
 agent-shim identity list [--json]
 agent-shim identity show <name> [--json]
 agent-shim identity set <name> [--label <text> | --no-label] [--default-profile <profile> | --no-default-profile] [--provider <provider> | --no-provider] [--[no-]allow-ambient-credential] [--json]
