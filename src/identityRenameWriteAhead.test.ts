@@ -2,11 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { CliError } from "./cliError";
 import { collectDoctorReport } from "./doctorReport";
 import { describeIdentityRename, discardRenameJournal, renameIdentity } from "./identityRename";
 import { readRenameJournal, renameJournalFile, writeRenameJournal, type RenameJournal } from "./identityRenameJournal";
 import { OWN_PID, createWorld, treeOf, type World } from "./identityRenameTestWorld";
 import { removeIdentity } from "./identityStore";
+import type { FarmFs } from "./launcher/ports";
 import { realFarmFs } from "./realPorts";
 
 /** What a journal records of one step, in the order the steps are listed. */
@@ -84,8 +86,8 @@ describe("the journal is written ahead of each step", () => {
     const journal = readRenameJournal(realFarmFs, renameJournalFile(world.paths.identityRenamesDir, "work", "client"));
     expect(journal?.steps.filter((step) => step.done).map((step) => step.description)).toEqual(["move identities/work to identities/client"]);
     // The step that failed was begun and could not be undone either, so it may be partly applied; every other step was undone and is no longer marked.
-    expect(journal?.steps.filter((step) => step.started === true && !step.done).map((step) => step.description)).toEqual(["rewrite usage/anchors.json: 1 stamp"]);
-    expect(journal?.steps.filter((step) => step.started !== true && !step.done).length).toBe((journal?.steps.length ?? 0) - 2);
+    expect(journal?.steps.filter((step) => step.started && !step.done).map((step) => step.description)).toEqual(["rewrite usage/anchors.json: 1 stamp"]);
+    expect(journal?.steps.filter((step) => !step.started && !step.done).length).toBe((journal?.steps.length ?? 0) - 2);
   });
 });
 
@@ -169,5 +171,117 @@ describe("a journal that shows a step begun but not done", () => {
     expect(fs.existsSync(world.directory("client"))).toBe(true);
     expect(readRenameJournal(realFarmFs, renameJournalFile(world.paths.identityRenamesDir, "work", "client"))).toBeUndefined();
     expect(path.basename(world.directory("client"))).toBe("client");
+  });
+});
+
+/** The writes of the journal in the order a rename makes them, counted from 1: the whole journal before the first step, then for each step a write ahead of it and a write after it. */
+const INITIAL_WRITE = 1;
+const DONE_WRITE_OF_FIRST_STEP = 3;
+const BEGUN_WRITE_OF_SECOND_STEP = 4;
+
+describe("a journal write that fails", () => {
+  let world: World;
+
+  beforeEach(() => {
+    world = createWorld("darwin");
+  });
+
+  afterEach(() => {
+    fs.rmSync(world.root, { recursive: true, force: true });
+  });
+
+  /**
+   * A filesystem on which the `failing`th write of the journal (counting from 1) throws, as it does when the disk is full, and every other write goes through. `removing` makes the removal of the journal fail too.
+   */
+  function failingJournalWrite(failing: number, removing = false): FarmFs {
+    let writes = 0;
+    return {
+      ...realFarmFs,
+      writeFilePrivate: (file: string, contents: string): void => {
+        if (file.startsWith(world.paths.identityRenamesDir)) {
+          writes += 1;
+          if (writes === failing) {
+            throw new Error("no space left on device");
+          }
+        }
+        realFarmFs.writeFilePrivate(file, contents);
+      },
+      removeRecursive: (target: string): void => {
+        if (removing && target.startsWith(world.paths.identityRenamesDir)) {
+          throw new Error("EACCES: permission denied");
+        }
+        realFarmFs.removeRecursive(target);
+      },
+    };
+  }
+
+  async function failureOf(attempt: () => Promise<unknown>): Promise<string> {
+    const failure: unknown = await attempt().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(CliError);
+    return failure instanceof Error ? failure.message : "";
+  }
+
+  it("before the first step stops the rename with an error that says so and that nothing was changed, not with the bare error of the disk", async () => {
+    const before = treeOf(world.root);
+    const message = await failureOf(async () => renameIdentity(world.paths, "work", "client", world.ports({ fs: failingJournalWrite(INITIAL_WRITE) })));
+    expect(message).toContain("could not be written");
+    expect(message).toContain("no space left on device");
+    expect(message).toContain("the rename was rolled back and nothing was changed");
+    expect(treeOf(world.root)).toEqual(before);
+  });
+
+  it("ahead of a step stops before the step runs, rolls back the steps before it, and says so", async () => {
+    const before = treeOf(world.root);
+    const message = await failureOf(async () => renameIdentity(world.paths, "work", "client", world.ports({ fs: failingJournalWrite(BEGUN_WRITE_OF_SECOND_STEP) })));
+    expect(message).toContain("could not be written");
+    expect(message).toContain("no space left on device");
+    expect(message).toContain("the rename was rolled back and nothing was changed");
+    expect(treeOf(world.root)).toEqual(before);
+    expect(readRenameJournal(realFarmFs, renameJournalFile(world.paths.identityRenamesDir, "work", "client"))).toBeUndefined();
+  });
+
+  it("after a step rolls that step back too, and says so", async () => {
+    const before = treeOf(world.root);
+    const message = await failureOf(async () => renameIdentity(world.paths, "work", "client", world.ports({ fs: failingJournalWrite(DONE_WRITE_OF_FIRST_STEP) })));
+    expect(message).toContain("could not be written");
+    expect(message).toContain("the rename was rolled back and nothing was changed");
+    expect(treeOf(world.root)).toEqual(before);
+  });
+
+  it("ahead of a step leaves a step that never ran unmarked in the journal a later write saves, so a rename that was rolled back can still be discarded", async () => {
+    // The begun write of the second step fails, the first step is rolled back, and the record then cannot be removed: what is left on disk must show nothing begun.
+    const message = await failureOf(async () => renameIdentity(world.paths, "work", "client", world.ports({ fs: failingJournalWrite(BEGUN_WRITE_OF_SECOND_STEP, true) })));
+    expect(message).toContain("could not be removed");
+    expect(message).toContain("agent-shim identity rename work client --discard-journal");
+    const journal = readRenameJournal(realFarmFs, renameJournalFile(world.paths.identityRenamesDir, "work", "client"));
+    expect(journal?.steps.filter((step) => step.started || step.done)).toEqual([]);
+    expect(discardRenameJournal(world.paths, "work", "client", world.ports())).toEqual({ from: "work", to: "client" });
+  });
+
+  it("ahead of a step in a run that finishes an earlier one leaves that step unmarked in the journal it keeps", async () => {
+    const half = {
+      ...realFarmFs,
+      rename: (from: string, to: string): void => {
+        if (to === world.directory("work")) {
+          throw new Error("the directory is busy");
+        }
+        realFarmFs.rename(from, to);
+      },
+      writeFilePrivate: (file: string, contents: string): void => {
+        if (file === world.paths.usageAnchorsFile) {
+          throw new Error("disk full");
+        }
+        realFarmFs.writeFilePrivate(file, contents);
+      },
+    };
+    await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: half }))).rejects.toThrow(/Rolling back also failed/);
+    const message = await failureOf(async () => renameIdentity(world.paths, "work", "client", world.ports({ fs: failingJournalWrite(BEGUN_WRITE_OF_SECOND_STEP) })));
+    expect(message).toContain("could not be written");
+    expect(message).toContain("the steps this run applied were rolled back; the rename it was finishing is still unfinished");
+    const journal = readRenameJournal(realFarmFs, renameJournalFile(world.paths.identityRenamesDir, "work", "client"));
+    expect(journal?.steps.filter((step) => step.started || step.done).map((step) => step.description)).toEqual(["move identities/work to identities/client"]);
   });
 });

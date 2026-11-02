@@ -639,6 +639,21 @@ class RollbackFailedError extends CliError {
   }
 }
 
+/**
+ * Raised when the journal could not be written ahead of a step, after one, or before the first, so the rename went no further. `where` says which write, `failure` is what the filesystem said, and `outcome` says what the rollback left once it has finished (see `rolledBackOutcome`); it is absent while the rollback is still to be done, which is how an error that reaches `applyAll` is told from one it has already finished.
+ */
+class JournalWriteError extends CliError {
+  constructor(readonly failure: unknown, readonly where: string, readonly outcome?: string) {
+    super(`The journal under identity-renames/ could not be written ${where} (${messageOf(failure)}), so the rename went no further${outcome === undefined ? "" : `: ${outcome}`}.`);
+    this.name = "JournalWriteError";
+  }
+
+  /** The same error with the outcome of the rollback that followed it. */
+  withOutcome(outcome: string): JournalWriteError {
+    return new JournalWriteError(this.failure, this.where, outcome);
+  }
+}
+
 /** Raised when every step this run applied was undone but the journal could not be updated to say so: the rollback is complete, and the failure is the record's. */
 class RollbackNotRecordedError extends CliError {
   override readonly exitCode: number;
@@ -725,7 +740,7 @@ async function applyAll(steps: readonly Step[], hooks: ApplyHooks): Promise<void
     if (unrecorded.length > 0) {
       throw new RollbackNotRecordedError(error, unrecorded, hooks.resuming);
     }
-    throw error;
+    throw error instanceof JournalWriteError && error.outcome === undefined ? error.withOutcome(rolledBackOutcome(hooks.resuming)) : error;
   }
 }
 
@@ -903,27 +918,48 @@ async function applyUnderLocks(paths: LayoutPaths, from: string, to: string, por
     const record = (): void => {
       writeRenameJournal(ports.fs, file, { version: 1, from, to, startedAt, pid: ports.lock.pid, steps: descriptions.map((description, position) => ({ description, started: marks[position]?.started === true, done: marks[position]?.done === true })) });
     };
-    record();
+    try {
+      record();
+    } catch (failure) {
+      // Nothing has run, so this run changed nothing, and an earlier run's journal, if there was one, is untouched: a write replaces the file whole or not at all.
+      throw new JournalWriteError(failure, "before the first step", rolledBackOutcome(resumed !== undefined));
+    }
     // A step's position in the journal is after the steps carried from the earlier run.
+    const positionOf = (index: number): number => carried.length + index;
     const markOf = (index: number): { started: boolean; done: boolean } => {
-      const mark = marks[carried.length + index];
+      const mark = marks[positionOf(index)];
       if (mark === undefined) {
         throw new Error(`no step at position ${String(index)}`);
       }
       return mark;
+    };
+    /** Saves the journal at one point of a step, reporting a failure as a `JournalWriteError` that names the step. */
+    const save = (index: number, when: "ahead of" | "after"): void => {
+      try {
+        record();
+      } catch (failure) {
+        throw new JournalWriteError(failure, `${when} "${descriptions[positionOf(index)] ?? String(index)}"`);
+      }
     };
     try {
       await applyAll(plan.steps, {
         ...hooks,
         resuming: resumed !== undefined,
         beforeStep: (index) => {
-          markOf(index).started = true;
-          record();
+          const mark = markOf(index);
+          mark.started = true;
+          try {
+            save(index, "ahead of");
+          } catch (error) {
+            // The step does not run, so it must not be left marked as begun for a later write of the journal to save.
+            mark.started = false;
+            throw error;
+          }
         },
         afterStep: (index) => {
           held.refresh();
           markOf(index).done = true;
-          record();
+          save(index, "after");
         },
         afterUndo: (index) => {
           const mark = markOf(index);
