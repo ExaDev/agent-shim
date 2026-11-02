@@ -96,7 +96,12 @@ function accountOf(attributes: string, service: string): string {
 
 /** The command that deletes the Keychain item filed under `service`, for a message that tells the person what to run. `account` narrows it to one item when the listing gave a plain one. */
 export function keychainDeleteCommand(service: string, account: string | undefined): string {
-  return `security delete-generic-password -s "${service}"${account === undefined ? "" : ` -a "${account}"`}`;
+  return `security delete-generic-password -s ${shellQuoted(service)}${account === undefined ? "" : ` -a ${shellQuoted(account)}`}`;
+}
+
+/** `value` as one POSIX shell word that the shell takes literally: in single quotes, with each single quote inside it closed, escaped and reopened. An account name is whatever the Keychain item holds, so nothing about it can be assumed safe to paste into a shell. */
+function shellQuoted(value: string): string {
+  return `'${value.replace(/'/gu, "'\\''")}'`;
 }
 
 /** What a question to the Keychain needs: the runner of `security` and the platform, since only macOS has a Keychain. */
@@ -140,7 +145,7 @@ export function planKeychainLogin(run: RunPort, fromDir: string, toDir: string, 
   const alreadyCopied = lookup(run, toService).found;
   if (alreadyCopied && !resuming) {
     throw new KeychainLoginError(
-      `The Keychain already holds a login filed for ${toDir} (service ${toService}). It is left behind by an identity of that name that was removed, since \`identity remove\` does not touch the Keychain. If you do not need it, remove it with \`security delete-generic-password -s "${toService}"\`, or choose another name.`,
+      `The Keychain already holds a login filed for ${toDir} (service ${toService}). It is left behind by an identity of that name that was removed, since \`identity remove\` does not touch the Keychain. If you do not need it, remove it with \`${keychainDeleteCommand(toService, undefined)}\`, or choose another name.`,
     );
   }
   return { fromService, toService, account: accountOf(from.attributes, fromService), alreadyCopied };
