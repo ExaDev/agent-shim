@@ -120,7 +120,8 @@ export function readRenameJournals(fs: Pick<RenameJournalFs, "readFileUtf8" | "r
 /** Replaces the journal in `file`, creating its directory owner-only, atomically and owner-only. */
 export function writeRenameJournal(fs: Pick<RenameJournalFs, "mkdirPrivate" | "writeFilePrivate">, file: string, journal: Readonly<RenameJournal>): void {
   fs.mkdirPrivate(path.dirname(file));
-  fs.writeFilePrivate(file, `${JSON.stringify(RenameJournalSchema.parse(journal), null, 2)}\n`);
+  // Durable: a step is recorded as begun before it runs so that the record is there if the process dies mid-step, and a power cut loses what was not flushed.
+  fs.writeFilePrivate(file, `${JSON.stringify(RenameJournalSchema.parse(journal), null, 2)}\n`, { durable: true });
 }
 
 /** Removes the journal; one that is already gone is fine. */

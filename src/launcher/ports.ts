@@ -23,6 +23,12 @@ export interface FarmStat {
   readonly sizeBytes: number;
 }
 
+/** How a private write is made safe against a crash. */
+export interface PrivateWriteOptions {
+  /** Flush the new contents to disk before they replace the old, and the directory after, so that once the call returns the file survives a power cut as far as the filesystem honours a flush. A record that is written ahead of an action, to say the action may have begun, needs this; an ordinary write does not and is not made slower by it. */
+  readonly durable?: boolean;
+}
+
 /**
  * Every filesystem operation the farm resync performs, injected so the whole of `src/launcher/farm.ts` — symlink creation, materialisation, adoption copies, and the atomic swap itself — runs against an in-memory fake in tests and never against a real `~/.claude` or `~/.agent-shim`.
  *
@@ -49,8 +55,8 @@ export interface FarmFs {
   readonly writeFileUtf8: (path: string, contents: string) => void;
   /** Creates a directory (and any missing parents) readable only by its owner: mode 0700, enforced on the leaf even when it already existed with a wider mode. For a directory holding capabilities another local account must never read. */
   readonly mkdirPrivate: (path: string) => void;
-  /** Writes a file's full contents as UTF-8 text readable only by its owner (mode 0600), atomically: a temporary sibling is written at that mode and renamed into place, so no reader ever sees a partial file or a wider mode. */
-  readonly writeFilePrivate: (path: string, contents: string) => void;
+  /** Writes a file's full contents as UTF-8 text readable only by its owner (mode 0600), atomically: a temporary sibling is written at that mode and renamed into place, so no reader ever sees a partial file or a wider mode. With `options.durable` the contents are also flushed to disk, the file before the rename and the directory after it. */
+  readonly writeFilePrivate: (path: string, contents: string, options?: PrivateWriteOptions) => void;
   /** Appends UTF-8 text to a file readable only by its owner (mode 0600), creating it at that mode when it is missing and narrowing an existing wider mode. The file is opened in append mode, so the text always lands at the end however the file grew; a reader running at the same moment can still see a trailing partial write. It is the primitive an append-only log with one writer per file is built on. */
   readonly appendFilePrivate: (path: string, contents: string) => void;
   /** Creates a file only if it does not already exist, returning false when it does. This is the exclusive-create the identity lock depends on for its mutual exclusion — a read-then-write pair would race. */

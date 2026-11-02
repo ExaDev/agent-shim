@@ -155,6 +155,20 @@ describe("finishabilityOf and an unfinishable rename", () => {
     expect(listRenameJournals(fs, DIR).journals).toEqual([]);
   });
 
+  it("is written durably, the file and its directory flushed, since a begun mark has to outlive a power cut to be of any use", () => {
+    const fs = createFakeFarmFs();
+    const options: unknown[] = [];
+    const recording = {
+      ...fs,
+      writeFilePrivate: (file: string, contents: string, writeOptions?: { readonly durable?: boolean }): void => {
+        options.push(writeOptions);
+        fs.writeFilePrivate(file, contents);
+      },
+    };
+    writeRenameJournal(recording, renameJournalFile(DIR, "work", "client"), JOURNAL);
+    expect(options).toEqual([{ durable: true }]);
+  });
+
   it("reads back the begun mark it wrote", () => {
     const fs = createFakeFarmFs();
     const file = renameJournalFile(DIR, "work", "client");

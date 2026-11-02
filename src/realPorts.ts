@@ -71,6 +71,28 @@ const OWNER_ONLY_FILE_MODE = 0o600;
 /** The permission bits of a file mode, without its type bits. */
 const PERMISSION_BITS = 0o777;
 
+/** Writes `contents` to `file` owner-only and flushes it to disk before returning, so a rename of the file into place cannot reach the disk ahead of its contents. */
+function writeFileFlushed(file: string, contents: string): void {
+  const descriptor = fs.openSync(file, "w", OWNER_ONLY_FILE_MODE);
+  try {
+    fs.writeFileSync(descriptor, contents, "utf8");
+    fs.fchmodSync(descriptor, OWNER_ONLY_FILE_MODE);
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+/** Flushes a directory's entries to disk, which is what makes a rename into it survive a power cut. POSIX filesystems only: Windows cannot open a directory to flush it, and the one caller of a durable write does not run there. */
+function flushDirectory(directory: string): void {
+  const descriptor = fs.openSync(directory, "r");
+  try {
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 export const realFarmFs: FarmFs = {
   lstat(filePath) {
     let stat: fs.Stats;
@@ -127,12 +149,18 @@ export const realFarmFs: FarmFs = {
     fs.mkdirSync(dirPath, { recursive: true, mode: OWNER_ONLY_DIR_MODE });
     fs.chmodSync(dirPath, OWNER_ONLY_DIR_MODE);
   },
-  writeFilePrivate(filePath, contents) {
+  writeFilePrivate(filePath, contents, options) {
     const temp = `${filePath}.${String(process.pid)}.tmp`;
     try {
-      fs.writeFileSync(temp, contents, { encoding: "utf8", mode: OWNER_ONLY_FILE_MODE });
-      fs.chmodSync(temp, OWNER_ONLY_FILE_MODE);
-      fs.renameSync(temp, filePath);
+      if (options?.durable === true) {
+        writeFileFlushed(temp, contents);
+        fs.renameSync(temp, filePath);
+        flushDirectory(path.dirname(filePath));
+      } else {
+        fs.writeFileSync(temp, contents, { encoding: "utf8", mode: OWNER_ONLY_FILE_MODE });
+        fs.chmodSync(temp, OWNER_ONLY_FILE_MODE);
+        fs.renameSync(temp, filePath);
+      }
     } catch (error) {
       // A failed write, chmod or rename leaves the temporary sibling behind, and nothing else would ever remove it; the failure itself still reaches the caller.
       fs.rmSync(temp, { force: true });
