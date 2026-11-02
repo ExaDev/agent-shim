@@ -918,12 +918,6 @@ async function applyUnderLocks(paths: LayoutPaths, from: string, to: string, por
     const record = (): void => {
       writeRenameJournal(ports.fs, file, { version: 1, from, to, startedAt, pid: ports.lock.pid, steps: descriptions.map((description, position) => ({ description, started: marks[position]?.started === true, done: marks[position]?.done === true })) });
     };
-    try {
-      record();
-    } catch (failure) {
-      // Nothing has run, so this run changed nothing, and an earlier run's journal, if there was one, is untouched: a write replaces the file whole or not at all.
-      throw new JournalWriteError(failure, "before the first step", rolledBackOutcome(resumed !== undefined));
-    }
     // A step's position in the journal is after the steps carried from the earlier run.
     const positionOf = (index: number): number => carried.length + index;
     const markOf = (index: number): { started: boolean; done: boolean } => {
@@ -942,6 +936,12 @@ async function applyUnderLocks(paths: LayoutPaths, from: string, to: string, por
       }
     };
     try {
+      try {
+        record();
+      } catch (failure) {
+        // Nothing has run, so this run changed nothing. The file may still have landed, though: it is renamed into place before the directory is flushed, and a flush that fails leaves a complete journal behind, which the catch below removes for a run that began here (an earlier run's journal, for one that is resuming, stays and describes the state it left).
+        throw new JournalWriteError(failure, "before the first step", rolledBackOutcome(resumed !== undefined));
+      }
       await applyAll(plan.steps, {
         ...hooks,
         resuming: resumed !== undefined,
