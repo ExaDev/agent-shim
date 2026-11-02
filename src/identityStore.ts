@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { ConfigValidationError } from "./config/load";
+import { ConfigFileNotJsonError, ConfigValidationError } from "./config/load";
 import { FileNameSchema } from "./config/names";
 import { applyPatch, nodeStoreFs, readJson, writeJsonAtomic, writeTextAtomic } from "./config/store";
 import { IdentitySchema, type Anchor, type CredentialCache, type CredentialSource, type CredentialTarget, type Identity } from "./config/schema";
@@ -149,7 +149,7 @@ const NOT_JSON_PROBLEM = "is not valid JSON";
 /**
  * Reads one identity for `listIdentities`, converting an unreadable `identity.json` into a reportable problem string instead of throwing.
  *
- * Only the two failure modes a *file's own content* can produce are caught: a `SyntaxError` from `JSON.parse`, and the `ConfigValidationError` a schema violation raises. Anything else (a permission error, a directory where a file belongs) still propagates, since those are environment faults rather than one identity's data being bad.
+ * Only the two failure modes a *file's own content* can produce are caught: a `ConfigFileNotJsonError` for a file that is not JSON, and the `ConfigValidationError` a schema violation raises. Anything else (a permission error, a directory where a file belongs) still propagates, since those are environment faults rather than one identity's data being bad.
  *
  * A wholly absent `identity.json` is neither — it yields `undefined`, and `listIdentities` skips the entry entirely. That is what keeps `identities/` retained superseded farms (`.<name>.previous.<pid>.<uuid>/`, which are real directories with no `identity.json`) out of the listing.
  */
@@ -157,8 +157,8 @@ function readIdentityForListing(paths: LayoutPaths, name: string): Identity | { 
   try {
     return readIdentity(paths, name);
   } catch (error) {
-    // A SyntaxError's message quotes the text either side of the failure, which may be a secret, so the file is said to be not JSON and nothing of it is repeated.
-    if (error instanceof SyntaxError) {
+    // The file is said to be not JSON and nothing of its text is repeated, since the parser's message quotes the text either side of the failure, which may be a secret.
+    if (error instanceof ConfigFileNotJsonError) {
       return { problem: NOT_JSON_PROBLEM };
     }
     if (error instanceof ConfigValidationError) {

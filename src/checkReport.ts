@@ -12,7 +12,7 @@ import path from "node:path";
 import { z } from "zod";
 import { parseEnvBool } from "./cli/envBool";
 import type { CHECK_CREDENTIAL_APPLIES, CheckReportJson } from "./checkReportSchema";
-import { ConfigValidationError } from "./config/load";
+import { ConfigFileNotJsonError, ConfigValidationError } from "./config/load";
 import { SHIPPED_CATEGORY_DEFAULTS, isRouterProvider, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type Identity, type Provider } from "./config/schema";
 import { formatCredentialSummary, summariseCredential, type CredentialCacheEnv, type CredentialSummary } from "./credential";
 import { resolveClaudeVersion, type PinnedClaudeVersion } from "./launcher/claudeVersion";
@@ -23,7 +23,7 @@ import type { ConfigProfileDecisionSource, IdentityDecisionSource } from "./laun
 import type { FarmFs, RunPort } from "./launcher/ports";
 import type { LayoutPaths } from "./paths";
 import type { PoolPickReport } from "./usage/pickReportSchema";
-import { LegacyProviderFileError, ProviderFileNotJsonError, readProvider } from "./providersStore";
+import { LegacyProviderFileError, readProvider } from "./providersStore";
 import { detectEncodingAmbiguity, type EncodingAmbiguity } from "./resolve/projects";
 import { descendPolicyFor, resolveDecisions, type ResolvedState } from "./resolve/pipeline";
 import type { CascadeInput } from "./resolve/walk";
@@ -544,7 +544,7 @@ function loadCheckProvider(paths: LayoutPaths, name: string): CheckProviderInput
   try {
     definition = readProvider(paths, name);
   } catch (error) {
-    if (error instanceof ConfigValidationError || error instanceof LegacyProviderFileError || error instanceof ProviderFileNotJsonError) {
+    if (error instanceof ConfigValidationError || error instanceof LegacyProviderFileError || error instanceof ConfigFileNotJsonError) {
       return { name, problem: error.message };
     }
     throw error;

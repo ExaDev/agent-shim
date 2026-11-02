@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { ConfigValidationError } from "./config/load";
+import { ConfigFileNotJsonError, ConfigValidationError } from "./config/load";
 import { writeJsonAtomic } from "./config/store";
 import { parseIgnoringUnrecognisedKeys, noteIgnoredKeys } from "./config/unrecognisedKeys";
 import {
@@ -152,15 +152,7 @@ function parseProviderFile(filePath: string, raw: unknown): Provider {
   return parsed.data;
 }
 
-/** Raised when a provider file is not JSON. It says so and nothing of the text, which the parser would quote and which may hold a credential. */
-export class ProviderFileNotJsonError extends CliError {
-  constructor(filePath: string) {
-    super(`${filePath} is not valid JSON.`);
-    this.name = "ProviderFileNotJsonError";
-  }
-}
-
-/** Reads and validates one provider definition, or undefined when it does not exist. Throws `ProviderFileNotJsonError` for a file that is not JSON, and what `parseProviderFile` throws for one that is not a valid definition. */
+/** Reads and validates one provider definition, or undefined when it does not exist. Throws `ConfigFileNotJsonError` for a file that is not JSON, and what `parseProviderFile` throws for one that is not a valid definition. */
 export function readProvider(paths: LayoutPaths, name: string): Provider | undefined {
   const filePath = providerJsonPath(paths, name);
   if (!fs.existsSync(filePath)) {
@@ -170,7 +162,7 @@ export function readProvider(paths: LayoutPaths, name: string): Provider | undef
   try {
     raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
   } catch (error) {
-    throw error instanceof SyntaxError ? new ProviderFileNotJsonError(filePath) : error;
+    throw error instanceof SyntaxError ? new ConfigFileNotJsonError(filePath) : error;
   }
   return parseProviderFile(filePath, raw);
 }
@@ -207,7 +199,7 @@ export function listProviders(paths: LayoutPaths, onInvalid: (name: string, mess
     try {
       provider = readProvider(paths, name);
     } catch (error) {
-      if (!(error instanceof ConfigValidationError || error instanceof LegacyProviderFileError || error instanceof ProviderFileNotJsonError || error instanceof UnsafeNameError)) {
+      if (!(error instanceof ConfigValidationError || error instanceof LegacyProviderFileError || error instanceof ConfigFileNotJsonError || error instanceof UnsafeNameError)) {
         throw error;
       }
       onInvalid(name, error.message);
