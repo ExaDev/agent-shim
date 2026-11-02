@@ -1,4 +1,4 @@
-import { ConfigValidationError } from "../config/load";
+import { ConfigFileNotJsonError, ConfigValidationError } from "../config/load";
 import { InvalidProviderNameError, isFileName } from "../config/names";
 import { isAntigravityProvider, isCodexProvider, isHttpProvider, type AntigravityProvider, type CodexProvider, type HttpProvider, type Credential, isRouterProvider, type ModelsConfig } from "../config/schema";
 import { HTTP_STATUS } from "../codex/http";
@@ -273,7 +273,7 @@ export function createProviderRouteResolver(deps: {
       if (error instanceof InvalidProviderNameError) {
         return { ok: false, status: HTTP_STATUS.notFound, message: `no provider named ${JSON.stringify(provider)}` };
       }
-      if (error instanceof ConfigValidationError || error instanceof LegacyProviderFileError) {
+      if (error instanceof ConfigValidationError || error instanceof LegacyProviderFileError || error instanceof ConfigFileNotJsonError) {
         return { ok: false, status: HTTP_STATUS.internalServerError, message: `provider ${provider} is invalid: ${error instanceof Error ? error.message : String(error)}` };
       }
       throw error;

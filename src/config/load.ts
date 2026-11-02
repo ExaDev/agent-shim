@@ -67,18 +67,26 @@ export class ConfigValidationError extends CliError {
   }
 }
 
-/** Raised when a config file exists but is not JSON. It names the file and says nothing of its text, which the parser's own message would quote either side of the failure, and which may be a secret. */
+/** Raised when a config file exists but its syntax is not valid: JSON, which every file this project reads is, or YAML, for a file cosmiconfig would parse as that. It names the file and says nothing of its text, which the parser's own message would quote either side of the failure, and which may be a secret. */
 export class ConfigFileNotJsonError extends CliError {
-  constructor(readonly filepath: string) {
-    super(`${filepath} is not valid JSON.`);
+  constructor(readonly filepath: string, readonly format: "JSON" | "YAML" = "JSON") {
+    super(`${filepath} is not valid ${format}.`);
     this.name = "ConfigFileNotJsonError";
   }
+}
+
+/** The error for a file cosmiconfig could not parse, if `error` is one: a `SyntaxError` from its JSON loader, or the `YAMLException` its YAML loader throws (named, since the YAML parser is cosmiconfig's own dependency and not this project's). Both carry a quote of the text around the failure. */
+function unparseableFile(error: unknown, filepath: string): ConfigFileNotJsonError | undefined {
+  if (error instanceof SyntaxError) {
+    return new ConfigFileNotJsonError(filepath);
+  }
+  return error instanceof Error && error.name === "YAMLException" ? new ConfigFileNotJsonError(filepath, "YAML") : undefined;
 }
 
 /** Injected reader for a single config file, so tests never touch a real filesystem. Returns undefined when the file does not exist. */
 export type ConfigFileReader = (filepath: string) => unknown;
 
-/** A cosmiconfig-backed reader: loads and parses one file by path, returning undefined when it is missing or empty. */
+/** A cosmiconfig-backed reader: loads and parses one file by path, returning undefined when it is missing or empty. Throws `ConfigFileNotJsonError` for a file it cannot parse, in place of cosmiconfig's own error, which quotes the file's text. */
 export function cosmiconfigReader(explorer: Readonly<PublicExplorerSync> = createExplorer()): ConfigFileReader {
   return (filepath: string): unknown => {
     let result;
@@ -89,7 +97,7 @@ export function cosmiconfigReader(explorer: Readonly<PublicExplorerSync> = creat
       if (code === "ENOENT") {
         return undefined;
       }
-      throw error;
+      throw unparseableFile(error, filepath) ?? error;
     }
     if (result === null || result.isEmpty === true) {
       return undefined;
