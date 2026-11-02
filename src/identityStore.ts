@@ -110,18 +110,66 @@ export function isIdentityDirectoryName(name: string): boolean {
   return !name.startsWith(".");
 }
 
-/**
- * The names of the identity directories directly under `identitiesDir`, sorted: a directory, or a symlink that resolves to one, since `identityExists` follows a symlink and every command that reaches an identity does with it. A symlink to a file or to nothing is not an identity, and neither is a name `isIdentityDirectoryName` rejects. `listIdentities` and `doctor` both list identities through this, so they cannot disagree about which names exist.
- */
-export function identityDirectoryNames(paths: LayoutPaths): readonly string[] {
-  if (!fs.existsSync(paths.identitiesDir)) {
-    return [];
+/** An entry directly under `identitiesDir` that is a symlink the filesystem would not follow, and why: `code` is the error `stat` gave. */
+export interface UnfollowableIdentityEntry {
+  readonly name: string;
+  readonly code: string;
+}
+
+/** The identity directories under `identitiesDir`, and the symlinks among its entries that could not be followed. */
+export interface IdentityDirectoryListing {
+  readonly names: readonly string[];
+  readonly unfollowable: readonly UnfollowableIdentityEntry[];
+}
+
+/** The errors `stat` gives for a link that cannot be resolved because of what it points through, not because of a fault in the machine: a cycle, a directory that cannot be searched, a path through a file. */
+const UNFOLLOWABLE_LINK_CODES: ReadonlySet<string> = new Set(["ELOOP", "EACCES", "ENOTDIR"]);
+
+/** The `code` of a system error, or undefined for anything else. */
+function systemErrorCode(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code : undefined;
+}
+
+/** What following a symlink under `identitiesDir` finds: a directory, something else (a file, or nothing at all), or a refusal that names its code. Any other fault is thrown, since it is the machine's and not the link's. */
+function followedLink(link: string): "directory" | "other" | { readonly code: string } {
+  try {
+    return fs.statSync(link).isDirectory() ? "directory" : "other";
+  } catch (error) {
+    const code = systemErrorCode(error);
+    if (code === "ENOENT") {
+      return "other";
+    }
+    if (code !== undefined && UNFOLLOWABLE_LINK_CODES.has(code)) {
+      return { code };
+    }
+    throw error;
   }
-  return fs
-    .readdirSync(paths.identitiesDir, { withFileTypes: true })
-    .filter((entry) => isIdentityDirectoryName(entry.name) && (entry.isDirectory() || (entry.isSymbolicLink() && fs.statSync(path.join(paths.identitiesDir, entry.name), { throwIfNoEntry: false })?.isDirectory() === true)))
-    .map((entry) => entry.name)
-    .sort();
+}
+
+/**
+ * The identity directories directly under `identitiesDir`, sorted: a directory, or a symlink that resolves to one, since `identityExists` follows a symlink and every command that reaches an identity does with it. A symlink to a file or to nothing is not an identity, and neither is a name `isIdentityDirectoryName` rejects. A symlink that cannot be followed (a cycle, an unsearchable directory, a path through a file) is not an identity either, and is listed apart so that `doctor` can say so instead of the whole listing failing. `listIdentities` and `doctor` both list identities through this, so they cannot disagree about which names exist.
+ */
+export function listIdentityDirectories(paths: LayoutPaths): IdentityDirectoryListing {
+  const names: string[] = [];
+  const unfollowable: UnfollowableIdentityEntry[] = [];
+  if (fs.existsSync(paths.identitiesDir)) {
+    for (const entry of fs.readdirSync(paths.identitiesDir, { withFileTypes: true })) {
+      if (!isIdentityDirectoryName(entry.name)) {
+        continue;
+      }
+      if (entry.isDirectory()) {
+        names.push(entry.name);
+      } else if (entry.isSymbolicLink()) {
+        const followed = followedLink(path.join(paths.identitiesDir, entry.name));
+        if (followed === "directory") {
+          names.push(entry.name);
+        } else if (followed !== "other") {
+          unfollowable.push({ name: entry.name, code: followed.code });
+        }
+      }
+    }
+  }
+  return { names: names.sort(), unfollowable: unfollowable.sort((a, b) => a.name.localeCompare(b.name)) };
 }
 
 /** One identity as reported by `listIdentities`, whose `identity.json` parsed and validated cleanly. */
@@ -179,7 +227,7 @@ export function listIdentities(paths: LayoutPaths): readonly IdentityListing[] {
   }
   const active = readActiveIdentity(paths);
   const result: IdentityListing[] = [];
-  for (const name of identityDirectoryNames(paths)) {
+  for (const name of listIdentityDirectories(paths).names) {
     const read = readIdentityForListing(paths, name);
     if (read === undefined) {
       continue;

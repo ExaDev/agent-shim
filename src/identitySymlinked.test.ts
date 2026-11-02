@@ -9,6 +9,10 @@ import { createWorld, writeJson, type World } from "./identityRenameTestWorld";
 import { listIdentities, readIdentity } from "./identityStore";
 import { realFarmFs } from "./realPorts";
 
+/** The mode of a directory nobody can enter, and the mode that gives it back to its owner so it can be removed. */
+const NO_ACCESS = 0;
+const OWNER_ALL = 0o700;
+
 describe("an identity whose directory is a symlink to a directory", () => {
   let world: World;
   let elsewhere: string;
@@ -76,5 +80,67 @@ describe("an identity whose directory is a symlink to a directory", () => {
     const done = await renameIdentity(world.paths, "work", "client", world.ports());
     expect(readIdentity(world.paths, "personal")?.credential?.sources[0]).toEqual({ file: path.join(world.root, "credentials", "client.token") });
     expect(done.warnings).toContainEqual(expect.stringContaining('Identity "personal" has a command credential source'));
+  });
+
+  describe("that cannot be followed", () => {
+    /** A link the filesystem refuses to resolve, made under the identities directory, and the error code `stat` gives for it. */
+    const unfollowable: readonly { readonly case: string; readonly code: string; readonly make: (made: World, outside: string) => readonly string[] }[] = [
+      {
+        case: "a cycle of links",
+        code: "ELOOP",
+        make: (made) => {
+          fs.symlinkSync(made.directory("loop-b"), made.directory("loop-a"));
+          fs.symlinkSync(made.directory("loop-a"), made.directory("loop-b"));
+          return ["loop-a", "loop-b"];
+        },
+      },
+      {
+        case: "a target below a directory that cannot be searched",
+        code: "EACCES",
+        make: (made, outside) => {
+          const locked = path.join(outside, "locked");
+          fs.mkdirSync(path.join(locked, "inner"), { recursive: true });
+          fs.symlinkSync(path.join(locked, "inner"), made.directory("locked-link"));
+          fs.chmodSync(locked, NO_ACCESS);
+          return ["locked-link"];
+        },
+      },
+      {
+        case: "a target below a file",
+        code: "ENOTDIR",
+        make: (made, outside) => {
+          fs.writeFileSync(path.join(outside, "a-file"), "");
+          fs.symlinkSync(path.join(outside, "a-file", "child"), made.directory("below-a-file"));
+          return ["below-a-file"];
+        },
+      },
+    ];
+
+    afterEach(() => {
+      // A directory made unsearchable by a case could not be removed with the world.
+      const locked = path.join(elsewhere, "locked");
+      if (fs.existsSync(locked)) {
+        fs.chmodSync(locked, OWNER_ALL);
+      }
+    });
+
+    const root = process.getuid?.() === 0;
+
+    it.skipIf(root).each(unfollowable)("is left out of the listing, not thrown from it, for $case, and the other identities are listed", ({ make }) => {
+      make(world, elsewhere);
+      expect(listIdentities(world.paths).map((entry) => entry.name)).toEqual(["personal", "work"]);
+    });
+
+    it.skipIf(root).each(unfollowable)("is reported by doctor as an entry it did not count, with the reason, for $case, and the rest of the report is produced", ({ code, make }) => {
+      const names = make(world, elsewhere);
+      const report = collectDoctorReport({ paths: world.paths, env: { PATH: "" } });
+      for (const name of names) {
+        const finding = report.findings.find((entry) => entry.section === "identity" && entry.subject === name);
+        expect(finding?.severity).toBe("warn");
+        expect(finding?.message).toContain(code);
+        expect(finding?.message).toContain("not counted as an identity");
+      }
+      expect(report.findings.some((entry) => entry.section === "identity" && entry.subject === "work" && entry.severity === "pass")).toBe(true);
+    });
   });
 });
