@@ -83,11 +83,21 @@ function writeFileFlushed(file: string, contents: string): void {
   }
 }
 
-/** Flushes a directory's entries to disk, which is what makes a rename into it survive a power cut. POSIX filesystems only: Windows cannot open a directory to flush it, and the one caller of a durable write does not run there. */
+/** The errors `fsync` gives a directory on a filesystem that cannot flush one (some FUSE and network filesystems): the call is not supported there, which says nothing of whether the data reached the disk. Anything else, EIO included, is a fault in the write. */
+const DIRECTORY_FLUSH_UNSUPPORTED_CODES: ReadonlySet<string> = new Set(["EINVAL", "ENOTSUP", "EOPNOTSUPP"]);
+
+/**
+ * Flushes a directory's entries to disk, which is what makes a rename into it survive a power cut. A filesystem that cannot flush a directory answers one of `DIRECTORY_FLUSH_UNSUPPORTED_CODES`; that is taken as "nothing more can be done here" and the write succeeds, so a durable write still works on such a mount, with the file itself flushed before the rename. A failed flush of the file is never excused this way. POSIX filesystems only: Windows cannot open a directory to flush it, and the one caller of a durable write does not run there.
+ */
 function flushDirectory(directory: string): void {
   const descriptor = fs.openSync(directory, "r");
   try {
     fs.fsyncSync(descriptor);
+  } catch (error) {
+    const code = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code : undefined;
+    if (code === undefined || !DIRECTORY_FLUSH_UNSUPPORTED_CODES.has(code)) {
+      throw error;
+    }
   } finally {
     fs.closeSync(descriptor);
   }

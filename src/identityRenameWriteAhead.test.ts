@@ -7,7 +7,7 @@ import { collectDoctorReport } from "./doctorReport";
 import { describeIdentityRename, discardRenameJournal, renameIdentity } from "./identityRename";
 import { readRenameJournal, renameJournalFile, writeRenameJournal, type RenameJournal } from "./identityRenameJournal";
 import { LOGIN_SECRET, OWN_PID, createWorld, failingOnce, treeOf, type World } from "./identityRenameTestWorld";
-import { removeIdentity } from "./identityStore";
+import { addIdentity, removeIdentity } from "./identityStore";
 import type { FarmFs } from "./launcher/ports";
 import { realFarmFs } from "./realPorts";
 import { claudeCodeKeychainService } from "./usage/signIn";
@@ -248,6 +248,58 @@ describe("a journal write that fails", () => {
     expect(message).toContain("no space left on device");
     expect(message).toContain("the rename was rolled back and nothing was changed");
     expect(treeOf(world.root)).toEqual(before);
+  });
+
+  /** A filesystem on which the `failing`th write of the journal reaches the disk and then throws, as a write does when its file is renamed into place and flushing the directory then fails. */
+  function landingThenFailing(failing: number): FarmFs {
+    let writes = 0;
+    return {
+      ...realFarmFs,
+      writeFilePrivate: (file: string, contents: string): void => {
+        realFarmFs.writeFilePrivate(file, contents);
+        if (file.startsWith(world.paths.identityRenamesDir)) {
+          writes += 1;
+          if (writes === failing) {
+            throw new Error("input/output error");
+          }
+        }
+      },
+    };
+  }
+
+  it("before the first step, when the file landed and the flush after it failed, leaves no journal behind to block other renames and the add of either name", async () => {
+    const before = treeOf(world.root);
+    const message = await failureOf(async () => renameIdentity(world.paths, "work", "client", world.ports({ fs: landingThenFailing(INITIAL_WRITE) })));
+    expect(message).toContain("could not be written before the first step");
+    expect(message).toContain("input/output error");
+    expect(message).toContain("the rename was rolled back and nothing was changed");
+    expect(readRenameJournal(realFarmFs, renameJournalFile(world.paths.identityRenamesDir, "work", "client"))).toBeUndefined();
+    expect(treeOf(world.root)).toEqual(before);
+    expect(() => addIdentity(world.paths, "client")).not.toThrow();
+  });
+
+  it("before the first step, in a run that finishes an earlier one, keeps the journal, which then describes the earlier run's state", async () => {
+    const half = {
+      ...realFarmFs,
+      rename: (from: string, to: string): void => {
+        if (to === world.directory("work")) {
+          throw new Error("the directory is busy");
+        }
+        realFarmFs.rename(from, to);
+      },
+      writeFilePrivate: (file: string, contents: string): void => {
+        if (file === world.paths.usageAnchorsFile) {
+          throw new Error("disk full");
+        }
+        realFarmFs.writeFilePrivate(file, contents);
+      },
+    };
+    await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: half }))).rejects.toThrow(/Rolling back also failed/);
+    const message = await failureOf(async () => renameIdentity(world.paths, "work", "client", world.ports({ fs: landingThenFailing(INITIAL_WRITE) })));
+    expect(message).toContain("could not be written before the first step");
+    expect(message).toContain("the steps this run applied were rolled back; the rename it was finishing is still unfinished");
+    const journal = readRenameJournal(realFarmFs, renameJournalFile(world.paths.identityRenamesDir, "work", "client"));
+    expect(journal?.steps.filter((step) => step.done).map((step) => step.description)).toEqual(["move identities/work to identities/client"]);
   });
 
   it("ahead of a step stops before the step runs, rolls back the steps before it, and says so", async () => {

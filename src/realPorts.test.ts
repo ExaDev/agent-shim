@@ -354,6 +354,17 @@ describe("resolveOwnExecutablePath", () => {
   });
 });
 
+/** An error as the operating system reports one: a message and its `code`. */
+class SystemError extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+  ) {
+    super(message);
+    this.name = "SystemError";
+  }
+}
+
 describe("realFarmFs durable private writes", () => {
   /** Records, in order, what a durable write does to the disk: flushing a file, renaming it into place, and flushing a directory. */
   function recordDiskCalls(): string[] {
@@ -403,6 +414,42 @@ describe("realFarmFs durable private writes", () => {
     const events = recordDiskCalls();
     realFarmFs.writeFilePrivate(path.join(root, "plain.json"), "{}\n");
     expect(events).toEqual(["rename"]);
+  });
+
+  /** Makes flushing a directory fail with `code`, and flushing a file succeed. */
+  function failDirectoryFlush(code: string): void {
+    const flush = fs.fsyncSync.bind(fs);
+    vi.spyOn(fs, "fsyncSync").mockImplementation((descriptor) => {
+      if (fs.fstatSync(descriptor).isDirectory()) {
+        throw new SystemError(`${code}: flushing a directory is not possible here`, code);
+      }
+      flush(descriptor);
+    });
+  }
+
+  it.skipIf(process.platform === "win32").each(["EINVAL", "ENOTSUP", "EOPNOTSUPP"])("treats %s from flushing the directory as a filesystem that cannot, not as a failed write, and leaves the file in place", (code) => {
+    const file = path.join(root, "journal.json");
+    failDirectoryFlush(code);
+    realFarmFs.writeFilePrivate(file, "{}\n", { durable: true });
+    expect(fs.readFileSync(file, "utf8")).toBe("{}\n");
+    expect(fs.readdirSync(root)).toEqual(["journal.json"]);
+  });
+
+  it.skipIf(process.platform === "win32").each(["EIO", "ENOSPC", "EACCES"])("still fails a durable write when flushing the directory fails with %s, which is a fault and not a missing feature", (code) => {
+    failDirectoryFlush(code);
+    expect(() => {
+      realFarmFs.writeFilePrivate(path.join(root, "journal.json"), "{}\n", { durable: true });
+    }).toThrow(code);
+  });
+
+  it.skipIf(process.platform === "win32")("does not excuse a failed flush of the file itself, whatever its code", () => {
+    vi.spyOn(fs, "fsyncSync").mockImplementation(() => {
+      throw new SystemError("EINVAL: not supported", "EINVAL");
+    });
+    expect(() => {
+      realFarmFs.writeFilePrivate(path.join(root, "journal.json"), "{}\n", { durable: true });
+    }).toThrow("EINVAL");
+    expect(fs.readdirSync(root)).toEqual([]);
   });
 
   it.skipIf(process.platform === "win32")("reports a flush that fails, leaves no temporary file behind and does not put the file in place", () => {
