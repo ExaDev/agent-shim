@@ -60,7 +60,7 @@ export interface IdentityRenamePorts {
 
 /** What the rename needs to stop cleanly when the process is told to: a handler for the signals, and a way to let one that arrived during synchronous work be delivered. */
 export interface IdentityRenameSignals {
-  /** Calls `handler` with the signal's name when the process is sent SIGINT or SIGTERM, until the returned function is called. */
+  /** Calls `handler` with the signal's name when the process is sent SIGINT, SIGTERM or SIGHUP, until the returned function is called. */
   readonly onInterrupt: (handler: (signal: NodeJS.Signals) => void) => () => void;
   /** Resolves after the event loop has turned, which is when a signal that arrived during synchronous work reaches its handler. */
   readonly turn: () => Promise<void>;
@@ -614,7 +614,7 @@ function rolledBackOutcome(resuming: boolean): string {
   return resuming ? "the steps this run applied were rolled back; the rename it was finishing is still unfinished, and running the same command again finishes it" : "the rename was rolled back and nothing was changed";
 }
 
-/** Raised when the process was sent SIGINT or SIGTERM while the rename was applying its steps. Everything this run did has been undone. The exit status is the shell's convention for a process ended by that signal. */
+/** Raised when the process was sent SIGINT, SIGTERM or SIGHUP while the rename was applying its steps. Everything this run did has been undone. The exit status is the shell's convention for a process ended by that signal. */
 class RenameInterruptedError extends CliError {
   override readonly exitCode: number;
 
@@ -683,7 +683,7 @@ interface ApplyHooks {
 }
 
 /**
- * Applies the steps in order. Before each step the event loop is let turn and the process is checked for a SIGINT or SIGTERM, and after each the locks are refreshed; a signal during the last step lets the rename finish, since there is nothing left to undo. If a step, the refresh or an interrupt fails the rename, every step applied so far, the failing one included, is undone in reverse order and the failure is thrown.
+ * Applies the steps in order. Before each step the event loop is let turn and the process is checked for a SIGINT, SIGTERM or SIGHUP, and after each the locks are refreshed; a signal during the last step lets the rename finish, since there is nothing left to undo. If a step, the refresh or an interrupt fails the rename, every step applied so far, the failing one included, is undone in reverse order and the failure is thrown.
  */
 async function applyAll(steps: readonly Step[], hooks: ApplyHooks): Promise<void> {
   const started: { readonly step: Step; readonly index: number }[] = [];
@@ -792,7 +792,7 @@ function resumeNote(journal: Readonly<RenameJournal>): string {
 /**
  * Renames identity `from` to `to` without losing its login or anything kept under its name. Takes the resync lock of both names, refuses while a session runs against the identity's directory, then applies, in order: the macOS Keychain login is copied to the service the new directory hashes to; the identity's own `identity.json` and farm record are rewritten; the directory (and any superseded farm beside it) and the stored token file move; the cached credential follows; every reference to the old name is rewritten (pools, jobs, account model refs, directory rules, the active selection, the usage snapshot, recorded picks, anchor stamps); and last, the old Keychain item is deleted once the new one is found. The old name is not kept as an alias: nothing can be running under it, and a stale name would only hide a mistake.
  *
- * It is transactional up to the last step. If any step fails, or the process is sent SIGINT or SIGTERM between steps, every earlier one is undone, the new Keychain item removed and the old one kept, and the failure is thrown. A failure in the last step only (deleting the old Keychain item) is a warning in the report, because the rename is complete by then and the leftover item is harmless.
+ * It is transactional up to the last step. If any step fails, or the process is sent SIGINT, SIGTERM or SIGHUP between steps, every earlier one is undone, the new Keychain item removed and the old one kept, and the failure is thrown. A failure in the last step only (deleting the old Keychain item) is a warning in the report, because the rename is complete by then and the leftover item is harmless.
  *
  * A journal in the state root's `identity-renames` directory is written before the first step and marked as each completes. A rename that is killed, or whose rollback fails, leaves it behind, and running the same rename again plans from what is on disk, so it does only what is left, and removes the journal at the end. A rename of anything else that names either identity refuses until then.
  *

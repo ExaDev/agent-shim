@@ -15,7 +15,7 @@ describe("the real signal port", () => {
 
   it("delivers a signal sent to this process during synchronous work by the time one turn has passed, and no longer once stopped", async () => {
     const received: NodeJS.Signals[] = [];
-    const listeners = { SIGINT: process.listenerCount("SIGINT"), SIGTERM: process.listenerCount("SIGTERM") };
+    const listeners = { SIGINT: process.listenerCount("SIGINT"), SIGTERM: process.listenerCount("SIGTERM"), SIGHUP: process.listenerCount("SIGHUP") };
     stop = realSignals.onInterrupt((signal) => {
       received.push(signal);
     });
@@ -29,8 +29,11 @@ describe("the real signal port", () => {
     process.kill(process.pid, "SIGINT");
     await realSignals.turn();
     expect(received).toEqual(["SIGTERM", "SIGINT"]);
+    process.kill(process.pid, "SIGHUP");
+    await realSignals.turn();
+    expect(received).toEqual(["SIGTERM", "SIGINT", "SIGHUP"]);
     stop();
     stop = undefined;
-    expect({ SIGINT: process.listenerCount("SIGINT"), SIGTERM: process.listenerCount("SIGTERM") }).toEqual(listeners);
+    expect({ SIGINT: process.listenerCount("SIGINT"), SIGTERM: process.listenerCount("SIGTERM"), SIGHUP: process.listenerCount("SIGHUP") }).toEqual(listeners);
   });
 });
