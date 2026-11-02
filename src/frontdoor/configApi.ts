@@ -15,6 +15,7 @@ import {
   identityExists,
   readIdentity,
   removeIdentity,
+  requireIdentityAddable,
   requireIdentityNames,
   setAllowAmbientCredential,
   setDefaultConfigProfile,
@@ -25,11 +26,14 @@ import {
   useIdentity,
   type IdentityCredentialChange,
 } from "../identityStore";
+import { KeychainLoginError } from "../keychainLogin";
 import { poolNameOf } from "../launcher/identity";
 import type { LayoutPaths } from "../paths";
+import { resolveWithAsyncRuns, type AsyncRun } from "../replayRun";
 import { addPool, changePool, isPoolChange, PoolAlreadyExistsError, PoolNotFoundError, readPools, removePool, requirePool } from "../poolStore";
 import { addProvider, ProviderAlreadyExistsError, ProviderNotFoundError, providerExists, readProvider, removeProvider, requireProviderExists, updateProvider } from "../providersStore";
 import {
+  ConfigIdentityAddInputSchema,
   ConfigIdentityAddOutputSchema,
   ConfigNameInputSchema,
   ConfigIdentityRemoveInputSchema,
@@ -69,7 +73,7 @@ import { doorApiAuth } from "./rcApi";
 /**
  * The door's configuration management as a typed oRPC API: the writes the CLI's `identity`, `profile`, `pool`, `provider` and `rule` verbs make, as `config.<noun>.<verb>` procedures, every one behind the same per-generation control token as the rest of the mount.
  *
- * Each procedure calls the store function its verb calls (and the shared rules extracted beside them), so a write through the API and a write through the CLI are the same write: the same validation, the same atomic store write, the same refusals. A refusal is the CLI's own message carried as an oRPC error (`NOT_FOUND` for a name that does not exist, `CONFLICT` for one that already does, `BAD_REQUEST` for anything else the store refuses), and every outcome is the `--json` object the verb prints.
+ * Each procedure makes the checks its verb makes and calls the store function it calls (and the shared rules extracted beside them), so a write through the API and a write through the CLI are the same write: the same validation, the same atomic store write, the same refusals. The one check that reaches outside the stores is `config.identity.add`'s question to the macOS Keychain, asked through the asynchronous runner in `deps.keychain` so the door's event loop is never held, by the function the CLI asks it with. A refusal is the CLI's own message carried as an oRPC error (`NOT_FOUND` for a name that does not exist, `CONFLICT` for one that already does or for a Keychain login in the way, `BAD_REQUEST` for anything else the store refuses), and every outcome is the `--json` object the verb prints.
  *
  * What the API deliberately does not accept: a credential source of the `command` kind, a provider's `env` block and a statusline patch setting the `extra` group, all of which would let a holder of the control token run a program of their choosing at the next launch; the interactive wizards and `configure`, which need a terminal; a removal without `confirm: true`, and a change of an existing provider's `baseUrl` that does not restate its credential block. Those stay on the CLI.
  */
@@ -80,6 +84,8 @@ export interface ConfigApiDeps {
   readonly expectedToken: string;
   /** The configuration tree the stores operate on. */
   readonly paths: LayoutPaths;
+  /** How the door asks the macOS Keychain whether a login is already filed for a directory an identity is about to be created in: `security` run without blocking the event loop, and the platform, since only macOS has a Keychain. */
+  readonly keychain: { readonly runAsync: AsyncRun; readonly platform: NodeJS.Platform };
 }
 
 /** The OpenAPI tag the configuration procedures group under in the document. */
@@ -101,7 +107,8 @@ function refusal(error: unknown): never {
     error instanceof ProfileAlreadyExistsError ||
     error instanceof PoolAlreadyExistsError ||
     error instanceof ProviderAlreadyExistsError ||
-    error instanceof DirectoryRuleAlreadyExistsError
+    error instanceof DirectoryRuleAlreadyExistsError ||
+    error instanceof KeychainLoginError
   ) {
     throw new ORPCError("CONFLICT", { message: error.message });
   }
@@ -109,6 +116,15 @@ function refusal(error: unknown): never {
     throw new ORPCError("BAD_REQUEST", { message: error.message });
   }
   throw error;
+}
+
+/** Runs one write that awaits, converting the expected refusals as `guarded` does. */
+async function guardedAsync(write: () => Promise<void>): Promise<void> {
+  try {
+    await write();
+  } catch (error: unknown) {
+    refusal(error);
+  }
 }
 
 /** Runs one write, converting the stores' expected refusals as `refusal` does. */
@@ -184,14 +200,20 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
     config: {
       identity: {
         add: route("/rest/config/identity/add", "Create an identity")
-          .input(ConfigNameInputSchema)
+          .input(ConfigIdentityAddInputSchema)
           .output(ConfigIdentityAddOutputSchema)
-          .handler(({ input }) =>
-            guarded(() => {
+          .handler(async ({ input }) => {
+            // The Keychain is asked through the asynchronous runner, so the door's event loop is never held, by the same check the CLI makes (it changes nothing, which is what lets it run over the replaying port); the write follows once it has passed.
+            await guardedAsync(async () => {
+              await resolveWithAsyncRuns((run) => {
+                requireIdentityAddable(paths, input.name, { run, platform: deps.keychain.platform }, input.keepKeychainLogin === true);
+              }, deps.keychain.runAsync);
+            });
+            return guarded(() => {
               addIdentity(paths, input.name);
               return { action: "created" as const, kind: "identity" as const, name: input.name, value: identityValue(input.name, paths) };
-            }),
-          ),
+            });
+          }),
         set: route("/rest/config/identity/set", "Update an identity's label, default profile, provider, ambient-credential setting, credential or anchors")
           .input(ConfigIdentitySetInputSchema)
           .output(ConfigIdentitySetOutputSchema)

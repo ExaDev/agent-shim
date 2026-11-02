@@ -88,6 +88,7 @@ describe("library surface", () => {
       "CodexRateLimitsReadSchema",
       "CodexSignInSchema",
       "CodexStatusOutputSchema",
+      "ConfigIdentityAddInputSchema",
       "ConfigIdentityAddOutputSchema",
       "ConfigIdentityRemoveInputSchema",
       "ConfigIdentityRemoveOutputSchema",

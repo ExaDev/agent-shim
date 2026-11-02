@@ -87,6 +87,9 @@ const ProviderValueSchema = z.strictObject({
 /** The input of the procedures that act on one named identity, profile or pool and take nothing else (`add` for an identity, `use` for each). The stores' own naming rules refuse a malformed name with the rule it broke. */
 export const ConfigNameInputSchema = z.strictObject({ name: z.string().min(1) });
 
+/** The input of `config.identity.add`: the name, and `keepKeychainLogin`, the API's form of `identity add --keep-keychain-login`: the caller's statement that a login the macOS Keychain holds for the identity's directory is wanted, which is otherwise refused because the new identity would start signed in as that account. */
+export const ConfigIdentityAddInputSchema = z.strictObject({ name: z.string().min(1), keepKeychainLogin: z.boolean().optional() });
+
 export const ConfigIdentityAddOutputSchema = storedMutationOutput("identity", "created", IdentityValueSchema);
 
 /** `defaultConfigProfile: false` clears it; `credential: false` removes the credential block, returning the identity to its stored login. At least one field must be present. */
