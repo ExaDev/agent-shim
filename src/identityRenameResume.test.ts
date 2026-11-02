@@ -256,6 +256,7 @@ describe("the journal a rename keeps", () => {
       expect(message).toContain("Rolling back also failed");
       expect(message).toContain("the directory is busy");
       expect(message).toContain("could not be updated");
+      expect(message).toContain("may still show steps as begun or done that were undone");
       expect(message).toContain("no space left on device");
       expect(journalOf(world)).toMatchObject({ from: "work", to: "client" });
     });
