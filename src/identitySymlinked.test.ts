@@ -82,9 +82,9 @@ describe("an identity whose directory is a symlink to a directory", () => {
     expect(done.warnings).toContainEqual(expect.stringContaining('Identity "personal" has a command credential source'));
   });
 
-  describe("that cannot be followed", () => {
-    /** A link the filesystem refuses to resolve, made under the identities directory, and the error code `stat` gives for it. */
-    const unfollowable: readonly { readonly case: string; readonly code: string; readonly make: (made: World, outside: string) => readonly string[] }[] = [
+  describe("that cannot be reached", () => {
+    /** An entry the filesystem refuses to reach (a link it will not resolve, or a directory nobody can enter), made under the identities directory, and the error code it gives. */
+    const unreachable: readonly { readonly case: string; readonly code: string; readonly make: (made: World, outside: string) => readonly string[] }[] = [
       {
         case: "a cycle of links",
         code: "ELOOP",
@@ -106,6 +106,28 @@ describe("an identity whose directory is a symlink to a directory", () => {
         },
       },
       {
+        case: "a symlink to a directory nobody can enter",
+        code: "EACCES",
+        make: (made, outside) => {
+          const closed = path.join(outside, "closed");
+          fs.mkdirSync(closed);
+          fs.writeFileSync(path.join(closed, "identity.json"), `${JSON.stringify({ name: "closed-link", allowAmbientCredential: false })}\n`);
+          fs.symlinkSync(closed, made.directory("closed-link"));
+          fs.chmodSync(closed, NO_ACCESS);
+          return ["closed-link"];
+        },
+      },
+      {
+        case: "a directory nobody can enter",
+        code: "EACCES",
+        make: (made) => {
+          fs.mkdirSync(made.directory("closed-dir"));
+          fs.writeFileSync(path.join(made.directory("closed-dir"), "identity.json"), `${JSON.stringify({ name: "closed-dir", allowAmbientCredential: false })}\n`);
+          fs.chmodSync(made.directory("closed-dir"), NO_ACCESS);
+          return ["closed-dir"];
+        },
+      },
+      {
         case: "a target below a file",
         code: "ENOTDIR",
         make: (made, outside) => {
@@ -118,20 +140,21 @@ describe("an identity whose directory is a symlink to a directory", () => {
 
     afterEach(() => {
       // A directory made unsearchable by a case could not be removed with the world.
-      const locked = path.join(elsewhere, "locked");
-      if (fs.existsSync(locked)) {
-        fs.chmodSync(locked, OWNER_ALL);
+      for (const closed of [path.join(elsewhere, "locked"), path.join(elsewhere, "closed"), world.directory("closed-dir")]) {
+        if (fs.existsSync(closed)) {
+          fs.chmodSync(closed, OWNER_ALL);
+        }
       }
     });
 
     const root = process.getuid?.() === 0;
 
-    it.skipIf(root).each(unfollowable)("is left out of the listing, not thrown from it, for $case, and the other identities are listed", ({ make }) => {
+    it.skipIf(root).each(unreachable)("is left out of the listing, not thrown from it, for $case, and the other identities are listed", ({ make }) => {
       make(world, elsewhere);
       expect(listIdentities(world.paths).map((entry) => entry.name)).toEqual(["personal", "work"]);
     });
 
-    it.skipIf(root).each(unfollowable)("is reported by doctor as an entry it did not count, with the reason, for $case, and the rest of the report is produced", ({ code, make }) => {
+    it.skipIf(root).each(unreachable)("is reported by doctor as an entry it did not count, with the reason, for $case, and the rest of the report is produced", ({ code, make }) => {
       const names = make(world, elsewhere);
       const report = collectDoctorReport({ paths: world.paths, env: { PATH: "" } });
       for (const name of names) {
@@ -139,6 +162,7 @@ describe("an identity whose directory is a symlink to a directory", () => {
         expect(finding?.severity).toBe("warn");
         expect(finding?.message).toContain(code);
         expect(finding?.message).toContain("not counted as an identity");
+        expect(finding?.message).toContain("cannot be reached");
       }
       expect(report.findings.some((entry) => entry.section === "identity" && entry.subject === "work" && entry.severity === "pass")).toBe(true);
     });
