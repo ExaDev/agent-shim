@@ -67,6 +67,14 @@ export class ConfigValidationError extends CliError {
   }
 }
 
+/** Raised when a config file exists but is not JSON. It names the file and says nothing of its text, which the parser's own message would quote either side of the failure, and which may be a secret. */
+export class ConfigFileNotJsonError extends CliError {
+  constructor(readonly filepath: string) {
+    super(`${filepath} is not valid JSON.`);
+    this.name = "ConfigFileNotJsonError";
+  }
+}
+
 /** Injected reader for a single config file, so tests never touch a real filesystem. Returns undefined when the file does not exist. */
 export type ConfigFileReader = (filepath: string) => unknown;
 

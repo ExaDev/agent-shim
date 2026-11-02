@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { z } from "zod";
 
-import { ConfigValidationError } from "./load";
+import { ConfigFileNotJsonError, ConfigValidationError } from "./load";
 import { noteIgnoredKeys, parseIgnoringUnrecognisedKeys, restoreIgnoredKeys } from "./unrecognisedKeys";
 
 /**
@@ -66,7 +66,7 @@ export const nodeStoreFs: StoreFs = {
 /**
  * Reads and validates one JSON config file against `schema`.
  *
- * Returns undefined when the file does not exist. Throws `ConfigValidationError` (the same error type `src/config/load.ts` throws for every other config file in this project) when it exists but fails validation.
+ * Returns undefined when the file does not exist. Throws `ConfigValidationError` (the same error type `src/config/load.ts` throws for every other config file in this project) when it exists but fails validation, and `ConfigFileNotJsonError` when it is not JSON, which names the file and none of its text.
  */
 export function readJson<S extends z.ZodType>(
   filePath: string,
@@ -77,7 +77,12 @@ export function readJson<S extends z.ZodType>(
   if (raw === undefined) {
     return undefined;
   }
-  const parsed: unknown = JSON.parse(raw);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw error instanceof SyntaxError ? new ConfigFileNotJsonError(filePath) : error;
+  }
   const result = parseIgnoringUnrecognisedKeys(schema, parsed);
   if (!result.success) {
     throw new ConfigValidationError(filePath, result.issues);

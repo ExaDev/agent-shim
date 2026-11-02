@@ -7,6 +7,7 @@ import { collectDoctorReport } from "./doctorReport";
 import { describeIdentityRename, renameIdentity } from "./identityRename";
 import { createWorld, treeOf, type World } from "./identityRenameTestWorld";
 import { listIdentities } from "./identityStore";
+import { readDirectoryRules } from "./directoryRulesStore";
 import { buildProgram } from "./program";
 import { fakeCommandDeps } from "./test-helpers";
 
@@ -85,6 +86,85 @@ describe("an identity.json that is not JSON", () => {
     const identityMessages = report.findings.filter((finding) => finding.section === "identity").map((finding) => finding.message);
     expect(identityMessages.some((message) => message.includes("is not valid JSON"))).toBe(true);
     expect(JSON.stringify(report)).not.toContain("madeup");
+  });
+});
+
+describe("the identity being renamed has an identity.json that is not JSON", () => {
+  let world: World;
+
+  beforeEach(() => {
+    world = createWorld();
+    fs.writeFileSync(path.join(world.directory("work"), "identity.json"), BROKEN_IDENTITY.replace('"personal"', '"work"'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(world.root, { recursive: true, force: true });
+  });
+
+  it("is refused in the dry run and the real run with a message that names the file and repeats none of its text", async () => {
+    const before = treeOf(world.root);
+    const attempts = [
+      async (): Promise<void> => {
+        await Promise.resolve(describeIdentityRename(world.paths, "work", "client", world.ports()));
+      },
+      async (): Promise<void> => {
+        await renameIdentity(world.paths, "work", "client", world.ports());
+      },
+    ];
+    for (const attempt of attempts) {
+      const failure: unknown = await attempt().then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(failure).toBeInstanceOf(CliError);
+      const message = failure instanceof Error ? failure.message : "";
+      expect(message).toContain(path.join(world.directory("work"), "identity.json"));
+      expect(message).toContain("is not valid JSON");
+      expect(message).not.toContain(SECRET);
+      expect(message).not.toContain("madeup");
+    }
+    expect(treeOf(world.root)).toEqual(before);
+  });
+
+  it("is refused by identity set with the same message, since every reader of a stored file shares it", async () => {
+    const failure: unknown = await buildProgram({ ...fakeCommandDeps(world.paths), runClaude: vi.fn() })
+      .parseAsync(["identity", "set", "work", "--label", "Example Org"], { from: "user" })
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    expect(failure).toBeInstanceOf(CliError);
+    const message = failure instanceof Error ? failure.message : "";
+    expect(message).toContain("is not valid JSON");
+    expect(message).not.toContain("madeup");
+  });
+});
+
+describe("a directory-rules.json that is not JSON", () => {
+  let world: World;
+
+  beforeEach(() => {
+    world = createWorld();
+    fs.writeFileSync(world.paths.directoryRulesFile, `{ "rules": [{ "path": "/example", "secret": ${SECRET} }] }\n`);
+  });
+
+  afterEach(() => {
+    fs.rmSync(world.root, { recursive: true, force: true });
+  });
+
+  it("is refused with a message that names the file and repeats none of its text", () => {
+    const failure: unknown = (() => {
+      try {
+        readDirectoryRules(world.paths);
+      } catch (error) {
+        return error;
+      }
+      return undefined;
+    })();
+    expect(failure).toBeInstanceOf(CliError);
+    const message = failure instanceof Error ? failure.message : "";
+    expect(message).toContain(world.paths.directoryRulesFile);
+    expect(message).not.toContain("madeup");
   });
 });
 
