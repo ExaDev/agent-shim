@@ -25,7 +25,7 @@ const OWNER_ONLY_MODE = 0o600;
 /** What no permission file means: reads only. */
 const NONE: McpPermissions = { writes: false, remoteControl: false, history: false };
 
-/** Reads the stored permissions: none granted when the file does not exist. A file that exists but is not valid throws `ConfigValidationError`, so a damaged file fails the request loudly instead of silently granting or denying. */
+/** Reads the stored permissions: none granted when the file does not exist. A file that exists but is not valid throws `ConfigValidationError` (it fails its schema) or `ConfigFileNotJsonError` (it is not JSON), so a damaged file fails the request loudly instead of silently granting or denying. */
 export function readStoredMcpPermissions(paths: LayoutPaths): McpPermissions {
   return readJson(paths.mcpPermissionsFile, StoredMcpPermissionsSchema) ?? NONE;
 }
