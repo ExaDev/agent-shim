@@ -3,6 +3,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readProvider } from "./providersStore";
 import { IdentityAlreadyExistsError, readIdentity } from "./identityStore";
+import { CliError } from "./cliError";
 import { describeIdentityRename, renameIdentity, type IdentityRenamePorts } from "./identityRename";
 import { registerLaunch } from "./launcher/launchRecords";
 import { realLaunchProbe } from "./realIdentityRename";
@@ -204,6 +205,36 @@ describe("renameIdentity and a signal to stop", () => {
       },
     };
   }
+
+  it("ends with the shell's status for the signal when the journal could not be updated as the steps rolled back, since the rename was still rolled back", async () => {
+    // The journal is written once after the step the signal arrived in, and its next write is the first of the rollback, which is the one that fails.
+    let writesSinceSignal: number | undefined;
+    const sending = signalAfterFirstMove("SIGINT");
+    const journalFull = {
+      ...sending,
+      rename: (from: string, to: string): void => {
+        sending.rename(from, to);
+        writesSinceSignal ??= 0;
+      },
+      writeFilePrivate: (file: string, contents: string): void => {
+        if (writesSinceSignal !== undefined && file.startsWith(world.paths.identityRenamesDir)) {
+          writesSinceSignal += 1;
+          if (writesSinceSignal > 1) {
+            throw new Error("no space left on device");
+          }
+        }
+        realFarmFs.writeFilePrivate(file, contents);
+      },
+    };
+    const failure: unknown = await renameIdentity(world.paths, "work", "client", world.ports({ fs: journalFull })).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(CliError);
+    expect(failure).toMatchObject({ exitCode: SIGINT_STATUS });
+    expect(failure instanceof Error ? failure.message : "").toContain("Interrupted by SIGINT");
+    expect(failure instanceof Error ? failure.message : "").toContain("no space left on device");
+  });
 
   it("rolls every step back, the Keychain copy included, and ends with the shell's status for SIGINT, when the signal arrives between steps", async () => {
     const before = treeOf(world.root);

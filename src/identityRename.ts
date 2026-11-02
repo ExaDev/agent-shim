@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import type { z } from "zod";
 
-import { CliError, UsageError } from "./cliError";
+import { CliError, EXIT_FAILURE, UsageError } from "./cliError";
 import { ConfigValidationError } from "./config/load";
 import { UnsafeNameError, isStoredName } from "./config/names";
 import { ConfigProfileSchema, DirectoryRulesSchema, GlobalConfigSchema, IdentitySchema, ProviderSchema, isRouterProvider, type CredentialCacheStore, type CredentialSource } from "./config/schema";
@@ -709,11 +709,28 @@ class RenameInterruptedError extends CliError {
   }
 }
 
-/** Raised when the rollback after a failed step could not undo everything: the first failure, and what was left. */
+/** What the sentence about the journal says when a rollback could not record that it undid steps: they were undone, and only the record of them is behind. */
+function unrecordedSentence(unrecorded: readonly string[]): string {
+  return `The journal under identity-renames/ could not be updated for ${unrecorded.join("; ")}, so it may still show steps as done that were undone; a run of the same rename plans from what is on disk and is not misled by it.`;
+}
+
+/** Raised when the rollback after a failed step could not undo everything: the first failure, and what was left. `unrecorded` names the steps that were undone but whose journal update failed, when any. */
 class RollbackFailedError extends CliError {
-  constructor(cause: string, leftovers: readonly string[]) {
-    super(`${cause}\nRolling back also failed, so the rename is partly done: ${leftovers.join("; ")}. Look at the steps named before running anything else.`);
+  constructor(cause: string, leftovers: readonly string[], unrecorded: readonly string[]) {
+    super(`${cause}\nRolling back also failed, so the rename is partly done: ${leftovers.join("; ")}. Look at the steps named before running anything else.${unrecorded.length === 0 ? "" : `\n${unrecordedSentence(unrecorded)}`}`);
     this.name = "RollbackFailedError";
+  }
+}
+
+/** Raised when every step was undone but the journal could not be updated to say so: the rename is rolled back, and the failure is the record's. */
+class RollbackNotRecordedError extends CliError {
+  override readonly exitCode: number;
+
+  /** `cause` is what failed the rename: its message leads, and its exit status is kept, since a signal that rolled the rename back still ends the process with the signal's status. */
+  constructor(cause: unknown, unrecorded: readonly string[]) {
+    super(`${messageOf(cause)}\nThe rename was rolled back, and nothing is left half done. ${unrecordedSentence(unrecorded)}`);
+    this.name = "RollbackNotRecordedError";
+    this.exitCode = cause instanceof CliError ? cause.exitCode : EXIT_FAILURE;
   }
 }
 
@@ -753,16 +770,26 @@ async function applyAll(steps: readonly Step[], hooks: ApplyHooks): Promise<void
     }
   } catch (error) {
     const leftovers: string[] = [];
+    const unrecorded: string[] = [];
     for (const { step, index } of started.reverse()) {
       try {
         step.undo();
-        hooks.afterUndo(index);
       } catch (undoError) {
         leftovers.push(`${step.description} (${messageOf(undoError)})`);
+        continue;
+      }
+      // Its own try: the step is undone, so a journal that cannot be written is not a step that could not be undone.
+      try {
+        hooks.afterUndo(index);
+      } catch (journalError) {
+        unrecorded.push(`${step.description} (${messageOf(journalError)})`);
       }
     }
     if (leftovers.length > 0) {
-      throw new RollbackFailedError(messageOf(error), leftovers);
+      throw new RollbackFailedError(messageOf(error), leftovers, unrecorded);
+    }
+    if (unrecorded.length > 0) {
+      throw new RollbackNotRecordedError(error, unrecorded);
     }
     throw error;
   }
@@ -950,6 +977,7 @@ async function applyUnderLocks(paths: LayoutPaths, from: string, to: string, por
         },
       });
     } catch (error) {
+      // Every step is undone unless the rollback itself failed, so a run that began here leaves nothing half done and its journal goes, whether or not the journal could be kept up to date while it rolled back.
       if (resumed === undefined && !(error instanceof RollbackFailedError)) {
         removeRenameJournal(ports.fs, file);
       }
