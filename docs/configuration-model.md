@@ -253,7 +253,7 @@ Each source is an object with exactly one key naming its kind:
 | `{ "file": "~/.config/agent-shim/z.token" }` | the trimmed contents of an absolute or `~`-rooted file, refused if group or others can read or write it (mode 600 or stricter) | no |
 | `{ "command": ["pass", "show", "z"] }` | the trimmed stdout of an argv run at launch with no shell | no |
 | `{ "op": "op://vault/item/field" }` | `op read <ref>` | yes, unless `OP_SERVICE_ACCOUNT_TOKEN` is set |
-| `{ "keychain": { "service": "claude-work", "account": "joe" } }` | `security find-generic-password -s <service> [-a <account>] -w` | no |
+| `{ "keychain": { "service": "claude-work", "account": "alex" } }` | `security find-generic-password -s <service> [-a <account>] -w` | no |
 | `{ "literal": "dummy" }` | the value as written (a non-secret placeholder; see below) | no |
 
 `command`, `op` and `keychain` also take `interactive` (override whether the source needs a person) and `timeoutMs` (how long the command may run; 10 seconds by default, 120 seconds for an interactive source, which leaves time to approve a prompt). A 1Password service account needs no special source: `OP_SERVICE_ACCOUNT_TOKEN` in the launching environment is inherited by `op`, which then authenticates without asking anyone, so the `op` source stops counting as interactive. A Keychain read defaults to non-interactive because an item whose access list trusts `security` reads silently and one that does not fails at once over SSH ("User interaction is not allowed") rather than hanging; mark it `interactive: true` if yours shows a dialog.
