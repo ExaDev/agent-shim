@@ -154,6 +154,19 @@ const HOP_RESET_RETRIES = 1;
 /** The socket errors that say the daemon (or its listener backlog) dropped a connection it had already accepted, as opposed to one that could never be opened. Only these are replayed. */
 const HOP_RESET_CODES: ReadonlySet<string> = new Set(["ECONNRESET", "EPIPE"]);
 
+/** The prefix of every error code Node's HTTP parser raises (`HPE_HEADER_OVERFLOW`, `HPE_INVALID_CONSTANT` and the rest). */
+const HTTP_PARSE_ERROR_CODE_PREFIX = "HPE_";
+
+/**
+ * What one hop failure tells the client, in the 502's message. A parse error means the daemon was reached and answered, with bytes this client rejected (a header block past its size limit, say), so calling it unreachable would send the reader looking at the daemon's liveness instead of its response; every other error is a connection that could not be made or kept.
+ */
+function hopFailureSummary(error: Error): string {
+  const code = "code" in error && typeof error.code === "string" ? error.code : undefined;
+  return code?.startsWith(HTTP_PARSE_ERROR_CODE_PREFIX) === true
+    ? `the headroom daemon sent a response the front door could not read (${error.message} ${code})`
+    : `the headroom daemon is unreachable (${error.message})`;
+}
+
 /** Bytes in one mebibyte, the unit the Messages API states its request size limit in. */
 const BYTES_PER_MIB = 1_048_576;
 
@@ -315,7 +328,7 @@ async function hopOnce(
       if (!response.headersSent) {
         response.start(HTTP_BAD_GATEWAY, { "Content-Type": "application/json" });
         void response
-          .write(JSON.stringify({ type: "error", error: { type: "api_error", message: `agent-shim front door: the headroom daemon is unreachable (${error.message})` } }))
+          .write(JSON.stringify({ type: "error", error: { type: "api_error", message: `agent-shim front door: ${hopFailureSummary(error)}` } }))
           .then(() => {
             response.end();
           });
