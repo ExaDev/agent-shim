@@ -572,6 +572,28 @@ describe("the headroom hop", () => {
     }
   });
 
+  it("says a response it cannot read is unreadable, not that the daemon is unreachable", async () => {
+    // A header block past the client's size limit is rejected by the HTTP parser, which is a daemon that answered, not one that is down.
+    const oversized = http.createServer((_request, response) => {
+      response.writeHead(HTTP_STATUS.ok, { "content-type": "application/json", "x-oversized": "a".repeat(http.maxHeaderSize * 2) });
+      response.end("{}");
+    });
+    await listenOnHeadroomSocket(oversized);
+    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider } });
+    try {
+      const unreadable = await fetch(`${door.url}/providers/codex/v1/messages`, {
+        dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY });
+      expect(unreadable.status).toBe(HTTP_STATUS.badGateway);
+      const unreadableMessage = JSON.stringify(await unreadable.json());
+      expect(unreadableMessage).toContain("sent a response the front door could not read");
+      expect(unreadableMessage).toContain("HPE_HEADER_OVERFLOW");
+      expect(unreadableMessage).not.toContain("unreachable");
+    } finally {
+      await door.close();
+      await closeServer(oversized);
+    }
+  });
+
   it("logs a daemon that drops the connection after it started answering, but not a client that went away", async () => {
     const dropping = http.createServer((_request, response) => {
       response.writeHead(HTTP_STATUS.ok, { "content-type": "text/event-stream", "transfer-encoding": "chunked" });
@@ -670,6 +692,8 @@ describe("the headroom hop", () => {
       const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
         dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY });
       expect(response.status).toBe(HTTP_STATUS.badGateway);
+      // A connection the daemon keeps resetting is a daemon that is not serving, which the 502 still says plainly.
+      expect(JSON.stringify(await response.json())).toContain("the headroom daemon is unreachable");
       expect(daemon.bodies).toHaveLength(2);
       expect(logged.filter((line) => line.includes("failed (POST") && line.includes("replay, client still waiting"))).toHaveLength(1);
     } finally {
