@@ -93,6 +93,10 @@ export interface FrontDoorSupervisorPorts {
    * The door this one replaces through a handover, when it was started for one: its listeners are adopted from that door's sockets instead of bound, the state file is not written until this door accepts on all three (the old door owns it and keeps serving until then), and the old door is told once this door serves. Absent for every other start.
    */
   readonly predecessor?: Predecessor;
+  /**
+   * The watchdog's respawn chain this door belongs to: `generation` is how many watchdog replacements produced it (0 for a door a launch or `frontdoor restart` started), and `startNext` starts the door of the next generation the way the watchdog starts one on a stall (see `startNextRespawnGeneration`). A door of generation 1 or more whose start fails calls `startNext` before it exits, once its listeners are down and it has released the start lock, because nobody else would start a door: the stalled door that started it is gone and no launch is waiting on it, so every registered session would get connection refused until some later launch happened to start one. A door a launch started reports its failure to that launch instead, and a handover successor leaves the door it was replacing serving. Optional for a host that does not respawn.
+   */
+  readonly respawnChain?: { readonly generation: number; readonly startNext: () => Promise<void> };
   /** Stops the work the door runs on its own account rather than for a request (the usage, window, job and catalogue keepers), called once when a drain begins so the successor's are the only ones acting. Optional because a host without such work has nothing to stop. */
   readonly stopBackgroundWork?: () => void;
   /**
@@ -145,7 +149,7 @@ const MS_PER_MINUTE = 60_000;
 /**
  * Runs the front-door supervisor: binds all three listeners (the HTTPS provider listener, the CONNECT surface and the plain-HTTP direct listener, each on its sticky port), records the serving state, and shuts down with an empty session registry, either at the first such tick after the executable it serves as has been replaced on disk (so an applied update reaches the door without waiting out the idle window) or after `idleShutdownMinutes` of it. A door whose state file comes to name another live supervisor is superseded: from then on it takes no new sessions, never writes the state file again, and exits as soon as the sessions it was serving have ended. Returns the exit code: 0 for any of these retirements, 1 for a fatal start failure.
  *
- * The listeners live in this process, so there is no child to keep alive: a crash of this process is a crash of every routed session's door at once, and recovery is the next launch's ensure spawning a replacement on the same sticky ports, which is exactly the failure model the issue asks to settle with tests. Keeping the headroom daemon alive is the headroom supervisor's job, not this one's; the two daemons idle out independently.
+ * The listeners live in this process, so there is no child to keep alive: a crash of this process is a crash of every routed session's door at once, and recovery is the next launch's ensure spawning a replacement on the same sticky ports, or, for a stall or a failed start in a door the watchdog's respawn chain started, the next generation of that chain (see `FrontDoorSupervisorPorts.respawnChain`). Keeping the headroom daemon alive is the headroom supervisor's job, not this one's; the two daemons idle out independently.
  */
 export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports: FrontDoorSupervisorPorts, options: RunFrontDoorSupervisorOptions = {}): Promise<number> {
   // From here this process's event loop answers every session, so nothing in it may block the thread (see `refuseToBlockInRole`). Left again on return, which only an in-process host or a test ever reaches.
@@ -178,7 +182,7 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
   const sourceOf = (listener: "provider" | "connect" | "direct", preferredPort: number | undefined): ListenSource =>
     predecessor === undefined ? { preferredPort } : { inherit: async () => await predecessor.take(listener) };
 
-  const fail = (message: string): number => {
+  const fail = async (message: string): Promise<number> => {
     // A startup failure exits this process exactly as the idle shutdown does, so the hub's final cursor save belongs here too: a session whose frozen base URL still names the sticky port could have delivered an observed exchange between the first listener's bind and this failure, and its attachment would otherwise lose the one save the exit could still make.
     ports.closeRcStreamHub();
     // A successor that fails leaves the state file and the start lock alone: the door it was replacing still owns the one and serves every address, and the other belongs to whichever launcher holds it.
@@ -187,6 +191,11 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
       fs.removeRecursive(paths.frontdoorLockFile);
     }
     ports.log(`agent-shim frontdoor supervisor: ${message}`);
+    const chain = ports.respawnChain;
+    if (predecessor === undefined && chain !== undefined && chain.generation > 0) {
+      ports.log(`agent-shim frontdoor supervisor ${String(ports.ownPid)}: this door is generation ${String(chain.generation)} of the watchdog's respawn chain and nothing waits on it, so it starts generation ${String(chain.generation + 1)} rather than leaving no door`);
+      await chain.startNext();
+    }
     return 1;
   };
 
@@ -201,7 +210,7 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
     http = await ports.startProviderListener(sourceOf("provider", lastPort));
   } catch (error) {
     ports.doorHealth.listenerFailed("provider", error instanceof Error ? error.message : String(error));
-    return fail(`could not start the provider listener: ${error instanceof Error ? error.message : String(error)}`);
+    return await fail(`could not start the provider listener: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (previousSticky !== undefined && http.port !== previousSticky) {
     ports.log(`agent-shim frontdoor supervisor: sticky port ${String(previousSticky)} was occupied; moving to ${String(http.port)} (sessions launched against the old port are stale until they relaunch)`);
@@ -215,7 +224,7 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
   } catch (error) {
     await http.close();
     ports.doorHealth.listenerFailed("connect", error instanceof Error ? error.message : String(error));
-    return fail(`could not start the CONNECT surface: ${error instanceof Error ? error.message : String(error)}`);
+    return await fail(`could not start the CONNECT surface: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (previousStickyConnect !== undefined && connect.port !== previousStickyConnect) {
     ports.log(`agent-shim frontdoor supervisor: sticky CONNECT port ${String(previousStickyConnect)} was occupied; moving to ${String(connect.port)} (OAuth sessions launched against the old port are stale until they relaunch)`);
@@ -230,7 +239,7 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
     await connect.close();
     await http.close();
     ports.doorHealth.listenerFailed("direct", error instanceof Error ? error.message : String(error));
-    return fail(`could not start the direct listener: ${error instanceof Error ? error.message : String(error)}`);
+    return await fail(`could not start the direct listener: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (previousStickyDirect !== undefined && direct.port !== previousStickyDirect) {
     ports.log(`agent-shim frontdoor supervisor: sticky direct port ${String(previousStickyDirect)} was occupied; moving to ${String(direct.port)} (headroom admits the new address once its supervisor rewrites the allowlist file)`);
