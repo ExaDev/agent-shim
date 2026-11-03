@@ -1,3 +1,13 @@
+## [11.83.2](https://github.com/ExaDev/agent-shim/compare/v11.83.1...v11.83.2) (2026-11-03)
+
+### Bug Fixes
+
+* **frontdoor:** say a response the hop cannot read is unreadable, not unreachable ([da59363](https://github.com/ExaDev/agent-shim/commit/da59363e59dbf942e189cc762e67a017f705a2bb))
+
+### Continuous Integration
+
+* run the test suite on macOS ([c7e4d1d](https://github.com/ExaDev/agent-shim/commit/c7e4d1d6858eaa034f3028d29d6456f6ddb5d6fc))
+
 ## [11.83.1](https://github.com/ExaDev/agent-shim/compare/v11.83.0...v11.83.1) (2026-11-02)
 
 ### Bug Fixes
