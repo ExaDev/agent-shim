@@ -1,3 +1,9 @@
+## [11.83.3](https://github.com/ExaDev/agent-shim/compare/v11.83.2...v11.83.3) (2026-11-03)
+
+### Bug Fixes
+
+* **headroom:** pin the default install source to the bounded-header fork commit ([649b876](https://github.com/ExaDev/agent-shim/commit/649b8761570dfc7b1305773963cd4d17a58fd37b))
+
 ## [11.83.2](https://github.com/ExaDev/agent-shim/compare/v11.83.1...v11.83.2) (2026-11-03)
 
 ### Bug Fixes
