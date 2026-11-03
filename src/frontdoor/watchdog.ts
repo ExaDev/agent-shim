@@ -1,6 +1,7 @@
 import { Worker } from "node:worker_threads";
 
 import { FRONTDOOR_PROBE_ATTEMPTS } from "./ensure";
+import { processorShare, type MachineLoadReading } from "./machineLoad";
 import { PROBE_TIMEOUT_MS } from "./probe";
 
 /**
@@ -12,7 +13,7 @@ export const DOOR_STALL_BOUND_MS = 2 * FRONTDOOR_PROBE_ATTEMPTS * PROBE_TIMEOUT_
 export const DOOR_AWAIT_PID_ENV = "AGENT_SHIM_FRONTDOOR_AWAIT_PID";
 
 /**
- * The environment variable naming how many doors the watchdog's respawns have gone through before this one: a door started by `frontdoor restart` or a launch carries nothing here and counts as generation 0, and each watchdog respawn adds one. A door reads it once at startup and passes the number to its own watchdog, which refuses to respawn past `DOOR_RESPAWN_MAX_GENERATIONS`.
+ * The environment variable naming how many doors the watchdog's respawns have gone through before this one: a door started by `frontdoor restart` or a launch carries nothing here and counts as generation 0, and each watchdog respawn adds one. A replacement that fails to start counts as a generation too, and starts the next one itself (see `startNextRespawnGeneration`). A door reads it once at startup and passes the number to its own watchdog and to its start-failure handling, each of which gives the replacement it starts past `DOOR_RESPAWN_MAX_GENERATIONS` a growing cooldown (see `respawnDelayMs`).
  */
 export const DOOR_RESPAWN_GENERATION_ENV = "AGENT_SHIM_FRONTDOOR_RESPAWN_GENERATION";
 
@@ -46,95 +47,21 @@ export interface DoorWatchdog {
   readonly stop: () => void;
 }
 
-/** A fixed reading of the machine's load in place of the real one (`os.loadavg()` and `os.cpus()`), for a host whose judgement must not depend on the machine it runs on: the tests, which would otherwise see a loaded machine's starvation as a reason not to report. */
-export interface MachineLoadReading {
-  readonly loadAverage: number;
-  readonly cpus: number;
-}
-
 /** What the thread does when the counter has not moved for the bound: end the process (production) or only report to its parent (tests, which must not kill the test run). */
 type StallAction = "kill-process" | "report";
 
 /**
- * The source of the watchdog thread, exported so a test can run its checks in process against a fake clock and make one late, which a real thread cannot be made to do on demand. The thread: its own event loop, which a blocked main loop cannot stall. It compares a shared beat counter (moved by a timer on the main loop) against its previous reading on a fixed cadence, and counts the time the counter stays still at the share of a processor the machine's load leaves a runnable thread (all of one while the one-minute load average is within the processor count, the processor count over the load average beyond it): a main loop the machine did not schedule has not had the time to run, and replacing the door would only drop every in-flight request into a door just as starved. When that counted time reaches `boundMs` it records the stall in the state file (the existing `lastError` field, so no reader of the file sees a new key) and in the door's log (the next generation's first state write replaces `lastError`, and a SIGKILL runs no handler, so the log line is the only record that outlives the replacement), logs the machine's load and where the main thread was (see `describeMainThread`, so a stall that was the door's own code is told apart from one the machine caused), starts a replacement door (as long as this door's own generation has not reached the respawn ceiling, so a stall that recurs through consecutive doors ends the chain rather than looping) and ends the process. A thread that was itself descheduled for longer than its cadence (the machine was suspended or starved) restarts its clock instead of judging, since the main loop stalled by the same pause is not a hung one.
+ * The part of a door thread's source that starts the next door of the respawn chain, shared by the watchdog thread (on a stall) and the thread a replacement that failed to start runs (see `startNextRespawnGeneration`), so both start it the one way. It expects `fs` and the `RespawnChainParams` fields with the three environment variable names (`awaitPidEnv`, `respawnGenerationEnv`, `delayEnv`) in scope, and defines `log` and `spawnReplacement`.
  */
-export const WATCHDOG_SOURCE = `
-const { workerData, parentPort } = require("node:worker_threads");
-const fs = require("node:fs");
-const os = require("node:os");
-const inspector = require("node:inspector");
-const { shared, boundMs, checkEveryMs, pauseWaitMs, stateFile, ownPid, action, logFile, respawn, respawnGeneration, respawnMaxGeneration, cooldownStepMs, cooldownCapMs, startLockFile, awaitPidEnv, respawnGenerationEnv, delayEnv, nativeSample, machineLoad } = workerData;
-const counter = new Int32Array(shared);
-let lastValue = Atomics.load(counter, 0);
-let lastChangeAt = Date.now();
-let lastCheckAt = Date.now();
-// The processor time the machine's load left the main thread since the counter last moved: what the bound is judged against.
-let scheduledMs = 0;
-// Set once a silence has outlasted the bound in wall time while the counted time has not, so the wait is logged once and its end is logged too, whether or not a late check restarted the clock in between.
-let waitingOutStarvation = false;
-let stopped = false;
-const readLoad = () => machineLoad === undefined ? { loadAverage: os.loadavg()[0], cpus: os.cpus().length } : machineLoad;
-const processorShare = (reading) => reading.loadAverage <= reading.cpus ? 1 : reading.cpus / reading.loadAverage;
-const describeLoad = (reading) => reading.loadAverage.toFixed(1) + " across " + String(reading.cpus) + " cpus";
-const record = (message) => {
-  try {
-    const existing = JSON.parse(fs.readFileSync(stateFile, "utf8"));
-    const next = Object.assign({}, existing, { lastError: message });
-    const temporary = stateFile + "." + String(ownPid) + ".watchdog";
-    fs.writeFileSync(temporary, JSON.stringify(next, null, 2) + "\\n", { mode: 0o600 });
-    fs.renameSync(temporary, stateFile);
-  } catch (error) {
-    // The state file is a courtesy to whoever looks next; the process still has to end.
-  }
-};
+const RESPAWN_SOURCE = `
 const log = (line) => {
   if (logFile === undefined) return;
   try {
     fs.appendFileSync(logFile, new Date().toISOString() + " frontdoor " + String(ownPid) + ": " + line + "\\n");
   } catch (error) {
-    // Nowhere left to report a failed log write to; the process still has to end.
+    // Nowhere left to report a failed log write to; the thread's work goes on without it.
   }
 };
-const MS_PER_SECOND = 1000;
-// Enough of the stack to read the caller chain from the timer or socket callback down to the call that held the loop.
-const STACK_FRAMES_LOGGED = 12;
-// Asks the main thread where it is, through the inspector: a pause request interrupts JavaScript that is running (a loop, or a synchronous call that can be interrupted), so the top frames name what held the loop. A main thread that cannot be paused within the wait is not at such a point (it is idle in the event loop, which means it was not scheduled, or blocked inside a native call), and the answer says so rather than guessing. \`resume\` lets a thread that is not about to be killed run on again.
-const describeMainThread = (waitMs, resume) => new Promise((resolve) => {
-  let session;
-  let settled = false;
-  const finish = (text) => {
-    if (settled) return;
-    settled = true;
-    clearTimeout(timeout);
-    try {
-      session.disconnect();
-    } catch (error) {
-      // Never connected; there is nothing to release.
-    }
-    resolve(text);
-  };
-  const timeout = setTimeout(() => finish("the main thread could not be paused within " + String(waitMs) + "ms, so it was idle in the event loop or blocked inside a native call"), waitMs);
-  try {
-    session = new inspector.Session();
-    session.connectToMainThread();
-    session.on("Debugger.paused", (event) => {
-      if (settled) return;
-      const frames = event.params.callFrames.slice(0, STACK_FRAMES_LOGGED).map((frame) => (frame.functionName === "" ? "(anonymous)" : frame.functionName) + " " + frame.url + ":" + String(frame.location.lineNumber + 1));
-      const text = "the main thread was in " + frames.join(" <- ");
-      if (resume) {
-        session.post("Debugger.resume", () => finish(text));
-      } else {
-        finish(text);
-      }
-    });
-    session.post("Debugger.enable", () => {
-      // The wait may have run out while the main thread was too stalled to answer the enable; the session is gone then.
-      if (!settled) session.post("Debugger.pause");
-    });
-  } catch (error) {
-    finish("the main thread could not be inspected: " + (error instanceof Error ? error.message : String(error)));
-  }
-});
 // Whether a process is alive: signal 0 only tests, and EPERM means it exists under another user.
 const isRunning = (pid) => {
   try {
@@ -186,11 +113,87 @@ const spawnReplacement = () => {
       log("withdrew replacement door " + String(child.pid) + ": a launcher took the start lock first and its door is the one starting");
       return;
     }
-    log("started replacement door " + String(child.pid) + " of generation " + String(nextGeneration) + ", which binds once this process is gone" + (cooldownMs > 0 ? " and a " + String(cooldownMs) + "ms cooldown has passed, since the stall has recurred through " + String(respawnMaxGeneration) + " consecutive replacements" : ""));
+    log("started replacement door " + String(child.pid) + " of generation " + String(nextGeneration) + ", which binds once this process is gone" + (cooldownMs > 0 ? " and a " + String(cooldownMs) + "ms cooldown has passed, since the chain has gone through " + String(respawnMaxGeneration) + " consecutive replacements" : ""));
   } catch (error) {
     log("could not start a replacement door: " + (error instanceof Error ? error.message : String(error)));
   }
 };
+`;
+
+/**
+ * The source of the watchdog thread, exported so a test can run its checks in process against a fake clock and make one late, which a real thread cannot be made to do on demand. The thread: its own event loop, which a blocked main loop cannot stall. It compares a shared beat counter (moved by a timer on the main loop) against its previous reading on a fixed cadence, and counts the time the counter stays still at the share of a processor the machine's load leaves a runnable thread (all of one while the one-minute load average is within the processor count, the processor count over the load average beyond it): a main loop the machine did not schedule has not had the time to run, and replacing the door would only drop every in-flight request into a door just as starved. When that counted time reaches `boundMs` it records the stall in the state file (the existing `lastError` field, so no reader of the file sees a new key) and in the door's log (the next generation's first state write replaces `lastError`, and a SIGKILL runs no handler, so the log line is the only record that outlives the replacement), logs the machine's load and where the main thread was (see `describeMainThread`, so a stall that was the door's own code is told apart from one the machine caused), starts a replacement door (see `RESPAWN_SOURCE`; one past `DOOR_RESPAWN_MAX_GENERATIONS` waits a growing cooldown before it binds, so a stall that recurs through consecutive doors never spins faster than the machine can serve) and ends the process. A thread that was itself descheduled for longer than its cadence (the machine was suspended or starved) restarts its clock instead of judging, since the main loop stalled by the same pause is not a hung one.
+ */
+export const WATCHDOG_SOURCE = `
+const { workerData, parentPort } = require("node:worker_threads");
+const fs = require("node:fs");
+const os = require("node:os");
+const inspector = require("node:inspector");
+const { shared, boundMs, checkEveryMs, pauseWaitMs, stateFile, ownPid, action, logFile, respawn, respawnGeneration, respawnMaxGeneration, cooldownStepMs, cooldownCapMs, startLockFile, awaitPidEnv, respawnGenerationEnv, delayEnv, nativeSample, machineLoad } = workerData;
+const counter = new Int32Array(shared);
+let lastValue = Atomics.load(counter, 0);
+let lastChangeAt = Date.now();
+let lastCheckAt = Date.now();
+// The processor time the machine's load left the main thread since the counter last moved: what the bound is judged against.
+let scheduledMs = 0;
+// Set once a silence has outlasted the bound in wall time while the counted time has not, so the wait is logged once and its end is logged too, whether or not a late check restarted the clock in between.
+let waitingOutStarvation = false;
+let stopped = false;
+const readLoad = () => machineLoad === undefined ? { loadAverage: os.loadavg()[0], cpus: os.cpus().length } : machineLoad;
+// The main thread's own formula, embedded as its source text (see \`processorShare\`), so the stall bound and the start-up probe budget are counted alike.
+const processorShare = ${processorShare.toString()};
+const describeLoad = (reading) => reading.loadAverage.toFixed(1) + " across " + String(reading.cpus) + " cpus";
+const record = (message) => {
+  try {
+    const existing = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    const next = Object.assign({}, existing, { lastError: message });
+    const temporary = stateFile + "." + String(ownPid) + ".watchdog";
+    fs.writeFileSync(temporary, JSON.stringify(next, null, 2) + "\\n", { mode: 0o600 });
+    fs.renameSync(temporary, stateFile);
+  } catch (error) {
+    // The state file is a courtesy to whoever looks next; the process still has to end.
+  }
+};
+${RESPAWN_SOURCE}
+const MS_PER_SECOND = 1000;
+// Enough of the stack to read the caller chain from the timer or socket callback down to the call that held the loop.
+const STACK_FRAMES_LOGGED = 12;
+// Asks the main thread where it is, through the inspector: a pause request interrupts JavaScript that is running (a loop, or a synchronous call that can be interrupted), so the top frames name what held the loop. A main thread that cannot be paused within the wait is not at such a point (it is idle in the event loop, which means it was not scheduled, or blocked inside a native call), and the answer says so rather than guessing. \`resume\` lets a thread that is not about to be killed run on again.
+const describeMainThread = (waitMs, resume) => new Promise((resolve) => {
+  let session;
+  let settled = false;
+  const finish = (text) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timeout);
+    try {
+      session.disconnect();
+    } catch (error) {
+      // Never connected; there is nothing to release.
+    }
+    resolve(text);
+  };
+  const timeout = setTimeout(() => finish("the main thread could not be paused within " + String(waitMs) + "ms, so it was idle in the event loop or blocked inside a native call"), waitMs);
+  try {
+    session = new inspector.Session();
+    session.connectToMainThread();
+    session.on("Debugger.paused", (event) => {
+      if (settled) return;
+      const frames = event.params.callFrames.slice(0, STACK_FRAMES_LOGGED).map((frame) => (frame.functionName === "" ? "(anonymous)" : frame.functionName) + " " + frame.url + ":" + String(frame.location.lineNumber + 1));
+      const text = "the main thread was in " + frames.join(" <- ");
+      if (resume) {
+        session.post("Debugger.resume", () => finish(text));
+      } else {
+        finish(text);
+      }
+    });
+    session.post("Debugger.enable", () => {
+      // The wait may have run out while the main thread was too stalled to answer the enable; the session is gone then.
+      if (!settled) session.post("Debugger.pause");
+    });
+  } catch (error) {
+    finish("the main thread could not be inspected: " + (error instanceof Error ? error.message : String(error)));
+  }
+});
 // Captures where a main thread that could not be paused is held natively, with the platform's own sampler, so a stall the inspector cannot name still leaves a stack to read. The wait is the sampling time plus the sampler's start-up and symbolication, stretched by the processor share the machine's load leaves it, and the capture never delays the process ending beyond that. The sampler writes its report only once it has finished, so one ended at the deadline, or one that failed, leaves no file, and the log says which rather than naming a file that is not there.
 const takeNativeSample = () => new Promise((resolve) => {
   if (nativeSample === undefined) { resolve(); return; }
@@ -282,20 +285,15 @@ parentPort.on("message", (message) => {
 });
 `;
 
-/** What `startThreadWatchdog` needs: where the state file is, which process to end, and the two derived time constants (parameters so a test can use small ones). `checkEveryMs` is also the cadence of the main loop's beat. */
-export interface ThreadWatchdogParams {
-  readonly stateFile: string;
+/** How a door starts the next door of the watchdog's respawn chain: what the watchdog needs for a stall's replacement, and what `startNextRespawnGeneration` needs for a replacement that failed to start. */
+export interface RespawnChainParams {
+  /** This door's pid, which the next door waits to see gone before it binds (`DOOR_AWAIT_PID_ENV`). */
   readonly ownPid: number;
-  readonly boundMs: number;
-  readonly checkEveryMs: number;
-  /** How long the thread waits for the main thread to pause so its frames can be logged before it ends the process anyway (`DOOR_WATCHDOG_CHECK_MS` in production, the same cadence that bounds how late a stall is noticed). */
-  readonly pauseWaitMs: number;
-  readonly action: StallAction;
-  /** The door's log file, which the thread appends the stall to before ending the process. Omitted by a host with no log of its own. */
+  /** The door's log file, where the start (or why there was none) is recorded and the next door's output goes. Omitted by a host with no log of its own, which starts no replacement. */
   readonly logFile?: string;
   /** How many watchdog respawns produced this door (`0` for a door no watchdog started), from `DOOR_RESPAWN_GENERATION_ENV` in production. */
   readonly respawnGeneration: number;
-  /** The highest replacement generation this door's watchdog starts with no cooldown (`DOOR_RESPAWN_MAX_GENERATIONS` in production); each generation past it waits `cooldownStepMs` longer, up to `cooldownCapMs`. */
+  /** The highest replacement generation started with no cooldown (`DOOR_RESPAWN_MAX_GENERATIONS` in production); each generation past it waits `cooldownStepMs` longer, up to `cooldownCapMs`. */
   readonly respawnMaxGeneration: number;
   /** How much longer each generation past `respawnMaxGeneration` waits before it binds (`DOOR_STALL_BOUND_MS` in production). */
   readonly cooldownStepMs: number;
@@ -303,8 +301,21 @@ export interface ThreadWatchdogParams {
   readonly cooldownCapMs: number;
   /** The start lock a launcher's ensure takes before it spawns a door and the door removes once it is serving: the respawn takes the same lock, naming the replacement as holder, so a launch that finds the stalled door's pid dead waits for the replacement instead of starting a second door that would find the sticky ports held and move off them. */
   readonly startLockFile: string;
-  /** How to start a replacement door on a stall: the invocation and environment of a door, to which the thread adds `DOOR_AWAIT_PID_ENV` and `DOOR_RESPAWN_GENERATION_ENV`. Omitted by a host that does not respawn. */
+  /** How to start a replacement door: the invocation and environment of a door, to which the thread adds `DOOR_AWAIT_PID_ENV`, `DOOR_RESPAWN_GENERATION_ENV` and `DOOR_RESPAWN_DELAY_ENV`. Omitted by a host that does not respawn. */
   readonly respawn?: { readonly command: string; readonly args: readonly string[]; readonly env: Readonly<Record<string, string>> };
+}
+
+/** The environment variable names the respawn source sets on the door it starts, as the thread's `workerData` carries them. */
+const RESPAWN_ENV_NAMES = { awaitPidEnv: DOOR_AWAIT_PID_ENV, respawnGenerationEnv: DOOR_RESPAWN_GENERATION_ENV, delayEnv: DOOR_RESPAWN_DELAY_ENV } as const;
+
+/** What `startThreadWatchdog` needs besides the respawn chain: where the state file is, what to do on a stall, and the two derived time constants (parameters so a test can use small ones). `checkEveryMs` is also the cadence of the main loop's beat. */
+export interface ThreadWatchdogParams extends RespawnChainParams {
+  readonly stateFile: string;
+  readonly boundMs: number;
+  readonly checkEveryMs: number;
+  /** How long the thread waits for the main thread to pause so its frames can be logged before it ends the process anyway (`DOOR_WATCHDOG_CHECK_MS` in production, the same cadence that bounds how late a stall is noticed). */
+  readonly pauseWaitMs: number;
+  readonly action: StallAction;
   /**
    * How to capture the native stack of a main thread the inspector could not pause (it was blocked inside a native call, which no JavaScript frame names): a command run with `{pid}`, `{seconds}` and `{file}` replaced in its arguments, its output written to `directory` as `<pid>.txt`, keeping the newest `keep` files. It is given `seconds` plus `overheadMs` (one probe deadline, `PROBE_TIMEOUT_MS`, in production: the time a launcher allows the door itself to answer, spent here on the sampler's start-up and symbolication), stretched by the processor share the machine's load leaves it, before it is ended with nothing written. Omitted where the platform has no such tool (production sets it on macOS only).
    */
@@ -321,7 +332,7 @@ export function startThreadWatchdog(params: Readonly<ThreadWatchdogParams>): Doo
   const counter = new Int32Array(shared);
   const worker = new Worker(WATCHDOG_SOURCE, {
     eval: true,
-    workerData: { shared, boundMs: params.boundMs, checkEveryMs: params.checkEveryMs, pauseWaitMs: params.pauseWaitMs, stateFile: params.stateFile, ownPid: params.ownPid, action: params.action, logFile: params.logFile, respawn: params.respawn, respawnGeneration: params.respawnGeneration, respawnMaxGeneration: params.respawnMaxGeneration, cooldownStepMs: params.cooldownStepMs, cooldownCapMs: params.cooldownCapMs, startLockFile: params.startLockFile, awaitPidEnv: DOOR_AWAIT_PID_ENV, respawnGenerationEnv: DOOR_RESPAWN_GENERATION_ENV, delayEnv: DOOR_RESPAWN_DELAY_ENV, nativeSample: params.nativeSample, machineLoad: params.machineLoad },
+    workerData: { shared, boundMs: params.boundMs, checkEveryMs: params.checkEveryMs, pauseWaitMs: params.pauseWaitMs, stateFile: params.stateFile, ownPid: params.ownPid, action: params.action, logFile: params.logFile, respawn: params.respawn, respawnGeneration: params.respawnGeneration, respawnMaxGeneration: params.respawnMaxGeneration, cooldownStepMs: params.cooldownStepMs, cooldownCapMs: params.cooldownCapMs, startLockFile: params.startLockFile, ...RESPAWN_ENV_NAMES, nativeSample: params.nativeSample, machineLoad: params.machineLoad },
   });
   worker.unref();
   const beat = setInterval(() => {
@@ -345,4 +356,29 @@ export function startThreadWatchdog(params: Readonly<ThreadWatchdogParams>): Doo
       void worker.terminate();
     },
   };
+}
+
+/** The source of the thread `startNextRespawnGeneration` runs: the respawn source, called once. */
+const NEXT_GENERATION_SOURCE = `
+const { workerData } = require("node:worker_threads");
+const fs = require("node:fs");
+const { ownPid, logFile, respawn, respawnGeneration, respawnMaxGeneration, cooldownStepMs, cooldownCapMs, startLockFile, awaitPidEnv, respawnGenerationEnv, delayEnv } = workerData;
+${RESPAWN_SOURCE}
+spawnReplacement();
+`;
+
+/**
+ * Starts the next door of the respawn chain from a door that is about to exit without serving: a replacement whose own start failed (observed under heavy load: its listener's health probe went unanswered for the start budget). Nothing else would start one, since the stalled door that started this one is gone and no launch is waiting on it, so without this every registered session is left with connection refused. It runs the very code the watchdog runs on a stall (see `RESPAWN_SOURCE`), on a thread of its own because that code makes synchronous filesystem and process calls the door's main thread must not make, so the next door is generation `respawnGeneration + 1`, waits for this pid to be gone, gets the same growing cooldown past `respawnMaxGeneration`, and holds the start lock while it boots. The caller must already have released the start lock it holds itself: a live holder (this door, until it exits) makes the respawn decline. Resolves once the thread has finished, its outcome written to `logFile`; rejects when the thread itself fails.
+ */
+export async function startNextRespawnGeneration(params: Readonly<RespawnChainParams>): Promise<void> {
+  const worker = new Worker(NEXT_GENERATION_SOURCE, {
+    eval: true,
+    workerData: { ownPid: params.ownPid, logFile: params.logFile, respawn: params.respawn, respawnGeneration: params.respawnGeneration, respawnMaxGeneration: params.respawnMaxGeneration, cooldownStepMs: params.cooldownStepMs, cooldownCapMs: params.cooldownCapMs, startLockFile: params.startLockFile, ...RESPAWN_ENV_NAMES },
+  });
+  await new Promise<void>((resolve, reject) => {
+    worker.once("error", reject);
+    worker.once("exit", () => {
+      resolve();
+    });
+  });
 }

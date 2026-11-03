@@ -49,7 +49,7 @@ type FakeBind = number | undefined | { readonly adopted: HandoverListenerName };
 /**
  * The fake world the supervisor runs against: an in-memory filesystem, a clock advanced only by the supervisor's own sleeps, a modelled process table, and listeners that bind the preferred port when it is free and the fresh one otherwise (the real listeners' bind-time fallback). `onSleep` lets a test act between ticks.
  */
-export function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs; readonly predecessor?: Predecessor } = {}) {
+export function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs; readonly predecessor?: Predecessor; readonly respawnGeneration?: number } = {}) {
   const fs = options.fs ?? createFakeFarmFs({});
   const ownPid = options.ownPid ?? OWN_PID;
   let clock = 0;
@@ -96,6 +96,8 @@ export function makeWorld(options: { readonly ownPid?: number; readonly fs?: Hea
   const launchEvents = createLaunchEventPublisher(doorEvents, () => clock);
   /** How many ticks ran the expiring-quota check, so the tick's calling of it is itself observable. */
   let quotaChecks = 0;
+  /** What the start lock held each time the door started the next generation of the respawn chain, so a test can prove the door released its own claim first (the real start claims the lock for the door it spawns, and refuses while a live process holds it). */
+  const nextGenerationStarts: (string | undefined)[] = [];
 
   /** A fake listener's port: an adopted socket keeps the old door's port, and a bind takes the preferred port when it is free and the fresh one otherwise (the real listeners' bind-time fallback). */
   const fakePortOf = async (listener: HandoverListenerName, source: ListenSource, record: (bind: FakeBind) => void): Promise<number> => {
@@ -224,6 +226,14 @@ export function makeWorld(options: { readonly ownPid?: number; readonly fs?: Hea
       },
     },
     ...(options.predecessor === undefined ? {} : { predecessor: options.predecessor }),
+    respawnChain: {
+      generation: options.respawnGeneration ?? 0,
+      startNext: async () => {
+        nextGenerationStarts.push(fs.readFileUtf8(paths.frontdoorLockFile));
+        timeline.push("next-generation");
+        await Promise.resolve();
+      },
+    },
     stopBackgroundWork: () => {
       stopOrder.push("background");
       timeline.push("background");
@@ -278,6 +288,7 @@ export function makeWorld(options: { readonly ownPid?: number; readonly fs?: Hea
     },
     doorEvents,
     quotaChecks: () => quotaChecks,
+    nextGenerationStarts,
     logs,
     clock: () => clock,
     set failListener(value: boolean) {

@@ -9,7 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FRONTDOOR_PROBE_ATTEMPTS } from "./ensure";
 import { PROBE_TIMEOUT_MS } from "./probe";
-import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_DELAY_ENV, DOOR_RESPAWN_GENERATION_ENV, DOOR_RESPAWN_COOLDOWN_CAP_MS, DOOR_RESPAWN_MAX_GENERATIONS, respawnDelayMs, DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startThreadWatchdog, WATCHDOG_SOURCE, type DoorWatchdog, type MachineLoadReading, type ThreadWatchdogParams } from "./watchdog";
+import type { MachineLoadReading } from "./machineLoad";
+import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_DELAY_ENV, DOOR_RESPAWN_GENERATION_ENV, DOOR_RESPAWN_COOLDOWN_CAP_MS, DOOR_RESPAWN_MAX_GENERATIONS, respawnDelayMs, DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startNextRespawnGeneration, startThreadWatchdog, WATCHDOG_SOURCE, type DoorWatchdog, type ThreadWatchdogParams } from "./watchdog";
 
 /** The respawn ceiling the tests run at: small so the chain-end case needs no real doors, and one above the middle generation so the stepping case can observe a spawn that is not the last. */
 const TEST_RESPAWN_MAX_GENERATION = 3;
@@ -414,6 +415,56 @@ describe("startThreadWatchdog", () => {
       await stallWith({ respawnGeneration: TEST_RESPAWN_MAX_GENERATION + GENERATIONS_PAST_THE_CAP, respawn });
       expect(await writtenTextOf(markerFile)).toBe(String(TEST_COOLDOWN_CAP_MS));
     });
+  });
+});
+
+describe("startNextRespawnGeneration", () => {
+  let directory: string;
+  let logFile: string;
+  let lockFile: string;
+
+  beforeEach(() => {
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-next-generation-"));
+    logFile = path.join(directory, LOG_NAME);
+    lockFile = path.join(directory, LOCK_NAME);
+  });
+
+  afterEach(() => {
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  /** A replacement that writes the environment the respawn gave it to `marker`, then stays alive long enough for the lock it holds to name a live process. */
+  function recordingRespawn(marker: string) {
+    return { command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(marker)}, process.env.${DOOR_AWAIT_PID_ENV} + " gen " + process.env.${DOOR_RESPAWN_GENERATION_ENV} + " delay " + process.env.${DOOR_RESPAWN_DELAY_ENV}); setTimeout(() => undefined, 5000)`], env: { PATH: process.env.PATH ?? "" } };
+  }
+
+  /** Starts the next generation from a door of `respawnGeneration` at the test's cooldowns. */
+  async function startNextFrom(respawnGeneration: number, marker: string): Promise<void> {
+    await startNextRespawnGeneration({ ownPid: process.pid, logFile, respawn: recordingRespawn(marker), respawnGeneration, respawnMaxGeneration: TEST_RESPAWN_MAX_GENERATION, cooldownStepMs: TEST_COOLDOWN_STEP_MS, cooldownCapMs: TEST_COOLDOWN_CAP_MS, startLockFile: lockFile });
+  }
+
+  it("starts the next generation waiting for this door to be gone, and hands it the start lock", async () => {
+    const marker = path.join(directory, "next");
+    await startNextFrom(1, marker);
+    expect(await writtenTextOf(marker)).toBe(`${String(process.pid)} gen 2 delay 0`);
+    const started = /started replacement door (\d+) of generation 2/.exec(textOf(logFile));
+    expect(started).not.toBeNull();
+    const lock: unknown = JSON.parse(fs.readFileSync(lockFile, "utf8"));
+    expect(lock).toMatchObject({ pid: Number(started?.[1]) });
+  });
+
+  it("gives a generation past the immediate ones the same cooldown a stall's replacement gets", async () => {
+    const marker = path.join(directory, "next");
+    await startNextFrom(TEST_RESPAWN_MAX_GENERATION, marker);
+    expect(await writtenTextOf(marker)).toBe(`${String(process.pid)} gen ${String(TEST_RESPAWN_MAX_GENERATION + 1)} delay ${String(TEST_COOLDOWN_STEP_MS)}`);
+  });
+
+  it("starts none while a live process holds the start lock, so a door a launch is already starting is not raced", async () => {
+    fs.writeFileSync(lockFile, `${JSON.stringify({ pid: process.pid, at: 0 })}\n`);
+    const marker = path.join(directory, "next");
+    await startNextFrom(1, marker);
+    expect(textOf(logFile)).toMatch(new RegExp(`process ${String(process.pid)} holds the start lock`));
+    expect(fs.existsSync(marker)).toBe(false);
   });
 });
 

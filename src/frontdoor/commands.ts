@@ -80,7 +80,7 @@ import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, g
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
 import type { RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
-import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_COOLDOWN_CAP_MS, DOOR_RESPAWN_DELAY_ENV, DOOR_RESPAWN_GENERATION_ENV, DOOR_RESPAWN_MAX_GENERATIONS, DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startThreadWatchdog } from "./watchdog";
+import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_COOLDOWN_CAP_MS, DOOR_RESPAWN_DELAY_ENV, DOOR_RESPAWN_GENERATION_ENV, DOOR_RESPAWN_MAX_GENERATIONS, DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startNextRespawnGeneration, startThreadWatchdog, type RespawnChainParams } from "./watchdog";
 import { PROBE_TIMEOUT_MS } from "./probe";
 import { readFrontDoorListeners, realFrontDoorListenerProbes } from "./listenerReadings";
 import { collectFrontDoorStatus, formatFrontDoorListeners, formatFrontDoorStatus, headroomSocketTarget } from "./status";
@@ -94,7 +94,6 @@ import { createRealQuotaRefresher } from "../usage/realQuotaRefresher";
 import { createUsageStore } from "../usage/store";
 import type { UsageRecord } from "../usage/schema";
 
-/** How a door's watchdog starts a replacement: this very executable running the supervisor subcommand, pinned to this door's state root exactly as `spawnDetachedSupervisor` pins it. Every environment value is a string, as the watchdog thread's `spawn` requires. */
 /** macOS ships `sample` here: it samples a process's native stacks, the one tool that can say where a thread blocked inside a native call is held. */
 const MACOS_SAMPLER = "/usr/bin/sample";
 
@@ -106,12 +105,13 @@ function readRespawnDelayMs(): number {
   return Number.isInteger(delay) && delay > 0 ? delay : 0;
 }
 
-/** The respawn generation this door was started as (`DOOR_RESPAWN_GENERATION_ENV`), or 0 for a door no watchdog started. Read once at startup so the env can be scrubbed before anything is served and the value handed to the supervisor ports explicitly. */
+/** The respawn generation this door was started as (`DOOR_RESPAWN_GENERATION_ENV`), or 0 for a door no respawn started. Read once at startup so the env can be scrubbed before anything is served and the value handed to the supervisor ports explicitly. */
 function readRespawnGeneration(): number {
   const generation = Number(process.env[DOOR_RESPAWN_GENERATION_ENV]);
   return Number.isInteger(generation) && generation > 0 ? generation : 0;
 }
 
+/** How a door starts the next door of the respawn chain: this very executable running the supervisor subcommand, pinned to this door's state root exactly as `spawnDetachedSupervisor` pins it. Every environment value is a string, as the respawn thread's `spawn` requires. */
 function respawnInvocation(paths: LayoutPaths): { readonly command: string; readonly args: readonly string[]; readonly env: Readonly<Record<string, string>> } {
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries({ ...process.env, AGENT_SHIM_HOME: paths.root })) {
@@ -179,11 +179,22 @@ interface DoorLifecycle {
 /**
  * The real supervisor ports. The three listener starts are where the whole routing assembly is built: the codex translation's real ports, the provider route resolver over them, both pipelines (see `createDoorPipelines`), the three listeners that feed them, and the CA that signs both TLS-serving listeners' leaves.
  */
-/** `respawnGeneration` is the generation this door was started as (see `readRespawnGeneration`), threaded in because the env it came from is scrubbed before the supervisor's lazy `startWatchdog` closure would read it. */
+/** `respawnGeneration` is the generation this door was started as (see `readRespawnGeneration`), threaded in because the env it came from is scrubbed before the supervisor's lazy `startWatchdog` closure, or a failed start's `respawnChain.startNext`, would read it. */
 function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: number, lifecycle: DoorLifecycle, trackTunnels: (count: () => number) => void): FrontDoorSupervisorPorts {
   const log = (line: string): void => {
     appendDoorLog(paths, `frontdoor ${String(process.pid)}: ${line}`);
   };
+  // How this door starts the next one of the watchdog's respawn chain, the same for a stall's replacement and for a replacement whose own start failed. Built when it is used, so the invocation carries the environment as it is then.
+  const respawnChain = (): RespawnChainParams => ({
+    ownPid: process.pid,
+    logFile: paths.frontdoorLogPath,
+    respawn: respawnInvocation(paths),
+    respawnGeneration,
+    respawnMaxGeneration: DOOR_RESPAWN_MAX_GENERATIONS,
+    cooldownStepMs: DOOR_STALL_BOUND_MS,
+    cooldownCapMs: DOOR_RESPAWN_COOLDOWN_CAP_MS,
+    startLockFile: paths.frontdoorLockFile,
+  });
   // The direct listener's port is only known once it has bound, but the route resolver needs it to name the address a headroom hop forwards an in-process route back to. No request can arrive before the binds complete, so a closure over the late-filled value is exact, not a race.
   let directPort = 0;
   // The self-hosted Remote Control mode, decided at door start like the transparent surface and the capture are: the door is one process, so the mode is the door's own. When it is on, the door serves the CCR session family itself (see rcSelfHost.ts) and points its own client-half dials at its own transparent surface; the record the surface authenticates against is read fresh on every call, so a re-mint applies without a restart.
@@ -693,21 +704,20 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       return { port: handle.port, listening: server, close: handle.close, drain: handle.drain };
     },
     closeRcStreamHub: rcHub.close,
+    respawnChain: {
+      generation: respawnGeneration,
+      startNext: async () => {
+        await startNextRespawnGeneration(respawnChain());
+      },
+    },
     startWatchdog: () =>
       startThreadWatchdog({
+        ...respawnChain(),
         stateFile: paths.frontdoorStateFile,
-        ownPid: process.pid,
         boundMs: DOOR_STALL_BOUND_MS,
         checkEveryMs: DOOR_WATCHDOG_CHECK_MS,
         pauseWaitMs: DOOR_WATCHDOG_CHECK_MS,
         action: "kill-process",
-        logFile: paths.frontdoorLogPath,
-        respawn: respawnInvocation(paths),
-        respawnGeneration,
-        respawnMaxGeneration: DOOR_RESPAWN_MAX_GENERATIONS,
-        cooldownStepMs: DOOR_STALL_BOUND_MS,
-        cooldownCapMs: DOOR_RESPAWN_COOLDOWN_CAP_MS,
-        startLockFile: paths.frontdoorLockFile,
         ...(process.platform === "darwin"
           ? { nativeSample: { command: MACOS_SAMPLER, args: ["{pid}", "{seconds}", "-file", "{file}"], directory: path.join(path.dirname(paths.frontdoorLogPath), "stall-samples"), seconds: Math.max(1, Math.ceil(DOOR_WATCHDOG_CHECK_MS / MS_PER_SECOND)), overheadMs: PROBE_TIMEOUT_MS, keep: DOOR_RESPAWN_MAX_GENERATIONS + 1 } }
           : {}),

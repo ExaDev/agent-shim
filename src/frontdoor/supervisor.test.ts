@@ -1,5 +1,8 @@
+import net from "node:net";
+
 import { describe, expect, it } from "vitest";
 
+import type { Predecessor } from "./handover";
 import { DOOR_HEALTH_EVENT_SOURCE, LAUNCH_EVENT_SOURCE, type DoorEvent } from "./eventSchemas";
 import { FRONT_DOOR_PROTOCOL, listFrontDoorDirectRecords, listFrontDoorSessions, readFrontDoorState, removeFrontDoorSession, writeFrontDoorSession, writeFrontDoorState } from "./state";
 import { awaitPidExit, FRONTDOOR_POLL_MS, FRONTDOOR_SUPERVISOR_STILL_RUNNING, runFrontDoorSupervisor, watchedInstallEntry } from "./supervisor";
@@ -166,6 +169,50 @@ describe("runFrontDoorSupervisor", () => {
     // The already-bound listener closes first and the hub's close follows it, the same after-the-listeners position the idle shutdown gives it.
     expect(world.hubCloses()).toBe(1);
     expect(world.stopOrder).toEqual(["provider", "hub"]);
+  });
+
+  describe("a start failure in a door the watchdog's respawn chain started", () => {
+    /** The generation a stalled door's watchdog starts its replacement as. */
+    const FIRST_REPLACEMENT = 1;
+    /** The start lock the stalled door's watchdog took naming its replacement, which is this door. */
+    const LOCK_NAMING_THIS_DOOR = `${JSON.stringify({ pid: OWN_PID, at: 0 })}\n`;
+
+    /** A world for a door of `generation` whose direct listener (the one the observed load-starved probe failed on) cannot start, holding the start lock its starter claimed for it. */
+    function failingDoor(generation: number, predecessor?: Predecessor) {
+      const world = makeWorld({ respawnGeneration: generation, ...(predecessor === undefined ? {} : { predecessor }) });
+      world.failDirect = true;
+      world.fs.mkdirp(paths.frontdoorDir);
+      world.fs.writeFileUtf8(paths.frontdoorLockFile, LOCK_NAMING_THIS_DOOR);
+      return world;
+    }
+
+    it("starts the next generation once it has released the start lock, so nobody waiting on it is left with no door", async () => {
+      const world = failingDoor(FIRST_REPLACEMENT);
+      expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports)).toBe(1);
+      // Released before the start, since the start refuses while a live process (this door, until it exits) holds the lock.
+      expect(world.nextGenerationStarts).toEqual([undefined]);
+      expect(readFrontDoorState(world.fs, paths.frontdoorStateFile)?.lastError).toContain("direct chaos");
+      expect(world.logs.some((line) => line.includes(`generation ${String(FIRST_REPLACEMENT)}`) && line.includes(`generation ${String(FIRST_REPLACEMENT + 1)}`))).toBe(true);
+    });
+
+    it("starts the next generation after its listeners and stream hub are down, so the next door finds the ports free once this process is gone", async () => {
+      const world = failingDoor(FIRST_REPLACEMENT);
+      await runFrontDoorSupervisor(IDLE_MINUTES, world.ports);
+      expect(world.timeline).toEqual(["connect", "provider", "hub", "next-generation"]);
+    });
+
+    it("starts none for a door a launch or a restart started, whose starter is waiting on it and reports the failure", async () => {
+      const world = failingDoor(0);
+      expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports)).toBe(1);
+      expect(world.nextGenerationStarts).toEqual([]);
+    });
+
+    it("starts none for a handover successor, since the door it was replacing still serves every address", async () => {
+      const predecessor: Predecessor = { take: async () => await Promise.resolve(new net.Server()), serving: () => undefined };
+      const world = failingDoor(FIRST_REPLACEMENT, predecessor);
+      expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports)).toBe(1);
+      expect(world.nextGenerationStarts).toEqual([]);
+    });
   });
 
   it("prunes dead launcher sessions and never idles out while one is live", async () => {
