@@ -112,6 +112,7 @@ agent-shim model distinct <left> <right>   # assert two alike names are two mode
 agent-shim model unassert <ref>
 agent-shim model family <key> [--mode <mode>] [--name <ref>]... [--context <tokens>] [--[no-]vision|tools|thinking] | --clear
 agent-shim model list [--json]
+agent-shim model explain <name>   # which member the virtual model's mode picks now, and why
 agent-shim provider remove <name> [--yes]
 agent-shim provider rename <old> <new> [--json]
 agent-shim provider unalias <alias> [--json]
@@ -162,6 +163,8 @@ agent-shim job list [--json]
 agent-shim job show <name> [--json]
 agent-shim job remove <name> [--yes] [--json]
 agent-shim job run <name>
+agent-shim statusline keys [--json]          # every statusline setting with its kind, default (if it has one) and meaning
+agent-shim statusline                          # serve as a statusline entrypoint: enrich the client's stdin payload with the identity's live provider, account and usage windows, then delegate to $AGENT_SHIM_STATUSLINE_CMD or render the built-in line
 agent-shim usage [--identity <name>] [--provider <name>] [--since <duration>] [--refresh] [--resets] [--json]
 agent-shim account show [<identity>] [--refresh] [--json]
 agent-shim session list [--identity <name>] [--all] [--json]   # sessions that spawned agents or ran workflows, newest transcript first
