@@ -1,3 +1,10 @@
+## [11.83.5](https://github.com/ExaDev/agent-shim/compare/v11.83.4...v11.83.5) (2026-11-03)
+
+### Bug Fixes
+
+* **frontdoor:** count a listener's start-up probe budget in processor time ([c3772e4](https://github.com/ExaDev/agent-shim/commit/c3772e4d4d8ecf641622f43c58649946921139b5)), references [#697](https://github.com/ExaDev/agent-shim/issues/697)
+* **frontdoor:** start the next respawn generation when a replacement fails to start ([e6c4483](https://github.com/ExaDev/agent-shim/commit/e6c4483baa191a511891cd70c4f67a73e1e1d6e5)), closes [#697](https://github.com/ExaDev/agent-shim/issues/697)
+
 ## [11.83.4](https://github.com/ExaDev/agent-shim/compare/v11.83.3...v11.83.4) (2026-11-03)
 
 ### Documentation
