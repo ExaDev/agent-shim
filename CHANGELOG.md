@@ -1,3 +1,9 @@
+## [11.83.4](https://github.com/ExaDev/agent-shim/compare/v11.83.3...v11.83.4) (2026-11-03)
+
+### Documentation
+
+* **readme:** point at the full command list instead of repeating it ([69b6dd6](https://github.com/ExaDev/agent-shim/commit/69b6dd68236d09dfa34979471863989e0ae2a27f))
+
 ## [11.83.3](https://github.com/ExaDev/agent-shim/compare/v11.83.2...v11.83.3) (2026-11-03)
 
 ### Bug Fixes
