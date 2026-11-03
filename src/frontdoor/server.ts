@@ -6,14 +6,15 @@ import net from "node:net";
 import { HTTP_STATUS } from "../codex/http";
 import { aliasLegacyWireHeaders } from "../legacy";
 import type { LeafCert } from "./connect";
+import { processorShare, readMachineLoad, type MachineLoadReading } from "./machineLoad";
 import { CONTROL_PATH_PREFIX } from "./rcControl";
 import type { PipelineRequest } from "./pipeline";
 
 /** How long one health probe waits before giving up: a listener that just bound answers in milliseconds, so the bound only bites when the request path itself is broken. */
 const HEALTH_TIMEOUT_MS = 2_000;
 
-/** How long the start-up probe may retry before the listener counts as broken: the server has just bound and serves nothing else, so a probe that never answers means the request path itself is broken and the generation must fail loudly. */
-const HEALTH_START_BUDGET_MS = 5_000;
+/** How much processor time the start-up probe may retry for before the listener counts as broken (see `awaitStartHealth`): the server has just bound and serves nothing else, so a probe that goes unanswered while the door has had this long to run means the request path itself is broken and the generation must fail loudly. */
+export const HEALTH_START_BUDGET_MS = 5_000;
 const HEALTH_RETRY_MS = 50;
 
 /** How many attempts listenFrontDoor makes to bind preferredPort before falling back to an ephemeral port. */
@@ -218,35 +219,69 @@ export async function listenFrontDoor(server: FrontDoorServer, options: Readonly
   if (options.onError !== undefined) {
     server.on("error", options.onError);
   }
-  const deadline = Date.now() + HEALTH_START_BUDGET_MS;
+  await awaitStartHealth(
+    {
+      probe: async () => await frontDoorHealthy(bound, ca),
+      now: () => Date.now(),
+      sleep: async (ms) => {
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, ms);
+        });
+      },
+      readLoad: readMachineLoad,
+    },
+    `127.0.0.1:${String(bound)}`,
+  );
+  return {
+    port: bound,
+    close: async () => {
+      await new Promise<void>((resolve) => {
+        server.close(() => {
+          resolve(undefined);
+        });
+        server.closeAllConnections();
+      });
+    },
+    // The port is released as the close runs, before the first await (see `trackConnections` for what happens to the connections already accepted).
+    drain: async () => {
+      await new Promise<void>((resolve) => {
+        connections.drain(() => {
+          resolve(undefined);
+        });
+      });
+    },
+  };
+}
+
+/** What `awaitStartHealth` waits with: the listener's probe, the clock and wait it retries on, and the machine's load its budget is counted against. */
+export interface StartHealthPorts {
+  /** One probe of the listener's health endpoint, resolving with whether it answered healthy. */
+  readonly probe: () => Promise<boolean>;
+  readonly now: () => number;
+  readonly sleep: (ms: number) => Promise<void>;
+  readonly readLoad: () => MachineLoadReading;
+}
+
+/**
+ * Probes a just-bound listener until it answers, throwing once `HEALTH_START_BUDGET_MS` of processor time has passed with no answer. `address` names the listener in the error.
+ *
+ * The budget is counted the way the door's watchdog counts a silent event loop: each stretch of wall time between probes is weighted by the processor share the machine's load leaves a runnable thread (see `processorShare`). This process answers its own probe, so on a machine whose run queue far outnumbers its processors the probe goes unanswered for reasons that are the machine's, and a wall-clock budget failed a replacement door that had barely been scheduled (observed in production: the replacement exited and left no door). On a machine with a processor to spare the share is one and the budget is the plain wall time it was.
+ */
+export async function awaitStartHealth(ports: StartHealthPorts, address: string): Promise<void> {
+  const startedAt = ports.now();
+  let scheduledMs = 0;
+  let countedTo = startedAt;
   for (;;) {
-    if (await frontDoorHealthy(bound, ca)) {
-      return {
-        port: bound,
-        close: async () => {
-          await new Promise<void>((resolve) => {
-            server.close(() => {
-              resolve(undefined);
-            });
-            server.closeAllConnections();
-          });
-        },
-        // The port is released as the close runs, before the first await (see `trackConnections` for what happens to the connections already accepted).
-        drain: async () => {
-          await new Promise<void>((resolve) => {
-            connections.drain(() => {
-              resolve(undefined);
-            });
-          });
-        },
-      };
+    if (await ports.probe()) {
+      return;
     }
-    if (Date.now() >= deadline) {
-      throw new Error(`the front door listener on 127.0.0.1:${String(bound)} did not answer its health probe`);
+    const now = ports.now();
+    scheduledMs += (now - countedTo) * processorShare(ports.readLoad());
+    countedTo = now;
+    if (scheduledMs >= HEALTH_START_BUDGET_MS) {
+      throw new Error(`the front door listener on ${address} did not answer its health probe within ${String(HEALTH_START_BUDGET_MS)}ms of processor time (${String(now - startedAt)}ms of wall time)`);
     }
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, HEALTH_RETRY_MS);
-    });
+    await ports.sleep(HEALTH_RETRY_MS);
   }
 }
 

@@ -11,7 +11,8 @@ import { AUTH_HEADER, HEADROOM_FLAG_HEADER, IDENTITY_HEADER, SESSION_HEADER, typ
 import { serveRouted, type PipelineDeps, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
 import { LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial } from "./connect";
-import { createFrontDoorServer, frontDoorHealthy, listenFrontDoor } from "./server";
+import type { MachineLoadReading } from "./machineLoad";
+import { awaitStartHealth, createFrontDoorServer, frontDoorHealthy, HEALTH_START_BUDGET_MS, listenFrontDoor } from "./server";
 
 const PROVIDERS_DIR = `${FAKE_HOME}/.agent-shim/providers`;
 const POLL_MS = 10;
@@ -90,6 +91,67 @@ async function waitFor(condition: () => boolean, timeoutMs: number): Promise<voi
     });
   }
 }
+
+describe("awaitStartHealth", () => {
+  /** The processor count of the fixed load readings these tests judge by, so the machine running them never decides the outcome. */
+  const CPUS = 4;
+  const UNLOADED: MachineLoadReading = { loadAverage: 0, cpus: CPUS };
+  /** A run queue ten times the processor count: a runnable thread gets a tenth of a processor, the share the observed overloaded host left the replacement door. */
+  const RUN_QUEUE_PER_CPU = 10;
+  const OVERLOADED: MachineLoadReading = { loadAverage: CPUS * RUN_QUEUE_PER_CPU, cpus: CPUS };
+  /** How long one fake probe takes to come back unanswered, in wall time. */
+  const PROBE_MS = 100;
+
+  /** A listener that answers its probe once `answersAfterMs` of wall time has passed, on a clock only the probes and the retry waits advance. */
+  function fakeListener(answersAfterMs: number, load: MachineLoadReading) {
+    let clock = 0;
+    let probes = 0;
+    return {
+      ports: {
+        probe: async () => {
+          probes += 1;
+          clock += PROBE_MS;
+          return await Promise.resolve(clock >= answersAfterMs);
+        },
+        now: () => clock,
+        sleep: async (ms: number) => {
+          clock += ms;
+          await Promise.resolve();
+        },
+        readLoad: () => load,
+      },
+      clock: () => clock,
+      probes: () => probes,
+    };
+  }
+
+  it("keeps probing a listener the machine's load starves past the budget in wall time, since the door has not had the budget's processor time to answer", async () => {
+    const answersAfterMs = HEALTH_START_BUDGET_MS * (RUN_QUEUE_PER_CPU / 2);
+    const listener = fakeListener(answersAfterMs, OVERLOADED);
+    await awaitStartHealth(listener.ports, "127.0.0.1:4100");
+    expect(listener.clock()).toBeGreaterThanOrEqual(answersAfterMs);
+  });
+
+  it("fails a listener that has had the budget's processor time and still does not answer, naming its address", async () => {
+    const listener = fakeListener(Number.POSITIVE_INFINITY, OVERLOADED);
+    await expect(awaitStartHealth(listener.ports, "127.0.0.1:4100")).rejects.toThrow("the front door listener on 127.0.0.1:4100 did not answer its health probe");
+    // The wall time the budget stretched to: the processor share the load left is what the budget is counted in.
+    expect(listener.clock()).toBeGreaterThanOrEqual(HEALTH_START_BUDGET_MS * RUN_QUEUE_PER_CPU);
+  });
+
+  it("fails within the budget's wall time on a machine with a processor to spare, where a silent listener is a broken one", async () => {
+    const listener = fakeListener(Number.POSITIVE_INFINITY, UNLOADED);
+    await expect(awaitStartHealth(listener.ports, "127.0.0.1:4100")).rejects.toThrow("did not answer its health probe");
+    expect(listener.clock()).toBeGreaterThanOrEqual(HEALTH_START_BUDGET_MS);
+    expect(listener.clock()).toBeLessThan(HEALTH_START_BUDGET_MS * 2);
+  });
+
+  it("resolves on the first answer without waiting", async () => {
+    const listener = fakeListener(0, UNLOADED);
+    await awaitStartHealth(listener.ports, "127.0.0.1:4100");
+    expect(listener.probes()).toBe(1);
+  });
+});
 
 describe("createFrontDoorServer", () => {
   it("answers its health probe without routing anything", async () => {
