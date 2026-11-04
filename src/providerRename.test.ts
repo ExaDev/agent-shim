@@ -8,6 +8,7 @@ import { writeJsonAtomic } from "./config/store";
 import type { CachedCredential, CredentialCachePort } from "./credentialCache";
 import { addIdentity, readIdentity, setIdentityProvider } from "./identityStore";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
+import { catalogueBindingPath, catalogueCachePath } from "./providerCatalogue";
 import { readProviderAliases } from "./providerAliases";
 import { renameModelRefs, renameProvider, type ProviderRenamePorts } from "./providerRename";
 import { InvalidProviderNameError } from "./config/names";
@@ -165,5 +166,23 @@ describe("renameProvider", () => {
     expect(cache.get("file:provider zai")).toEqual(entry);
     expect(cache.has("file:provider z")).toBe(false);
     expect(report.updated).toEqual(["catalogue", "credential cache"]);
+  });
+
+  it("moves supervisor-scoped catalogues and bindings with a renamed Codex provider", () => {
+    writeJsonAtomic(path.join(paths.providersDir, "z.json"), { kind: "codex", displayName: "C", credential: { sources: [{ env: "TOKEN" }] } });
+    const generation = "10000000-0000-4000-8000-000000000001";
+    for (const pid of [1, 2]) {
+      const cachePath = catalogueCachePath(paths, "z", pid, generation);
+      fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+      fs.writeFileSync(cachePath, "cache");
+      fs.writeFileSync(catalogueBindingPath(paths, "z", pid, generation), "binding");
+    }
+    const report = renameProvider(paths, "z", "zai", ports);
+    for (const pid of [1, 2]) {
+      expect(fs.readFileSync(catalogueCachePath(paths, "zai", pid, generation), "utf8")).toBe("cache");
+      expect(fs.readFileSync(catalogueBindingPath(paths, "zai", pid, generation), "utf8")).toBe("binding");
+      expect(fs.existsSync(catalogueCachePath(paths, "z", pid, generation))).toBe(false);
+    }
+    expect(report.updated).toContain("catalogue");
   });
 });

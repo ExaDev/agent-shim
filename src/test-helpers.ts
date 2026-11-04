@@ -402,6 +402,7 @@ export function fakeProc(env: Readonly<Record<string, string | undefined>>, argv
   return {
     env,
     argv,
+    isProcessAlive: () => true,
     exit: (code: number): never => {
       throw new ExitCalled(code);
     },
@@ -417,6 +418,10 @@ const EXISTING_IDENTITIES: Readonly<Record<string, unknown>> = Object.fromEntrie
 export function fakeFs(ownFiles: Record<string, unknown>): FsPort {
   const files: Record<string, unknown> = { ...EXISTING_IDENTITIES, ...ownFiles };
   return {
+    fileRevision: (filePath) => {
+      const value = files[`${filePath}.revision`];
+      return typeof value === "string" ? value : undefined;
+    },
     readFileUtf8: (filePath) => {
       const value = files[filePath];
       return typeof value === "string" ? value : undefined;
@@ -435,6 +440,9 @@ export function fakeFs(ownFiles: Record<string, unknown>): FsPort {
 
 /** The trust bundle path every fake front door hands its launches. */
 export const FAKE_TRUST_BUNDLE = "/home/testuser/.agent-shim/frontdoor/ca/ca.pem";
+
+/** The supervisor reported by a fake front door. */
+const FAKE_SUPERVISOR_PID = 500;
 
 /** A fake `FrontDoorPort` that counts its bring-ups and releases and records the inherited CA bundle each bring-up was given, so a test can assert both that the door came up and that the launcher released its session. */
 export function fakeFrontDoorPort(
@@ -455,7 +463,7 @@ export function fakeFrontDoorPort(
       ensures += 1;
       inherited.push(inheritedExtraCaCerts);
       sessions.push(session);
-      return { port, connectPort, trustBundlePath: trust.path, ...(trust.warning === undefined ? {} : { trustWarning: trust.warning }), sessionToken: "launch-token-for-tests" };
+      return { port, connectPort, supervisorPid: FAKE_SUPERVISOR_PID, trustBundlePath: trust.path, ...(trust.warning === undefined ? {} : { trustWarning: trust.warning }), sessionToken: "launch-token-for-tests" };
     },
     release: () => {
       releases += 1;

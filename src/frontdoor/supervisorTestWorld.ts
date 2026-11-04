@@ -113,10 +113,13 @@ export function makeWorld(options: { readonly ownPid?: number; readonly fs?: Hea
 
   const registry = createLiveSessionRegistry({ fs, sessionsDir: paths.frontdoorSessionsDir });
   const ports: FrontDoorSupervisorPorts = {
+    onServing: () => undefined,
     fs,
     paths,
     registry,
     ownPid,
+    codexHome: "/home/testuser/.codex",
+    catalogueGeneration: "10000000-0000-4000-8000-000000000001",
     now: () => clock,
     sleep: async (ms) => {
       clock += ms;

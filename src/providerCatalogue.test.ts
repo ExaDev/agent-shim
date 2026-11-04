@@ -27,6 +27,22 @@ describe("catalogueCachePath", () => {
     expect(catalogueCachePath(paths, "z.ai")).toBe("/home/test/.agent-shim/catalogues/z.ai.json");
   });
 
+  it("isolates caches belonging to different supervisors", () => {
+    const generation = "10000000-0000-4000-8000-000000000001";
+    expect(catalogueCachePath(paths, "z.ai", 1, generation)).not.toBe(catalogueCachePath(paths, "z.ai", 2, generation));
+    expect(catalogueCachePath(paths, "z.ai", 1, generation)).not.toBe(catalogueCachePath(paths, "z.ai"));
+  });
+
+  it("rejects a supervisor cache path without a generation", () => {
+    expect(() => catalogueCachePath(paths, "z.ai", 1)).toThrow("generation");
+  });
+
+  it("isolates generations that reuse the same supervisor PID", () => {
+    const first = "10000000-0000-4000-8000-000000000001";
+    const second = "10000000-0000-4000-8000-000000000002";
+    expect(catalogueCachePath(paths, "z.ai", 1, first)).not.toBe(catalogueCachePath(paths, "z.ai", 1, second));
+  });
+
   it.each(["../x", "../../etc/passwd", "a/b", "", ".."])("refuses %j, which would reach a file outside the directory", (name) => {
     expect(() => catalogueCachePath(paths, name)).toThrow(InvalidProviderNameError);
   });
@@ -54,6 +70,18 @@ describe("parseCatalogueBody", () => {
   it("reads a models list and a bare list of ids or objects", () => {
     expect(parseCatalogueBody({ models: [{ id: "a" }] })).toEqual([{ id: "a" }]);
     expect(parseCatalogueBody(["a", { id: "b" }])).toEqual([{ id: "a" }, { id: "b" }]);
+  });
+
+  it("reads visible account models by slug while excluding hidden models", () => {
+    expect(parseCatalogueBody({ models: [{ slug: "gpt-visible", display_name: "Visible", visibility: "list" }, { slug: "gpt-hidden", display_name: "Hidden", visibility: "hide" }] })).toEqual([{ id: "gpt-visible", name: "Visible" }]);
+  });
+
+  it("excludes hidden account models even when they carry an id", () => {
+    expect(parseCatalogueBody({ models: [{ id: "gpt-hidden", slug: "gpt-hidden", visibility: "hide" }] })).toEqual([]);
+  });
+
+  it("keeps a generic provider model that includes an unrelated slug", () => {
+    expect(parseCatalogueBody({ data: [{ id: "a", slug: "friendly-name" }] })).toEqual([{ id: "a" }]);
   });
 
   it("keeps each id once, in the order given, and skips entries that name no model", () => {

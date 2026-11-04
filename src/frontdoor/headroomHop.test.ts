@@ -514,10 +514,15 @@ describe("the headroom hop", () => {
     });
     await listenOnHeadroomSocket(server);
     const logged: string[] = [];
+    let resolveFailure: () => void = () => undefined;
+    const failureLogged = new Promise<void>((resolve) => {
+      resolveFailure = resolve;
+    });
     const door = await startDoor({
       files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider },
       log: (line) => {
         logged.push(line);
+        if (line.includes("headroom hop")) resolveFailure();
       },
     });
     try {
@@ -530,9 +535,7 @@ describe("the headroom hop", () => {
         () => undefined,
         () => undefined,
       );
-      await new Promise((resolve) => {
-        setTimeout(resolve, SETTLE_MS);
-      });
+      await failureLogged;
       const failures = logged.filter((line) => line.includes("headroom hop"));
       expect(failures).toHaveLength(1);
       expect(failures[0]).toContain("before the response started");

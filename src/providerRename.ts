@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { z } from "zod";
 import { ConfigProfileSchema, GlobalConfigSchema, ProviderSchema, isHttpProvider, isRouterProvider, type LaunchFlags, type ModelsConfig, type ModelsLayer } from "./config/schema";
 import { applyPatch, writeJsonAtomic } from "./config/store";
 import { ConfigValidationError } from "./config/load";
@@ -7,7 +8,7 @@ import { UsageError } from "./cliError";
 import { listProfiles, readGlobalConfig } from "./configProfilesStore";
 import { effectiveStore, type CredentialCachePort } from "./credentialCache";
 import type { FarmFs } from "./launcher/ports";
-import { catalogueCachePath } from "./providerCatalogue";
+import { catalogueBindingPath, catalogueCachePath } from "./providerCatalogue";
 import { UsageSnapshotSchema } from "./usage/schema";
 import { listUsageSnapshots, snapshotPath, type UsageReadFs } from "./usage/read";
 import { readDirectoryRules, writeDirectoryRules } from "./directoryRulesStore";
@@ -104,6 +105,28 @@ function moveState(paths: LayoutPaths, from: string, to: string, ports: Provider
   if (fs.existsSync(catalogueCachePath(paths, from))) {
     fs.renameSync(catalogueCachePath(paths, from), catalogueCachePath(paths, to));
     moved.push("catalogue");
+  }
+  const globalBinding = catalogueBindingPath(paths, from);
+  if (fs.existsSync(globalBinding)) {
+    fs.renameSync(globalBinding, catalogueBindingPath(paths, to));
+    if (!moved.includes("catalogue")) moved.push("catalogue");
+  }
+  const supervisorsDir = path.join(paths.catalogueDir, "supervisors");
+  if (fs.existsSync(supervisorsDir)) {
+    for (const entry of fs.readdirSync(supervisorsDir, { withFileTypes: true })) {
+      const pid = Number(entry.name);
+      if (!entry.isDirectory() || !Number.isSafeInteger(pid) || pid <= 0 || String(pid) !== entry.name) continue;
+      for (const generation of fs.readdirSync(path.join(supervisorsDir, entry.name), { withFileTypes: true })) {
+        if (!generation.isDirectory() || !z.uuid().safeParse(generation.name).success) continue;
+        for (const location of [catalogueCachePath, catalogueBindingPath]) {
+          const source = location(paths, from, pid, generation.name);
+          if (fs.existsSync(source)) {
+            fs.renameSync(source, location(paths, to, pid, generation.name));
+            if (!moved.includes("catalogue")) moved.push("catalogue");
+          }
+        }
+      }
+    }
   }
   const renamed = readProvider(paths, to);
   const cache = renamed === undefined || isRouterProvider(renamed) ? undefined : renamed.credential.cache;

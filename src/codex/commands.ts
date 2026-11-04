@@ -77,11 +77,11 @@ function writeUsageSnapshot(log: (line: string) => void, snapshot: UsageSnapshot
 /**
  * The ports the translation route needs, wired to the real auth store and upstream fetch, for the process that mounts the route: the front-door supervisor, which serves codex providers in process. The undici agent's keep-alive ceiling (the fix for the idle-socket hang) applies to every upstream call this process makes.
  */
-export function createCodexRoutePorts(log: (line: string) => void, signInFile: string, options?: { readonly enableUsageSnapshot?: boolean }): Omit<CodexRoutePorts, "loadProvider"> {
+export function createCodexRoutePorts(log: (line: string) => void, signInFile: string, options?: { readonly enableUsageSnapshot?: boolean; readonly env?: Readonly<Record<string, string | undefined>> }): Omit<CodexRoutePorts, "loadProvider"> {
   const agent = createUpstreamAgent();
   const upstreamFetch = createUpstreamFetch(agent);
   const tempSuffix = `${String(process.pid)}.${randomUUID()}`;
-  const auth = createCodexAuthStore(path.join(codexHome(process.env, os.homedir()), "auth.json"), {
+  const auth = createCodexAuthStore(path.join(codexHome(options?.env ?? process.env, os.homedir()), "auth.json"), {
     fs: realCodexAuthFs,
     fetch: upstreamFetch,
     now: () => new Date(),

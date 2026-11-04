@@ -3,6 +3,7 @@ import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDe
 import { addCredentialCacheOptions, cacheChange, collectCredentialSource, CREDENTIAL_SOURCE_SYNTAX, type CredentialCacheOptions } from "./cli/credentialOption";
 import { collectRepeated, collectStringPair } from "./cli/parsers";
 import { resolveCodexConfig } from "./codex/translate";
+import { savedCatalogueFingerprint } from "./codex/catalogueCredential";
 import { resolveAntigravityConfig } from "./antigravity/translate";
 import {
   ANTIGRAVITY_EFFORTS,
@@ -33,12 +34,15 @@ import {
 import { UsageError } from "./cliError";
 import { catalogueCachePath, filterCatalogue, parseCatalogueCache } from "./providerCatalogue";
 import { refreshCatalogueForReal } from "./realCatalogueRefresh";
+import { readFrontDoorCodexRecord, readFrontDoorState } from "./frontdoor/state";
+import { providerModelRows } from "./launcher/modelPicker";
 import fs from "node:fs";
+import os from "node:os";
 import { describeCredential, summariseCredential } from "./credential";
 import { aliasesOf, readProviderAliases, removeProviderAlias } from "./providerAliases";
 import { renameProvider } from "./providerRename";
 import { realCredentialCacheEnv } from "./realCredentialCache";
-import { realFarmFs } from "./realPorts";
+import { realFarmFs, realFsPort, realIsProcessAlive } from "./realPorts";
 import { ProviderNotFoundError, providerExists, readProvider, listProviders, type ProviderCredentialTarget, type ProviderKind, describeProviderEndpoint, addProvider, updateProvider, removeProvider } from "./providersStore";
 
 /** One provider as `provider show --json` and `provider list --json` print it: its name, the file's own fields (less its editor-only `$schema` pointer), and its credential block summarised, so no `literal` source's value is printed. */
@@ -476,6 +480,36 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         const found = readProvider(paths, name);
         if (found === undefined) {
           throw new ProviderNotFoundError(name);
+        }
+        if (isCodexProvider(found)) {
+          const door = readFrontDoorState(realFarmFs, paths.frontdoorStateFile);
+          const recordedPid = door?.port === undefined ? undefined : door.supervisorPid;
+          const pid = recordedPid !== undefined && realIsProcessAlive(recordedPid) ? recordedPid : undefined;
+          const record = pid === undefined ? undefined : readFrontDoorCodexRecord(realFarmFs, paths.frontdoorDir, pid);
+          const home = record?.codexHome;
+          const generation = record?.generation;
+          if (pid !== undefined && record === undefined) throw new UsageError("The serving front door's Codex home or catalogue generation is unavailable.");
+          const env = home === undefined ? process.env : { ...process.env, CODEX_HOME: home };
+          const cache = options.refresh === true ? await (pid === undefined || record === undefined ? refreshCatalogueForReal(paths, name, env) : refreshCatalogueForReal(paths, name, env, pid, record.generation)) : parseCatalogueCache(realFsPort.readFileUtf8(catalogueCachePath(paths, name, pid, generation)));
+          if (options.refresh === true) {
+            const currentDoor = readFrontDoorState(realFarmFs, paths.frontdoorStateFile);
+            const recordedCurrentPid = currentDoor?.port === undefined ? undefined : currentDoor.supervisorPid;
+            const currentPid = recordedCurrentPid !== undefined && realIsProcessAlive(recordedCurrentPid) ? recordedCurrentPid : undefined;
+            const currentRecord = currentPid === undefined ? undefined : readFrontDoorCodexRecord(realFarmFs, paths.frontdoorDir, currentPid);
+            if (pid !== currentPid || home !== currentRecord?.codexHome || generation !== currentRecord?.generation) throw new UsageError("The front door changed during catalogue refresh; refresh again.");
+          }
+          if (cache === undefined) throw new UsageError(`No catalogue has been fetched for "${name}" yet; run \`agent-shim provider models ${name} --refresh\`.`);
+          if (options.refresh !== true && cache.supervisorPid !== pid) throw new UsageError(`The catalogue for "${name}" belongs to a different front door; refresh it before reading.`);
+          const fingerprint = options.refresh === true ? undefined : savedCatalogueFingerprint(found, paths, env, os.homedir(), realFsPort.readFileUtf8);
+          if (options.refresh !== true && (fingerprint === undefined || cache.credentialFingerprint !== fingerprint)) throw new UsageError(`The catalogue for "${name}" belongs to a different Codex account; refresh it before reading.`);
+          const listed = providerModelRows(found, cache.models).map((row) => row.model);
+          if (options.json === true) {
+            printJson({ name, url: cache.url, fetchedAt: new Date(cache.fetchedAt).toISOString(), models: cache.models, listed });
+          } else {
+            console.log(`Catalogue of ${name}: ${String(cache.models.length)} models from ${cache.url}, fetched ${new Date(cache.fetchedAt).toISOString()}; /model lists ${String(listed.length)}.`);
+            for (const model of cache.models) console.log(`${listed.includes(model.id) ? "*" : " "} ${model.id}${model.name === undefined ? "" : `  (${model.name})`}`);
+          }
+          return;
         }
         if (isCodexProvider(found) || isAntigravityProvider(found) || isRouterProvider(found) || found.catalogue === undefined) {
           throw new UsageError(`Provider "${name}" has no catalogue setting. Set one with \`agent-shim provider set ${name} --catalogue-tier <tier>\`.`);

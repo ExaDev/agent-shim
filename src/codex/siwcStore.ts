@@ -72,10 +72,9 @@ function grantFrom(previous: SiwcGrant, tokens: GrantTokens): SiwcGrant {
 }
 
 /**
- * The store over one sign-in file. Credentials are served from memory until `SIWC_REFRESH_MARGIN_MS` before their expiry, then replaced through the refresh grant. OpenAI rotates the refresh token on every refresh, so the replacement is written to disk before the new access token is used, and only one refresh runs at a time. A grant that lacks the plan scope signs the person in but cannot send a request, and is refused here with the way to fix it. No token reaches an error message.
+ * The store over one sign-in file. Credentials are read from the file for each request and replaced through the refresh grant when they approach expiry. OpenAI rotates the refresh token on every refresh, so the replacement is written to disk before the new access token is used, and only one refresh runs at a time. A grant that lacks the plan scope signs the person in but cannot send a request, and is refused here with the way to fix it. No token reaches an error message.
  */
 export function createSiwcStore(filePath: string, ports: SiwcStorePorts): SiwcStore {
-  let cached: SiwcGrant | undefined;
   let inFlight: Promise<CodexCredentials> | undefined;
 
   const read = (): SiwcFile | undefined => {
@@ -87,7 +86,6 @@ export function createSiwcStore(filePath: string, ports: SiwcStorePorts): SiwcSt
     const temp = `${filePath}.${ports.tempSuffix}.tmp`;
     ports.fs.writePrivate(temp, `${JSON.stringify(file, null, 2)}\n`);
     ports.fs.rename(temp, filePath);
-    cached = file.grant;
   };
 
   const loadSignedIn = (): { readonly file: SiwcFile; readonly grant: SiwcGrant } => {
@@ -104,10 +102,9 @@ export function createSiwcStore(filePath: string, ports: SiwcStorePorts): SiwcSt
   const credentialsOf = (grant: SiwcGrant): CodexCredentials => ({ accessToken: grant.accessToken, accountId: undefined });
 
   const doRefresh = async (rejected: string | undefined): Promise<CodexCredentials> => {
-    const { file, grant } = loadSignedIn();
+    const { grant } = loadSignedIn();
     // Another process (a sign-in command, a second door) may already have replaced the rejected token.
     if (rejected !== undefined && grant.accessToken !== rejected) {
-      cached = grant;
       return credentialsOf(grant);
     }
     let tokens: GrantTokens;
@@ -119,8 +116,10 @@ export function createSiwcStore(filePath: string, ports: SiwcStorePorts): SiwcSt
       }
       throw error;
     }
+    const latest = loadSignedIn();
+    if (latest.grant.accessToken !== grant.accessToken) return credentialsOf(latest.grant);
     const next = grantFrom(grant, tokens);
-    write({ ...file, grant: next });
+    write({ ...latest.file, grant: next });
     return credentialsOf(next);
   };
 
@@ -134,8 +133,7 @@ export function createSiwcStore(filePath: string, ports: SiwcStorePorts): SiwcSt
     write,
     auth: {
       current: async () => {
-        const grant = cached ?? loadSignedIn().grant;
-        cached = grant;
+        const grant = loadSignedIn().grant;
         if (grant.expiresAt - SIWC_REFRESH_MARGIN_MS <= ports.siwc.now().getTime()) {
           return await refreshOnce(undefined);
         }

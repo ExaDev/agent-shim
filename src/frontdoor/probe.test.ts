@@ -4,6 +4,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial, type LeafCert } from "./connect";
 import { PROBE_WAIT_MARGIN_MS, probeFrontDoorSync, probeListenerAcceptSync } from "./probe";
+import * as probe from "./probe";
 
 /** Enough time for the pure-JS 2048-bit keypairs this file generates. */
 const KEYGEN_TIMEOUT_MS = 120_000;
@@ -22,6 +23,11 @@ const { workerData, parentPort } = require("node:worker_threads");
 const http = require("node:http");
 const https = require("node:https");
 const handler = (request, response) => {
+  if (request.method === "POST" && request.url === "/__agent-shim/orpc/rest/frontdoor/catalogues/refresh" && request.headers.authorization === "Bearer test-control-token") {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end('{"requested":true}');
+    return;
+  }
   response.writeHead(request.url === "/healthz" ? 200 : 404, { "content-type": "text/plain" });
   response.end(request.url === "/healthz" ? "ok" : "no");
 };
@@ -77,6 +83,12 @@ describe("probeFrontDoorSync", () => {
     foreignCa = generateCa(new Date());
   }, KEYGEN_TIMEOUT_MS);
 
+  it("requests a catalogue tick over an authenticated TLS connection", async () => {
+    const port = await listenerThread(mintLeaf(ca, LOOPBACK_LEAF_NAMES, new Date()));
+    const result = "requestCatalogueRefreshSync" in probe && typeof probe.requestCatalogueRefreshSync === "function" ? probe.requestCatalogueRefreshSync(port, ca.certPem, "test-control-token", READ_VERDICT_TIMEOUT_MS) : undefined;
+    expect(result).toEqual({ ok: true });
+  }, KEYGEN_TIMEOUT_MS);
+
   it(
     "accepts a listener whose loopback leaf chains to agent-shim's CA",
     async () => {
@@ -117,7 +129,7 @@ describe("probeFrontDoorSync", () => {
     const address = silent.address();
     try {
       const verdict = probeFrontDoorSync(typeof address === "object" && address !== null ? address.port : 0, ca.certPem);
-      expect(verdict.ok ? "" : verdict.reason).toContain("no answer within");
+      expect(verdict.ok ? "" : verdict.reason).toMatch(/(?:no answer|the probe did not finish) within \d+ms/);
     } finally {
       silent.close();
     }

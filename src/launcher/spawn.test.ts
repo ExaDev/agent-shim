@@ -14,6 +14,7 @@ function fakeProc(): ProcPort {
   return {
     env: {},
     argv: [],
+    isProcessAlive: () => true,
     exit: (code: number): never => {
       throw new ExitCalled(code);
     },

@@ -33,6 +33,15 @@ function isEnoent(error: unknown): boolean {
 
 /** The real, `node:fs`-backed `FsPort` used by the actual `claude` launcher — never used in tests. */
 export const realFsPort: FsPort = {
+  fileRevision(filePath) {
+    try {
+      const stat = fs.statSync(filePath, { bigint: true });
+      return [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].map(String).join(":");
+    } catch (error) {
+      if (isEnoent(error)) return undefined;
+      throw error;
+    }
+  },
   readFileUtf8(filePath) {
     try {
       return fs.readFileSync(filePath, "utf8");
@@ -716,6 +725,7 @@ export const realSpawnPort: SpawnPort = {
 export const realProcPort: ProcPort = {
   env: process.env,
   argv: process.argv.slice(2),
+  isProcessAlive: realIsProcessAlive,
   exit: (code: number): never => process.exit(code),
 };
 
