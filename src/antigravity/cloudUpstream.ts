@@ -84,10 +84,13 @@ function isGeminiChunk(value: unknown): value is GeminiGenerateContentResponseCh
 export class AntigravityUpstreamError extends Error {
   readonly status: number;
   readonly retryAfter?: string | null;
+  /** The backend's own answer, as it sent it, which carries more than the message says (the model a 429 names and when its allowance lifts). */
+  readonly body: string;
 
   constructor(status: number, message: string, retryAfter?: string | null) {
     super(`Google Antigravity API error (${String(status)}): ${message}`);
     this.name = "AntigravityUpstreamError";
+    this.body = message;
     this.status = status;
     this.retryAfter = retryAfter;
   }

@@ -1,3 +1,16 @@
+## [11.83.6](https://github.com/ExaDev/agent-shim/compare/v11.83.5...v11.83.6) (2026-11-04)
+
+### Bug Fixes
+
+* **antigravity:** fall back to Gemini buckets for Argon when its weekly bucket is absent ([b71f87d](https://github.com/ExaDev/agent-shim/commit/b71f87df750b2bc68d1d7bc6fca63ab729c99269))
+* **antigravity:** leave a model the backend refuses as spent until its allowance lifts ([60f827d](https://github.com/ExaDev/agent-shim/commit/60f827d3b5895aec118f57e4058b9a295ea37e5a))
+* **statusline:** scope routed sessions to the target provider and treat expired buckets as zero ([5687373](https://github.com/ExaDev/agent-shim/commit/5687373795d3fbbcd9ffabec3670898213e78479))
+* **usage:** give the Gemini 4 Argon weekly bucket its seven-day period ([85f1236](https://github.com/ExaDev/agent-shim/commit/85f1236b7a7e1153cd13b9e7ec6e55608adae32c))
+
+### Reverts
+
+* drop the Gemini bucket fallback for Argon ([1bccd9e](https://github.com/ExaDev/agent-shim/commit/1bccd9e9b4f370349d4ba4b24d881430e453d8e1))
+
 ## [11.83.5](https://github.com/ExaDev/agent-shim/compare/v11.83.4...v11.83.5) (2026-11-03)
 
 ### Bug Fixes

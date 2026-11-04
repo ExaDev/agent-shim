@@ -192,6 +192,8 @@ export function createProviderRouteResolver(deps: {
   const antigravityQuotaSources = new Map<string, () => AntigravityQuotaMap | undefined>();
   // The routing memory an antigravity provider's sessions keep their last model in: one per provider, held by the resolver, because the route is mounted afresh for every request and a memory inside the mount would forget between requests.
   const antigravityRoutingMemory = new Map<string, Map<string, string>>();
+  // The models an antigravity provider's backend has refused as spent, each until the instant it lifts: one per provider (its account's allowance is shared by every session routed through it), held here for the same reason as the routing memory.
+  const antigravityExhaustedModels = new Map<string, Map<string, number>>();
   /** Whether a provider file defines this name: an absent file and an unparseable one both answer no, exactly as the loop above treats an unparseable file as no routes rather than a fault. */
   const definesProvider = (name: string): boolean => {
     try {
@@ -210,6 +212,15 @@ export function createProviderRouteResolver(deps: {
     }
     const created = new Map<string, string>();
     antigravityRoutingMemory.set(provider, created);
+    return created;
+  };
+  const exhaustedModelsFor = (provider: string): Map<string, number> => {
+    const existing = antigravityExhaustedModels.get(provider);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const created = new Map<string, number>();
+    antigravityExhaustedModels.set(provider, created);
     return created;
   };
   const antigravityQuotaOf = (
@@ -318,6 +329,7 @@ export function createProviderRouteResolver(deps: {
             },
             quotaSource: antigravityQuotaOf(provider, antigravityProvider, config),
             lastRouted: memoryFor(provider),
+            exhaustedModels: exhaustedModelsFor(provider),
           },
           directOrigin(deps.directPort()),
           provider,
