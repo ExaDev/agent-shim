@@ -240,6 +240,11 @@ describe("refinePathShadow", () => {
     expect(status).toEqual({ status: "ok" });
   });
 
+  it("accepts a dispatcher whose resolved executable is this installation", () => {
+    const status = refinePathShadow({ status: "shadowed", by: "/shim/agent-shim" }, "/own/agent-shim", (target) => target, () => "/own/agent-shim");
+    expect(status).toEqual({ status: "ok" });
+  });
+
   it("passes through every non-shadowed status untouched", () => {
     const realpath = (target: string): string => target;
     expect(refinePathShadow({ status: "ok" }, "/b/agent-shim", realpath)).toEqual({ status: "ok" });
