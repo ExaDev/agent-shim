@@ -221,7 +221,13 @@ const AntigravityUserSchema = z.object({
 });
 
 /** How long each of the summary's named windows lasts, when the name is one this project knows. */
-const ANTIGRAVITY_WINDOW_MS: Readonly<Record<string, number>> = { "gemini-5h": FIVE_HOURS_MS, "3p-5h": FIVE_HOURS_MS, "gemini-weekly": WEEK_MS, "3p-weekly": WEEK_MS };
+const ANTIGRAVITY_WINDOW_MS: Readonly<Record<string, number>> = {
+  "gemini-5h": FIVE_HOURS_MS,
+  "3p-5h": FIVE_HOURS_MS,
+  "gemini-weekly": WEEK_MS,
+  "3p-weekly": WEEK_MS,
+  "gemini-argon-wtu-weekly": WEEK_MS,
+};
 
 /**
  * The Cloud Code endpoint behind an antigravity provider: its quota summary (the same RPC the backend's own CLI polls, windows named by their bucket id) and Google's tokeninfo for the account the provider's OAuth token belongs to. The token is sent as a Bearer, the form the endpoint's generate route already accepts.
