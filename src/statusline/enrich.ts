@@ -81,7 +81,7 @@ function livePercentOf(window: QuotaWindow | undefined, nowMs: number): number |
   return Math.round(Math.min(1, Math.max(0, window.utilization)) * FULL_PERCENT);
 }
 
-/** The binding windows across the states given: the window furthest spent is the one that bites first, which is what a statusline should show. */
+/** The binding windows of the provider whose window is furthest spent: the window furthest spent is the one that bites first, and taking both windows from that provider keeps one provider's pair together instead of mixing a five-hour window from one provider with a weekly window from another. */
 type ProviderState = UsageSnapshot["providers"][string];
 
 function windowsOf(states: readonly ProviderState[], nowMs: number): Pick<StatuslineSummary, "fiveHourUsed" | "fiveHourResetAt" | "sevenDayUsed" | "sevenDayResetAt"> {
@@ -89,20 +89,21 @@ function windowsOf(states: readonly ProviderState[], nowMs: number): Pick<Status
   let fiveHourResetAt: string | undefined;
   let sevenDayUsed: number | undefined;
   let sevenDayResetAt: string | undefined;
+  let bindingUsed: number | undefined;
   for (const state of states) {
     const unified = state.rateLimit?.unified;
     if (unified === undefined) {
       continue;
     }
     const five = livePercentOf(unified.fiveHour, nowMs);
-    if (five !== undefined && (fiveHourUsed === undefined || five > fiveHourUsed)) {
-      fiveHourUsed = five;
-      fiveHourResetAt = unified.fiveHour?.resetsAt;
-    }
     const seven = livePercentOf(unified.sevenDay, nowMs);
-    if (seven !== undefined && (sevenDayUsed === undefined || seven > sevenDayUsed)) {
+    const max = five === undefined ? seven : seven === undefined ? five : Math.max(five, seven);
+    if (max !== undefined && (bindingUsed === undefined || max > bindingUsed)) {
+      bindingUsed = max;
+      fiveHourUsed = five;
+      fiveHourResetAt = five === undefined ? undefined : unified.fiveHour?.resetsAt;
       sevenDayUsed = seven;
-      sevenDayResetAt = unified.sevenDay?.resetsAt;
+      sevenDayResetAt = seven === undefined ? undefined : unified.sevenDay?.resetsAt;
     }
   }
   return { fiveHourUsed, fiveHourResetAt, sevenDayUsed, sevenDayResetAt };
@@ -160,10 +161,11 @@ function antigravityQuotaMapOf(payload: unknown): AntigravityQuotaMap | undefine
   );
 }
 
-/** A bucket's use as a fraction and the instant it resets, as the statusline draws a window. */
+/** A bucket's use as a percentage and the instant it resets, as the statusline draws a window. A bucket whose reset has already passed (`reset_in_seconds <= 0`) has refreshed and has zero usage, while its reset instant is kept so the renderer draws `(available)`. */
 function bucketView(bucket: AntigravityQuotaBucket | undefined, nowMs: number): { used: number | undefined; resetAt: string | undefined } {
+  const expired = bucket?.reset_in_seconds !== undefined && Number.isFinite(bucket.reset_in_seconds) && bucket.reset_in_seconds <= 0;
   return {
-    used: bucket?.remaining_fraction === undefined || !Number.isFinite(bucket.remaining_fraction) ? undefined : (1 - Math.min(1, Math.max(0, bucket.remaining_fraction))) * FULL_PERCENT,
+    used: bucket?.remaining_fraction === undefined || !Number.isFinite(bucket.remaining_fraction) ? undefined : expired ? 0 : (1 - Math.min(1, Math.max(0, bucket.remaining_fraction))) * FULL_PERCENT,
     resetAt: bucket?.reset_in_seconds === undefined || !Number.isFinite(bucket.reset_in_seconds) ? undefined : isoOf(nowMs + bucket.reset_in_seconds * MS_PER_SECOND),
   };
 }
@@ -248,11 +250,13 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
     ...(params.modelChoice === undefined ? {} : { modelChoice: params.modelChoice }),
     ...(params.doorCostUsd === undefined ? {} : { doorCostUsd: params.doorCostUsd }),
   };
+  let scopedName: string | undefined;
   if (params.snapshot !== undefined) {
-    const scopedName = providerScopedState(params.snapshot, params.providerName, params.env.AGENT_SHIM_PROVIDER);
+    const routedProvider = routedProviderOf(params);
+    scopedName = providerScopedState(params.snapshot, params.providerName, params.env.AGENT_SHIM_PROVIDER) ?? providerScopedState(params.snapshot, routedProvider, routedProvider);
     const scopedState = scopedName === undefined ? undefined : params.snapshot.providers[scopedName];
-    // A session that selected a provider spends that provider's quota alone: when its state is not in the snapshot yet there are no windows to show, never another provider's (an exhausted login week was drawn as a z.ai session's usage). Only a session with no provider shows the binding windows across every provider the identity has used.
-    const states = summary.provider === undefined ? Object.values(params.snapshot.providers) : scopedState === undefined ? [] : [scopedState];
+    // A session that selected a provider or is routed to one spends that provider's quota alone: when its state is not in the snapshot yet there are no windows to show, never another provider's (an exhausted login week was drawn as a z.ai session's usage). Only a session with no provider shows the binding windows across every provider the identity has used.
+    const states = summary.provider === undefined && scopedState === undefined ? Object.values(params.snapshot.providers) : scopedState === undefined ? [] : [scopedState];
     let email: string | undefined;
     let sub: string | undefined;
     let plan: string | undefined;
@@ -287,8 +291,8 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
     );
     summary = { ...summary, ...windowsOf(states, params.nowMs), providerAccountEmail: email, providerAccountSub: sub, providerPlan: plan, providerQuotaWindows, quotaFamilies: quotaFamiliesOf(providerBuckets, params.nowMs) };
   }
-  if (summary.provider === undefined) {
-    // The client's own windows (Claude Code's rate_limits, the Antigravity CLI's quota map) describe exactly the account a providerless session spends, so each present one replaces the snapshot's binding window; a window the payload lacks keeps the snapshot's.
+  if (summary.provider === undefined && scopedName === undefined) {
+    // The client's own windows (Claude Code's rate_limits, the Antigravity CLI's quota map) describe the account a providerless session spends, so each present one replaces the snapshot's binding window; a window the payload lacks keeps the snapshot's. A session routed to a provider in the snapshot spends that provider's quota instead.
     const agyBuckets = antigravityQuotaMapOf(params.payload);
     if (agyBuckets !== undefined) {
       summary = { ...summary, quotaFamilies: quotaFamiliesOf(agyBuckets, params.nowMs) };
@@ -309,6 +313,33 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
     enriched[key] = value;
   }
   return { payload: enriched, summary };
+}
+
+/** The provider a providerless session is currently routed to, from the last request's model choice, its routed target (`<provider>/<model>`), or a qualified model name in the client's payload (`<provider>/<model>` or `<provider> / <model>`). */
+function routedProviderOf(params: EnrichParams): string | undefined {
+  if (params.modelChoice?.provider !== undefined && params.modelChoice.provider !== "") {
+    return params.modelChoice.provider;
+  }
+  const targetPrefix = prefixBeforeSlash(params.routedTarget);
+  if (targetPrefix !== undefined) {
+    return targetPrefix;
+  }
+  const model = isObject(params.payload) && isObject(params.payload.model) ? params.payload.model : undefined;
+  return prefixBeforeSlash(typeof model?.id === "string" ? model.id : undefined) ?? prefixBeforeSlash(typeof model?.display_name === "string" ? model.display_name : undefined);
+}
+
+/** The leading segment before `/` in a qualified target or picker label (`<provider>/<model>` or `<provider> / <model>`), or undefined when there is no slash or either side is blank. */
+function prefixBeforeSlash(value: string | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const slash = value.indexOf("/");
+  if (slash <= 0) {
+    return undefined;
+  }
+  const prefix = value.slice(0, slash).trim();
+  const rest = value.slice(slash + 1).trim();
+  return prefix === "" || rest === "" ? undefined : prefix;
 }
 
 /** The snapshot's provider entry for the session's launch-selected provider. The snapshot keys providers by their registered name; the launch environment carries only the display name, which can differ (`z` against `z.ai`), so the registered name resolved from the provider store wins and the display name is matched case-insensitively only as a fallback. */

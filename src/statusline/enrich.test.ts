@@ -88,6 +88,100 @@ describe("enrichStatuslinePayload", () => {
     expect(summary.quotaFamilies.map((window) => window.measures)).toEqual(["Gem Wk", "3P 5h"]);
   });
 
+  it("scopes a providerless session routed to Antigravity via /model to that provider's quota families, ignoring an exhausted Anthropic week and payload rate_limits", () => {
+    const snapshot = {
+      schemaVersion: 1,
+      identity: "work",
+      updatedAt: "2026-10-15T20:07:50.836Z",
+      providers: {
+        anthropic: { rateLimit: { unified: { fiveHour: { utilization: 1, resetsAt: "2026-10-15T21:00:00.000Z" }, sevenDay: { utilization: 1, resetsAt: "2026-10-22T13:52:54.000Z" } } } },
+        antigravity: {
+          rateLimit: { unified: { fiveHour: { utilization: 0.094, resetsAt: "2026-10-15T20:45:00.000Z" }, sevenDay: { utilization: 0.282, resetsAt: "2026-10-22T13:52:54.000Z" } } },
+          quota: {
+            level: "Google AI Ultra",
+            account: { email: "ada@example.com", accountId: "123456789012345678901" },
+            windows: [
+              { measures: "gemini-5h", utilization: 0.09, resetsAt: "2026-10-15T20:45:00.000Z" },
+              { measures: "gemini-weekly", utilization: 0.28, resetsAt: "2026-10-22T00:00:00.000Z" },
+              { measures: "3p-5h", utilization: 0.01, resetsAt: "2026-10-16T03:00:00.000Z" },
+              { measures: "3p-weekly", utilization: 0.15, resetsAt: "2026-10-21T00:00:00.000Z" },
+            ],
+          },
+        },
+      },
+    } as unknown as UsageSnapshot;
+    const base = {
+      payload: { rate_limits: { five_hour: { used_percentage: 99, resets_at: 1_738_425_600 }, seven_day: { used_percentage: 100, resets_at: 1_738_857_600 } } },
+      env: { ANTHROPIC_CUSTOM_HEADERS: "x-agent-shim-identity: work" },
+      snapshot,
+      account: undefined,
+      providerName: undefined,
+      nowMs: NOW_MS,
+      headroom: undefined,
+    };
+    const byRoutedTarget = enrichStatuslinePayload({ ...base, routedTarget: "antigravity/gemini-4-argon-high" }).summary;
+    expect(byRoutedTarget.quotaFamilies.map((window) => window.measures)).toEqual(["Gem 5h", "Gem Wk", "3P 5h", "3P Wk"]);
+    expect(byRoutedTarget.fiveHourUsed).toBe(GEMINI_FIVE_HOUR_USED_PERCENT);
+    expect(byRoutedTarget.sevenDayUsed).toBe(GEMINI_WEEKLY_USED_PERCENT);
+
+    const byModelChoice = enrichStatuslinePayload({ ...base, modelChoice: { requested: "auto", served: "gemini-4-argon-high", provider: "antigravity", providers: ["antigravity"] } }).summary;
+    expect(byModelChoice.quotaFamilies.map((window) => window.measures)).toEqual(["Gem 5h", "Gem Wk", "3P 5h", "3P Wk"]);
+    expect(byModelChoice.sevenDayUsed).toBe(GEMINI_WEEKLY_USED_PERCENT);
+
+    const byPayloadModel = enrichStatuslinePayload({ ...base, payload: { ...base.payload, model: { id: "antigravity/gemini-4-argon-high", display_name: "antigravity / gemini-4-argon-high" } } }).summary;
+    expect(byPayloadModel.quotaFamilies.map((window) => window.measures)).toEqual(["Gem 5h", "Gem Wk", "3P 5h", "3P Wk"]);
+    expect(byPayloadModel.sevenDayUsed).toBe(GEMINI_WEEKLY_USED_PERCENT);
+  });
+
+  it("takes both unified windows from the provider whose window is furthest spent rather than mixing providers", () => {
+    const { summary } = enrichStatuslinePayload({
+      payload: {},
+      env: { ANTHROPIC_CUSTOM_HEADERS: "x-agent-shim-identity: work" },
+      snapshot: {
+        ...SNAPSHOT,
+        providers: {
+          anthropic: { rateLimit: { unified: { fiveHour: { utilization: 0.05, resetsAt: "2026-10-15T21:00:00.000Z" }, sevenDay: { utilization: 0.95, resetsAt: "2026-10-22T13:52:54.000Z" } } } },
+          antigravity: { rateLimit: { unified: { fiveHour: { utilization: 0.4, resetsAt: "2026-10-15T20:45:00.000Z" }, sevenDay: { utilization: 0.28, resetsAt: "2026-10-22T13:52:54.000Z" } } } },
+        },
+      } as unknown as UsageSnapshot,
+      account: undefined,
+      providerName: undefined,
+      nowMs: NOW_MS,
+      headroom: undefined,
+    });
+    const ANTHROPIC_SEVEN_DAY_PERCENT = 95;
+    expect(summary.fiveHourUsed).toBe(LIVE_FIVE_HOUR_USED_PERCENT);
+    expect(summary.sevenDayUsed).toBe(ANTHROPIC_SEVEN_DAY_PERCENT);
+  });
+
+  it("treats an Antigravity bucket whose reset has passed as zero used while keeping its reset time for available display", () => {
+    const EXPIRED_PAST_SECONDS = -10;
+    const PERCENT_SCALE = 100;
+    const { summary } = enrichStatuslinePayload({
+      payload: {
+        model: { id: "gemini-3.8-flash-high", display_name: "Gemini 3.8 Flash" },
+        quota: {
+          "gemini-5h": { remaining_fraction: 0.644, reset_in_seconds: 0 },
+          "gemini-weekly": { remaining_fraction: 0.95, reset_in_seconds: GEMINI_WEEKLY_RESET_SECONDS },
+          "3p-5h": { remaining_fraction: 0.2, reset_in_seconds: EXPIRED_PAST_SECONDS },
+        },
+      },
+      env: {},
+      snapshot: undefined,
+      account: undefined,
+      providerName: undefined,
+      nowMs: NOW_MS,
+      headroom: undefined,
+    });
+    expect(summary.fiveHourUsed).toBe(0);
+    expect(summary.fiveHourResetAt).toBe(new Date(NOW_MS).toISOString());
+    expect(summary.sevenDayUsed).toBeCloseTo(ANTIGRAVITY_WEEKLY_USED_PERCENT, FLOAT_PRECISION_DIGITS);
+    expect(summary.quotaFamilies.map((window) => window.measures)).toEqual(["Gem 5h", "Gem Wk", "3P 5h"]);
+    expect(summary.quotaFamilies[0]).toEqual({ measures: "Gem 5h", utilization: 0, resetsAt: new Date(NOW_MS).toISOString() });
+    expect(summary.quotaFamilies[1]?.utilization).toBeCloseTo(ANTIGRAVITY_WEEKLY_USED_PERCENT / PERCENT_SCALE, FLOAT_PRECISION_DIGITS);
+    expect(summary.quotaFamilies[2]).toEqual({ measures: "3P 5h", utilization: 0, resetsAt: new Date(NOW_MS + EXPIRED_PAST_SECONDS * MS_PER_SECOND).toISOString() });
+  });
+
   it("carries the identity's label into the summary beside its name, and none when the identity has none", () => {
     const params = { payload: {}, env: { ANTHROPIC_CUSTOM_HEADERS: "x-agent-shim-identity: work" }, snapshot: undefined, account: undefined, providerName: undefined, nowMs: NOW_MS, headroom: undefined };
     expect(enrichStatuslinePayload({ ...params, identityLabel: "Example Org" }).summary).toMatchObject({ identity: "work", identityLabel: "Example Org" });
