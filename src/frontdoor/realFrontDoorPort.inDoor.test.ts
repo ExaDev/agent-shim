@@ -13,9 +13,10 @@ import { declareThisProcessTheFrontDoor, resetFrontDoorDeclarationForTests } fro
 import { FRONT_DOOR_PROTOCOL, writeFrontDoorState } from "./state";
 import { realFarmFs } from "../realPorts";
 import { catalogueCredentialFingerprint } from "../codex/catalogueCredential";
-import { CATALOGUE_RETRY_MS, catalogueCachePath } from "../providerCatalogue";
+import { CATALOGUE_REFRESH_TIMEOUT_MS, CATALOGUE_RETRY_MS, catalogueCachePath } from "../providerCatalogue";
 import { writeCatalogueStatus, writeFrontDoorCodexHome } from "./state";
 
+const POLLS_BEFORE_CACHE = 3;
 const SERVING_PORT = 4100;
 const SERVING_CONNECT_PORT = 4300;
 
@@ -77,6 +78,24 @@ describe("a launch the front door plans for itself", () => {
     const port = realFrontDoorPort(paths, () => { throw new Error("unexpected daemon"); });
     port.waitForCatalogues?.(process.pid + 1);
     expect(sleep).toHaveBeenCalledOnce();
+  });
+
+  it("waits for a refresh child using its startup grace", () => {
+    const paths = buildLayoutPaths(root);
+    fs.mkdirSync(paths.providersDir, { recursive: true });
+    fs.mkdirSync(paths.catalogueDir, { recursive: true });
+    fs.writeFileSync(path.join(paths.providersDir, "http.json"), JSON.stringify({ displayName: "HTTP", baseUrl: "https://example.test", credential: { sources: [{ env: "TOKEN" }] }, catalogue: { tier: "sonnet" } }));
+    let now = Date.now();
+    let sleeps = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    vi.spyOn(realPorts, "realSleepSync").mockImplementation(() => {
+      now += CATALOGUE_REFRESH_TIMEOUT_MS / 2;
+      sleeps++;
+      if (sleeps === POLLS_BEFORE_CACHE) fs.writeFileSync(path.join(paths.catalogueDir, "http.json"), JSON.stringify({ fetchedAt: now, url: "https://example.test/v1/models", models: [{ id: "model" }] }));
+    });
+    const port = realFrontDoorPort(paths, () => { throw new Error("unexpected daemon"); });
+    expect(port.waitForCatalogues?.(process.pid + 1)).toBeUndefined();
+    expect(sleeps).toBe(POLLS_BEFORE_CACHE);
   });
 
   it("reports a catalogue timeout without refusing the launch", () => {
