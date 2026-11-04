@@ -1,3 +1,9 @@
+## [11.83.7](https://github.com/ExaDev/agent-shim/compare/v11.83.6...v11.83.7) (2026-11-04)
+
+### Bug Fixes
+
+* **antigravity:** parse the last line of the backend's stream when no newline follows it ([3b26976](https://github.com/ExaDev/agent-shim/commit/3b269761238971c27ab237d9365ee3440d0ec703))
+
 ## [11.83.6](https://github.com/ExaDev/agent-shim/compare/v11.83.5...v11.83.6) (2026-11-04)
 
 ### Bug Fixes
