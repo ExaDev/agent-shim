@@ -57,13 +57,19 @@ export function antigravityFamilyBuckets(quota: AntigravityQuotaMap): readonly {
 }
 
 /**
- * The five-hour and weekly buckets a model draws from: a gemini model its gemini buckets, any other model the third-party ones. The map is the one the quota endpoint's translation and the Antigravity CLI's own statusline payload share, keyed by bucket id.
+ * The five-hour and weekly buckets a model draws from: a gemini model its gemini buckets, any other model the third-party ones. On a plan that reports a separate `gemini-argon-wtu-weekly` bucket (Google AI Pro), Gemini 4 Argon draws on that weekly window alone; on a plan that omits it while reporting the Gemini family's weekly window (Google AI Ultra), Argon draws on the Gemini five-hour and weekly buckets. The map is the one the quota endpoint's translation and the Antigravity CLI's own statusline payload share, keyed by bucket id.
  */
 export function selectAntigravityBuckets(quota: AntigravityQuotaMap, model: string | undefined): { readonly fiveHour: AntigravityQuotaBucket | undefined; readonly weekly: AntigravityQuotaBucket | undefined } {
   const lower = (model ?? "").toLowerCase();
-  // Gemini 4 Argon draws on a weekly window of its own and has no five-hour one, so the Gemini family's five-hour bucket (spent, or not) says nothing about it.
   if (lower.includes("argon")) {
-    return { fiveHour: undefined, weekly: findBucket(quota, ARGON_WEEKLY_KEYS) };
+    const argonWeekly = findBucket(quota, ARGON_WEEKLY_KEYS);
+    if (argonWeekly !== undefined) {
+      return { fiveHour: undefined, weekly: argonWeekly };
+    }
+    const geminiWeekly = findBucket(quota, GEMINI_WEEKLY_KEYS);
+    if (geminiWeekly === undefined) {
+      return { fiveHour: undefined, weekly: undefined };
+    }
   }
   const isGemini = lower.includes("gemini");
   return {
