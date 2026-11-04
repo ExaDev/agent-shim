@@ -5,6 +5,7 @@ import { readJson } from "./config/store";
 import { listIdentityDirectories, type UnreachableIdentityEntry } from "./identityStore";
 import { findExecutableInDir, realContentSourcePath, realFarmFs, realFsPort, realHeadroomSocketTrust, realInstalledClaudeVersions, realFrontDoorLiveness, realIsProcessRunning, realOwnExecutablePath, realProcessCommandLine, realResolveClaudeBinary, realRunPort } from "./realPorts";
 import fs from "node:fs";
+import { realpathOrSelf, resolveMiseDispatcher } from "./doctorPath";
 import path from "node:path";
 import type { z } from "zod";
 import { lookupKeychainService } from "./checkReport";
@@ -136,19 +137,21 @@ interface DoctorPathResolution {
 }
 
 /**
- * Collapses a `shadowed` verdict back to `ok` when the shadowing entry and this executable are literally the same file reached by two names — `findPathShadow` compares *directories*, so a symlink on PATH pointing at the running executable's own real location otherwise reads as a shadow of itself.
+ * Collapses a `shadowed` verdict to `ok` when the PATH entry or its resolved dispatcher reaches the running executable. `findPathShadow` compares directories, so a symlink or dispatcher can otherwise appear to shadow itself.
  *
- * `realpath` must resolve symlinks, and must return its argument unchanged rather than throwing when the path cannot be resolved (a broken symlink, a race with an uninstall), so an unresolvable path simply stays unequal and the shadow verdict stands.
+ * `realpath` resolves symlinks and returns its input when it cannot resolve the path. `resolveDispatcher` returns the executable selected by a known dispatcher, or undefined when it cannot establish one; an unresolved or different target leaves the shadow verdict in place.
  */
 export function refinePathShadow(
   status: PathShadowStatus,
   ownExecutablePath: string,
   realpath: (target: string) => string,
+  resolveDispatcher?: (target: string) => string | undefined,
 ): PathShadowStatus {
   if (status.status !== "shadowed") {
     return status;
   }
-  return realpath(status.by) === realpath(ownExecutablePath) ? { status: "ok" } : status;
+  const resolved = resolveDispatcher?.(status.by) ?? status.by;
+  return realpath(resolved) === realpath(ownExecutablePath) ? { status: "ok" } : status;
 }
 
 /** Everything `runDoctor` needs, all of it already loaded/injected — nothing in `runDoctor` itself reads a file, shells out, or touches the farm. */
@@ -910,15 +913,6 @@ export function formatDoctorReport(report: DoctorReport): string[] {
   return lines;
 }
 
-/** `fs.realpathSync` with every failure collapsed back to the input path — see `refinePathShadow` for why an unresolvable path must stay unequal rather than abort the audit. */
-function realpathOrSelf(target: string): string {
-  try {
-    return fs.realpathSync(target);
-  } catch {
-    return target;
-  }
-}
-
 /** What `collectDoctorReport` needs from its caller. */
 export interface CollectDoctorReportParams {
   readonly paths: LayoutPaths;
@@ -1008,6 +1002,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
           }),
           shimState.targetPath,
           realpathOrSelf,
+          (target) => resolveMiseDispatcher(target, pathDirs, params.env),
         );
 
   // Process listing needs a POSIX uid; where there is none the front-door check is skipped rather than guessed.
@@ -1051,6 +1046,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
         }),
         ownExecutablePath,
         realpathOrSelf,
+        (target) => resolveMiseDispatcher(target, pathDirs, params.env),
       ),
       ...(claudeShimShadow === undefined ? {} : { claude: claudeShimShadow }),
     },
