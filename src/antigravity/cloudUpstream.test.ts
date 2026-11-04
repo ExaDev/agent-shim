@@ -143,6 +143,49 @@ describe("callCloudAntigravity", () => {
     expect(chunks[1]?.candidates?.[0]?.finishReason).toBe("STOP");
   });
 
+  const streamOf = (...parts: readonly string[]): typeof fetch => async () => {
+    const encoder = new TextEncoder();
+    return await Promise.resolve(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            for (const part of parts) {
+              controller.enqueue(encoder.encode(part));
+            }
+            controller.close();
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+  };
+  const collect = async (fetchFn: typeof fetch): Promise<readonly unknown[]> => {
+    const chunks: unknown[] = [];
+    for await (const chunk of callCloudAntigravity({ config: resolveAntigravityConfig(undefined), model: "claude-sonnet-5-5-low", request: { contents: [] }, token: "fake-token", signal: new AbortController().signal }, fetchFn)) {
+      chunks.push(chunk);
+    }
+    return chunks;
+  };
+  const TEXT_CHUNK = 'data: {"response": {"candidates":[{"content":{"parts":[{"text":"I will look"}]}}]}}\n\n';
+  const CALL_CHUNK = 'data: {"response": {"candidates":[{"content":{"parts":[{"functionCall":{"name":"bash","args":{"command":"ls"}}}]},"finishReason":"STOP"}]}}';
+
+  it("parses a last data line that the response ends without a newline after, so a closing tool call is not lost", async () => {
+    const chunks = await collect(streamOf(TEXT_CHUNK, CALL_CHUNK));
+    expect(chunks).toHaveLength(2);
+    expect(JSON.stringify(chunks[1])).toContain("functionCall");
+  });
+
+  it("parses a last data line cut across two reads of the body", async () => {
+    const half = Math.floor(CALL_CHUNK.length / 2);
+    const chunks = await collect(streamOf(TEXT_CHUNK, CALL_CHUNK.slice(0, half), CALL_CHUNK.slice(half)));
+    expect(chunks).toHaveLength(2);
+  });
+
+  it("parses a last data line that ends with a carriage return alone", async () => {
+    const chunks = await collect(streamOf(TEXT_CHUNK, `${CALL_CHUNK}\r`));
+    expect(chunks).toHaveLength(2);
+  });
+
   it("throws on non-200 responses", async () => {
     const config = resolveAntigravityConfig(undefined);
     const mockFetch: typeof fetch = async () => await Promise.resolve(new Response("Unauthorized", { status: 401 }));

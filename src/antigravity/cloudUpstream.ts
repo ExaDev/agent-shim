@@ -123,32 +123,43 @@ export async function* callCloudAntigravity(
 
   const decoder = new TextDecoder("utf-8");
   let buffer = "";
-  const sseDataPrefix = "data:";
 
   for await (const rawChunk of response.body) {
     const chunk = rawChunk instanceof Uint8Array ? rawChunk : Buffer.from(String(rawChunk));
     buffer += decoder.decode(chunk, { stream: true });
     const lines = buffer.split("\n");
     buffer = lines.pop() ?? "";
-
     for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith(sseDataPrefix)) {
-        const jsonStr = trimmed.slice(sseDataPrefix.length).trim();
-        if (jsonStr.length > 0) {
-          try {
-            const parsed: unknown = JSON.parse(jsonStr);
-            if (isRecord(parsed)) {
-              const unwrapped = isRecord(parsed.response) ? parsed.response : parsed;
-              if (isGeminiChunk(unwrapped)) {
-                yield unwrapped;
-              }
-            }
-          } catch {
-            // Ignore partial or unparseable SSE heartbeats
-          }
-        }
-      }
+      yield* chunksOfLine(line);
+    }
+  }
+  // What the body ends on is a line like any other, even with no newline after it: the closing chunk (a tool call and the finish reason) is the one most likely to be left there, and dropping it would end the turn without its call.
+  buffer += decoder.decode();
+  yield* chunksOfLine(buffer);
+}
+
+const SSE_DATA_PREFIX = "data:";
+
+/** The Gemini chunk a line of the backend's event stream carries, unwrapped from the Cloud Code envelope: none for a line that is not a data line, is empty, or does not parse (a heartbeat, or a line cut short). */
+function* chunksOfLine(line: string): Generator<GeminiGenerateContentResponseChunk> {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith(SSE_DATA_PREFIX)) {
+    return;
+  }
+  const jsonStr = trimmed.slice(SSE_DATA_PREFIX.length).trim();
+  if (jsonStr.length === 0) {
+    return;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonStr);
+  } catch {
+    return;
+  }
+  if (isRecord(parsed)) {
+    const unwrapped = isRecord(parsed.response) ? parsed.response : parsed;
+    if (isGeminiChunk(unwrapped)) {
+      yield unwrapped;
     }
   }
 }
