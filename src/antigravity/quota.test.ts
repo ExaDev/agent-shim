@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  antigravityQuotaExhaustion,
+  antigravityQuotaPressure,
   createCachedAntigravityQuotaSource,
   fetchAntigravityQuotaSummary,
   parseRetryAfterSeconds,
-  antigravityQuotaExhaustion,
   unifiedAntigravityQuotaHeaders,
   type AntigravityQuotaMap,
 } from "./quota";
@@ -118,6 +119,23 @@ describe("unifiedAntigravityQuotaHeaders", () => {
     // Argon has no five-hour window, so none is reported, and nothing here is spent.
     expect(headers["anthropic-ratelimit-unified-5h-utilization"]).toBeUndefined();
     expect(antigravityQuotaExhaustion(quota, "gemini-4-argon-medium", NOW_MS)).toBeUndefined();
+  });
+
+  it("answers for Gemini 4 Argon from the Gemini family's buckets on a plan that omits the separate Argon weekly bucket", () => {
+    const GEMINI_FIVE_HOUR_REMAINING = 0.75;
+    const GEMINI_WEEKLY_REMAINING = 0.9;
+    const quota: AntigravityQuotaMap = {
+      "gemini-5h": { remaining_fraction: GEMINI_FIVE_HOUR_REMAINING, reset_in_seconds: FIVE_HOURS_SEC },
+      "gemini-weekly": { remaining_fraction: GEMINI_WEEKLY_REMAINING, reset_in_seconds: SEVEN_DAYS_SEC },
+    };
+    const headers = unifiedAntigravityQuotaHeaders({ quota, rejected: false, nowMs: NOW_MS, model: "gemini-4-argon-high" });
+
+    expect(headers["anthropic-ratelimit-unified-status"]).toBe("allowed");
+    expect(headers["anthropic-ratelimit-unified-5h-utilization"]).toBe("0.250");
+    expect(headers["anthropic-ratelimit-unified-5h-reset"]).toBe(String(NOW_SEC + FIVE_HOURS_SEC));
+    expect(headers["anthropic-ratelimit-unified-7d-utilization"]).toBe("0.100");
+    expect(headers["anthropic-ratelimit-unified-7d-reset"]).toBe(String(NOW_SEC + SEVEN_DAYS_SEC));
+    expect(antigravityQuotaPressure(quota, "gemini-4-argon-high")).toBeCloseTo(GEMINI_FIVE_HOUR_REMAINING);
   });
 
   it("claims no window on a 429 that no bucket explains, rather than reporting limits the account has not reached", () => {
