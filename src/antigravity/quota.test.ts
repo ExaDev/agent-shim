@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   createCachedAntigravityQuotaSource,
   fetchAntigravityQuotaSummary,
+  parseQuotaExhaustion,
   parseRetryAfterSeconds,
+  quotaWithExhaustions,
   antigravityQuotaExhaustion,
   unifiedAntigravityQuotaHeaders,
   type AntigravityQuotaMap,
@@ -246,5 +248,68 @@ describe("createCachedAntigravityQuotaSource", () => {
     await new Promise((resolve) => { setTimeout(resolve, 0); });
     expect(source()).toEqual({ "3p-5h": { remaining_fraction: 0.9 } });
     expect(reads).toBe(2);
+  });
+});
+
+describe("parseQuotaExhaustion", () => {
+  const MS_PER_SECOND = 1000;
+  const RETRY_DELAY_SEC = 60.5;
+  const answer = (details: unknown): string => JSON.stringify({ error: { code: 429, status: "RESOURCE_EXHAUSTED", details } });
+  const info = (reason: string, metadata: Readonly<Record<string, string>>): unknown => ({ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason, metadata });
+
+  it("reads the model and the instant its allowance lifts from a QUOTA_EXHAUSTED answer", () => {
+    const body = answer([info("QUOTA_EXHAUSTED", { model: "gemini-4-argon-high", quotaResetTimeStamp: "2026-11-04T13:14:15Z" }), { retryDelay: "12525.9s" }]);
+    expect(parseQuotaExhaustion(body, NOW_MS)).toEqual({ model: "gemini-4-argon-high", resetAtMs: Date.parse("2026-11-04T13:14:15Z") });
+  });
+
+  it("counts a retry delay from now when the answer gives no timestamp", () => {
+    const body = answer([info("QUOTA_EXHAUSTED", { model: "gemini-4-argon-high" }), { "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: `${String(RETRY_DELAY_SEC)}s` }]);
+    expect(parseQuotaExhaustion(body, NOW_MS)).toEqual({ model: "gemini-4-argon-high", resetAtMs: NOW_MS + RETRY_DELAY_SEC * MS_PER_SECOND });
+  });
+
+  it.each([
+    ["a per-minute throttle", answer([info("RATE_LIMIT_EXCEEDED", { model: "gemini-4-argon-high", quotaResetTimeStamp: "2026-11-04T13:14:15Z" })])],
+    ["an answer naming no model", answer([info("QUOTA_EXHAUSTED", { quotaResetTimeStamp: "2026-11-04T13:14:15Z" })])],
+    ["an answer saying when nothing", answer([info("QUOTA_EXHAUSTED", { model: "gemini-4-argon-high" })])],
+    ["text that is not JSON", "Resource has been exhausted (e.g. check quota)"],
+  ])("reads %s as no spent allowance", (_name, body) => {
+    expect(parseQuotaExhaustion(body, NOW_MS)).toBeUndefined();
+  });
+});
+
+describe("quotaWithExhaustions", () => {
+  const MS = 1000;
+  const HOUR_MS = SECONDS_IN_HOUR * MS;
+  const IN_FOUR_HOURS_SEC = FIVE_HOURS_SEC - SECONDS_IN_HOUR;
+  const IN_TWO_DAYS_SEC = 2 * SECONDS_IN_DAY;
+  const spentFor = (seconds: number): { remaining_fraction: number; reset_in_seconds: number } => ({ remaining_fraction: 0, reset_in_seconds: seconds });
+
+  it("stands a spent model in its own bucket: Argon's weekly one, and a family's five-hour or weekly one by how far off it lifts", () => {
+    const merged = quotaWithExhaustions(
+      {},
+      new Map([
+        ["gemini-4-argon-high", NOW_MS + HOUR_MS],
+        ["gemini-3.8-flash-low", NOW_MS + IN_FOUR_HOURS_SEC * MS],
+        ["gemini-3.8-pro", NOW_MS + IN_TWO_DAYS_SEC * MS],
+        ["claude-sonnet-5-5-low", NOW_MS + HOUR_MS],
+      ]),
+      NOW_MS,
+    );
+    expect(merged?.["gemini-argon-wtu-weekly"]).toEqual(spentFor(SECONDS_IN_HOUR));
+    expect(merged?.["gemini-5h"]).toEqual(spentFor(IN_FOUR_HOURS_SEC));
+    expect(merged?.["gemini-weekly"]).toEqual(spentFor(IN_TWO_DAYS_SEC));
+    expect(merged?.["3p-5h"]).toEqual(spentFor(SECONDS_IN_HOUR));
+  });
+
+  it("keeps a bucket the summary already reports spent for longer, and the quota itself when nothing is spent", () => {
+    const quota = { "gemini-5h": spentFor(FIVE_HOURS_SEC) };
+    expect(quotaWithExhaustions(quota, new Map([["gemini-3.8-flash-low", NOW_MS + HOUR_MS]]), NOW_MS)?.["gemini-5h"]).toEqual(spentFor(FIVE_HOURS_SEC));
+    expect(quotaWithExhaustions(quota, new Map(), NOW_MS)).toBe(quota);
+    expect(quotaWithExhaustions(quota, new Map([["gemini-3.8-flash-low", NOW_MS - 1]]), NOW_MS)).toBe(quota);
+  });
+
+  it("is exhausted for a model once marked, so routing treats it as spent", () => {
+    const quota = quotaWithExhaustions(undefined, new Map([["gemini-4-argon-high", NOW_MS + HOUR_MS]]), NOW_MS);
+    expect(antigravityQuotaExhaustion(quota, "gemini-4-argon-high", NOW_MS)).toMatchObject({ window: "seven_day", resetSec: NOW_SEC + SECONDS_IN_HOUR });
   });
 });
