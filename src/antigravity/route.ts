@@ -7,7 +7,7 @@ import { translateRequest, type ResolvedAntigravityConfig } from "./translate";
 import { callCloudAntigravity, AntigravityUpstreamError } from "./cloudUpstream";
 import { callLocalAntigravity } from "./localUpstream";
 import type { AcpConnection } from "./localUpstream";
-import { antigravityQuotaExhaustion, parseRetryAfterSeconds, unifiedAntigravityQuotaHeaders, type AntigravityExhaustion, type AntigravityQuotaMap } from "./quota";
+import { antigravityQuotaExhaustion, parseQuotaExhaustion, parseRetryAfterSeconds, quotaWithExhaustions, unifiedAntigravityQuotaHeaders, type AntigravityExhaustion, type AntigravityQuotaMap } from "./quota";
 import type { GeminiGenerateContentResponseChunk } from "./geminiSchema";
 import type { RouteRequest, RouteResponse } from "../codex/route";
 
@@ -35,6 +35,8 @@ export interface AntigravityRoutePorts {
   readonly quotaSource?: () => AntigravityQuotaMap | undefined;
   /** The sessions' last routing choices, shared by every mounting of this route. A caller that mounts the route per request (the front door's resolver) supplies one map per provider, so a session keeps its model across the remounts; without it the route keeps its own, which lives only as long as one mounting. */
   readonly lastRouted?: Map<string, string>;
+  /** The models the backend has answered with a spent allowance, each with the instant (epoch milliseconds) it lifts, shared like `lastRouted`: the quota summary does not measure every model's allowance (Gemini 4 Argon's is absent on some plans), so the backend's own refusal is what says a model is spent, and routing then leaves it until the instant given. */
+  readonly exhaustedModels?: Map<string, number>;
 }
 
 const MS_PER_SECOND = 1000;
@@ -51,6 +53,16 @@ function exhaustedMessage(exhaustion: AntigravityExhaustion): string {
 export function createAntigravityRoute(ports: AntigravityRoutePorts): (request: RouteRequest) => Promise<RouteResponse> {
   const fallbackId = ports.fallbackId ?? (() => randomUUID());
   const lastRouted = ports.lastRouted ?? new Map<string, string>();
+  const exhaustedModels = ports.exhaustedModels ?? new Map<string, number>();
+  // The account's measured buckets with every model the backend has refused as spent marked spent until it lifts; a lifted one is forgotten.
+  const liveQuota = (nowMs: number): AntigravityQuotaMap | undefined => {
+    for (const [model, resetAtMs] of exhaustedModels) {
+      if (resetAtMs <= nowMs) {
+        exhaustedModels.delete(model);
+      }
+    }
+    return quotaWithExhaustions(ports.quotaSource?.(), exhaustedModels, nowMs);
+  };
 
   return async (request: RouteRequest): Promise<RouteResponse> => {
     await Promise.resolve();
@@ -111,15 +123,85 @@ export function createAntigravityRoute(ports: AntigravityRoutePorts): (request: 
     const nowMs = ports.now?.() ?? Date.now();
     // `metadata.user_id` is stable for one Claude Code session; a request without one belongs to no session and is routed afresh every time.
     const sessionKey = parsed.data.metadata?.user_id === undefined ? undefined : `${parsed.data.metadata.user_id}\u0000${parsed.data.model ?? ""}`;
-    const translated = translateRequest(parsed.data, config, { quota: ports.quotaSource?.(), nowMs, previous: sessionKey === undefined ? undefined : lastRouted.get(sessionKey) });
-    if (sessionKey !== undefined) {
-      lastRouted.delete(sessionKey);
-      lastRouted.set(sessionKey, translated.model);
-      if (lastRouted.size > ROUTING_MEMORY_SESSIONS) {
-        const oldest = lastRouted.keys().next();
-        if (oldest.done !== true) {
-          lastRouted.delete(oldest.value);
+    const routeRequest = (): ReturnType<typeof translateRequest> => {
+      const routed = translateRequest(parsed.data, config, { quota: liveQuota(nowMs), nowMs, previous: sessionKey === undefined ? undefined : lastRouted.get(sessionKey) });
+      if (sessionKey !== undefined) {
+        lastRouted.delete(sessionKey);
+        lastRouted.set(sessionKey, routed.model);
+        if (lastRouted.size > ROUTING_MEMORY_SESSIONS) {
+          const oldest = lastRouted.keys().next();
+          if (oldest.done !== true) {
+            lastRouted.delete(oldest.value);
+          }
         }
+      }
+      return routed;
+    };
+    let translated = routeRequest();
+    // A model the backend refuses as spent is left and the request routed again, to a model not yet tried: the set is finite and each model is tried once, so this ends with an answer or the last refusal.
+    const tried = new Set<string>();
+    let iterator: AsyncIterator<GeminiGenerateContentResponseChunk>;
+    let firstResult: IteratorResult<GeminiGenerateContentResponseChunk>;
+    for (;;) {
+      tried.add(translated.model);
+      const upstreamChunks =
+        config.mode === "local"
+          ? callLocalAntigravity({
+              config,
+              model: translated.model,
+              request: translated.request,
+              signal: request.signal,
+              connector: ports.localConnector,
+            })
+          : callCloudAntigravity(
+              {
+                config,
+                model: translated.model,
+                request: translated.request,
+                token,
+                credentialTarget,
+                signal: request.signal,
+              },
+              ports.fetchFn,
+            );
+      iterator = upstreamChunks[Symbol.asyncIterator]();
+      try {
+        firstResult = await iterator.next();
+        break;
+      } catch (error) {
+        if (error instanceof AntigravityUpstreamError) {
+          const is429 = error.status === HTTP_STATUS.tooManyRequests;
+          const learned = is429 ? parseQuotaExhaustion(error.body, nowMs) : undefined;
+          if (learned !== undefined) {
+            exhaustedModels.set(learned.model, learned.resetAtMs);
+            const next = routeRequest();
+            if (!tried.has(next.model)) {
+              translated = next;
+              continue;
+            }
+          }
+          const quota = liveQuota(nowMs);
+          const quotaHeaders = unifiedAntigravityQuotaHeaders({ quota, rejected: is429, nowMs, model: translated.model });
+          // A spent window supplies its own retry-after (the time until it resets); otherwise the backend's hint stands.
+          const retryAfter = is429 && quotaHeaders["retry-after"] === undefined ? parseRetryAfterSeconds(error.retryAfter) : undefined;
+          const exhaustion = is429 ? antigravityQuotaExhaustion(quota, translated.model, nowMs) : undefined;
+          const errorType = is429 ? "rate_limit_error" : "api_error";
+          return {
+            status: error.status,
+            headers: {
+              "Content-Type": "application/json",
+              ...quotaHeaders,
+              ...(retryAfter !== undefined ? { "retry-after": String(retryAfter) } : {}),
+            },
+            body: JSON.stringify({ type: "error", error: { type: errorType, message: exhaustion === undefined ? error.message : exhaustedMessage(exhaustion) } }),
+          };
+        }
+        const errMsg = error instanceof Error ? error.message : String(error);
+        return {
+          status: HTTP_STATUS.badGateway,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "error", error: { type: "api_error", message: errMsg } }),
+        };
       }
     }
     const relay = createAntigravityRelay({
@@ -129,60 +211,8 @@ export function createAntigravityRoute(ports: AntigravityRoutePorts): (request: 
       fallbackId,
     });
 
-    const upstreamChunks =
-      config.mode === "local"
-        ? callLocalAntigravity({
-            config,
-            model: translated.model,
-            request: translated.request,
-            signal: request.signal,
-            connector: ports.localConnector,
-          })
-        : callCloudAntigravity(
-            {
-              config,
-              model: translated.model,
-              request: translated.request,
-              token,
-              credentialTarget,
-              signal: request.signal,
-            },
-            ports.fetchFn,
-          );
-
-    const iterator = upstreamChunks[Symbol.asyncIterator]();
-    let firstResult: IteratorResult<GeminiGenerateContentResponseChunk>;
-    try {
-      firstResult = await iterator.next();
-    } catch (error) {
-      if (error instanceof AntigravityUpstreamError) {
-        const is429 = error.status === HTTP_STATUS.tooManyRequests;
-        const quota = ports.quotaSource?.();
-        const quotaHeaders = unifiedAntigravityQuotaHeaders({ quota, rejected: is429, nowMs, model: translated.model });
-        // A spent window supplies its own retry-after (the time until it resets); otherwise the backend's hint stands.
-        const retryAfter = is429 && quotaHeaders["retry-after"] === undefined ? parseRetryAfterSeconds(error.retryAfter) : undefined;
-        const exhaustion = is429 ? antigravityQuotaExhaustion(quota, translated.model, nowMs) : undefined;
-        const errorType = is429 ? "rate_limit_error" : "api_error";
-        return {
-          status: error.status,
-          headers: {
-            "Content-Type": "application/json",
-            ...quotaHeaders,
-            ...(retryAfter !== undefined ? { "retry-after": String(retryAfter) } : {}),
-          },
-          body: JSON.stringify({ type: "error", error: { type: errorType, message: exhaustion === undefined ? error.message : exhaustedMessage(exhaustion) } }),
-        };
-      }
-      const errMsg = error instanceof Error ? error.message : String(error);
-      return {
-        status: HTTP_STATUS.badGateway,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "error", error: { type: "api_error", message: errMsg } }),
-      };
-    }
-
     const quotaHeaders = unifiedAntigravityQuotaHeaders({
-      quota: ports.quotaSource?.(),
+      quota: liveQuota(nowMs),
       rejected: false,
       nowMs,
       model: translated.model,

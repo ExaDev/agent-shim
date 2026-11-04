@@ -99,6 +99,79 @@ export function antigravityQuotaPressure(quota: AntigravityQuotaMap | undefined,
   return pressures.length === 0 ? undefined : Math.min(...pressures);
 }
 
+/** A model the backend has refused as spent, and the instant (epoch milliseconds) its allowance lifts. */
+export interface LearnedExhaustion {
+  readonly model: string;
+  readonly resetAtMs: number;
+}
+
+/** What the backend's RetryInfo gives a delay as: seconds with a fraction and an `s`, such as `12525.914521644s`. */
+const RETRY_DELAY = /^(?<seconds>\d+(?:\.\d+)?)s$/u;
+
+/**
+ * Reads a 429 answer that says a model's allowance is spent: its `QUOTA_EXHAUSTED` ErrorInfo names the model and the timestamp the allowance lifts (or, failing that, a RetryInfo delay counted from `nowMs`). Undefined for any other answer, a per-minute throttle included, which says nothing about an allowance.
+ */
+export function parseQuotaExhaustion(body: string, nowMs: number): LearnedExhaustion | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  const details = isRecord(parsed) && isRecord(parsed.error) && Array.isArray(parsed.error.details) ? parsed.error.details : [];
+  let model: string | undefined;
+  let resetAtMs: number | undefined;
+  for (const detail of details) {
+    if (!isRecord(detail)) {
+      continue;
+    }
+    if (detail.reason === "QUOTA_EXHAUSTED" && isRecord(detail.metadata)) {
+      const named = detail.metadata.model;
+      const stamp = typeof detail.metadata.quotaResetTimeStamp === "string" ? Date.parse(detail.metadata.quotaResetTimeStamp) : Number.NaN;
+      model = typeof named === "string" && named !== "" ? named : undefined;
+      resetAtMs = Number.isNaN(stamp) ? undefined : stamp;
+    } else if (typeof detail.retryDelay === "string" && resetAtMs === undefined) {
+      const seconds = RETRY_DELAY.exec(detail.retryDelay)?.groups?.seconds;
+      resetAtMs = seconds === undefined ? undefined : nowMs + Math.ceil(Number(seconds) * MS_PER_SECOND);
+    }
+  }
+  return model === undefined || resetAtMs === undefined ? undefined : { model, resetAtMs };
+}
+
+/** The bucket a spent model's allowance stands in: Gemini 4 Argon's own weekly one, else the five-hour or the weekly bucket of its family, told apart by how far off the allowance lifts (a window of five hours cannot lift later than that). */
+function bucketKeyOf(model: string, resetInSeconds: number): string {
+  const lower = model.toLowerCase();
+  if (lower.includes("argon")) {
+    return "gemini-argon-wtu-weekly";
+  }
+  const withinFiveHours = resetInSeconds <= FIVE_HOUR_PERIOD_SECONDS;
+  if (lower.includes("gemini")) {
+    return withinFiveHours ? "gemini-5h" : "gemini-weekly";
+  }
+  return withinFiveHours ? "3p-5h" : "3p-weekly";
+}
+
+/**
+ * The account's quota buckets with each model the backend has refused as spent marked spent until it lifts, so routing and the limit headers treat it as they treat a bucket the summary reports spent. A bucket the summary already reports spent for longer is kept. Returns `quota` itself when nothing is spent.
+ */
+export function quotaWithExhaustions(quota: AntigravityQuotaMap | undefined, exhaustions: ReadonlyMap<string, number>, nowMs: number): AntigravityQuotaMap | undefined {
+  const spent = [...exhaustions].filter(([, resetAtMs]) => resetAtMs > nowMs);
+  if (spent.length === 0) {
+    return quota;
+  }
+  const merged: Record<string, AntigravityQuotaBucket | undefined> = { ...quota };
+  for (const [model, resetAtMs] of spent) {
+    const resetIn = Math.ceil((resetAtMs - nowMs) / MS_PER_SECOND);
+    const key = bucketKeyOf(model, resetIn);
+    const known = merged[key];
+    if (known?.remaining_fraction === 0 && (known.reset_in_seconds ?? 0) >= resetIn) {
+      continue;
+    }
+    merged[key] = { remaining_fraction: 0, reset_in_seconds: resetIn };
+  }
+  return merged;
+}
+
 /** Utilization is a used fraction from 0 to 1 (`0.81` is 81% used), the form the real API's headers carry: an integer percent here reads as a vast fraction, which Claude Code clamps to an exhausted window. */
 function calculateUtilization(remainingFraction?: number): string | undefined {
   if (remainingFraction === undefined || !Number.isFinite(remainingFraction)) {

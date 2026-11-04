@@ -22,6 +22,7 @@ const FIVE_HOURS_SEC = 18_000;
 const SEVEN_DAYS_SEC = 604_800;
 /** How many seconds a request may take between the quota being read and the response being built. */
 const SLACK_SEC = 30;
+const THREE_HOURS_MS = 10_800_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -456,5 +457,107 @@ describe("createAntigravityRoute", () => {
     expect(res.headers["anthropic-ratelimit-unified-status"]).toBe("allowed");
     expect(res.headers["anthropic-ratelimit-unified-5h-utilization"]).toBe("0.200");
     expect(res.headers["anthropic-ratelimit-unified-7d-utilization"]).toBe("0.050");
+  });
+});
+
+describe("createAntigravityRoute when the backend refuses a model as spent", () => {
+  const SPENT_UNTIL_MS = TEST_NOW_MS + THREE_HOURS_MS;
+  const spentAnswer = (model: string): Response =>
+    new Response(
+      JSON.stringify({
+        error: {
+          code: 429,
+          message: "Individual quota reached. Please upgrade your subscription to increase your limits.",
+          status: "RESOURCE_EXHAUSTED",
+          details: [
+            { "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "QUOTA_EXHAUSTED", domain: "cloudcode-pa.googleapis.com", metadata: { model, quotaResetTimeStamp: new Date(SPENT_UNTIL_MS).toISOString() } },
+          ],
+        },
+      }),
+      { status: HTTP_STATUS.tooManyRequests },
+    );
+  const answered = (): Response => new Response('data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}\n\n', { status: 200, headers: { "Content-Type": "text/event-stream" } });
+  const modelOf = (input: Parameters<typeof fetch>[0]): string => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    return /models\/(?<model>[^:]+):/u.exec(url)?.groups?.model ?? "";
+  };
+  const askFor = async (route: ReturnType<typeof createAntigravityRoute>, model: string, session = "session-1"): Promise<{ status: number; headers: Record<string, string> }> => {
+    const res = await route({ method: "POST", path: "/providers/ag/v1/messages", body: JSON.stringify({ model, max_tokens: 1024, metadata: { user_id: session }, messages: [{ role: "user", content: "Hi" }] }), signal: new AbortController().signal });
+    return { status: res.status, headers: res.headers };
+  };
+
+  it("serves the request from the next candidate and leaves the spent model until its allowance lifts, though the quota summary never measured it", async () => {
+    const asked: string[] = [];
+    const route = createAntigravityRoute({
+      loadProvider: async () => await Promise.resolve({ ok: true, config: DEFAULT_CLOUD_CONFIG, token: "key" }),
+      fetchFn: async (input) => {
+        const model = modelOf(input);
+        asked.push(model);
+        return await Promise.resolve(model === "gemini-3.8-flash-low" ? spentAnswer(model) : answered());
+      },
+      now: () => TEST_NOW_MS,
+    });
+
+    expect((await askFor(route, "claude-haiku-5-5")).status).toBe(HTTP_STATUS.ok);
+    expect(asked).toEqual(["gemini-3.8-flash-low", "gemini-4-argon-low"]);
+
+    asked.length = 0;
+    expect((await askFor(route, "claude-haiku-5-5")).status).toBe(HTTP_STATUS.ok);
+    expect(asked).toEqual(["gemini-4-argon-low"]);
+  });
+
+  it("goes back to a model once the instant its allowance lifts has passed", async () => {
+    let nowMs = TEST_NOW_MS;
+    const asked: string[] = [];
+    const route = createAntigravityRoute({
+      loadProvider: async () => await Promise.resolve({ ok: true, config: DEFAULT_CLOUD_CONFIG, token: "key" }),
+      fetchFn: async (input) => {
+        const model = modelOf(input);
+        asked.push(model);
+        return await Promise.resolve(model === "gemini-3.8-flash-low" && nowMs < SPENT_UNTIL_MS ? spentAnswer(model) : answered());
+      },
+      now: () => nowMs,
+    });
+
+    await askFor(route, "claude-haiku-5-5");
+    nowMs = SPENT_UNTIL_MS + 1;
+    asked.length = 0;
+    // A session already moved to the next candidate stays there while it has quota (see the routing memory), so another session shows the model is chosen again.
+    await askFor(route, "claude-haiku-5-5", "session-2");
+    expect(asked).toEqual(["gemini-3.8-flash-low"]);
+  });
+
+  it("answers the last refusal, with the instant it lifts, when every model has been refused, and asks each model only once", async () => {
+    const asked: string[] = [];
+    const route = createAntigravityRoute({
+      loadProvider: async () => await Promise.resolve({ ok: true, config: DEFAULT_CLOUD_CONFIG, token: "key" }),
+      fetchFn: async (input) => {
+        const model = modelOf(input);
+        asked.push(model);
+        return await Promise.resolve(spentAnswer(model));
+      },
+      now: () => TEST_NOW_MS,
+    });
+
+    const res = await askFor(route, "claude-haiku-5-5");
+    expect(res.status).toBe(HTTP_STATUS.tooManyRequests);
+    expect(new Set(asked).size).toBe(asked.length);
+    expect(Number(res.headers["retry-after"])).toBeGreaterThan(0);
+    expect(res.headers["anthropic-ratelimit-unified-status"]).toBe("rejected");
+  });
+
+  it("does not take a per-minute throttle for a spent allowance", async () => {
+    const asked: string[] = [];
+    const route = createAntigravityRoute({
+      loadProvider: async () => await Promise.resolve({ ok: true, config: DEFAULT_CLOUD_CONFIG, token: "key" }),
+      fetchFn: async (input) => {
+        asked.push(modelOf(input));
+        return await Promise.resolve(new Response(JSON.stringify({ error: { code: 429, status: "RESOURCE_EXHAUSTED", details: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "RATE_LIMIT_EXCEEDED", metadata: { model: "gemini-3.8-flash-low" } }] } }), { status: HTTP_STATUS.tooManyRequests }));
+      },
+      now: () => TEST_NOW_MS,
+    });
+
+    expect((await askFor(route, "claude-haiku-5-5")).status).toBe(HTTP_STATUS.tooManyRequests);
+    expect(asked).toEqual(["gemini-3.8-flash-low"]);
   });
 });
