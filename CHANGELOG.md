@@ -1,3 +1,19 @@
+## [11.84.0](https://github.com/ExaDev/agent-shim/compare/v11.83.8...v11.84.0) (2026-11-04)
+
+### Features
+
+* discover models for the serving Codex account ([b89c3a9](https://github.com/ExaDev/agent-shim/commit/b89c3a9a9fb10d187c21d9337adecb79c8177135))
+
+### Bug Fixes
+
+* allow catalogue refresh child startup grace ([359bb48](https://github.com/ExaDev/agent-shim/commit/359bb480945f3f4b77a8a6be2f756bb74151b50f))
+* authenticate the successor before selecting its catalogue ([105e8d0](https://github.com/ExaDev/agent-shim/commit/105e8d0c2bdb806c9adcaaf18f9c00ebde3c71cb))
+* recheck a door replaced before catalogue readiness ([b25e3e9](https://github.com/ExaDev/agent-shim/commit/b25e3e92b09517b05a107aced81b082d2812858c))
+
+### Tests
+
+* verify catalogue control authentication ([a7d0313](https://github.com/ExaDev/agent-shim/commit/a7d03134ed5e69cbbff07ef37a5fa96d12adc6d0))
+
 ## [11.83.8](https://github.com/ExaDev/agent-shim/compare/v11.83.7...v11.83.8) (2026-11-04)
 
 ### Bug Fixes
