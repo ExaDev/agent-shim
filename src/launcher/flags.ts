@@ -184,7 +184,7 @@ export interface BuildEnvParams {
   /** The launching identity's own resolved credential, when it has a credential block and no provider was selected. A provider's credential authenticates against the provider's endpoint, so the identity's is never applied alongside one. */
   readonly identityCredential?: ResolvedCredential;
   /** The front door this launch routes through, when one is engaged (a provider is selected, or headroom resolved on). It is what the child talks to: its CONNECT surface for every session, provider and OAuth alike, since the door decides where the traffic goes from there. */
-  readonly frontdoor?: FrontDoorUp;
+  readonly frontdoor?: Pick<FrontDoorUp, "port" | "connectPort" | "trustBundlePath" | "sessionToken">;
   /** The headroom daemon this launch's requests must pass through (as the door's headroom hop), when headroom resolved on. The child never talks to it directly. */
   readonly headroom?: HeadroomUp;
   /** The per-launch session id, stamped into the session header the door identifies this launch's requests by. */

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { CREDENTIAL_UNAVAILABLE_EXIT } from "./credential";
+import { catalogueCredentialFingerprint } from "./codex/catalogueCredential";
 import { prepareLaunch, type RunLauncherParams } from "./launcher";
 import type { SupervisedLaunch } from "./launcher/claudeSession";
 import {
@@ -495,6 +496,8 @@ describe("runLauncher provider selection", () => {
   });
 });
 
+const TEST_CATALOGUE_GENERATION = "10000000-0000-4000-8000-000000000001";
+
 describe("runLauncher /model picker", () => {
   const codexProvider = {
     kind: "codex",
@@ -512,11 +515,16 @@ describe("runLauncher /model picker", () => {
   function spawnedWith(provider: object, argv: readonly string[], supervised?: SupervisedLaunch, extraFiles: Record<string, unknown> = {}): { readonly args: readonly string[] | undefined; readonly infos: readonly string[] } {
     const spawn = fakeSpawn();
     const log = fakeLog();
+    const codexFiles = "kind" in provider && provider.kind === "codex" ? {
+      [`${FAKE_HOME}/.codex/auth.json`]: JSON.stringify({ tokens: { access_token: "cli-account", account_id: "workspace" } }),
+      [`${paths.frontdoorDir}/codex-homes/500.json`]: JSON.stringify({ codexHome: `${FAKE_HOME}/.codex`, generation: TEST_CATALOGUE_GENERATION }),
+      [`${FAKE_HOME}/.agent-shim/catalogues/supervisors/500/${TEST_CATALOGUE_GENERATION}/p.json`]: JSON.stringify({ fetchedAt: 1, url: "https://example.test", models: [{ id: "big" }, { id: "mid" }, { id: "small" }], credentialFingerprint: catalogueCredentialFingerprint(true, "cli-account", "workspace"), supervisorPid: 500 }),
+    } : {};
     launch({
       paths,
-      fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/p.json`]: provider, ...extraFiles }),
+      fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/p.json`]: provider, ...codexFiles, ...extraFiles }),
       spawn,
-      proc: fakeProc({ CODEX_TOKEN: "tok", Z_API_TOKEN: "tok" }, ["--provider", "p", ...argv]),
+      proc: fakeProc({ CODEX_TOKEN: "tok", Z_API_TOKEN: "tok", CODEX_HOME: `${FAKE_HOME}/.codex` }, ["--provider", "p", ...argv]),
       log,
       resolveClaudeBinary: () => discovered,
       ...(supervised === undefined ? {} : { supervised }),
@@ -547,12 +555,35 @@ describe("runLauncher /model picker", () => {
   describe("a provider's fetched catalogue", () => {
     const catalogued = { ...plainProvider, catalogue: { tier: "sonnet", exclude: ["*air"] } };
     const cacheFile = `${FAKE_HOME}/.agent-shim/catalogues/p.json`;
+    const codexCacheFile = `${FAKE_HOME}/.agent-shim/catalogues/supervisors/500/${TEST_CATALOGUE_GENERATION}/p.json`;
     const cache = JSON.stringify({ fetchedAt: 1, url: "https://api.z.ai/api/anthropic/v1/models", models: [{ id: "glm-5" }, { id: "glm-air" }, { id: "glm-4" }] });
 
     it("lists the models the door last fetched, after the provider's own filters", () => {
       const { args } = spawnedWith(catalogued, ["--print"], undefined, { [cacheFile]: cache });
 
       expect(settingsIn(args)).toMatchObject({ modelPicker: { replaceBuiltInOptions: true, options: [{ model: "p/glm-4" }, { model: "p/glm-5" }] } });
+    });
+
+    it("does not offer a Codex catalogue fetched for a different account", () => {
+      const stale = JSON.stringify({ fetchedAt: 1, url: "https://example.test", models: [{ id: "stale-model" }], credentialFingerprint: "old-account", supervisorPid: 500 });
+      const auth = JSON.stringify({ tokens: { access_token: "current-account", account_id: "workspace" } });
+      const { args } = spawnedWith(codexProvider, ["--print"], undefined, { [codexCacheFile]: stale, [`${FAKE_HOME}/.codex/auth.json`]: auth });
+      expect(settingsIn(args)).toBeUndefined();
+    });
+
+    it("does not use the CLI account to validate a separate ChatGPT sign-in catalogue", () => {
+      const signin = { ...codexProvider, codex: { ...codexProvider.codex, login: "chatgpt-sign-in" } };
+      const stale = JSON.stringify({ fetchedAt: 1, url: "https://example.test", models: [{ id: "stale-model" }], credentialFingerprint: catalogueCredentialFingerprint(true, "cli-account", "workspace"), supervisorPid: 500 });
+      const auth = JSON.stringify({ tokens: { access_token: "cli-account", account_id: "workspace" } });
+      const signinAuth = JSON.stringify({ grant: { clientId: "client", sub: "subject", idToken: "id-token", accessToken: "different-account", refreshToken: "refresh", scopes: ["chatgpt.tokens.use.direct"], expiresAt: 1 } });
+      const { args } = spawnedWith(signin, ["--print"], undefined, { [codexCacheFile]: stale, [`${FAKE_HOME}/.codex/auth.json`]: auth, [paths.chatgptSignInFile]: signinAuth });
+      expect(settingsIn(args)).toBeUndefined();
+    });
+
+    it("does not offer unverified Codex models when the selected account has no credentials", () => {
+      const stale = JSON.stringify({ fetchedAt: 1, url: "https://example.test", models: [{ id: "stale-model" }], credentialFingerprint: "old-account", supervisorPid: 500 });
+      const { args } = spawnedWith(codexProvider, ["--print"], undefined, { [codexCacheFile]: stale, [`${FAKE_HOME}/.codex/auth.json`]: undefined });
+      expect(settingsIn(args)).toBeUndefined();
     });
 
     it("keeps Claude Code's own picker until a catalogue has been fetched", () => {
@@ -584,5 +615,10 @@ describe("runLauncher /model picker", () => {
 
     expect(args).toEqual(["--settings", "mine.json", "--print"]);
     expect(infos.some((line) => line.includes("--settings was passed"))).toBe(true);
+  });
+
+  it("does not report a suppressed picker when no provider models are available", () => {
+    const { infos } = spawnedWith(plainProvider, ["--settings", "mine.json", "--print"]);
+    expect(infos.some((line) => line.includes("--settings was passed"))).toBe(false);
   });
 });

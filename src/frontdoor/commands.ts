@@ -1,4 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import os from "node:os";
+import { savedCatalogueFingerprint } from "../codex/catalogueCredential";
 import path from "node:path";
 import fs from "node:fs";
 import type net from "node:net";
@@ -8,7 +10,7 @@ import { HTTP_STATUS } from "../codex/http";
 import { readGlobalConfig } from "../configProfilesStore";
 import { FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES, type Job } from "../config/schema";
 import { parseDuration } from "../resolve/conditions";
-import { collectCodexStatus, createCodexRoutePorts, runCodexLogout } from "../codex/commands";
+import { codexHome, collectCodexStatus, createCodexRoutePorts, runCodexLogout } from "../codex/commands";
 import type { LayoutPaths } from "../paths";
 import { realSessionFs } from "../agents/realFs";
 import { collectSessionList, showSession } from "../agents/sessions";
@@ -27,6 +29,7 @@ import { loadPoolMembers } from "../usage/poolPick";
 import { createRealAnthropicUsageRefresher } from "../usage/realAnthropicUsageProbe";
 import { runChild } from "../usage/childRun";
 import { createCatalogueKeeper } from "../catalogueKeeper";
+import { pruneAbandonedCatalogueGenerations } from "./catalogueCleanup";
 import { CATALOGUE_REFRESH_TIMEOUT_MS, catalogueCachePath } from "../providerCatalogue";
 import { createProviderCanonicaliser, loadProviderAliases } from "../providerAliases";
 import { listProviders, providerFileDefined } from "../providersStore";
@@ -84,7 +87,7 @@ import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_COOLDOWN_CAP_MS, DOOR_RESPAWN_DELAY_EN
 import { PROBE_TIMEOUT_MS } from "./probe";
 import { readFrontDoorListeners, realFrontDoorListenerProbes } from "./listenerReadings";
 import { collectFrontDoorStatus, formatFrontDoorListeners, formatFrontDoorStatus, headroomSocketTarget } from "./status";
-import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, removeFrontDoorSession, writeFrontDoorSession } from "./state";
+import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, removeFrontDoorSession, writeCatalogueStatus, writeFrontDoorSession } from "./state";
 import { declareThisProcessTheFrontDoor } from "./selfIdentity";
 import { awaitPidExit, runFrontDoorSupervisor, watchedInstallEntry, type FrontDoorSupervisorPorts, type OwnExecutableStat } from "./supervisor";
 import { createAccountReader } from "../usage/account";
@@ -181,6 +184,7 @@ interface DoorLifecycle {
  */
 /** `respawnGeneration` is the generation this door was started as (see `readRespawnGeneration`), threaded in because the env it came from is scrubbed before the supervisor's lazy `startWatchdog` closure, or a failed start's `respawnChain.startNext`, would read it. */
 function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: number, lifecycle: DoorLifecycle, trackTunnels: (count: () => number) => void): FrontDoorSupervisorPorts {
+  const catalogueGeneration = randomUUID();
   const log = (line: string): void => {
     appendDoorLog(paths, `frontdoor ${String(process.pid)}: ${line}`);
   };
@@ -425,16 +429,17 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
   });
   // A provider that opted into a model catalogue is fetched in a child process, never in the door, for the same reason the window opener is: the door's event loop answers every session. The first tick runs at start, so a new catalogue does not wait a period, and a fresh cache costs no request.
   const catalogueKeeper = createCatalogueKeeper({
+    supervisorPid: process.pid,
+    publishStatus: (name, status, fingerprint) => { writeCatalogueStatus(realFarmFs, paths, process.pid, catalogueGeneration, name, status, fingerprint, Date.now()); },
     providers: () => listProviders(paths, (name, message) => { log(`catalogue keeper skipped provider ${name}: ${message}`); }).map((entry) => [entry.name, entry.provider] as const),
-    readCache: (name) => realFsPort.readFileUtf8(catalogueCachePath(paths, name)),
+    readCache: (name, provider) => realFsPort.readFileUtf8(provider.kind === "codex" ? catalogueCachePath(paths, name, process.pid, catalogueGeneration) : catalogueCachePath(paths, name)),
+    credentialFingerprint: (provider) => provider.kind === "codex" ? savedCatalogueFingerprint(provider, paths, process.env, os.homedir(), realFsPort.readFileUtf8) : undefined,
     refresh: async (name) => {
-      await runChild({ paths, args: ["__refresh-catalogue", name], timeoutMs: CATALOGUE_REFRESH_TIMEOUT_MS });
+      await runChild({ paths, args: ["__refresh-catalogue", name, String(process.pid), catalogueGeneration], timeoutMs: CATALOGUE_REFRESH_TIMEOUT_MS });
     },
     nowMs: () => Date.now(),
     log,
   });
-  catalogueKeeper.tick();
-  everyFreshnessInterval(catalogueKeeper.tick);
   const headroomDecision = createHeadroomDecision(createRoutingSettingReader(paths));
   // The usage store folds each record into the door's per-target observations through its `onRecord` above, so recording a finished record needs nothing beside the store.
   const recordUsage = (record: UsageRecord): void => {
@@ -492,6 +497,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     paths,
     registry: sessionRegistry,
     ownPid: process.pid,
+    codexHome: path.resolve(codexHome(process.env, os.homedir())),
+    catalogueGeneration,
     now: () => Date.now(),
     sleep: async (ms) => {
       await new Promise<void>((resolve) => {
@@ -557,6 +564,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
           spawnSelfDetached(paths, ["frontdoor", "restart"]);
         },
         checkForUpdate: async () => await checkForUpdate(paths),
+        refreshCatalogues: catalogueKeeper.tick,
         codexStatus: () => collectCodexStatus(realFarmFs, paths, realIsProcessRunning),
         codexLogout: async () => await runCodexLogout(paths),
       };
@@ -725,6 +733,15 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     // The launch lifecycle publisher over the same backbone the typed API serves: the tick's registry facts go in here, and the door's own register, prune and end moments come out as source-tagged events.
     observeLaunchRegistry: createLaunchEventPublisher(doorEvents, () => Date.now()).observe,
     doorHealth,
+    onServing: () => {
+      catalogueKeeper.tick();
+      everyFreshnessInterval(catalogueKeeper.tick);
+      everyFreshnessInterval(() => {
+        void pruneAbandonedCatalogueGenerations(realFarmFs, paths, process.pid, catalogueGeneration, realRunningAmong).catch((error: unknown) => {
+          log(`catalogue cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+        });
+      });
+    },
     retire: lifecycle.retire,
     handover: {
       requested: lifecycle.handoverRequested,

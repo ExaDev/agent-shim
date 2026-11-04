@@ -23,6 +23,15 @@ describe("providerModelRows", () => {
     expect(rows.map((row) => row.description)).toEqual(["Serves the fable and opus tiers", "Serves the sonnet tier", "Serves the haiku tier"]);
   });
 
+  it("offers the Codex models in the account catalogue, including models outside the tier mappings", () => {
+    const rows = providerModelRows(codex({ models: { fable: "big", opus: "big", sonnet: "mid", haiku: "small" } }), [{ id: "big" }, { id: "new-model" }]);
+    expect(rows.map((row) => row.model)).toEqual(["big", "new-model"]);
+  });
+
+  it("does not offer tier mappings when the account catalogue is explicitly empty", () => {
+    expect(providerModelRows(codex({ models: { fable: "big", opus: "big", sonnet: "mid", haiku: "small" } }), [])).toEqual([]);
+  });
+
   it("borrows each row's client-side handling from the highest tier that reaches it", () => {
     const rows = providerModelRows(codex({ models: { fable: "big", opus: "big", sonnet: "mid", haiku: "small" } }));
     expect(rows.map((row) => row.behavesAs)).toEqual(["claude-fable-5-1", "claude-sonnet-5-5", "claude-haiku-5-5"]);

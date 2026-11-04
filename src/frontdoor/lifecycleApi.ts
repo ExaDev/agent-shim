@@ -1,6 +1,7 @@
 import { ORPCError } from "@orpc/client";
 import { openapi } from "@orpc/openapi";
 import type { RouterClient } from "@orpc/server";
+import { z } from "zod";
 
 import { UpdateChannelError, UpdateConflictError, UpdateDownloadError, type UpdateReport } from "../update/update";
 import { FrontDoorRestartOutputSchema, UpdateCheckOutputSchema } from "./controlSchemas";
@@ -22,6 +23,7 @@ export interface LifecycleApiDeps {
   readonly restartDoor: () => void;
   /** The update check as `agent-shim update --check` makes it: nothing is downloaded or changed. */
   readonly checkForUpdate: () => Promise<UpdateReport>;
+  readonly refreshCatalogues: () => void;
 }
 
 const FRONTDOOR_API_TAG = "frontdoor";
@@ -32,6 +34,10 @@ export function createLifecycleApiRouter(deps: LifecycleApiDeps) {
   const authed = doorApiAuth(deps.expectedToken);
   return {
     frontdoor: {
+      refreshCatalogues: authed
+        .meta(openapi({ method: "POST", path: "/rest/frontdoor/catalogues/refresh", summary: "Request a catalogue refresh tick", tags: [FRONTDOOR_API_TAG] }))
+        .output(z.strictObject({ requested: z.literal(true) }))
+        .handler(() => { deps.refreshCatalogues(); return { requested: true as const }; }),
       restart: authed
         .meta(openapi({ method: "POST", path: "/rest/frontdoor/restart", summary: "Replace the serving front door in place", description: "Answers with the pid of the door being replaced, then replaces it. The replacement is a new generation with its own control token: the caller reopens its client from the state root once the door's supervisor pid differs from the one returned.", tags: [FRONTDOOR_API_TAG] }))
         .output(FrontDoorRestartOutputSchema)

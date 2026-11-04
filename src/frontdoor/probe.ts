@@ -54,6 +54,38 @@ setTimeout(() => { request.destroy(new Error("no answer within " + String(timeou
 request.on("error", (error) => finish(failed, (error.code ? error.code + ": " : "") + error.message));
 `;
 
+const CATALOGUE_REQUEST_SOURCE = `
+const { workerData } = require("node:worker_threads");
+const https = require("node:https");
+const { port, ca, token, timeoutMs, shared, ok, failed, headerSlots } = workerData;
+const header = new Int32Array(shared, 0, headerSlots);
+const reason = new Uint8Array(shared, headerSlots * 4);
+let done = false;
+const finish = (verdict, message) => {
+  if (done) return;
+  done = true;
+  const bytes = Buffer.from(String(message), "utf8").subarray(0, reason.length);
+  reason.set(bytes);
+  Atomics.store(header, 1, bytes.length);
+  Atomics.store(header, 0, verdict);
+  Atomics.notify(header, 0);
+};
+const request = https.request({ host: "127.0.0.1", port, path: "/__agent-shim/orpc/rest/frontdoor/catalogues/refresh", method: "POST", headers: { authorization: "Bearer " + token }, ca: [ca], agent: false }, (response) => {
+  response.resume();
+  response.on("end", () => response.statusCode === 200 ? finish(ok, "") : finish(failed, "catalogue refresh request returned HTTP " + String(response.statusCode)));
+  response.on("error", (error) => finish(failed, error.message));
+});
+setTimeout(() => { request.destroy(new Error("no answer within " + String(timeoutMs) + "ms")); }, timeoutMs);
+request.on("error", (error) => finish(failed, (error.code ? error.code + ": " : "") + error.message));
+request.end();
+`;
+
+/** Requests a catalogue keeper tick through the authenticated front-door control API. */
+export function requestCatalogueRefreshSync(port: number, caPem: string, token: string, timeoutMs: number = PROBE_TIMEOUT_MS): ListenerVerdict {
+  refuseToBlockInRole("a synchronous catalogue refresh request");
+  return runProbeWorker(CATALOGUE_REQUEST_SOURCE, { port, ca: caPem, token }, timeoutMs);
+}
+
 /**
  * Authenticates the front door's provider listener before a launch trusts it: a TLS handshake that must chain to agent-shim's CA (whose key only this user can read) for 127.0.0.1, then a healthy answer. A process that merely holds the port (a stale state file's port re-bound by someone else, or a reused pid's listener) cannot complete that handshake, so it fails here and the launch never hands its child that address.
  *

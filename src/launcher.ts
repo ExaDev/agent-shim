@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import os from "node:os";
+import { parseCatalogueBinding, savedCatalogueFingerprint } from "./codex/catalogueCredential";
 import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
 
@@ -20,7 +22,8 @@ import { holdBeforeLaunch, LAUNCH_CANCELLED_EXIT, type HoldOutcome, type HoldPor
 import type { Candidate } from "./usage/pick";
 import { decisionRows, farmRow, noteRow, pinnedVersionRow, routingRows, type BillingFacts, type LastRanAs } from "./launcher/launchReport";
 import { modelPickerSettingsFromRows, routedModelRows } from "./launcher/modelPicker";
-import { catalogueCachePath, parseCatalogueCache, type CatalogueModel } from "./providerCatalogue";
+import { readFrontDoorCodexRecord, readFrontDoorState } from "./frontdoor/state";
+import { catalogueBindingPath, catalogueCachePath, parseCatalogueCache, type CatalogueModel } from "./providerCatalogue";
 import { listProviderNames, loadProvider } from "./providersStore";
 import type { ModelsConfig, Provider } from "./config/schema";
 import { resolvePoolLaunch } from "./launcher/pool";
@@ -283,6 +286,7 @@ interface DecidedLaunch {
   readonly globalModels: ModelsConfig | undefined;
   readonly bin: string;
   readonly args: readonly string[];
+  readonly argsForSupervisor: (supervisorPid?: number) => { readonly args: readonly string[]; readonly pickerSuppressed: boolean };
   readonly decision: LaunchDecision;
 }
 
@@ -528,21 +532,41 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
   // The cascade's block when a cascade was read (a launch with a farm), else the global block alone; read through the launcher's own config port so a test sees its own filesystem.
   const globalModels = loadConfigFile(paths.globalConfigFile, GlobalConfigSchema, params.fs.readConfigFile)?.config.models;
   const models = launchCascade !== undefined && params.farm !== undefined ? cascadeModels : globalModels;
+  const callerSettings = hasSettingsArgument(parsedArgv.rest);
+  const startsSession = !isClaudeSubcommand(parsedArgv.rest);
+  const argsForSupervisor = (supervisorPid?: number): { readonly args: readonly string[]; readonly pickerSuppressed: boolean } => {
+  const door = readFrontDoorState(params.fs, paths.frontdoorStateFile);
+  const recordedPid = door?.port === undefined ? undefined : door.supervisorPid;
+  const doorPid = supervisorPid ?? (recordedPid !== undefined && proc.isProcessAlive(recordedPid) ? recordedPid : undefined);
+  const doorRecord = doorPid === undefined ? undefined : readFrontDoorCodexRecord(params.fs, paths.frontdoorDir, doorPid);
+  const doorHome = doorRecord?.codexHome;
+  const catalogueEnv = doorHome === undefined ? proc.env : { ...proc.env, CODEX_HOME: doorHome };
   // The provider list is read through the launch's own filesystem port (a broken file lists no rows rather than failing the launch; `doctor` is where a broken file is reported), never the process's real one, so a test's fake filesystem is what decides.
   const listedProviders = listProviderNames(fs.readdir, paths.providersDir).flatMap((name): readonly [string, Provider, readonly CatalogueModel[]][] => {
     try {
       const definition = loadProvider(paths.providersDir, name, fs);
-      return definition === undefined ? [] : [[name, definition, parseCatalogueCache(params.fs.readFileUtf8(catalogueCachePath(paths, name)))?.models ?? []]];
+      if (definition === undefined) return [];
+      const catalogueOwner = definition.kind === "codex" ? doorPid : undefined;
+      const generation = definition.kind === "codex" ? doorRecord?.generation : undefined;
+      const cache = parseCatalogueCache(params.fs.readFileUtf8(catalogueCachePath(paths, name, catalogueOwner, generation)));
+      if (definition.kind === "codex" && cache !== undefined && cache.supervisorPid !== doorPid) return [];
+      if (definition.kind === "codex" && doorPid !== undefined && doorRecord === undefined) return [];
+      if (definition.kind === "codex" && readOnly && cache !== undefined) {
+        const binding = parseCatalogueBinding(params.fs.readFileUtf8(catalogueBindingPath(paths, name, catalogueOwner, generation)));
+        const configuredHome = catalogueEnv.CODEX_HOME;
+        const home = configuredHome === undefined || configuredHome === "" ? path.join(os.homedir(), ".codex") : configuredHome;
+        const source = definition.codex?.login === "chatgpt-sign-in" ? paths.chatgptSignInFile : path.resolve(home, "auth.json");
+        const revision = params.fs.fileRevision?.(source);
+        if (binding === undefined || binding.fingerprint !== cache.credentialFingerprint || binding.source !== source || revision === undefined || revision !== binding.revision) return [];
+      }
+      const fingerprint = definition.kind === "codex" && !readOnly ? savedCatalogueFingerprint(definition, paths, catalogueEnv, os.homedir(), params.fs.readFileUtf8) : undefined;
+      if (definition.kind === "codex" && !readOnly && cache !== undefined && (fingerprint === undefined || cache.credentialFingerprint !== fingerprint)) return [];
+      return [[name, definition, cache?.models ?? []]];
     } catch {
       return [];
     }
   });
   const pickerSettings = modelPickerSettingsFromRows(routedModelRows(models ?? {}, listedProviders), selectedProvider !== undefined);
-  const callerSettings = hasSettingsArgument(parsedArgv.rest);
-  const startsSession = !isClaudeSubcommand(parsedArgv.rest);
-  if (startsSession && pickerSettings !== undefined && callerSettings) {
-    notes.push("--settings was passed, so /model keeps Claude Code's own model names");
-  }
   const launcherSettings = mergeSettings([params.supervised?.settings, callerSettings ? undefined : pickerSettings]);
 
   // A claude subcommand (`plugin install`, `auth status`) starts no session and rejects the options a session takes, so it receives the caller's arguments as typed.
@@ -553,6 +577,9 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
         passthrough: withLauncherSettings(params.supervised === undefined ? parsedArgv.rest : withSupervision(parsedArgv.rest, params.supervised), launcherSettings),
       })
     : [...parsedArgv.rest];
+  return { args, pickerSuppressed: startsSession && pickerSettings !== undefined && callerSettings };
+  };
+  const args = argsForSupervisor().args;
 
   // The configuration directory the child runs with, as `buildEnv` will set it: the identity's own directory unless the caller named one.
   const configDir = configDirEscapeHatchApplies || identityDecision.name === undefined ? env.CLAUDE_CONFIG_DIR : path.join(paths.identitiesDir, identityDecision.name);
@@ -589,6 +616,7 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
     globalModels,
     bin: discovered.path,
     args,
+    argsForSupervisor,
     decision,
   };
 }
@@ -625,7 +653,7 @@ function prepareRegisteredLaunch(params: PrepareLaunchParams, onRecorded: (remov
   const { paths, proc, log } = params;
   const { env } = proc;
   const decided = decideLaunch(params, false);
-  const { identityDecision, configProfileDecision, resolvedProvider, identityCredential, poolPick, poolRanking, lastRanAs, billing, notes, flags: resolvedFlags, args: finalArgv, configDirEscapeHatch: configDirEscapeHatchApplies, decision } = decided;
+  const { identityDecision, configProfileDecision, resolvedProvider, identityCredential, poolPick, poolRanking, lastRanAs, billing, notes, flags: resolvedFlags, configDirEscapeHatch: configDirEscapeHatchApplies, decision } = decided;
 
   // Everything the launch has to say about itself is collected as it is decided and printed as one block once the launch is ready to start, so what a person reads is a single table of facts and not lines scattered between the steps. Warnings follow it.
   const rows: ReportRow[] = [
@@ -721,6 +749,9 @@ function prepareRegisteredLaunch(params: PrepareLaunchParams, onRecorded: (remov
   const resolvedModels = decided.models ?? (decided.globalModels === undefined ? undefined : {});
   const sessionModels = isDeepStrictEqual(resolvedModels, decided.globalModels) ? undefined : resolvedModels;
   const frontDoor = frontDoorEngaged && frontDoorPort !== undefined ? frontDoorPort.ensure(env.NODE_EXTRA_CA_CERTS, { sessionId, ...(sessionModels === undefined ? {} : { models: sessionModels }) }) : undefined;
+  const doorBeforeCatalogues = readFrontDoorState(params.fs, paths.frontdoorStateFile);
+  const catalogueWarning = frontDoor === undefined ? undefined : frontDoorPort?.waitForCatalogues?.(frontDoor.supervisorPid);
+  if (catalogueWarning !== undefined) log.warn(catalogueWarning);
   if (frontDoor?.trustWarning !== undefined) {
     log.warn(frontDoor.trustWarning);
   }
@@ -760,11 +791,15 @@ function prepareRegisteredLaunch(params: PrepareLaunchParams, onRecorded: (remov
       registered();
     }
   };
+  const doorAfterCatalogues = readFrontDoorState(params.fs, paths.frontdoorStateFile);
+  const successor = doorAfterCatalogues?.supervisorPid !== doorBeforeCatalogues?.supervisorPid && doorAfterCatalogues?.port !== undefined && doorAfterCatalogues.supervisorPid !== undefined && proc.isProcessAlive(doorAfterCatalogues.supervisorPid) ? doorAfterCatalogues.supervisorPid : undefined;
+  const picker = decided.argsForSupervisor(successor ?? frontDoor?.supervisorPid);
+  if (picker.pickerSuppressed) rows.push(noteRow("--settings was passed, so /model keeps Claude Code's own model names"));
   rows.push(...notes.map(noteRow));
   log.report(rows);
   printDiagnosticLines(log, warnings, { errorsAsWarnings: false });
   const hold = (): HoldOutcome => holdBeforeLaunch({ delayMs: resolvedFlags.delayMs, pause: resolvedFlags.pause }, params.hold, log);
-  return { bin: decided.bin, args: finalArgv, env: finalEnv, sessionId, release, markChildStarted: updateCheck.markChildStarted, hold, decision };
+  return { bin: decided.bin, args: picker.args, env: finalEnv, sessionId, release, markChildStarted: updateCheck.markChildStarted, hold, decision };
 }
 
 /**

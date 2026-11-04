@@ -4,7 +4,10 @@ import type { HeadroomFs } from "../headroom/state";
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
 import { createLiveSessionRegistry } from "./liveSessionRegistry";
-import { listFrontDoorDirectRecords, listFrontDoorSessions, MAX_TCP_PORT, pruneMalformedFrontDoorDirectFiles, pruneDeadFrontDoorSessions, readFrontDoorState, removeFrontDoorSession, writeFrontDoorSession, writeFrontDoorState } from "./state";
+import * as state from "./state";
+import path from "node:path";
+import { catalogueCachePath } from "../providerCatalogue";
+import { listFrontDoorDirectRecords, listFrontDoorSessions, MAX_TCP_PORT, pruneMalformedFrontDoorDirectFiles, pruneDeadFrontDoorSessions, readFrontDoorCodexHome, readFrontDoorCodexRecord, readFrontDoorState, removeFrontDoorSession, writeFrontDoorCodexHome, writeFrontDoorSession, writeFrontDoorState } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 
@@ -12,8 +15,77 @@ const LIVE = 301;
 const DEAD = 302;
 const OWNER_ONLY_DIR = 0o700;
 const OWNER_ONLY_FILE = 0o600;
+
+it("isolates catalogue status by supervisor generation", () => {
+  const fs = createFakeFarmFs({});
+  const first = "10000000-0000-4000-8000-000000000001";
+  const second = "10000000-0000-4000-8000-000000000002";
+  if ("writeCatalogueStatus" in state && typeof state.writeCatalogueStatus === "function" && "readCatalogueStatus" in state && typeof state.readCatalogueStatus === "function") {
+    state.writeCatalogueStatus(fs, paths, LIVE, first, "codex", "running");
+    state.writeCatalogueStatus(fs, paths, LIVE, second, "codex", "failed");
+    expect(state.readCatalogueStatus(fs, paths, LIVE, first, "codex")?.status).toBe("running");
+    expect(state.readCatalogueStatus(fs, paths, LIVE, second, "codex")?.status).toBe("failed");
+  } else {
+    expect(undefined).toBe("running");
+  }
+});
+
+it("stores the account fingerprint with a catalogue status", () => {
+  const fs = createFakeFarmFs({});
+  const generation = "10000000-0000-4000-8000-000000000001";
+  state.writeCatalogueStatus(fs, paths, LIVE, generation, "codex", "failed", "fingerprint");
+  const file = path.join(path.dirname(catalogueCachePath(paths, "codex", LIVE, generation)), "codex.status.json");
+  expect(JSON.parse(fs.readFileUtf8(file) ?? "null")).toEqual({ status: "failed", fingerprint: "fingerprint" });
+});
+
+it("reads a catalogue status that contains an account fingerprint", () => {
+  const fs = createFakeFarmFs({});
+  const generation = "10000000-0000-4000-8000-000000000001";
+  state.writeCatalogueStatus(fs, paths, LIVE, generation, "codex", "failed", "fingerprint");
+  expect(state.readCatalogueStatus(fs, paths, LIVE, generation, "codex")?.status).toBe("failed");
+});
+
+it("returns the account fingerprint alongside catalogue status", () => {
+  const fs = createFakeFarmFs({});
+  const generation = "10000000-0000-4000-8000-000000000001";
+  state.writeCatalogueStatus(fs, paths, LIVE, generation, "codex", "failed", "fingerprint");
+  expect(state.readCatalogueStatus(fs, paths, LIVE, generation, "codex")).toEqual({ status: "failed", fingerprint: "fingerprint" });
+});
+
+it("stores when the catalogue status was recorded", () => {
+  const fs = createFakeFarmFs({});
+  const generation = "10000000-0000-4000-8000-000000000001";
+  const recordedAt = 123;
+  state.writeCatalogueStatus(fs, paths, LIVE, generation, "codex", "failed", "fingerprint", recordedAt);
+  expect(state.readCatalogueStatus(fs, paths, LIVE, generation, "codex")).toEqual({ status: "failed", fingerprint: "fingerprint", recordedAt });
+});
 /** A recognisable capability, so an assertion can search every serialised output for it. */
 const SECRET_CAPABILITY = "capability-that-must-never-be-listed";
+
+it("records each supervisor's Codex home independently", () => {
+  const fs = createFakeFarmFs({});
+  writeFrontDoorCodexHome(fs, paths.frontdoorDir, LIVE, "/accounts/first", "10000000-0000-4000-8000-000000000001");
+  writeFrontDoorCodexHome(fs, paths.frontdoorDir, DEAD, "/accounts/second", "10000000-0000-4000-8000-000000000002");
+  expect(readFrontDoorCodexHome(fs, paths.frontdoorDir, LIVE)).toBe("/accounts/first");
+  expect(readFrontDoorCodexHome(fs, paths.frontdoorDir, DEAD)).toBe("/accounts/second");
+});
+
+it("records the unique generation alongside a supervisor's Codex home", () => {
+  const fs = createFakeFarmFs({});
+  const generation = "10000000-0000-4000-8000-000000000001";
+  writeFrontDoorCodexHome(fs, paths.frontdoorDir, LIVE, "/accounts/first", generation);
+  expect(readFrontDoorCodexRecord(fs, paths.frontdoorDir, LIVE)).toEqual({ codexHome: "/accounts/first", generation });
+});
+
+it("does not accept a supervisor record without a generation", () => {
+  const fs = createFakeFarmFs({ [`${paths.frontdoorDir}/codex-homes/${String(LIVE)}.json`]: JSON.stringify({ codexHome: "/accounts/first" }) });
+  expect(readFrontDoorCodexRecord(fs, paths.frontdoorDir, LIVE)).toBeUndefined();
+});
+
+it("does not trust a relative Codex home from a supervisor record", () => {
+  const fs = createFakeFarmFs({ [`${paths.frontdoorDir}/codex-homes/${String(LIVE)}.json`]: JSON.stringify({ codexHome: "relative-home" }) });
+  expect(readFrontDoorCodexHome(fs, paths.frontdoorDir, LIVE)).toBeUndefined();
+});
 
 describe("front-door session registry", () => {
   it("lists a registered launch even though its record carries a capability token", () => {

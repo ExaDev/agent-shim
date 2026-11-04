@@ -142,11 +142,15 @@ function catalogueRows(provider: Provider, models: readonly CatalogueModel[]): r
 /**
  * The real models a provider serves, as `/model` rows: the ones its tier settings reach, then the ones its file declares in `pickerModels`, which replace a derived row for the same model, then the ones its catalogue last listed (an `http` provider that opted into one), each only where an earlier part has not already named it. Empty when the provider names none, in which case the picker keeps its built-in lineup.
  */
-export function providerModelRows(provider: Provider, catalogue: readonly CatalogueModel[] = []): readonly ModelPickerRow[] {
+export function providerModelRows(provider: Provider, catalogue?: readonly CatalogueModel[]): readonly ModelPickerRow[] {
   const derived = provider.kind === "codex" ? codexRows(provider) : provider.kind === "antigravity" ? antigravityRows(provider) : provider.kind === "router" ? [] : httpRows(provider);
+  if (provider.kind === "codex" && catalogue !== undefined) {
+    return catalogue.map((model) => derived.find((row) => row.model === model.id) ?? { model: model.id, label: labelOf(model.id), description: "Listed by Codex", behavesAs: TIER_BEHAVES_AS.sonnet });
+  }
   const declared = (provider.kind === "router" ? [] : (provider.pickerModels ?? []).map(declaredRow));
   const declaredModels = new Set(declared.map((row) => row.model));
   const named = [...derived.filter((row) => !declaredModels.has(row.model)), ...declared];
+  if (catalogue === undefined) return named;
   // A model the provider's own settings name with the context marker is the same model its catalogue lists without it, so the marker is ignored when asking whether a row repeats one.
   const taken = new Set(named.map((row) => labelOf(row.model)));
   return [...named, ...catalogueRows(provider, catalogue).filter((row) => !taken.has(labelOf(row.model)))];
@@ -189,7 +193,7 @@ function safeExpand(name: string, models: ModelsConfig): readonly string[] {
 /**
  * The Claude Code settings, as the JSON `--settings` takes, that make `/model` list `provider`'s real models in place of Claude Code's own names, or `undefined` when the provider names none. The built-in lineup is replaced because it would show a Claude name for a model the provider serves under another. Choosing a row sends that model's name verbatim, which every translator passes through, so a person can pick a backend model directly instead of going through a tier.
  */
-export function modelPickerSettings(provider: Provider, catalogue: readonly CatalogueModel[] = []): string | undefined {
+export function modelPickerSettings(provider: Provider, catalogue?: readonly CatalogueModel[]): string | undefined {
   return modelPickerSettingsFromRows(providerModelRows(provider, catalogue), true);
 }
 

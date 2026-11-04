@@ -326,6 +326,7 @@ describe("realStatuslinePorts", () => {
       const longAgo = new Date(Date.now() - STALE_MS);
       fs.utimesSync(stale, longAgo, longAgo);
       fs.utimesSync(unrelated, longAgo, longAgo);
+      const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now());
       try {
         const own = realStatuslinePorts({}, state, OUTPUT_TEST_RUN_MS);
         expect(own.run(process.execPath, ["-p", "1"], os.tmpdir(), { outputInFile: true })).toBe("1\n");
@@ -335,6 +336,7 @@ describe("realStatuslinePorts", () => {
         expect(own.run("/nonexistent/program", [], os.tmpdir(), { outputInFile: true })).toBeUndefined();
         expect(fs.readdirSync(runRoot).sort()).toEqual(["agent-shim-run-fresh", "other"]);
       } finally {
+        clock.mockRestore();
         fs.rmSync(state, { recursive: true });
       }
     });

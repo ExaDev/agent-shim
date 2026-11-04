@@ -5,6 +5,8 @@ import type { FrontDoorSessionDetails } from "../frontdoor/state";
  * Filesystem operations the launcher needs, injected so no test in this project ever touches a real filesystem — consistent with the resolver core's own injected-facts approach in `src/resolve/types.ts`.
  */
 export interface FsPort {
+  /** Identifies the current file revision without reading its contents, when supported by the host. */
+  readonly fileRevision?: (filePath: string) => string | undefined;
   /** Reads a file's contents as UTF-8 text, or returns undefined when it does not exist. Used for plain-text files like the persisted active-identity file. */
   readonly readFileUtf8: (filePath: string) => string | undefined;
   /** Reads and parses a config file (JSON/YAML/JS via cosmiconfig in the real implementation), returning undefined when it does not exist. Mirrors `src/config/load.ts`'s own injected reader shape so `loadIdentity` can compose directly with `loadConfigFile`. */
@@ -118,6 +120,7 @@ export interface RunPort {
 export interface ProcPort {
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly argv: readonly string[];
+  readonly isProcessAlive: (pid: number) => boolean;
   readonly exit: (code: number) => never;
 }
 
@@ -166,6 +169,8 @@ export interface HeadroomPort {
  * Everything the launcher needs from the front-door daemon, injected like `HeadroomPort`: `ensure` brings the door up (spawning its detached supervisor when nothing authenticated is serving), registers this launch in its session registry and returns both listeners' loopback ports plus the CA bundle the child must trust; `release` removes that registration when the spawned `claude` exits.
  */
 export interface FrontDoorPort {
+  /** Wait for the initial catalogue work associated with the serving supervisor. */
+  readonly waitForCatalogues?: (supervisorPid: number) => string | undefined;
   /** `inheritedExtraCaCerts` is the parent environment's own `NODE_EXTRA_CA_CERTS`, which the returned trust bundle keeps (see `resolveTrustBundle`). `session` is what the launch tells the door about itself: its session id and the models block it resolved. */
   readonly ensure: (inheritedExtraCaCerts: string | undefined, session?: FrontDoorSessionDetails) => FrontDoorUp;
   readonly release: () => void;
@@ -173,6 +178,8 @@ export interface FrontDoorPort {
 
 /** The running front door one launch routed through, as `FrontDoorPort.ensure` reports it. */
 export interface FrontDoorUp {
+  /** The authenticated supervisor serving this launch. */
+  readonly supervisorPid: number;
   /** The loopback port the provider listener serves HTTPS on: the base URL every provider session points at. */
   readonly port: number;
   /** The loopback port the CONNECT surface listens on: what an OAuth launch points HTTPS_PROXY at. */

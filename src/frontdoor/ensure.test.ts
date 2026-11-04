@@ -165,6 +165,12 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean; readonly
 }
 
 describe("ensureFrontDoor", () => {
+  it("returns the supervisor that serves the registered launch", () => {
+    const world = makeWorld();
+    world.writeReadyState();
+    expect(ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports })).toMatchObject({ supervisorPid: SUPERVISOR_PID });
+  });
+
   it("spawns the supervisor when nothing is serving and waits for its ready state, then registers the session", () => {
     const world = makeWorld();
     const ensured = ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
@@ -219,6 +225,14 @@ describe("ensureFrontDoor", () => {
     world.writeReadyState(PORT, SUPERVISOR_PID, FRONT_DOOR_PROTOCOL - 1);
     ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
     expect(world.stops).toEqual([SUPERVISOR_PID]);
+    expect(world.spawns).toEqual([REPLACEMENT_PID]);
+  });
+
+  it("replaces a protocol 6 door that cannot publish catalogue generations", () => {
+    const world = makeWorld({ spawnedPid: REPLACEMENT_PID });
+    const protocolBeforeCatalogueGenerations = 6;
+    world.writeReadyState(PORT, SUPERVISOR_PID, protocolBeforeCatalogueGenerations);
+    ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
     expect(world.spawns).toEqual([REPLACEMENT_PID]);
   });
 

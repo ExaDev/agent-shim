@@ -54,6 +54,14 @@ function store(fs: FakeFs, respond: Parameters<typeof recordingFetch>[0] = () =>
 }
 
 describe("createSiwcStore credentials", () => {
+  it("uses an externally switched account on the next request", async () => {
+    const fs = fakeFs({ registeredClientId: REGISTERED, grant: grant() });
+    const { auth } = store(fs);
+    await expect(auth.current()).resolves.toMatchObject({ accessToken: "fake-access-old" });
+    fs.files.set(PATH, JSON.stringify({ registeredClientId: REGISTERED, grant: grant({ sub: "other-subject", accessToken: "fake-access-other" }) }));
+    await expect(auth.current()).resolves.toMatchObject({ accessToken: "fake-access-other" });
+  });
+
   it("serves the stored access token with no account id and no network call while it is fresh", async () => {
     const { auth, calls } = store(fakeFs({ registeredClientId: REGISTERED, grant: grant() }));
     await expect(auth.current()).resolves.toEqual({ accessToken: "fake-access-old", accountId: undefined });
@@ -90,6 +98,30 @@ describe("createSiwcStore credentials", () => {
     const { auth, calls } = store(fakeFs({ registeredClientId: REGISTERED, grant: grant({ accessToken: "fake-access-elsewhere" }) }));
     await expect(auth.refresh("fake-access-old")).resolves.toMatchObject({ accessToken: "fake-access-elsewhere" });
     expect(calls).toHaveLength(0);
+  });
+
+  it("preserves a different account selected while a refresh is in flight", async () => {
+    const fs = fakeFs({ registeredClientId: REGISTERED, grant: grant() });
+    const switched = JSON.stringify({ registeredClientId: REGISTERED, grant: grant({ sub: "other-subject", accessToken: "fake-access-other" }) });
+    const { auth } = store(fs, () => {
+      fs.files.set(PATH, switched);
+      return fakeResponse({ text: JSON.stringify(REFRESH_ANSWER) });
+    });
+
+    await expect(auth.refresh("fake-access-old")).resolves.toMatchObject({ accessToken: "fake-access-other" });
+    expect(fs.files.get(PATH)).toBe(switched);
+  });
+
+  it("does not restore a grant after logout during a refresh", async () => {
+    const fs = fakeFs({ registeredClientId: REGISTERED, grant: grant() });
+    const loggedOut = JSON.stringify({ registeredClientId: REGISTERED });
+    const { auth } = store(fs, () => {
+      fs.files.set(PATH, loggedOut);
+      return fakeResponse({ text: JSON.stringify(REFRESH_ANSWER) });
+    });
+
+    await expect(auth.refresh("fake-access-old")).rejects.toThrow("no Sign in with ChatGPT login");
+    expect(fs.files.get(PATH)).toBe(loggedOut);
   });
 
   it("explains a refused refresh without leaking a token", async () => {

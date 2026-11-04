@@ -17,7 +17,7 @@ const refuses = (refusal: Error) => async (): Promise<UpdateReport> => await Pro
 
 /** The deps one test runs against: every restart is reported to `onRestart`, and the update check answers whatever the test sets. */
 function makeDeps(checkForUpdate: () => Promise<UpdateReport>, onRestart: () => void): LifecycleApiDeps {
-  return { expectedToken: CONTROL_TOKEN, doorPid: DOOR_PID, restartDoor: onRestart, checkForUpdate };
+  return { expectedToken: CONTROL_TOKEN, doorPid: DOOR_PID, restartDoor: onRestart, checkForUpdate, refreshCatalogues: () => undefined };
 }
 
 describe("the door's lifecycle API", () => {
@@ -33,6 +33,20 @@ describe("the door's lifecycle API", () => {
     closes.push(mounted.close);
     return mounted;
   }
+
+  it("requests a catalogue refresh tick", async () => {
+    let ticks = 0;
+    const { client } = await mount({ ...makeDeps(answers(CURRENT), () => undefined), refreshCatalogues: () => { ticks += 1; } });
+    await client.frontdoor.refreshCatalogues();
+    expect(ticks).toBe(1);
+  });
+
+  it("does not refresh catalogues on a refused call", async () => {
+    let ticks = 0;
+    const { client } = await mount({ ...makeDeps(answers(CURRENT), () => undefined), refreshCatalogues: () => { ticks += 1; } }, "wrong-token");
+    await expect(client.frontdoor.refreshCatalogues()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(ticks).toBe(0);
+  });
 
   it("answers a restart with the pid being replaced, and requests the replacement once the answer has been written", async () => {
     let restarts = 0;

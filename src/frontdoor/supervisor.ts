@@ -5,10 +5,12 @@ import path from "node:path";
 
 import type { HeadroomFs } from "../headroom/state";
 import type { LayoutPaths } from "../paths";
+import { catalogueGenerationDir } from "../providerCatalogue";
+import { pruneAbandonedCatalogueGenerations } from "./catalogueCleanup";
 import type { DoorHealthPublisher } from "./doorHealthEvents";
 import type { LiveSessionRegistry } from "./liveSessionRegistry";
 import type { HandoverOutcome, HandoverSockets, ListenSource, Predecessor } from "./handover";
-import { FRONT_DOOR_PROTOCOL, pruneDeadFrontDoorSessions, readFrontDoorState, removeFrontDoorDirectRecord, writeFrontDoorDirectRecord, writeFrontDoorState, type FrontDoorSessionSummary, type FrontDoorState, markFrontDoorDraining, unmarkFrontDoorDraining } from "./state";
+import { FRONT_DOOR_PROTOCOL, pruneDeadFrontDoorSessions, readFrontDoorState, removeFrontDoorCodexHome, removeFrontDoorDirectRecord, writeFrontDoorCodexHome, writeFrontDoorDirectRecord, writeFrontDoorState, type FrontDoorSessionSummary, type FrontDoorState, markFrontDoorDraining, unmarkFrontDoorDraining } from "./state";
 
 /** A bound front-door listener in this process, and how to stop it. */
 interface FrontDoorListenerHandle {
@@ -52,6 +54,10 @@ export interface FrontDoorSupervisorPorts {
    */
   readonly registry: LiveSessionRegistry;
   readonly ownPid: number;
+  /** The absolute Codex CLI home used by this supervisor. */
+  readonly codexHome: string;
+  readonly catalogueGeneration: string;
+  readonly onServing: () => void;
   readonly now: () => number;
   /** An event-loop-yielding wait, for the same reason headroom's is: nothing else would ever run between ticks. */
   readonly sleep: (ms: number) => Promise<void>;
@@ -247,8 +253,11 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
   lastDirectPort = direct.port;
   // Recorded under this door's own pid before launches can be sent here, and kept until this door exits: headroom must keep admitting this door's direct origin for as long as any of its sessions can route through it, including after another door supersedes it in `state.json`.
   writeFrontDoorDirectRecord(fs, paths.frontdoorDirectRecordsDir, { pid: ports.ownPid, directPort: direct.port });
+  writeFrontDoorCodexHome(fs, paths.frontdoorDir, ports.ownPid, ports.codexHome, ports.catalogueGeneration);
 
   writeFrontDoorState(fs, paths.frontdoorStateFile, { protocol: FRONT_DOOR_PROTOCOL, supervisorPid: ports.ownPid, port: http.port, connectPort: connect.port, directPort: direct.port, ...sticky() });
+  await pruneAbandonedCatalogueGenerations(fs, paths, ports.ownPid, ports.catalogueGeneration, ports.runningAmong);
+  ports.onServing();
   ports.doorHealth.generation({ providerPort: http.port, connectPort: connect.port, directPort: direct.port });
   if (predecessor === undefined) {
     // The start lock has done its job: state now names a live supervisor, so every future launcher finds it there instead.
@@ -310,6 +319,8 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
     await Promise.all(drained);
     unmarkFrontDoorDraining(fs, paths.frontdoorDrainingDir, ports.ownPid);
     removeFrontDoorDirectRecord(fs, paths.frontdoorDirectRecordsDir, ports.ownPid);
+    removeFrontDoorCodexHome(fs, paths.frontdoorDir, ports.ownPid);
+    fs.removeRecursive(catalogueGenerationDir(paths, ports.ownPid, ports.catalogueGeneration));
     ports.log(`agent-shim frontdoor supervisor ${String(ports.ownPid)}: the connections this door carried have ended; exiting`);
     return 0;
   };
@@ -335,6 +346,8 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
     ports.closeRcStreamHub();
     // Nothing can route through this door's direct listener any more, so headroom may stop admitting its origin.
     removeFrontDoorDirectRecord(fs, paths.frontdoorDirectRecordsDir, ports.ownPid);
+    removeFrontDoorCodexHome(fs, paths.frontdoorDir, ports.ownPid);
+    fs.removeRecursive(catalogueGenerationDir(paths, ports.ownPid, ports.catalogueGeneration));
   };
   // The owner's retirement: the serving machinery stopped, then the sticky addresses written so the next generation starts where this one served, unless another live supervisor has claimed the state file since this tick looked, whose record is never rewritten.
   const shutdown = async (): Promise<number> => {

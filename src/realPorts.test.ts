@@ -52,7 +52,7 @@ describe("realCredentialPort", () => {
   });
 
   it("captures a command's stdout, and its stderr and status when it fails", () => {
-    const options = { timeoutMs: 10_000, interactive: false };
+    const options = { timeoutMs: GENEROUS_LIMIT_MS, interactive: false };
     expect(realCredentialPort.runCommand([process.execPath, "-e", "process.stdout.write('tok')"], options)).toEqual({
       status: 0,
       stdout: "tok",
@@ -67,7 +67,7 @@ describe("realCredentialPort", () => {
   });
 
   it("captures an interactive command's stdout while its stderr goes to the terminal", () => {
-    expect(realCredentialPort.runCommand([process.execPath, "-e", "process.stdout.write('tok')"], { timeoutMs: 10_000, interactive: true })).toEqual({
+    expect(realCredentialPort.runCommand([process.execPath, "-e", "process.stdout.write('tok')"], { timeoutMs: GENEROUS_LIMIT_MS, interactive: true })).toEqual({
       status: 0,
       stdout: "tok",
       stderr: "",

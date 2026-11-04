@@ -98,7 +98,6 @@ function credentialsOf(auth: AuthFile): CodexCredentials | undefined {
  * Only one refresh runs at a time; concurrent 401s wait for it. No token value ever reaches an error message or log line.
  */
 export function createCodexAuthStore(authPath: string, ports: CodexAuthPorts): CodexAuthStore {
-  let cached: CodexCredentials | undefined;
   let inFlight: Promise<CodexCredentials> | undefined;
 
   const readFile = (): AuthFile => {
@@ -129,7 +128,6 @@ export function createCodexAuthStore(authPath: string, ports: CodexAuthPorts): C
     const before = readFile();
     const already = credentialsOf(before);
     if (already !== undefined && already.accessToken !== rejected) {
-      cached = already;
       return already;
     }
     const refreshToken = before.tokens?.refresh_token;
@@ -146,7 +144,6 @@ export function createCodexAuthStore(authPath: string, ports: CodexAuthPorts): C
       const detail = (await response.text()).slice(0, REFRESH_ERROR_BODY_CHARS);
       const raced = credentialsOf(readFile());
       if (raced !== undefined && raced.accessToken !== rejected) {
-        cached = raced;
         return raced;
       }
       throw new CodexAuthError(`the Codex token refresh failed with HTTP ${String(response.status)}: ${detail}`);
@@ -156,6 +153,9 @@ export function createCodexAuthStore(authPath: string, ports: CodexAuthPorts): C
       throw new CodexAuthError("the Codex token endpoint answered without an access token");
     }
     const latest = readFile();
+    const current = credentialsOf(latest);
+    if (current === undefined && before.tokens?.access_token !== undefined) throw new CodexAuthError("Codex login changed during refresh");
+    if (current !== undefined && current.accessToken !== before.tokens?.access_token) return current;
     const merged: AuthFile = {
       ...latest,
       tokens: {
@@ -169,18 +169,13 @@ export function createCodexAuthStore(authPath: string, ports: CodexAuthPorts): C
     };
     writeFile(merged);
     const credentials: CodexCredentials = { accessToken: grant.data.access_token, accountId: merged.tokens?.account_id };
-    cached = credentials;
     return credentials;
   };
 
   return {
     current: async () => {
-      if (cached !== undefined) {
-        return cached;
-      }
       const fromFile = credentialsOf(readFile());
       if (fromFile !== undefined) {
-        cached = fromFile;
         return fromFile;
       }
       // A login with a refresh token but no access token yet: refreshing against an empty rejected token always spends the refresh token.

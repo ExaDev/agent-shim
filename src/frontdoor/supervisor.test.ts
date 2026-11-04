@@ -1,10 +1,12 @@
 import net from "node:net";
+import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import type { Predecessor } from "./handover";
+import { catalogueCachePath } from "../providerCatalogue";
 import { DOOR_HEALTH_EVENT_SOURCE, LAUNCH_EVENT_SOURCE, type DoorEvent } from "./eventSchemas";
-import { FRONT_DOOR_PROTOCOL, listFrontDoorDirectRecords, listFrontDoorSessions, readFrontDoorState, removeFrontDoorSession, writeFrontDoorSession, writeFrontDoorState } from "./state";
+import { FRONT_DOOR_PROTOCOL, listFrontDoorDirectRecords, listFrontDoorSessions, readFrontDoorCodexHome, readFrontDoorCodexRecord, readFrontDoorState, removeFrontDoorSession, writeFrontDoorSession, writeFrontDoorState } from "./state";
 import { awaitPidExit, FRONTDOOR_POLL_MS, FRONTDOOR_SUPERVISOR_STILL_RUNNING, runFrontDoorSupervisor, watchedInstallEntry } from "./supervisor";
 import { DEAD_SESSION, FRESH_PORT, FULL_IDLE_WINDOW_TICKS, IDLE_MINUTES, INSTALLED_BINARY, LIVE_SESSION, MS_PER_MINUTE, NEW_SESSION, OCCUPIED_PORT, OWN_PID, REPLACED_BINARY, SESSION_TOKEN, SLACK_TICKS, STICKY_CONNECT_PORT, STICKY_DIRECT_PORT, STICKY_PORT, SUCCESSOR_PID, SUCCESSOR_STATE, makeWorld, paths } from "./supervisorTestWorld";
 
@@ -72,6 +74,68 @@ describe("watchedInstallEntry", () => {
 });
 
 describe("runFrontDoorSupervisor", () => {
+  it("prunes abandoned catalogue generations while preserving live supervisors", async () => {
+    const world = makeWorld();
+    world.alive.add(LIVE_SESSION);
+    const oldGeneration = "10000000-0000-4000-8000-000000000002";
+    const ownOld = catalogueCachePath(paths, "codex", OWN_PID, oldGeneration);
+    const deadCache = catalogueCachePath(paths, "codex", DEAD_SESSION, oldGeneration);
+    const liveCache = catalogueCachePath(paths, "codex", LIVE_SESSION, oldGeneration);
+    const unrecognised = path.join(paths.catalogueDir, "supervisors", String(DEAD_SESSION), "not-a-generation", "data");
+    for (const file of [ownOld, deadCache, liveCache, unrecognised]) {
+      world.fs.mkdirp(path.dirname(file));
+      world.fs.writeFilePrivate(file, "cached");
+    }
+    await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: 1 });
+    expect(world.fs.readFileUtf8(ownOld)).toBeUndefined();
+    expect(world.fs.readFileUtf8(deadCache)).toBeUndefined();
+    expect(world.fs.readFileUtf8(liveCache)).toBe("cached");
+    expect(world.fs.readFileUtf8(unrecognised)).toBe("cached");
+  });
+
+  it("removes its own generation cache on shutdown and keeps other generations", async () => {
+    const world = makeWorld();
+    world.alive.add(LIVE_SESSION);
+    const ownGeneration = world.ports.catalogueGeneration;
+    const otherGeneration = "10000000-0000-4000-8000-000000000002";
+    const ownCache = catalogueCachePath(paths, "codex", OWN_PID, ownGeneration);
+    const otherCache = catalogueCachePath(paths, "codex", LIVE_SESSION, otherGeneration);
+    world.fs.mkdirp(path.dirname(ownCache));
+    world.fs.mkdirp(path.dirname(otherCache));
+    world.fs.writeFilePrivate(ownCache, "own");
+    world.fs.writeFilePrivate(otherCache, "other");
+    await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: FULL_IDLE_WINDOW_TICKS });
+    expect(world.fs.readFileUtf8(ownCache)).toBeUndefined();
+    expect(world.fs.readFileUtf8(otherCache)).toBe("other");
+  });
+
+  it("publishes its unique catalogue generation before starting the keeper", async () => {
+    const world = makeWorld();
+    const generation = "10000000-0000-4000-8000-000000000001";
+    const seen: (string | undefined)[] = [];
+    await runFrontDoorSupervisor(IDLE_MINUTES, { ...world.ports, catalogueGeneration: generation, onServing: () => { seen.push(readFrontDoorCodexRecord(world.fs, paths.frontdoorDir, OWN_PID)?.generation); } }, { tickLimit: 1 });
+    expect(seen).toEqual([generation]);
+  });
+
+  it("starts the catalogue keeper only after publishing the serving state", async () => {
+    const world = makeWorld();
+    const owners: (number | undefined)[] = [];
+    await runFrontDoorSupervisor(IDLE_MINUTES, { ...world.ports, onServing: () => { owners.push(readFrontDoorState(world.fs, paths.frontdoorStateFile)?.supervisorPid); } }, { tickLimit: 1 });
+    expect(owners).toEqual([OWN_PID]);
+  });
+
+  it("records its Codex home for launches that join this supervisor", async () => {
+    const world = makeWorld();
+    await runFrontDoorSupervisor(IDLE_MINUTES, { ...world.ports, codexHome: "/accounts/serving" }, { tickLimit: 1 });
+    expect(readFrontDoorCodexHome(world.fs, paths.frontdoorDir, OWN_PID)).toBe("/accounts/serving");
+  });
+
+  it("removes its Codex home record when it shuts down", async () => {
+    const world = makeWorld();
+    expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: FULL_IDLE_WINDOW_TICKS })).toBe(0);
+    expect(readFrontDoorCodexHome(world.fs, paths.frontdoorDir, OWN_PID)).toBeUndefined();
+  });
+
   it("binds both sticky ports the previous generation served on and records a serving state", async () => {
     const world = makeWorld();
     writeFrontDoorState(world.fs, paths.frontdoorStateFile, { lastPort: STICKY_PORT, lastConnectPort: STICKY_CONNECT_PORT, lastDirectPort: STICKY_DIRECT_PORT });

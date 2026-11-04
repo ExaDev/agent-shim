@@ -59,6 +59,7 @@ const EXPECTED_REST_PATHS = [
   "/rest/config/rule/set",
   "/rest/doctor",
   "/rest/events",
+  "/rest/frontdoor/catalogues/refresh",
   "/rest/frontdoor/restart",
   "/rest/frontdoor/sessions",
   "/rest/frontdoor/status",

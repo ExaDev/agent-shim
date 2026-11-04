@@ -1,7 +1,7 @@
 import { buildFarmRuntime, LaunchRefusedError, realPrepareLaunchParams, resolveClaudeLaunch } from "../launchWiring";
 import { prepareLaunch } from "../launcher";
 import type { LayoutPaths } from "../paths";
-import { realRunAsync, type DaemonSpawner } from "../realPorts";
+import { realIsProcessAlive, realRunAsync, type DaemonSpawner } from "../realPorts";
 import { recordRuns, type AsyncRun } from "../replayRun";
 
 /** The environment variable that makes a launch skip identity resolution, which would point a headless run at the wrong account. */
@@ -55,6 +55,7 @@ export async function withIdentityClaude<T>(params: Readonly<IdentityClaudeParam
       proc: {
         env,
         argv,
+        isProcessAlive: realIsProcessAlive,
         exit: (code) => {
           throw new LaunchRefusedError(refusals.join("\n") || `the launch was refused (exit ${String(code)})`, code);
         },

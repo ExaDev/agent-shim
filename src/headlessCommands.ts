@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import { z } from "zod";
 
 import type { CommandDeps } from "./cli/commandDeps";
 import { requireJob } from "./jobStore";
@@ -25,9 +26,11 @@ export function registerHeadlessCommands(program: Command, deps: CommandDeps): v
       await createRealJobRunner({ paths, spawnDaemon: spawnDetachedSupervisor, fs: realFarmFs, now: () => new Date() })(name, identity, requireJob(paths, name));
     });
   program
-    .command("__refresh-catalogue <name>", { hidden: true })
+    .command("__refresh-catalogue <name> <supervisorPid> <generation>", { hidden: true })
     .description("Internal: fetch and store a provider's model catalogue. Started by the front door's catalogue keeper.")
-    .action(async (name: string) => {
-      await refreshCatalogueForReal(paths, name, process.env);
+    .action(async (name: string, supervisorPid: string, generation: string) => {
+      const pid = Number(supervisorPid);
+      if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("Invalid catalogue supervisor pid");
+      await refreshCatalogueForReal(paths, name, process.env, pid, z.uuid().parse(generation));
     });
 }

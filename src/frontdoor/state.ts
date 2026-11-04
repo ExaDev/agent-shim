@@ -3,6 +3,28 @@ import { z } from "zod";
 
 import { ModelsConfigSchema, type ModelsConfig } from "../config/schema";
 import type { HeadroomFs } from "../headroom/state";
+import type { LayoutPaths } from "../paths";
+import { catalogueCachePath } from "../providerCatalogue";
+
+/** Stores one provider's refresh state within the supervisor generation that owns it. */
+export function writeCatalogueStatus(fs: HeadroomFs, paths: LayoutPaths, pid: number, generation: string, name: string, status: "running" | "ready" | "failed", fingerprint?: string, recordedAt?: number): void {
+  const dir = path.dirname(catalogueCachePath(paths, name, pid, generation));
+  fs.mkdirp(dir);
+  fs.writeFilePrivate(path.join(dir, `${name}.status.json`), JSON.stringify({ status, ...(fingerprint === undefined ? {} : { fingerprint }), ...(recordedAt === undefined ? {} : { recordedAt }) }));
+}
+
+/** Reads the refresh state recorded for a provider in a supervisor generation. */
+export function readCatalogueStatus(fs: Pick<HeadroomFs, "readFileUtf8">, paths: LayoutPaths, pid: number, generation: string, name: string): { readonly status: "running" | "ready" | "failed"; readonly fingerprint?: string; readonly recordedAt?: number } | undefined {
+  const file = path.join(path.dirname(catalogueCachePath(paths, name, pid, generation)), `${name}.status.json`);
+  const raw = fs.readFileUtf8(file);
+  if (raw === undefined) return undefined;
+  try {
+    const value = z.strictObject({ status: z.enum(["running", "ready", "failed"]), fingerprint: z.string().min(1).optional(), recordedAt: z.number().optional() }).safeParse(JSON.parse(raw));
+    return value.success ? value.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * The launcher-to-door wire protocol this release speaks: the headers a launch's child presents, the capability registry's record format, and the routes. Bump it when a change would stop a door of this release serving launches made by an older one, or an older door serving this release's launches.
@@ -15,9 +37,11 @@ import type { HeadroomFs } from "../headroom/state";
  *
  * Protocol 6: the door hands its listening sockets to a successor it starts itself when a launcher sends it `SIGUSR2` (see `./handover.ts`), so a requested replacement keeps every address accepting. A protocol 5 door has no handler for that signal, whose default action ends the process outright, so a launcher must know the door's protocol before it sends one; such a door is replaced the stop-and-start way, which its drain already makes safe for the connections it carries.
  *
+ * Protocol 7: the door publishes a unique catalogue generation used by launchers to find its Codex models. A protocol 6 door cannot publish the generation-scoped catalogue this launcher reads.
+ *
  * The rule that makes a bump safe: a door accepts every lower protocol's launches (protocol 1 accepts the former `x-claude-use-*` header names), and a launcher replaces a door whose protocol is lower than its own, never one that is higher. Replacing is safe because restarts are what the door is designed for: the capability registry is on disk and the listeners keep their sticky ports, so launches already running reach the replacement on the addresses they froze at launch.
  */
-export const FRONT_DOOR_PROTOCOL = 6;
+export const FRONT_DOOR_PROTOCOL = 7;
 
 /** The first protocol whose door hands its listeners over on `SIGUSR2` (see protocol 6 above): a launcher sends that request only to a door recording this protocol or a later one. */
 export const FRONT_DOOR_HANDOVER_PROTOCOL = 6;
@@ -63,8 +87,37 @@ export const FrontDoorStateSchema = z.strictObject({
 });
 export type FrontDoorState = z.infer<typeof FrontDoorStateSchema>;
 
+/** Records the Codex home used by one supervisor separately from the shared front-door state. */
+export function writeFrontDoorCodexHome(fs: HeadroomFs, frontdoorDir: string, pid: number, codexHome: string, generation: string): void {
+  const directory = path.join(frontdoorDir, "codex-homes");
+  fs.mkdirp(directory);
+  fs.writeFilePrivate(path.join(directory, `${String(pid)}.json`), `${JSON.stringify({ codexHome, generation })}\n`);
+}
+
+/** Reads the recorded Codex home and generation for one supervisor. */
+export function readFrontDoorCodexRecord(fs: Pick<HeadroomFs, "readFileUtf8">, frontdoorDir: string, pid: number): { readonly codexHome: string; readonly generation: string } | undefined {
+  const raw = fs.readFileUtf8(path.join(frontdoorDir, "codex-homes", `${String(pid)}.json`));
+  if (raw === undefined) return undefined;
+  try {
+    const parsed = z.strictObject({ codexHome: z.string().min(1), generation: z.uuid() }).safeParse(JSON.parse(raw));
+    return parsed.success && path.isAbsolute(parsed.data.codexHome) ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Reads the recorded Codex home for one supervisor, or undefined if no valid record exists. */
+export function readFrontDoorCodexHome(fs: Pick<HeadroomFs, "readFileUtf8">, frontdoorDir: string, pid: number): string | undefined {
+  return readFrontDoorCodexRecord(fs, frontdoorDir, pid)?.codexHome;
+}
+
+/** Removes one supervisor's Codex home record. */
+export function removeFrontDoorCodexHome(fs: HeadroomFs, frontdoorDir: string, pid: number): void {
+  fs.removeRecursive(path.join(frontdoorDir, "codex-homes", `${String(pid)}.json`));
+}
+
 /** Reads state.json, or undefined when absent or malformed: a malformed file is overwritten by the next supervisor rather than failing every launch over one bad write. */
-export function readFrontDoorState(fs: HeadroomFs, stateFile: string): FrontDoorState | undefined {
+export function readFrontDoorState(fs: Pick<HeadroomFs, "readFileUtf8">, stateFile: string): FrontDoorState | undefined {
   let raw: string | undefined;
   try {
     raw = fs.readFileUtf8(stateFile);

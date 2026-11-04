@@ -9,9 +9,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import * as esbuild from "esbuild";
 
 import { buildLayoutPaths } from "../paths";
+import { catalogueCredentialFingerprint } from "../codex/catalogueCredential";
 import { realFarmFs } from "../realPorts";
 import { connectProxyUrl } from "./capability";
-import { listDrainingFrontDoors, readFrontDoorState } from "./state";
+import { requestCatalogueRefreshSync } from "./probe";
+import { realFrontDoorPort } from "./realFrontDoorPort";
+import { catalogueCachePath, parseCatalogueCache } from "../providerCatalogue";
+import { providerModelRows } from "../launcher/modelPicker";
+import { readProvider } from "../providersStore";
+import { listDrainingFrontDoors, readCatalogueStatus, readFrontDoorCodexRecord, readFrontDoorState } from "./state";
 
 /** The capability the test registers for itself as a live launch: what the CONNECT surface demands of a tunnel. */
 const CAPABILITY = "handover-e2e-capability";
@@ -126,6 +132,124 @@ describe.skipIf(process.platform === "win32")("a front door handing its listener
       cleanup();
     }
   });
+
+  it("publishes a failed catalogue refresh for its generation", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "catalogue-status-e2e-"));
+    cleanups.push(() => { fs.rmSync(home, { recursive: true, force: true }); });
+    const layout = buildLayoutPaths(home);
+    fs.mkdirSync(layout.providersDir, { recursive: true });
+    fs.writeFileSync(path.join(layout.providersDir, "http.json"), JSON.stringify({ displayName: "HTTP", baseUrl: "http://127.0.0.1:1", credential: { sources: [{ env: "MISSING_CATALOGUE_TEST_TOKEN" }] }, catalogue: { tier: "sonnet" } }));
+    const cli = await bundleCli(home);
+    const door = spawn(process.execPath, [cli, "__frontdoor-supervisor"], { env: { ...process.env, AGENT_SHIM_HOME: home }, stdio: "ignore" });
+    cleanups.push(() => { door.kill("SIGKILL"); });
+    const pid = door.pid;
+    if (pid === undefined) throw new Error("the door did not start");
+    const record = await until(() => readFrontDoorCodexRecord(realFarmFs, layout.frontdoorDir, pid), STARTUP_TIMEOUT_MS, "the door generation");
+    const status = await until(() => readCatalogueStatus(realFarmFs, layout, pid, record.generation, "http")?.status === "failed" ? "failed" : undefined, STARTUP_TIMEOUT_MS, "the catalogue failure");
+    expect(status).toBe("failed");
+  }, SUITE_TIMEOUT_MS);
+
+  it("publishes the account fingerprint with a failed Codex refresh", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "codex-status-e2e-"));
+    cleanups.push(() => { fs.rmSync(home, { recursive: true, force: true }); });
+    const layout = buildLayoutPaths(home);
+    const codexHome = path.join(home, "codex-home");
+    fs.mkdirSync(layout.providersDir, { recursive: true });
+    fs.mkdirSync(codexHome, { recursive: true });
+    fs.writeFileSync(path.join(layout.providersDir, "codex.json"), JSON.stringify({ kind: "codex", displayName: "Codex", credential: { sources: [{ env: "TOKEN" }] } }));
+    fs.writeFileSync(path.join(codexHome, "auth.json"), JSON.stringify({ tokens: { access_token: "fake-token", account_id: "fake-account" } }));
+    const cli = await bundleCli(home);
+    const door = spawn(process.execPath, [cli, "__frontdoor-supervisor"], { env: { ...process.env, AGENT_SHIM_HOME: home, CODEX_HOME: codexHome, PATH: "/usr/bin:/bin" }, stdio: "ignore" });
+    cleanups.push(() => { door.kill("SIGKILL"); });
+    const pid = door.pid;
+    if (pid === undefined) throw new Error("the door did not start");
+    const record = await until(() => readFrontDoorCodexRecord(realFarmFs, layout.frontdoorDir, pid), STARTUP_TIMEOUT_MS, "the door generation");
+    const status = await until(() => { const value = readCatalogueStatus(realFarmFs, layout, pid, record.generation, "codex"); return value?.status === "failed" ? value : undefined; }, STARTUP_TIMEOUT_MS, "the catalogue failure");
+    expect(status.fingerprint).toBe(catalogueCredentialFingerprint(true, "fake-token", "fake-account"));
+  }, SUITE_TIMEOUT_MS);
+
+  it("timestamps a failed catalogue refresh", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "catalogue-time-e2e-"));
+    cleanups.push(() => { fs.rmSync(home, { recursive: true, force: true }); });
+    const layout = buildLayoutPaths(home);
+    fs.mkdirSync(layout.providersDir, { recursive: true });
+    fs.writeFileSync(path.join(layout.providersDir, "http.json"), JSON.stringify({ displayName: "HTTP", baseUrl: "http://127.0.0.1:1", credential: { sources: [{ env: "MISSING_CATALOGUE_TEST_TOKEN" }] }, catalogue: { tier: "sonnet" } }));
+    const cli = await bundleCli(home);
+    const startedAt = Date.now();
+    const door = spawn(process.execPath, [cli, "__frontdoor-supervisor"], { env: { ...process.env, AGENT_SHIM_HOME: home }, stdio: "ignore" });
+    cleanups.push(() => { door.kill("SIGKILL"); });
+    const pid = door.pid;
+    if (pid === undefined) throw new Error("the door did not start");
+    const record = await until(() => readFrontDoorCodexRecord(realFarmFs, layout.frontdoorDir, pid), STARTUP_TIMEOUT_MS, "the door generation");
+    const status = await until(() => { const value = readCatalogueStatus(realFarmFs, layout, pid, record.generation, "http"); return value?.status === "failed" ? value : undefined; }, STARTUP_TIMEOUT_MS, "the catalogue failure");
+    expect(status.recordedAt).toBeTypeOf("number");
+    expect(status.recordedAt).toBeGreaterThanOrEqual(startedAt);
+    expect(status.recordedAt).toBeLessThanOrEqual(Date.now());
+  }, SUITE_TIMEOUT_MS);
+
+  it("requests catalogue refresh from a real serving door", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "catalogue-tick-e2e-"));
+    cleanups.push(() => { fs.rmSync(home, { recursive: true, force: true }); });
+    const layout = buildLayoutPaths(home);
+    const cli = await bundleCli(home);
+    const door = spawn(process.execPath, [cli, "__frontdoor-supervisor"], { env: { ...process.env, AGENT_SHIM_HOME: home }, stdio: "ignore" });
+    cleanups.push(() => { door.kill("SIGKILL"); });
+    const pid = door.pid;
+    if (pid === undefined) throw new Error("the door did not start");
+    const serving = await until(() => { const value = readFrontDoorState(realFarmFs, layout.frontdoorStateFile); return value?.supervisorPid === pid && value.port !== undefined ? value : undefined; }, STARTUP_TIMEOUT_MS, "the door to serve");
+    const record = await until(() => readFrontDoorCodexRecord(realFarmFs, layout.frontdoorDir, pid), STARTUP_TIMEOUT_MS, "the door generation");
+    fs.mkdirSync(layout.providersDir, { recursive: true });
+    fs.writeFileSync(path.join(layout.providersDir, "http.json"), JSON.stringify({ displayName: "HTTP", baseUrl: "http://127.0.0.1:1", credential: { sources: [{ env: "MISSING_CATALOGUE_TEST_TOKEN" }] }, catalogue: { tier: "sonnet" } }));
+    const token = fs.readFileSync(layout.frontdoorControlTokenFile, "utf8").trim();
+    const ca = fs.readFileSync(layout.frontdoorCaCertFile, "utf8");
+    if (serving.port === undefined) throw new Error("the door has no provider listener");
+    expect(requestCatalogueRefreshSync(serving.port, ca, token, STARTUP_TIMEOUT_MS)).toEqual({ ok: true });
+    const status = await until(() => readCatalogueStatus(realFarmFs, layout, pid, record.generation, "http"), STARTUP_TIMEOUT_MS, "a catalogue tick");
+    expect(["running", "failed"]).toContain(status.status);
+  }, SUITE_TIMEOUT_MS);
+
+  it("wakes catalogue refresh before an external launch waits", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "catalogue-launch-e2e-"));
+    cleanups.push(() => { fs.rmSync(home, { recursive: true, force: true }); });
+    const layout = buildLayoutPaths(home);
+    const cli = await bundleCli(home);
+    const door = spawn(process.execPath, [cli, "__frontdoor-supervisor"], { env: { ...process.env, AGENT_SHIM_HOME: home }, stdio: "ignore" });
+    cleanups.push(() => { door.kill("SIGKILL"); });
+    const pid = door.pid;
+    if (pid === undefined) throw new Error("the door did not start");
+    await until(() => { const value = readFrontDoorState(realFarmFs, layout.frontdoorStateFile); return value?.supervisorPid === pid && value.port !== undefined ? value : undefined; }, STARTUP_TIMEOUT_MS, "the door to serve");
+    const record = await until(() => readFrontDoorCodexRecord(realFarmFs, layout.frontdoorDir, pid), STARTUP_TIMEOUT_MS, "the door generation");
+    fs.mkdirSync(layout.providersDir, { recursive: true });
+    fs.writeFileSync(path.join(layout.providersDir, "http.json"), JSON.stringify({ displayName: "HTTP", baseUrl: "http://127.0.0.1:1", credential: { sources: [{ env: "MISSING_CATALOGUE_TEST_TOKEN" }] }, catalogue: { tier: "sonnet" } }));
+    realFrontDoorPort(layout, () => { throw new Error("unexpected daemon"); }).waitForCatalogues?.(pid);
+    expect(readCatalogueStatus(realFarmFs, layout, pid, record.generation, "http")?.status).toBe("failed");
+  }, SUITE_TIMEOUT_MS);
+
+  it("discovers the serving Codex account's visible models for the picker", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "codex-picker-e2e-"));
+    cleanups.push(() => { fs.rmSync(home, { recursive: true, force: true }); });
+    const layout = buildLayoutPaths(home);
+    const codexHome = path.join(home, "codex-home");
+    const bin = path.join(home, "bin");
+    fs.mkdirSync(layout.providersDir, { recursive: true });
+    fs.mkdirSync(codexHome, { recursive: true });
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(layout.providersDir, "codex.json"), JSON.stringify({ kind: "codex", displayName: "Codex", credential: { sources: [{ env: "TOKEN" }] } }));
+    fs.writeFileSync(path.join(codexHome, "auth.json"), JSON.stringify({ tokens: { access_token: "fake-token", account_id: "fake-account" } }));
+    fs.writeFileSync(path.join(bin, "codex"), "#!/bin/sh\nprintf 'codex-cli 0.166.0\\n'\n", { mode: 0o700 });
+    const preload = path.join(home, "fetch.cjs");
+    fs.writeFileSync(preload, 'const realFetch = globalThis.fetch; globalThis.fetch = (url, options) => String(url).startsWith("https://chatgpt.com/backend-api/codex/models?") ? Promise.resolve(new Response(JSON.stringify({models:[{slug:"gpt-6.1-terra",visibility:"list"},{slug:"gpt-hidden",visibility:"hide"}]}), {status:200})) : realFetch(url, options);');
+    const cli = await bundleCli(home);
+    const door = spawn(process.execPath, [cli, "__frontdoor-supervisor"], { env: { ...process.env, AGENT_SHIM_HOME: home, CODEX_HOME: codexHome, PATH: `${bin}:${process.env.PATH ?? ""}`, NODE_OPTIONS: `--require=${preload}` }, stdio: "ignore" });
+    cleanups.push(() => { door.kill("SIGKILL"); });
+    const pid = door.pid;
+    if (pid === undefined) throw new Error("the door did not start");
+    const record = await until(() => readFrontDoorCodexRecord(realFarmFs, layout.frontdoorDir, pid), STARTUP_TIMEOUT_MS, "the door generation");
+    const cache = await until(() => parseCatalogueCache(realFarmFs.readFileUtf8(catalogueCachePath(layout, "codex", pid, record.generation))), STARTUP_TIMEOUT_MS, "the Codex catalogue");
+    const provider = readProvider(layout, "codex");
+    if (provider === undefined) throw new Error("the provider was not found");
+    expect(providerModelRows(provider, cache.models).map((row) => row.model)).toEqual(["gpt-6.1-terra"]);
+  }, SUITE_TIMEOUT_MS);
 
   it(
     "refuses no connection on any listener across the swap, serves on through the successor once the old door stops accepting, and lets a connection opened before the swap finish on the old door",

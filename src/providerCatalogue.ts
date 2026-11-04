@@ -1,4 +1,5 @@
 import picomatch from "picomatch";
+import path from "node:path";
 import { z } from "zod";
 
 import type { ResolvedCredential } from "./credential";
@@ -38,12 +39,24 @@ const CatalogueModelSchema = z.strictObject({ id: z.string().min(1), name: z.str
 export type CatalogueModel = z.infer<typeof CatalogueModelSchema>;
 
 /** A fetched catalogue as the door stores it: when and where it came from, and the models it listed. */
-const CatalogueCacheSchema = z.strictObject({ fetchedAt: z.number(), url: z.string().min(1), models: z.array(CatalogueModelSchema) });
+const CatalogueCacheSchema = z.strictObject({ fetchedAt: z.number(), url: z.string().min(1), models: z.array(CatalogueModelSchema), credentialFingerprint: z.string().optional(), supervisorPid: z.number().int().positive().optional() });
 export type CatalogueCache = z.infer<typeof CatalogueCacheSchema>;
 
 /** Where the door stores `name`'s fetched catalogue. */
-export function catalogueCachePath(paths: LayoutPaths, name: string): string {
-  return providerFilePath(paths.catalogueDir, name);
+export function catalogueCachePath(paths: LayoutPaths, name: string, supervisorPid?: number, generation?: string): string {
+  if ((supervisorPid === undefined) !== (generation === undefined)) throw new Error("A supervisor cache needs both its PID and generation");
+  const directory = supervisorPid === undefined || generation === undefined ? paths.catalogueDir : catalogueGenerationDir(paths, supervisorPid, generation);
+  return providerFilePath(directory, name);
+}
+
+/** The catalogue directory owned by one supervisor generation. */
+export function catalogueGenerationDir(paths: LayoutPaths, supervisorPid: number, generation: string): string {
+  return path.join(paths.catalogueDir, "supervisors", String(supervisorPid), z.uuid().parse(generation));
+}
+
+/** The account binding adjacent to a provider's catalogue. */
+export function catalogueBindingPath(paths: LayoutPaths, name: string, supervisorPid?: number, generation?: string): string {
+  return path.join(path.dirname(catalogueCachePath(paths, name, supervisorPid, generation)), `${name}.binding.json`);
 }
 
 /** The catalogue a cache file holds, or `undefined` when the text is not one (missing, unparsable, or from a release that stored a different shape). */
@@ -84,6 +97,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function modelOf(entry: unknown): CatalogueModel | undefined {
   if (typeof entry === "string") {
     return entry.trim() === "" ? undefined : { id: entry.trim() };
+  }
+  if (isRecord(entry) && typeof entry.slug === "string" && "visibility" in entry) {
+    return entry.visibility === "list" ? modelOf({ id: entry.slug, display_name: entry.display_name }) : undefined;
   }
   if (!isRecord(entry) || typeof entry.id !== "string" || entry.id.trim() === "") {
     return undefined;

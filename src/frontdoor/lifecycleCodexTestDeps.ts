@@ -7,6 +7,7 @@ const FAKE_DOOR_PID = 424_242;
 export const LIFECYCLE_AND_CODEX_TEST_DEPS = {
   doorPid: FAKE_DOOR_PID,
   restartDoor: (): void => undefined,
+  refreshCatalogues: (): void => undefined,
   checkForUpdate: async () => await Promise.resolve({ current: "0.0.0", latest: "0.0.0", action: "current" as const }),
   codexStatus: (): CodexStatus => ({
     frontDoor: {},

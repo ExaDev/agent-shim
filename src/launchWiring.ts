@@ -25,6 +25,7 @@ import {
   realFsPort,
   realHeadroomPort,
   realHoldPort,
+  realIsProcessAlive,
   realIsProcessRunning,
   realResolveClaudeBinary,
   realRunAsync,
@@ -178,6 +179,7 @@ export function prepareClaudeLaunch(options: PrepareClaudeLaunchOptions): Launch
   const proc: ProcPort = {
     env: options.env,
     argv: options.argv,
+    isProcessAlive: realIsProcessAlive,
     exit: (code) => {
       throw new LaunchRefusedError(refusals.join("\n") || `the launch was refused (exit ${String(code)})`, code);
     },
@@ -217,6 +219,7 @@ export function resolveClaudeLaunch(options: ResolveClaudeLaunchOptions, run: Ru
   const proc: ProcPort = {
     env: options.env,
     argv: options.argv,
+    isProcessAlive: realIsProcessAlive,
     exit: (code) => {
       throw new LaunchRefusedError(refusals.join("\n") || `the launch was refused (exit ${String(code)})`, code);
     },

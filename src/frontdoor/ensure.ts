@@ -13,7 +13,7 @@ import { FRONT_DOOR_HANDOVER_PROTOCOL, FRONT_DOOR_PROTOCOL, listFrontDoorSession
 export const FRONTDOOR_START_TIMEOUT_MS = 30_000;
 
 /** The launcher's poll rate while waiting for the door. */
-const FRONTDOOR_LAUNCHER_POLL_MS = 100;
+export const FRONTDOOR_LAUNCHER_POLL_MS = 100;
 
 /** How many times a listener that fails authentication is probed before it is believed. One failed probe is what a busy door looks like (sessions reattaching all at once miss the probe's own deadline), so a listener is distrusted only after consecutive failures: three misses in a row are a wedged or foreign listener, not slowness. */
 export const FRONTDOOR_PROBE_ATTEMPTS = 3;
@@ -67,7 +67,7 @@ export function ensureFrontDoor(params: {
   readonly replace?: RequestedReplacementReason;
   /** What this launch tells the door about itself beyond its token: the id its requests carry in their session header, and the models block it resolved when it added definitions of its own to the global one. Recorded in the launch's registry entry, so it lives and is pruned with the launch. */
   readonly session?: FrontDoorSessionDetails;
-}): { readonly port: number; readonly connectPort: number; readonly token: string } {
+}): { readonly port: number; readonly connectPort: number; readonly token: string; readonly supervisorPid: number } {
   const { paths, ports } = params;
   // Extended once by a handover's wait (see `handOverAndAwait`), so a handover that fails late still leaves the launch the time to start a door the ordinary way.
   const startedAt = ports.now();
@@ -155,7 +155,7 @@ export function ensureFrontDoor(params: {
           // This process is the serving door, which the process's own command line confirms: an equal pid alone proves nothing, since a pid recorded by a door that exited uncleanly can be reused by an ordinary launcher while another user holds the recorded port. A launch planned inside it (the usage probe, the window opener, a job) has nothing to authenticate, and probing itself would block the very event loop that has to answer the probe, stalling every session on the door for the whole wait. It registers the launch like any other and returns its own addresses.
           const token = randomUUID();
           writeFrontDoorSession(ports.fs, paths.frontdoorSessionsDir, { pid: params.launcherPid, startedAt: ports.now(), token, supervisorPid, ...recordOf(params.session) });
-          return { port: state.port, connectPort: state.connectPort, token };
+          return { port: state.port, connectPort: state.connectPort, token, supervisorPid };
         }
         const verdict = verifyWithRetry(state.port);
         const doorProtocol = state.protocol ?? 0;
@@ -179,7 +179,7 @@ export function ensureFrontDoor(params: {
           // The token is generated here, per launch: the registry entry is what the door's listeners check requests against, and a fresh launch invalidates nothing (its entry is added alongside the live ones).
           const token = randomUUID();
           writeFrontDoorSession(ports.fs, paths.frontdoorSessionsDir, { pid: params.launcherPid, startedAt: ports.now(), token, supervisorPid, ...recordOf(params.session) });
-          return { port: state.port, connectPort: state.connectPort, token };
+          return { port: state.port, connectPort: state.connectPort, token, supervisorPid };
         }
         lastRejection = `the listener on 127.0.0.1:${String(state.port)} (recorded for pid ${String(supervisorPid)}) failed authentication: ${verdict.reason}`;
         if (spawned) {

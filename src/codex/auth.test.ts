@@ -76,12 +76,20 @@ function parsedFile(fs: { readonly files: Map<string, string> }): Record<string,
 }
 
 describe("createCodexAuthStore", () => {
-  it("reads the access token and account from the file, then serves it from memory", async () => {
+  it("uses an externally switched Codex account on the next request", async () => {
+    const fs = fakeAuthFs(authFile({ access_token: OLD_ACCESS, refresh_token: OLD_REFRESH }));
+    const { auth } = store(fs, () => grant({}));
+    expect((await auth.current()).accessToken).toBe(OLD_ACCESS);
+    fs.files.set(AUTH_PATH, authFile({ access_token: CLI_ACCESS, refresh_token: "fake-cli-refresh", account_id: "other-account" }));
+    expect(await auth.current()).toEqual({ accessToken: CLI_ACCESS, accountId: "other-account" });
+  });
+
+  it("reads the access token and account from the file for each request", async () => {
     const fs = fakeAuthFs(authFile({ access_token: OLD_ACCESS, refresh_token: OLD_REFRESH }));
     const { auth, fetch } = store(fs, () => grant({}));
     expect(await auth.current()).toEqual({ accessToken: OLD_ACCESS, accountId: "fake-account" });
     await auth.current();
-    expect(fs.ops.filter((op) => op.startsWith("read"))).toHaveLength(1);
+    expect(fs.ops.filter((op) => op.startsWith("read"))).toHaveLength(2);
     expect(fetch.calls).toEqual([]);
   });
 
@@ -130,6 +138,30 @@ describe("createCodexAuthStore", () => {
     expect((await auth.refresh(OLD_ACCESS)).accessToken).toBe(CLI_ACCESS);
     expect(fetch.calls).toEqual([]);
     expect((await auth.current()).accessToken).toBe(CLI_ACCESS);
+  });
+
+  it("preserves a different account selected while a refresh is in flight", async () => {
+    const fs = fakeAuthFs(authFile({ access_token: OLD_ACCESS, refresh_token: OLD_REFRESH }));
+    const switched = authFile({ access_token: CLI_ACCESS, refresh_token: "fake-cli-refresh", account_id: "other-account" });
+    const { auth } = store(fs, () => {
+      fs.files.set(AUTH_PATH, switched);
+      return grant({ access_token: NEW_ACCESS, refresh_token: NEW_REFRESH });
+    });
+
+    expect(await auth.refresh(OLD_ACCESS)).toEqual({ accessToken: CLI_ACCESS, accountId: "other-account" });
+    expect(fs.files.get(AUTH_PATH)).toBe(switched);
+  });
+
+  it("does not restore an access token after logout during a refresh", async () => {
+    const fs = fakeAuthFs(authFile({ access_token: OLD_ACCESS, refresh_token: OLD_REFRESH }));
+    const loggedOut = authFile({});
+    const { auth } = store(fs, () => {
+      fs.files.set(AUTH_PATH, loggedOut);
+      return grant({ access_token: NEW_ACCESS, refresh_token: NEW_REFRESH });
+    });
+
+    await expect(auth.refresh(OLD_ACCESS)).rejects.toThrow("login changed during refresh");
+    expect(fs.files.get(AUTH_PATH)).toBe(loggedOut);
   });
 
   it("merges the new tokens into the file as it stands after the grant, so a concurrent CLI write to other fields survives", async () => {
