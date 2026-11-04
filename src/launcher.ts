@@ -751,13 +751,14 @@ function prepareRegisteredLaunch(params: PrepareLaunchParams, onRecorded: (remov
   const session = { sessionId, ...(sessionModels === undefined ? {} : { models: sessionModels }) };
   let frontDoor = frontDoorEngaged && frontDoorPort !== undefined ? frontDoorPort.ensure(env.NODE_EXTRA_CA_CERTS, session) : undefined;
   if (frontDoor !== undefined && frontDoorPort !== undefined) {
-    let beforePid = readFrontDoorState(params.fs, paths.frontdoorStateFile)?.supervisorPid;
+    let beforePid = frontDoor.supervisorPid;
     for (;;) {
       const catalogueWarning = frontDoorPort.waitForCatalogues?.(frontDoor.supervisorPid);
       if (catalogueWarning !== undefined) log.warn(catalogueWarning);
       const after = readFrontDoorState(params.fs, paths.frontdoorStateFile);
       if (after?.supervisorPid === undefined || after.supervisorPid === beforePid) break;
       frontDoor = frontDoorPort.ensure(env.NODE_EXTRA_CA_CERTS, session);
+      if (frontDoor.supervisorPid === beforePid) break;
       beforePid = frontDoor.supervisorPid;
     }
   }

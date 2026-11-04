@@ -90,6 +90,21 @@ describe("resolveLaunch", () => {
     prepareLaunch({ ...params, fs, frontdoor, headroom: { ensure: () => ({ socketPath: "/s", projectId: "p" }), release: () => undefined } });
     expect(ensure).toHaveBeenCalledTimes(2);
   });
+  it("rechecks the front door when it changes before readiness starts", () => {
+    const successor = SERVING_DOOR_PID + 1;
+    const { params } = ports({ argv: ["@work", "--headroom", "--print"] });
+    const read = params.fs.readFileUtf8;
+    const fs = { ...params.fs, readFileUtf8: (file: string) => file === paths.frontdoorStateFile ? JSON.stringify({ supervisorPid: successor, port: FRONTDOOR_PORT }) : read(file) };
+    const base = fakeFrontDoorPort();
+    let first = true;
+    const ensure = vi.fn((...args: Parameters<typeof base.ensure>) => {
+      const supervisorPid = first ? SERVING_DOOR_PID : successor;
+      first = false;
+      return { ...base.ensure(...args), supervisorPid };
+    });
+    prepareLaunch({ ...params, fs, frontdoor: { ...base, ensure }, headroom: { ensure: () => ({ socketPath: "/s", projectId: "p" }), release: () => undefined } });
+    expect(ensure).toHaveBeenCalledTimes(2);
+  });
   it("reports a catalogue readiness warning without refusing the launch", () => {
     const { params, log } = ports({ argv: ["@work", "--headroom", "--print"] });
     const frontdoor = { ...fakeFrontDoorPort(), waitForCatalogues: () => "catalogue timed out" };
