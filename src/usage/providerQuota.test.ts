@@ -329,7 +329,17 @@ describe("antigravityQuotaAdapter", () => {
     if (url === SUMMARY_URL) {
       return {
         status: 200,
-        text: JSON.stringify({ groups: [{ buckets: [{ bucketId: "gemini-5h", remainingFraction: 0.75, resetTime: "2026-10-02T15:00:00.000Z" }, { bucketId: "3p-weekly", remainingFraction: 0.9 }] }] }),
+        text: JSON.stringify({
+          groups: [
+            {
+              buckets: [
+                { bucketId: "gemini-5h", remainingFraction: 0.75, resetTime: "2026-10-02T15:00:00.000Z" },
+                { bucketId: "3p-weekly", remainingFraction: 0.9 },
+                { bucketId: "gemini-argon-wtu-weekly", remainingFraction: 0.9 },
+              ],
+            },
+          ],
+        }),
       };
     }
     if (url === "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist") {
@@ -360,11 +370,15 @@ describe("antigravityQuotaAdapter", () => {
     const freeQuota = await antigravityQuotaAdapter.fetch("REDACTED", freeAccount, new AbortController().signal, NOW_MS);
     // With no paid subscription, the plan falls back to the free code-assist tier's own name.
     expect(freeQuota.level).toBe("Antigravity");
-    expect(quota.windows).toHaveLength(2);
+    const EXPECTED_BUCKET_COUNT = 3;
+    expect(quota.windows).toHaveLength(EXPECTED_BUCKET_COUNT);
     expect(quota.windows[0]).toEqual({ measures: "gemini-5h", periodMs: FIVE_HOURS_MS, utilization: 0.25, resetsAt: "2026-10-02T15:00:00.000Z" });
     expect(quota.windows[1]?.measures).toBe("3p-weekly");
     expect(quota.windows[1]?.periodMs).toBe(WEEK_WINDOW_MS);
     expect(quota.windows[1]?.utilization).toBeCloseTo(WEEKLY_USED, FLOAT_PRECISION_DIGITS);
+    expect(quota.windows[2]?.measures).toBe("gemini-argon-wtu-weekly");
+    expect(quota.windows[2]?.periodMs).toBe(WEEK_WINDOW_MS);
+    expect(quota.windows[2]?.utilization).toBeCloseTo(WEEKLY_USED, FLOAT_PRECISION_DIGITS);
     expect(http.mock.calls[0]).toEqual([SUMMARY_URL, expect.anything(), expect.anything(), { method: "POST", body: JSON.stringify({ project: "aicode-consumers" }) }]);
   });
 
