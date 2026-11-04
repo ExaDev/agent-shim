@@ -89,6 +89,12 @@ describe("probeFrontDoorSync", () => {
     expect(result).toEqual({ ok: true });
   }, KEYGEN_TIMEOUT_MS);
 
+  it("rejects a catalogue request with a foreign certificate or wrong token", async () => {
+    const port = await listenerThread(mintLeaf(ca, LOOPBACK_LEAF_NAMES, new Date()));
+    expect(probe.requestCatalogueRefreshSync(port, foreignCa.certPem, "test-control-token", READ_VERDICT_TIMEOUT_MS).ok).toBe(false);
+    expect(probe.requestCatalogueRefreshSync(port, ca.certPem, "wrong-token", READ_VERDICT_TIMEOUT_MS).ok).toBe(false);
+  }, KEYGEN_TIMEOUT_MS);
+
   it(
     "accepts a listener whose loopback leaf chains to agent-shim's CA",
     async () => {
