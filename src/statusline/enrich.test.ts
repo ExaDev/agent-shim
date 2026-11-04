@@ -133,6 +133,12 @@ describe("enrichStatuslinePayload", () => {
     expect(byPayloadModel.sevenDayUsed).toBe(GEMINI_WEEKLY_USED_PERCENT);
   });
 
+  it("does not show another account's quota when the routed provider has no recorded state", () => {
+    const { summary } = enrichStatuslinePayload({ payload: { rate_limits: { five_hour: { used_percentage: 100 } } }, env: {}, snapshot: SNAPSHOT, account: undefined, providerName: undefined, nowMs: NOW_MS, headroom: undefined, routedTarget: "codex/gpt-new" });
+    expect(summary.fiveHourUsed).toBeUndefined();
+    expect(summary.sevenDayUsed).toBeUndefined();
+  });
+
   it("takes both unified windows from the provider whose window is furthest spent rather than mixing providers", () => {
     const { summary } = enrichStatuslinePayload({
       payload: {},

@@ -251,12 +251,12 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
     ...(params.doorCostUsd === undefined ? {} : { doorCostUsd: params.doorCostUsd }),
   };
   let scopedName: string | undefined;
+  const routedProvider = routedProviderOf(params);
   if (params.snapshot !== undefined) {
-    const routedProvider = routedProviderOf(params);
     scopedName = providerScopedState(params.snapshot, params.providerName, params.env.AGENT_SHIM_PROVIDER) ?? providerScopedState(params.snapshot, routedProvider, routedProvider);
     const scopedState = scopedName === undefined ? undefined : params.snapshot.providers[scopedName];
     // A session that selected a provider or is routed to one spends that provider's quota alone: when its state is not in the snapshot yet there are no windows to show, never another provider's (an exhausted login week was drawn as a z.ai session's usage). Only a session with no provider shows the binding windows across every provider the identity has used.
-    const states = summary.provider === undefined && scopedState === undefined ? Object.values(params.snapshot.providers) : scopedState === undefined ? [] : [scopedState];
+    const states = summary.provider === undefined && routedProvider === undefined && scopedState === undefined ? Object.values(params.snapshot.providers) : scopedState === undefined ? [] : [scopedState];
     let email: string | undefined;
     let sub: string | undefined;
     let plan: string | undefined;
@@ -291,8 +291,8 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
     );
     summary = { ...summary, ...windowsOf(states, params.nowMs), providerAccountEmail: email, providerAccountSub: sub, providerPlan: plan, providerQuotaWindows, quotaFamilies: quotaFamiliesOf(providerBuckets, params.nowMs) };
   }
-  if (summary.provider === undefined && scopedName === undefined) {
-    // The client's own windows (Claude Code's rate_limits, the Antigravity CLI's quota map) describe the account a providerless session spends, so each present one replaces the snapshot's binding window; a window the payload lacks keeps the snapshot's. A session routed to a provider in the snapshot spends that provider's quota instead.
+  if (summary.provider === undefined && routedProvider === undefined && scopedName === undefined) {
+    // The client's own windows (Claude Code's rate_limits, the Antigravity CLI's quota map) describe the account a providerless session spends, so each present one replaces the snapshot's binding window; a window the payload lacks keeps the snapshot's. A session routed to a provider spends that provider's quota, even before the snapshot records it.
     const agyBuckets = antigravityQuotaMapOf(params.payload);
     if (agyBuckets !== undefined) {
       summary = { ...summary, quotaFamilies: quotaFamiliesOf(agyBuckets, params.nowMs) };
