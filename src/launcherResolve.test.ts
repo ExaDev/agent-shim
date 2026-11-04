@@ -73,9 +73,22 @@ describe("resolveLaunch", () => {
     let changed = false;
     const read = params.fs.readFileUtf8;
     const fs = { ...params.fs, readFileUtf8: (file: string) => file === paths.frontdoorStateFile && changed ? JSON.stringify({ supervisorPid: successor, port: FRONTDOOR_PORT }) : read(file) };
-    const frontdoor = { ...fakeFrontDoorPort(), waitForCatalogues: () => { changed = true; return "The front door changed while waiting for provider catalogues"; } };
+    const base = fakeFrontDoorPort();
+    const frontdoor = { ...base, ensure: (...args: Parameters<typeof base.ensure>) => ({ ...base.ensure(...args), supervisorPid: changed ? successor : SERVING_DOOR_PID }), waitForCatalogues: () => { changed = true; return "The front door changed while waiting for provider catalogues"; } };
     const prepared = prepareLaunch({ ...params, fs, frontdoor, headroom: { ensure: () => ({ socketPath: "/s", projectId: "p" }), release: () => undefined } });
     expect(JSON.stringify(prepared.args)).toContain("successor-model");
+  });
+  it("authenticates a successor before using its catalogue", () => {
+    const successor = SERVING_DOOR_PID + 1;
+    const { params } = ports({ argv: ["@work", "--headroom", "--print"] });
+    let changed = false;
+    const read = params.fs.readFileUtf8;
+    const fs = { ...params.fs, readFileUtf8: (file: string) => file === paths.frontdoorStateFile && changed ? JSON.stringify({ supervisorPid: successor, port: FRONTDOOR_PORT }) : read(file) };
+    const base = fakeFrontDoorPort();
+    const ensure = vi.fn((...args: Parameters<typeof base.ensure>) => ({ ...base.ensure(...args), supervisorPid: changed ? successor : SERVING_DOOR_PID }));
+    const frontdoor = { ...base, ensure, waitForCatalogues: () => { changed = true; return undefined; } };
+    prepareLaunch({ ...params, fs, frontdoor, headroom: { ensure: () => ({ socketPath: "/s", projectId: "p" }), release: () => undefined } });
+    expect(ensure).toHaveBeenCalledTimes(2);
   });
   it("reports a catalogue readiness warning without refusing the launch", () => {
     const { params, log } = ports({ argv: ["@work", "--headroom", "--print"] });

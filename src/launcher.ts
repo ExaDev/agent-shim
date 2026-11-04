@@ -748,10 +748,19 @@ function prepareRegisteredLaunch(params: PrepareLaunchParams, onRecorded: (remov
   const sessionId = params.supervised?.sessionId ?? randomUUID();
   const resolvedModels = decided.models ?? (decided.globalModels === undefined ? undefined : {});
   const sessionModels = isDeepStrictEqual(resolvedModels, decided.globalModels) ? undefined : resolvedModels;
-  const frontDoor = frontDoorEngaged && frontDoorPort !== undefined ? frontDoorPort.ensure(env.NODE_EXTRA_CA_CERTS, { sessionId, ...(sessionModels === undefined ? {} : { models: sessionModels }) }) : undefined;
-  const doorBeforeCatalogues = readFrontDoorState(params.fs, paths.frontdoorStateFile);
-  const catalogueWarning = frontDoor === undefined ? undefined : frontDoorPort?.waitForCatalogues?.(frontDoor.supervisorPid);
-  if (catalogueWarning !== undefined) log.warn(catalogueWarning);
+  const session = { sessionId, ...(sessionModels === undefined ? {} : { models: sessionModels }) };
+  let frontDoor = frontDoorEngaged && frontDoorPort !== undefined ? frontDoorPort.ensure(env.NODE_EXTRA_CA_CERTS, session) : undefined;
+  if (frontDoor !== undefined && frontDoorPort !== undefined) {
+    let beforePid = readFrontDoorState(params.fs, paths.frontdoorStateFile)?.supervisorPid;
+    for (;;) {
+      const catalogueWarning = frontDoorPort.waitForCatalogues?.(frontDoor.supervisorPid);
+      if (catalogueWarning !== undefined) log.warn(catalogueWarning);
+      const after = readFrontDoorState(params.fs, paths.frontdoorStateFile);
+      if (after?.supervisorPid === undefined || after.supervisorPid === beforePid) break;
+      frontDoor = frontDoorPort.ensure(env.NODE_EXTRA_CA_CERTS, session);
+      beforePid = frontDoor.supervisorPid;
+    }
+  }
   if (frontDoor?.trustWarning !== undefined) {
     log.warn(frontDoor.trustWarning);
   }
@@ -791,9 +800,7 @@ function prepareRegisteredLaunch(params: PrepareLaunchParams, onRecorded: (remov
       registered();
     }
   };
-  const doorAfterCatalogues = readFrontDoorState(params.fs, paths.frontdoorStateFile);
-  const successor = doorAfterCatalogues?.supervisorPid !== doorBeforeCatalogues?.supervisorPid && doorAfterCatalogues?.port !== undefined && doorAfterCatalogues.supervisorPid !== undefined && proc.isProcessAlive(doorAfterCatalogues.supervisorPid) ? doorAfterCatalogues.supervisorPid : undefined;
-  const picker = decided.argsForSupervisor(successor ?? frontDoor?.supervisorPid);
+  const picker = decided.argsForSupervisor(frontDoor?.supervisorPid);
   if (picker.pickerSuppressed) rows.push(noteRow("--settings was passed, so /model keeps Claude Code's own model names"));
   rows.push(...notes.map(noteRow));
   log.report(rows);
