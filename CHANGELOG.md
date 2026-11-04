@@ -1,3 +1,9 @@
+## [11.83.8](https://github.com/ExaDev/agent-shim/compare/v11.83.7...v11.83.8) (2026-11-04)
+
+### Bug Fixes
+
+* **statusline:** leave routed quota unknown until recorded ([2e09969](https://github.com/ExaDev/agent-shim/commit/2e09969155135ec4e33e04ba26b94b40f245d99f))
+
 ## [11.83.7](https://github.com/ExaDev/agent-shim/compare/v11.83.6...v11.83.7) (2026-11-04)
 
 ### Bug Fixes
