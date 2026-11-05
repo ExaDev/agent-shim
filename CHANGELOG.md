@@ -1,3 +1,9 @@
+## [11.86.1](https://github.com/ExaDev/agent-shim/compare/v11.86.0...v11.86.1) (2026-11-05)
+
+### Bug Fixes
+
+* preserve Codex structured output schemas ([3c08165](https://github.com/ExaDev/agent-shim/commit/3c08165c2380fbe40477a96e50ba75c31de1f61f))
+
 ## [11.86.0](https://github.com/ExaDev/agent-shim/compare/v11.85.0...v11.86.0) (2026-11-05)
 
 ### Features
