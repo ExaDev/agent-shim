@@ -1,3 +1,9 @@
+## [11.86.3](https://github.com/ExaDev/agent-shim/compare/v11.86.2...v11.86.3) (2026-11-05)
+
+### Bug Fixes
+
+* relay Codex context limit errors ([9bef168](https://github.com/ExaDev/agent-shim/commit/9bef16863109dd65ec9bd7b7390af0e92b1faad7))
+
 ## [11.86.2](https://github.com/ExaDev/agent-shim/compare/v11.86.1...v11.86.2) (2026-11-05)
 
 ### Bug Fixes
