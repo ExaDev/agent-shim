@@ -228,10 +228,12 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
   const clientEmail = isObject(params.payload) && typeof params.payload.email === "string" && params.payload.email !== "" ? params.payload.email : undefined;
   const clientPlan = clientEmail !== undefined && isObject(params.payload) && typeof params.payload.plan_tier === "string" && params.payload.plan_tier !== "" ? params.payload.plan_tier : undefined;
   const account = clientEmail === undefined ? params.account : undefined;
+  const routedProvider = routedProviderOf(params);
+  const launchProvider = params.env.AGENT_SHIM_PROVIDER;
   let summary: StatuslineSummary = {
     identity: params.identityName ?? identity,
     identityLabel: params.identityLabel,
-    provider: params.env.AGENT_SHIM_PROVIDER === undefined || params.env.AGENT_SHIM_PROVIDER === "" ? undefined : params.env.AGENT_SHIM_PROVIDER,
+    provider: launchProvider === undefined || launchProvider === "" ? routedProvider : routedProvider !== undefined && routedProvider.toLowerCase() !== (params.providerName ?? launchProvider).toLowerCase() ? routedProvider : launchProvider,
     providerAccountEmail: undefined,
     providerAccountSub: undefined,
     providerPlan: undefined,
@@ -253,9 +255,8 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
     ...(params.doorCostUsd === undefined ? {} : { doorCostUsd: params.doorCostUsd }),
   };
   let scopedName: string | undefined;
-  const routedProvider = routedProviderOf(params);
   if (params.snapshot !== undefined) {
-    scopedName = providerScopedState(params.snapshot, params.providerName, params.env.AGENT_SHIM_PROVIDER) ?? providerScopedState(params.snapshot, routedProvider, routedProvider);
+    scopedName = routedProvider === undefined ? providerScopedState(params.snapshot, params.providerName, params.env.AGENT_SHIM_PROVIDER) : providerScopedState(params.snapshot, routedProvider, routedProvider);
     const scopedState = scopedName === undefined ? undefined : params.snapshot.providers[scopedName];
     // A session that selected a provider or is routed to one spends that provider's quota alone: when its state is not in the snapshot yet there are no windows to show, never another provider's (an exhausted login week was drawn as a z.ai session's usage). Only a session with no provider shows the binding windows across every provider the identity has used.
     const states = summary.provider === undefined && routedProvider === undefined && scopedState === undefined ? Object.values(params.snapshot.providers) : scopedState === undefined ? [] : [scopedState];
@@ -317,8 +318,13 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
   return { payload: enriched, summary };
 }
 
-/** The provider a providerless session is currently routed to, from the last request's model choice, its routed target (`<provider>/<model>`), or a qualified model name in the client's payload (`<provider>/<model>` or `<provider> / <model>`). */
+/** The selected provider from the client's qualified model name, or from the last request's model choice or routed target when the model is unqualified. */
 function routedProviderOf(params: EnrichParams): string | undefined {
+  const model = isObject(params.payload) && isObject(params.payload.model) ? params.payload.model : undefined;
+  const selectedProvider = prefixBeforeSlash(typeof model?.id === "string" ? model.id : undefined) ?? prefixBeforeSlash(typeof model?.display_name === "string" ? model.display_name : undefined);
+  if (selectedProvider !== undefined) {
+    return selectedProvider;
+  }
   if (params.modelChoice?.provider !== undefined && params.modelChoice.provider !== "") {
     return params.modelChoice.provider;
   }
@@ -326,8 +332,7 @@ function routedProviderOf(params: EnrichParams): string | undefined {
   if (targetPrefix !== undefined) {
     return targetPrefix;
   }
-  const model = isObject(params.payload) && isObject(params.payload.model) ? params.payload.model : undefined;
-  return prefixBeforeSlash(typeof model?.id === "string" ? model.id : undefined) ?? prefixBeforeSlash(typeof model?.display_name === "string" ? model.display_name : undefined);
+  return undefined;
 }
 
 /** The leading segment before `/` in a qualified target or picker label (`<provider>/<model>` or `<provider> / <model>`), or undefined when there is no slash or either side is blank. */
