@@ -48,7 +48,7 @@ interface ProviderQuotaWindowView {
   readonly periodMs?: number | undefined;
 }
 
-/** The identity name this tool's own launcher hands the session, inside its custom-header environment entry (`x-agent-shim-identity: <name>`), or derived from the config directory the launch pinned (`<root>/identities/<name>`). */
+/** The id of the identity this tool's own launcher hands the session, inside its custom-header environment entry (`x-agent-shim-identity: <id>`), or derived from the config directory the launch pinned (`<root>/identities/<id>`). Both carry the id, the directory the identity is stored in, which a rename keeps, so a session started before a rename still finds its identity; its name is looked up from the id. */
 export function identityOf(env: Readonly<Record<string, string | undefined>>): string | undefined {
   const headers = env.ANTHROPIC_CUSTOM_HEADERS;
   if (headers !== undefined) {
@@ -199,6 +199,8 @@ export interface EnrichParams {
   readonly env: Readonly<Record<string, string | undefined>>;
   /** The identity's usage snapshot, or undefined when there is none. */
   readonly snapshot: UsageSnapshot | undefined;
+  /** The launching identity's name, read from its `identity.json` by the id the session carries; absent when no identity is stored under that id any more, and the summary then names it by the id. */
+  readonly identityName?: string | undefined;
   /** The launching identity's display label, read from its `identity.json`; absent when it has none. */
   readonly identityLabel?: string | undefined;
   /** The identity's own OAuth account metadata, or undefined when the identity never logged in. */
@@ -227,7 +229,7 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
   const clientPlan = clientEmail !== undefined && isObject(params.payload) && typeof params.payload.plan_tier === "string" && params.payload.plan_tier !== "" ? params.payload.plan_tier : undefined;
   const account = clientEmail === undefined ? params.account : undefined;
   let summary: StatuslineSummary = {
-    identity,
+    identity: params.identityName ?? identity,
     identityLabel: params.identityLabel,
     provider: params.env.AGENT_SHIM_PROVIDER === undefined || params.env.AGENT_SHIM_PROVIDER === "" ? undefined : params.env.AGENT_SHIM_PROVIDER,
     providerAccountEmail: undefined,

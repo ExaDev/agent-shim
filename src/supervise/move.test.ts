@@ -18,8 +18,12 @@ const transcriptOf = (identity: string): string => `${paths.identitiesDir}/${ide
 const iso = (offsetMs: number): string => new Date(FAKE_NOW_MS + offsetMs).toISOString();
 
 /** A coordinator over a fake store whose transcript is visible to `visibleTo`, with `pick` standing in for the pool ranking and every pid in `running` alive. */
-function setup(options: Readonly<{ visibleTo?: readonly string[]; pick: (params: ResolvePoolParams) => ReturnType<MoverDeps["pickMember"]>; running?: readonly number[]; seed?: Readonly<Record<string, string>> }>) {
-  const farmFs = createFakeFarmFs({ ...Object.fromEntries((options.visibleTo ?? ["spare"]).map((identity) => [transcriptOf(identity), "{}\n"])), ...options.seed });
+function setup(options: Readonly<{ visibleTo?: readonly string[]; pick: (params: ResolvePoolParams) => ReturnType<MoverDeps["pickMember"]>; running?: readonly number[]; seed?: Readonly<Record<string, string>>; identities?: Readonly<Record<string, string>> }>) {
+  const farmFs = createFakeFarmFs({
+    ...Object.fromEntries(Object.entries(options.identities ?? { work: "work", spare: "spare" }).map(([id, name]) => [`${paths.identitiesDir}/${id}/identity.json`, JSON.stringify({ name })])),
+    ...Object.fromEntries((options.visibleTo ?? ["spare"]).map((identity) => [transcriptOf(identity), "{}\n"])),
+    ...options.seed,
+  });
   const calls: ResolvePoolParams[] = [];
   const mover = createMover({
     paths,
@@ -79,9 +83,16 @@ describe("the identity mover", () => {
     expect(liveSupervised(farmFs, paths, POOL, () => true)).toMatchObject([{ sessionId: SESSION, identity: "spare", carriedTokens: CONTEXT }]);
   });
 
+  it("moves onto the identity id the door named, saying the identity's name, and registers the session under the id", () => {
+    const { farmFs, identityMover } = identitySetup({ existing: ["work"], visibleTo: ["spare-1"] });
+    farmFs.seed({ [`${paths.identitiesDir}/spare-1/identity.json`]: JSON.stringify({ name: "spare" }) });
+    expect(identityMover({ ...request, to: "spare-1" })).toEqual({ kind: "move", to: "spare-1", explanation: "the picked model runs under spare" });
+    expect(liveSupervised(farmFs, paths, POOL, () => true).map((session) => session.identity)).toEqual(["spare-1"]);
+  });
+
   it("stays, saying why, when the named identity does not exist, is the one it is on, or does not share the transcript", () => {
     const { identityMover } = identitySetup({ existing: ["work"] });
-    expect(identityMover({ ...request, to: "ghost" })).toMatchObject({ kind: "stay", reason: 'no identity "ghost"' });
+    expect(identityMover({ ...request, to: "ghost" })).toMatchObject({ kind: "stay", reason: "no identity is stored under identities/ghost" });
     expect(identityMover({ ...request, to: "work" })).toMatchObject({ kind: "stay", reason: "the model already runs under this session's identity" });
     const { identityMover: blind } = identitySetup({ visibleTo: [] });
     expect(blind({ ...request, to: "spare" })).toMatchObject({ kind: "stay", reason: "spare does not share this conversation's history, so it could not resume it" });
@@ -89,6 +100,21 @@ describe("the identity mover", () => {
 });
 
 describe("the move coordinator", () => {
+  it("moves the session to the id of the member the ranking named, registers it under that id, and compares the session's own member by id", () => {
+    const { farmFs, mover } = setup({ pick: picks("spare"), identities: { "work-2": "work", "spare-1": "spare" }, visibleTo: ["spare-1"] });
+    expect(mover({ ...request, from: "work-2" })).toMatchObject({ kind: "move", to: "spare-1" });
+    expect(liveSupervised(farmFs, paths, POOL, () => true).map((session) => session.identity)).toEqual(["spare-1"]);
+    const { mover: same } = setup({ pick: picks("work"), identities: { "work-2": "work", "spare-1": "spare" }, visibleTo: ["work-2"] });
+    expect(same({ ...request, from: "work-2" })).toMatchObject({ kind: "stay", reason: `no other member of pool "${POOL}" can take it` });
+  });
+
+  it("ranks with the context carried onto each member counted under the member's name, from sessions registered under its id", () => {
+    const { farmFs, calls, mover } = setup({ pick: picks("spare"), identities: { "work-2": "work", "spare-1": "spare" }, visibleTo: ["spare-1"] });
+    registerSupervised(farmFs, paths, sibling({ sessionId: "a", identity: "spare-1", carriedTokens: CONTEXT }));
+    mover({ ...request, from: "work-2" });
+    expect(calls[0]?.committedContextTokens).toEqual({ spare: CONTEXT });
+  });
+
   it("moves the session to the member the ranking chose, records the pick and registers the session on it with the context it carries", () => {
     const { farmFs, mover } = setup({ pick: picks("spare") });
     expect(mover(request)).toEqual({ kind: "move", to: "spare", explanation: `pool ${POOL}: spare is next` });

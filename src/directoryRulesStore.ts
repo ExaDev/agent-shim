@@ -2,7 +2,7 @@ import { readJson, writeJsonAtomic } from "./config/store";
 import { ConfigValidationError } from "./config/load";
 import { DirectoryRulesSchema, POOL_SELECTOR_PREFIX, type DirectoryRule, type DirectoryRules } from "./config/schema";
 import { CliError } from "./cliError";
-import { IdentityNotFoundError, readIdentity } from "./identityStore";
+import { readIdentity, identityNotFound } from "./identityStore";
 import { PoolNotFoundError, readPools } from "./poolStore";
 import { renameAccountModelRefs } from "./modelRefs";
 import type { LayoutPaths } from "./paths";
@@ -142,7 +142,7 @@ export function requireRuleSelector(paths: LayoutPaths, selector: string): void 
       throw new PoolNotFoundError(poolName);
     }
   } else if (readIdentity(paths, selector) === undefined) {
-    throw new IdentityNotFoundError(selector);
+    throw identityNotFound(paths, selector);
   }
 }
 

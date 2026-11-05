@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CliError } from "./cliError";
 import { collectDoctorReport } from "./doctorReport";
-import { describeIdentityRename, renameIdentity } from "./identityRename";
+import { describeIdentityMove, moveIdentity } from "./identityRename";
 import { createWorld, treeOf, type World } from "./identityRenameTestWorld";
 import { listIdentities } from "./identityStore";
 import { readDirectoryRules } from "./directoryRulesStore";
@@ -60,10 +60,10 @@ describe("an identity.json that is not JSON", () => {
     const before = treeOf(world.root);
     const attempts = [
       async (): Promise<void> => {
-        await Promise.resolve(describeIdentityRename(world.paths, "work", "client", world.ports()));
+        await Promise.resolve(describeIdentityMove(world.paths, "work", "client", world.ports()));
       },
       async (): Promise<void> => {
-        await renameIdentity(world.paths, "work", "client", world.ports());
+        await moveIdentity(world.paths, "work", "client", world.ports());
       },
     ];
     for (const attempt of attempts) {
@@ -105,10 +105,10 @@ describe("the identity being renamed has an identity.json that is not JSON", () 
     const before = treeOf(world.root);
     const attempts = [
       async (): Promise<void> => {
-        await Promise.resolve(describeIdentityRename(world.paths, "work", "client", world.ports()));
+        await Promise.resolve(describeIdentityMove(world.paths, "work", "client", world.ports()));
       },
       async (): Promise<void> => {
-        await renameIdentity(world.paths, "work", "client", world.ports());
+        await moveIdentity(world.paths, "work", "client", world.ports());
       },
     ];
     for (const attempt of attempts) {

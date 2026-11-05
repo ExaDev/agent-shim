@@ -1,5 +1,5 @@
 import type { Pool } from "../config/schema";
-import { loadIdentity } from "./identity";
+import { identityIdResolver } from "./identity";
 import type { LayoutPaths } from "../paths";
 import type { Candidate, StickyPick } from "../usage/pick";
 import { formatAge } from "../usage/preflight";
@@ -97,7 +97,7 @@ export function resolvePoolLaunch(params: ResolvePoolParams): PoolResolution {
         resuming,
         ...(params.resumeContextTokens === undefined ? {} : { resumeContextTokens: params.resumeContextTokens }),
         ...(params.committedContextTokens === undefined ? {} : { committedContextTokens: params.committedContextTokens }),
-        identityExists: (name) => loadIdentity(params.paths.identitiesDir, name, params.fs) !== undefined,
+        identityIdOf: identityIdResolver(params.paths.identitiesDir, params.fs),
         ...(stickyRead.sticky === undefined ? {} : { sticky: stickyRead.sticky }),
       });
     } catch (error) {

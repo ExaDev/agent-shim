@@ -16,7 +16,7 @@ const SupervisedSessionSchema = z.strictObject({
   pid: z.number().int().positive(),
   sessionId: z.string().min(1),
   pool: z.string().min(1),
-  /** The identity the session is running as now. */
+  /** The id of the identity the session is running as now: the directory it is stored in, which a rename of its name keeps, so the entry stays true across one. */
   identity: z.string().min(1),
   cwd: z.string().min(1),
   /** When the session began running as `identity`: its launch, or the move that brought it there. */
@@ -142,7 +142,7 @@ export function liveSupervised(fs: RegistryFs, paths: LayoutPaths, pool: string,
 }
 
 /**
- * The context tokens already on their way to each member: the sum, per identity, of what the sessions that moved onto it carried, for the ones that have not yet made a request there. Until a moved session's first request lands, the member's usage does not show the cost of writing its context again, so the next mover would rank the member as if that cost were not coming.
+ * The context tokens already on their way to each member: the sum, per identity id, of what the sessions that moved onto it carried, for the ones that have not yet made a request there. Until a moved session's first request lands, the member's usage does not show the cost of writing its context again, so the next mover would rank the member as if that cost were not coming.
  */
 export function committedContextTokens(sessions: readonly SupervisedSession[], records: readonly UsageRecord[]): Readonly<Record<string, number>> {
   const committed: Record<string, number> = {};
@@ -151,6 +151,7 @@ export function committedContextTokens(sessions: readonly SupervisedSession[], r
       continue;
     }
     const sinceMs = Date.parse(session.since);
+    // The registry and the door's usage records both key the member by its id.
     const written = records.some((record) => record.sessionId === session.sessionId && record.identity === session.identity && Date.parse(record.at) >= sinceMs);
     if (!written) {
       committed[session.identity] = (committed[session.identity] ?? 0) + session.carriedTokens;
@@ -165,7 +166,7 @@ export function committedContextTokens(sessions: readonly SupervisedSession[], r
 const ModelMoveRequestSchema = z.strictObject({
   /** The session the request is for: the id its supervisor registered it under. */
   sessionId: z.string().min(1),
-  /** The identity the model runs under, as the `acct:` member names it. */
+  /** The id of the identity the model runs under, which the door resolved the `acct:` member's name to when it wrote the request. */
   to: z.string().min(1),
   /** The model to resume with, the part after the identity in the `acct:` member. */
   model: z.string().min(1),
@@ -178,6 +179,21 @@ export type ModelMoveRequest = z.infer<typeof ModelMoveRequestSchema>;
 export function writeModelMove(fs: RegistryFs, paths: LayoutPaths, request: Readonly<ModelMoveRequest>): void {
   fs.mkdirPrivate(paths.modelMovesDir);
   fs.writeFilePrivate(path.join(paths.modelMovesDir, `${request.sessionId}.json`), `${JSON.stringify(ModelMoveRequestSchema.parse(request))}\n`);
+}
+
+/**
+ * Leaves a model-move request for the supervisor of session `sessionId`, when one is supervising it, to relaunch the session under the identity an `acct:` model member names: `to` is that identity's name, and the request carries the id `idOf` resolves it to now, since the supervisor keys its sessions by id, which a rename keeps. Returns false, leaving nothing, when no live supervisor holds the session or no identity is named `to`, so the door answers with the command to run instead.
+ */
+export async function requestAccountMove(deps: { readonly fs: RegistryFs; readonly paths: LayoutPaths; readonly runningAmong: (pids: readonly number[]) => Promise<ReadonlySet<number>>; readonly idOf: (name: string) => string | undefined; readonly now: () => number }, sessionId: string, to: string, model: string): Promise<boolean> {
+  if ((await supervisedSessionOf(deps.fs, deps.paths, sessionId, deps.runningAmong)) === undefined) {
+    return false;
+  }
+  const toId = deps.idOf(to);
+  if (toId === undefined) {
+    return false;
+  }
+  writeModelMove(deps.fs, deps.paths, { sessionId, to: toId, model, at: new Date(deps.now()).toISOString() });
+  return true;
 }
 
 /** Reads the session's pending model-move request, when one is there and parses. */

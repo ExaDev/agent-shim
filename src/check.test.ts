@@ -445,8 +445,11 @@ describe("runCheck credential cache", () => {
   const identity = { name: "work", allowAmbientCredential: false, credential: caching };
 
   it("reports the age and remaining time of the identity's cached credential, in the text and the JSON, without the token", () => {
-    const report = runCheck(baseParams({ identityName: "work", identity, credentialCache: cachedAt(-THREE_HOURS_MS) }));
-    expect(formatCheckReport(report)).toContain("  Identity work: oauthToken from op op://vault/claude-work/token, cached for 12h; cached 3h ago, expires in 9h");
+    // The cache files the identity's credential under its id, here the directory it was created in before it was renamed to client.
+    const keyed = cachedAt(-THREE_HOURS_MS);
+    const byId: CredentialCacheEnv = { ...keyed, port: { ...keyed.port, read: (store, owner) => (owner === "identity work" ? keyed.port.read(store, owner) : undefined) } };
+    const report = runCheck(baseParams({ identityName: "client", identityId: "work", identity: { ...identity, name: "client" }, credentialCache: byId }));
+    expect(formatCheckReport(report)).toContain("  Identity client: oauthToken from op op://vault/claude-work/token, cached for 12h; cached 3h ago, expires in 9h");
     expect(checkReportToJson(report)).toMatchObject({ credential: { identityCached: { status: "fresh", ageMs: THREE_HOURS_MS, expiresInMs: NINE_HOURS_MS } } });
     expect(formatCheckReport(report).join("\n") + JSON.stringify(checkReportToJson(report))).not.toContain(SECRET);
   });
@@ -457,7 +460,7 @@ describe("runCheck credential cache", () => {
   });
 
   it("says nothing about a cache when the block does not cache, or no cache port was given", () => {
-    const plain = runCheck(baseParams({ identityName: "work", identity: { ...identity, credential: { sources: caching.sources, target: "oauthToken" } }, credentialCache: cachedAt(-HOUR_MS) }));
+    const plain = runCheck(baseParams({ identityName: "work", identityId: "work", identity: { ...identity, credential: { sources: caching.sources, target: "oauthToken" } }, credentialCache: cachedAt(-HOUR_MS) }));
     expect(plain.credential.identityCached).toBeUndefined();
     const noPort = runCheck(baseParams({ identityName: "work", identity }));
     expect(noPort.credential.identityCached).toBeUndefined();

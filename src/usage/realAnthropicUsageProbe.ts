@@ -1,5 +1,6 @@
 import { availableParallelism } from "node:os";
 
+import { requireIdentityId } from "../identityStore";
 import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import { createAnthropicUsageRefresher, unifiedFromReportedLimits, type AnthropicUsageRefresher } from "./anthropicUsageRefresh";
@@ -69,8 +70,9 @@ interface RealAnthropicUsageRefresherParams extends Omit<RealAnthropicUsageProbe
 export function createRealAnthropicUsageRefresher(params: RealAnthropicUsageRefresherParams): AnthropicUsageRefresher {
   return createAnthropicUsageRefresher({
     probe: createRealAnthropicUsageProbe({ paths: params.paths, cwd: params.cwd, spawnDaemon: params.spawnDaemon, timeoutMs: QUOTA_REQUEST_TIMEOUT_MS }),
+    // The refresher works by identity name, which the probe launches under; the store files usage by the id the identity is stored under, which a rename keeps.
     record: (identity, rateLimit) => {
-      params.store.recordRateLimit(identity, ANTHROPIC_PROVIDER, rateLimit);
+      params.store.recordRateLimit(requireIdentityId(params.paths, identity), ANTHROPIC_PROVIDER, rateLimit);
     },
     now: () => Date.now(),
     log: params.log,

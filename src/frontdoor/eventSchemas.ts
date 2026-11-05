@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { UsageSnapshot } from "../usage/schema";
+import { UsageSnapshotSchema, type UsageSnapshot } from "../usage/schema";
 
 /**
  * The Zod schemas of the door's event backbone: the envelope every source-tagged event carries, the source filter the subscription takes, and the launch lifecycle's own payload family. The backbone's TypeScript shapes in `eventHub.ts` and `launchEvents.ts` stay the implementations' types; these schemas are what the typed API's contract validates through, and because the backbone's publishers produce those interfaces' values, a drift between a schema and its interface fails the API's own output validation (exercised by its tests) rather than shipping silently. This module deliberately imports nothing from oRPC: it is a plain Zod leaf, so the backbone and its publishers can share it without depending on the API layer.
@@ -71,7 +71,10 @@ export type DoorHealthEvent = z.output<typeof DoorHealthEventSchema>;
  * One expiring-quota event: an identity's window with allowance still unspent that is about to reset, published once when the window enters its final span (so a scheduler can spend what would otherwise be lost, the moment spending it is still possible). `resetsAt` is the window's own reset instant; `observedAt` is when the door's tick saw it cross.
  */
 export const QuotaExpiringEventSchema = z.strictObject({
-  identity: z.string().min(1),
+  /** The id of the identity whose window it is: what its usage is filed under, which a rename keeps. */
+  id: z.string().min(1),
+  /** The identity's name when the event was published, absent for an identity no longer stored under the id. */
+  name: z.string().min(1).optional(),
   provider: z.string().min(1),
   window: z.enum(["fiveHour", "sevenDay"]),
   /** The fraction of the window already used when it was seen expiring, always below one because a fully used window has nothing left to spend. */
@@ -84,7 +87,24 @@ export const QuotaExpiringEventSchema = z.strictObject({
 export type QuotaExpiringEvent = z.output<typeof QuotaExpiringEventSchema>;
 
 /**
- * The usage source's payload: the snapshot the door just wrote, verbatim, so a consumer sees the quota change or reset in the payload itself rather than the door guessing which of the two a write was. The snapshot schema is the payload schema (identity, observed instant, every provider's state with its windows), the one definition `usage --json` readers already share.
+ * The usage source's payload: the snapshot the door just wrote, verbatim, so a consumer sees a quota change or a reset in the payload itself rather than the door guessing what the two writes were, with the identity it belongs to named both ways. A snapshot is filed by the identity's id, which its `identity` field also holds; `id` repeats it under the name every event uses, and `name` is the identity's name when the door wrote it, absent for a snapshot of an identity no longer stored under that id.
  */
-/** One usage change event, as the TypeScript the publisher emits and its consumers handle: the written snapshot itself, so the snapshot's own schema (`UsageSnapshotSchema`) is this payload's schema rather than a renamed copy. */
-export type UsageChangeEvent = UsageSnapshot;
+export const UsageChangeEventSchema = UsageSnapshotSchema.extend({
+  id: z.string().min(1),
+  name: z.string().min(1).optional(),
+});
+
+/** One usage change event, as the TypeScript the publisher emits and its consumers handle (the schema's own inferred type). */
+export type UsageChangeEvent = z.output<typeof UsageChangeEventSchema>;
+
+/** What publishes the usage change event for each snapshot the door writes, naming the identity through `nameOf` (the door's `createIdentityNameReader`). */
+export function usageEventPublisher(publish: (event: UsageChangeEvent) => void, nameOf: (id: string) => string | undefined): (snapshot: Readonly<UsageSnapshot>) => void {
+  return (snapshot) => {
+    publish(usageChangeEventOf(snapshot, nameOf(snapshot.identity)));
+  };
+}
+
+/** The usage change event for a snapshot the door wrote: the snapshot, its id (the `identity` it is filed under) and, when an identity is stored under that id, its `name`. Pure, so what the door publishes is what a subscriber's `UsageChangeEventSchema.parse` accepts. */
+export function usageChangeEventOf(snapshot: Readonly<UsageSnapshot>, name: string | undefined): UsageChangeEvent {
+  return { ...snapshot, id: snapshot.identity, ...(name === undefined ? {} : { name }) };
+}

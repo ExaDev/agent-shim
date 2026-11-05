@@ -1,13 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { IdentityInUseError, renameIdentity } from "./identityRename";
+import { IdentityInUseError, moveIdentity } from "./identityRename";
 import type { CredentialCachePort } from "./credentialCache";
 import { realFarmFs } from "./realPorts";
 import { claudeCodeKeychainService } from "./usage/signIn";
 import { LOGIN_SECRET, type World, createWorld, treeOf, failingOnce } from "./identityRenameTestWorld";
 
-describe("renameIdentity with a macOS Keychain login", () => {
+describe("moveIdentity with a macOS Keychain login", () => {
   let world: World;
   const oldService = (): string => claudeCodeKeychainService(world.directory("work"));
   const newService = (): string => claudeCodeKeychainService(world.directory("client"));
@@ -23,7 +23,7 @@ describe("renameIdentity with a macOS Keychain login", () => {
   it("carries the login to the service derived from the new directory and removes the old item last", async () => {
     const oldKey = oldService();
     const newKey = newService();
-    const report = await renameIdentity(world.paths, "work", "client", world.ports());
+    const report = await moveIdentity(world.paths, "work", "client", world.ports());
     expect(world.keychain.items.get(newKey)?.account).toBe("alex");
     expect(world.keychain.secretOf(newKey)?.toString("utf8")).toBe(LOGIN_SECRET);
     expect(world.keychain.items.has(oldKey)).toBe(false);
@@ -32,7 +32,7 @@ describe("renameIdentity with a macOS Keychain login", () => {
   });
 
   it("never exposes the login in an argument list, a step, a warning or a thrown error", async () => {
-    const report = await renameIdentity(world.paths, "work", "client", world.ports());
+    const report = await moveIdentity(world.paths, "work", "client", world.ports());
     const exposed = world.keychain.calls.map((call) => [call.command, ...call.args].join(" ")).join("\n");
     expect(exposed).not.toContain("made-up-value-for-the-rename-test");
     expect(exposed).not.toContain(Buffer.from(LOGIN_SECRET).toString("hex"));
@@ -40,7 +40,7 @@ describe("renameIdentity with a macOS Keychain login", () => {
   });
 
   it("deletes the old item only after the new one has been looked up and found", async () => {
-    await renameIdentity(world.paths, "work", "client", world.ports());
+    await moveIdentity(world.paths, "work", "client", world.ports());
     const calls = world.keychain.calls.map((call) => `${call.args[0] ?? ""} ${call.args.includes(newService()) ? "new" : call.args.includes(oldService()) ? "old" : ""}`.trim());
     const deleteOld = calls.lastIndexOf("delete-generic-password old");
     const lookupNew = calls.lastIndexOf("find-generic-password new");
@@ -79,7 +79,7 @@ describe("renameIdentity with a macOS Keychain login", () => {
         world.cache.delete(`${store}:${owner}`);
       },
     };
-    await renameIdentity(world.paths, "work", "client", world.ports({ fs: recording, run, credentialCache: { port: cachePort, platform: "linux" } }));
+    await moveIdentity(world.paths, "work", "client", world.ports({ fs: recording, run, credentialCache: { port: cachePort, platform: "linux" } }));
     expect(events.filter((event) => event === "read the login")).toHaveLength(1);
     expect(events.filter((event) => event === "read the cache")).toHaveLength(1);
     expect(events.indexOf("lock")).toBeGreaterThan(events.indexOf("read the login"));
@@ -88,14 +88,14 @@ describe("renameIdentity with a macOS Keychain login", () => {
 
   it("asks for neither when a session is running, since it is going to refuse", async () => {
     world.sessions.set(world.directory("work"), [{ pid: 4711, program: "claude" }]);
-    await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow(IdentityInUseError);
+    await expect(moveIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow(IdentityInUseError);
     expect(world.keychain.calls.some((call) => call.args.includes("-g"))).toBe(false);
   });
 
   it("keeps the old login and the old name when the new item cannot be created", async () => {
     world.keychain.failNextAdd(1);
     const before = treeOf(world.root);
-    await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow(/Could not create the login/);
+    await expect(moveIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow(/Could not create the login/);
     expect(treeOf(world.root)).toEqual(before);
     expect(world.keychain.items.has(oldService())).toBe(true);
     expect(world.keychain.items.has(newService())).toBe(false);
@@ -109,7 +109,7 @@ describe("renameIdentity with a macOS Keychain login", () => {
     async function refusal(): Promise<{ readonly message: string; readonly unchanged: boolean }> {
       world.keychain.seed(oldService(), "alex", "a".repeat(TOO_LARGE_FOR_ANY_FORM));
       const before = treeOf(world.root);
-      const failure: unknown = await renameIdentity(world.paths, "work", "client", world.ports()).then(
+      const failure: unknown = await moveIdentity(world.paths, "work", "client", world.ports()).then(
         () => undefined,
         (error: unknown) => error,
       );
@@ -145,7 +145,7 @@ describe("renameIdentity with a macOS Keychain login", () => {
     it("gives a route that works: with the old item deleted as the message says, the rename runs again and copies nothing", async () => {
       await refusal();
       world.keychain.items.delete(oldService());
-      const report = await renameIdentity(world.paths, "work", "client", world.ports());
+      const report = await moveIdentity(world.paths, "work", "client", world.ports());
       expect(report.steps.some((step) => step.startsWith("copy the Keychain login"))).toBe(false);
       expect(fs.existsSync(world.directory("client"))).toBe(true);
       expect(world.keychain.items.has(newService())).toBe(false);
@@ -160,7 +160,7 @@ describe("renameIdentity with a macOS Keychain login", () => {
   it("removes the new item and keeps the old one when a later step fails", async () => {
     const before = treeOf(world.root);
     const failing = failingOnce(world);
-    await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: failing }))).rejects.toThrow(/disk full/);
+    await expect(moveIdentity(world.paths, "work", "client", world.ports({ fs: failing }))).rejects.toThrow(/disk full/);
     expect(treeOf(world.root)).toEqual(before);
     expect(world.keychain.items.has(oldService())).toBe(true);
     expect(world.keychain.items.has(newService())).toBe(false);
@@ -169,14 +169,14 @@ describe("renameIdentity with a macOS Keychain login", () => {
   it("refuses when a login is already filed under the new directory, without touching either", async () => {
     world.keychain.seed(newService(), "alex", "left over");
     const before = treeOf(world.root);
-    await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow(/already holds a login/);
+    await expect(moveIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow(/already holds a login/);
     expect(treeOf(world.root)).toEqual(before);
     expect(world.keychain.secretOf(newService())?.toString("utf8")).toBe("left over");
   });
 
   it("copies nothing for an identity with no login in the Keychain", async () => {
     world.keychain.items.delete(oldService());
-    const report = await renameIdentity(world.paths, "work", "client", world.ports());
+    const report = await moveIdentity(world.paths, "work", "client", world.ports());
     expect(report.steps.some((step) => step.includes("Keychain"))).toBe(false);
     expect(world.keychain.calls.some((call) => call.args[0] === "-i" || call.args[0] === "delete-generic-password")).toBe(false);
   });
@@ -186,7 +186,7 @@ describe("renameIdentity with a macOS Keychain login", () => {
     const stubborn = {
       run: (command: string, args: readonly string[], input?: string) => (args[0] === "delete-generic-password" && args.includes(oldService()) ? { status: 1, stdout: "", stderr: "denied" } : original.run(command, args, input)),
     };
-    const report = await renameIdentity(world.paths, "work", "client", world.ports({ run: stubborn }));
+    const report = await moveIdentity(world.paths, "work", "client", world.ports({ run: stubborn }));
     expect(fs.existsSync(world.directory("client"))).toBe(true);
     expect(world.keychain.items.has(newService())).toBe(true);
     expect(report.warnings).toHaveLength(1);
@@ -194,11 +194,11 @@ describe("renameIdentity with a macOS Keychain login", () => {
   });
 });
 
-describe("renameIdentity off macOS", () => {
+describe("moveIdentity off macOS", () => {
   it("never calls security: the credentials file moves with the directory", async () => {
     const world = createWorld("linux");
     try {
-      await renameIdentity(world.paths, "work", "client", world.ports());
+      await moveIdentity(world.paths, "work", "client", world.ports());
       expect(world.keychain.calls).toEqual([]);
       expect(fs.readFileSync(path.join(world.directory("client"), ".credentials.json"), "utf8")).toBe("{}\n");
     } finally {

@@ -280,9 +280,18 @@ describe("usage snapshots", () => {
     expect(() => readUsageSnapshot(fs, SNAPSHOTS_DIR, "work")).toThrow(/schemaVersion/);
   });
 
-  it("refuses an identity name that could name a path outside the snapshots directory", () => {
-    expect(() => snapshotPath(SNAPSHOTS_DIR, "../escape")).toThrow('"../escape" is not a valid identity name.');
-    expect(() => readUsageSnapshot(createFakeFarmFs(), SNAPSHOTS_DIR, ".hidden")).toThrow("is not a valid identity name");
+  it("accepts a snapshot filed under a legacy or hand-made identity id outside isIdentityName, and refuses one that could leave the snapshots directory or starts with a dot", () => {
+    const fs = createFakeFarmFs({
+      [`${SNAPSHOTS_DIR}/-work.json`]: JSON.stringify(snapshotOf("-work")),
+      [`${SNAPSHOTS_DIR}/wörk.json`]: JSON.stringify(snapshotOf("wörk")),
+      [`${SNAPSHOTS_DIR}/wo"rk.json`]: JSON.stringify(snapshotOf('wo"rk')),
+    });
+    expect(readUsageSnapshot(fs, SNAPSHOTS_DIR, "-work")?.identity).toBe("-work");
+    expect(readUsageSnapshot(fs, SNAPSHOTS_DIR, "wörk")?.identity).toBe("wörk");
+    expect(readUsageSnapshot(fs, SNAPSHOTS_DIR, 'wo"rk')?.identity).toBe('wo"rk');
+    expect(listUsageSnapshots(fs, SNAPSHOTS_DIR).map((snapshot) => snapshot.identity)).toEqual(["-work", 'wo"rk', "wörk"]);
+    expect(() => snapshotPath(SNAPSHOTS_DIR, "../escape")).toThrow('"../escape" is not a valid identity id: an id must be non-empty, at most');
+    expect(() => readUsageSnapshot(createFakeFarmFs(), SNAPSHOTS_DIR, ".hidden")).toThrow('".hidden" is not a valid identity id: an id must not start with a dot');
   });
 
   it("lists every identity's snapshot ordered by identity, skipping files that are not snapshots", () => {

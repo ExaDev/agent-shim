@@ -37,7 +37,7 @@ A launch that selects an identity with no `identity.json`, or a configuration pr
 
 Every `list`, `show`, `check`, `doctor` and `status` command prints human-readable text by default and JSON with `--json`. `provider show`, `identity show`, `check` and `doctor` describe a credential by its source kinds and target (a variable name, a path, a program, a 1Password reference, a Keychain service) and never read or print a value; a `literal` source's placeholder is not printed either. `--credential <source>` takes `env:<VAR>`, `file:<path>`, `command:<program and arguments>`, `op:<op://reference>`, `keychain:<service>[:<account>]`, `literal:<placeholder>` or a JSON source object, repeats for an ordered list, and replaces the whole list on `set` (see [Credentials](configuration-model.md#credentials)).
 
-`identity list` and `identity show` also print the account email, organisation, role and plan of each identity's stored login, read from its `.claude.json` (the same source as `account show`, never the token), and `identity list` keeps identities that share a login (the same account in the same organisation) next to each other. An identity with no stored login, such as one that authenticates from a credential block or has never signed in, prints nothing for those fields. `--json` carries them as `account` (`emailAddress`, `organizationName`, `organizationType`, `organizationRole`, `billingType`, `seatTier`, each only when present) and `sharesLoginWith` (the other identities holding the same login); a profile that cannot be read is reported as `accountProblem` instead of failing the command.
+`identity list` prints `(id: <id>)` after a name that differs from the identity's id, and after every name more than one identity claims, so each can be renamed with `identity rename <id> <new> --id`; `identity show` prints the directory, which is named by the id. `identity list` and `identity show` also print the account email, organisation, role and plan of each identity's stored login, read from its `.claude.json` (the same source as `account show`, never the token), and `identity list` keeps identities that share a login (the same account in the same organisation) next to each other. An identity with no stored login, such as one that authenticates from a credential block or has never signed in, prints nothing for those fields. An identity whose `identity.json` cannot be read is printed with `[unreadable: <reason>]` in the list and `Unreadable: <reason>` in `show`, and one whose file an interrupted resync left in a superseded farm with `[displaced: <what puts it back>]` and `Displaced: ...`; `--json` carries `problem` for both and `displaced: true` for the second. `--json` carries them as `account` (`emailAddress`, `organizationName`, `organizationType`, `organizationRole`, `billingType`, `seatTier`, each only when present) and `sharesLoginWith` (the other identities holding the same login); a profile that cannot be read is reported as `accountProblem` instead of failing the command.
 
 Prompts appear only when standard input is a terminal and input the command needs is missing. Without a terminal, the command fails with the option that supplies that input instead of silently skipping it: `identity use` and the `@<name>` shortcut refuse a missing identity rather than offering the setup wizard, `identity set --default-profile`, `rule add --config-profile` and `profile use` refuse a missing profile rather than offering to create it, `profile add` with no options creates an empty profile rather than walking through its categories, and every `remove` needs `--yes` rather than asking for confirmation. `configure` is interactive by nature and refuses to run without a terminal. `NO_COLOR` is honoured by the prompts, the only coloured output agent-shim produces.
 
@@ -64,8 +64,8 @@ agent-shim identity set <name> [--label <text> | --no-label] [--default-profile 
 agent-shim identity set <name> [--credential <source>]... [--credential-target <bearer|apiKey|oauthToken>] [--no-credential]
 agent-shim identity set <name> [--anchor <days>@<HH:MM>[/<zone>]]... [--no-anchor]
 agent-shim identity set <name> [--credential-cache] [--credential-cache-ttl <ttl>] [--credential-cache-store <keychain|file>] [--no-credential-cache]
-agent-shim identity remove <name> [--yes]
-agent-shim identity rename <old> <new> [--dry-run | --discard-journal] [--json]
+agent-shim identity remove <name> [--yes] [--json]   # deletes the directory, its stored token, its cached credential (never one recorded for another identity whose id names the same file; one cached before owners were recorded names no owner and is deleted whichever identity whose id names that file cached it) and its usage snapshot
+agent-shim identity rename <old> <new> [--id | --move] [--dry-run | --move --discard-journal] [--json]   # without --move the name alone changes, and --id takes <old> as the identity's id; see the configuration model
 agent-shim identity use <name>
 agent-shim @<name>                          # shorthand for `identity use <name>`
 agent-shim identity resolve-conflicts <name>  # interactively resolve a retained superseded farm's conflicts
@@ -113,7 +113,7 @@ agent-shim model unassert <ref>
 agent-shim model family <key> [--mode <mode>] [--name <ref>]... [--context <tokens>] [--[no-]vision|tools|thinking] | --clear
 agent-shim model list [--json]
 agent-shim model explain <name>   # which member the virtual model's mode picks now, and why
-agent-shim provider remove <name> [--yes]
+agent-shim provider remove <name> [--yes]              # deletes its definition and file-cached credential, not a Keychain-cached credential
 agent-shim provider rename <old> <new> [--json]
 agent-shim provider unalias <alias> [--json]
 
@@ -126,7 +126,7 @@ agent-shim rule remove <path> [--yes]
 agent-shim credential store <identity>                 # token on standard input
 agent-shim credential warm [<identity> | --provider <name>]
 agent-shim credential forget [<identity> | --provider <name>]
-agent-shim credential push <identity> <host> [--provider <name>]
+agent-shim credential push <identity> <host> [--provider <name>]   # identity pushes require a destination agent-shim with the versioned lock receiver; refused, writing nothing, when no identity there has the name (add it there, unless identity list there already shows it), more than one claims it (rename all but one there with --id), its id there is not an ASCII letter or digit followed by ASCII letters, digits and . _ @ - no longer than the longest name, or the cache file there holds a credential recorded for another owner; for the last two, rename that identity aside there with identity rename, identity add the name and push again, which leaves the one renamed aside as it was; a provider's push over another owner's entry is refused too (another provider defined there whose name names the same file is renamed there with provider rename, and an entry no provider there reads is removed with credential forget --provider); the entry records its owner, which a host running a release from before owners were recorded reads as no entry, so upgrade that host first
 
 agent-shim configure [path] [--identity <identity>]
 agent-shim check [path] [--identity <identity>] [--json] [--strict]
@@ -190,7 +190,7 @@ agent-shim run [@<identity>] [launch flags] [claude arguments]
 claude @<identity> ...                      # the same, once `agent-shim shim enable` has run
 ```
 
-`identity add` refuses, on macOS, a name whose directory the Keychain already holds a Claude Code login for (left by an identity of that name that was renamed or removed), because the new identity would start signed in as that account; the message names the entry and the `security delete-generic-password` command that removes it. `--keep-keychain-login` creates the identity signed in as that account on purpose, and if another identity holds that login the two share it.
+`identity add` refuses, on macOS, when the Keychain already holds a Claude Code login filed for the directory the new identity would be created in (left by an identity stored there that was moved with `identity rename --move` or removed), because the new identity would start signed in as that account; the message names the entry and the `security delete-generic-password` command that removes it. `--keep-keychain-login` creates the identity signed in as that account on purpose, and if another identity holds that login the two share it.
 
 ### `agent-shim configure`: which file it writes to
 

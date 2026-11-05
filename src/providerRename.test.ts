@@ -185,4 +185,23 @@ describe("renameProvider", () => {
     }
     expect(report.updated).toContain("catalogue");
   });
+
+  it("moves a file-cached credential even when the provider has no cache block or caches in the Keychain on darwin", () => {
+    addProvider(paths, "z", base);
+    const entry: CachedCredential = { token: "pushed-token", fetchedAt: 1, source: { env: "Z_API_TOKEN" } };
+    cache.set("file:provider z", entry);
+    expect(renameProvider(paths, "z", "zai", ports).updated).toEqual(["credential cache"]);
+    expect(cache.get("file:provider zai")).toEqual(entry);
+    expect(cache.has("file:provider z")).toBe(false);
+
+    writeJsonAtomic(path.join(paths.providersDir, "zai.json"), { displayName: "z.ai", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z_API_TOKEN" }], cache: { ttl: "1h" } } });
+    const keychainEntry: CachedCredential = { token: "keychain-token", fetchedAt: 2, source: { env: "Z_API_TOKEN" } };
+    cache.set("keychain:provider zai", keychainEntry);
+    const darwinPorts: ProviderRenamePorts = { fs: realFarmFs, credentialCache: { port: ports.credentialCache.port, platform: "darwin" } };
+    expect(renameProvider(paths, "zai", "glm", darwinPorts).updated).toEqual(["credential cache"]);
+    expect(cache.get("file:provider glm")).toEqual(entry);
+    expect(cache.get("keychain:provider glm")).toEqual(keychainEntry);
+    expect(cache.has("file:provider zai")).toBe(false);
+    expect(cache.has("keychain:provider zai")).toBe(false);
+  });
 });

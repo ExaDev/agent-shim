@@ -239,7 +239,7 @@ describe("buildEnv", () => {
     const env = buildEnv({ sessionId: "session-test", remoteControl: false,
       baseEnv: { ...baseEnv, CLAUDE_CONFIG_DIR: "/somewhere/else" },
       configDirEscapeHatch: true,
-      resolvedIdentityName: "work",
+      identityId: "work",
       identitiesDir: "/home/testuser/.agent-shim/identities",
     });
     expect(env.CLAUDE_CONFIG_DIR).toBe("/somewhere/else");
@@ -259,7 +259,7 @@ describe("buildEnv", () => {
     const env = buildEnv({ sessionId: "session-test", remoteControl: false,
       baseEnv,
       configDirEscapeHatch: false,
-      resolvedIdentityName: "work",
+      identityId: "work",
       identitiesDir: "/home/testuser/.agent-shim/identities",
     });
     expect(env.CLAUDE_CONFIG_DIR).toBe("/home/testuser/.agent-shim/identities/work");
@@ -270,7 +270,7 @@ describe("buildEnv", () => {
     const env = buildEnv({ sessionId: "session-test", remoteControl: false,
       baseEnv: { ...baseEnv, CLAUDE_EXTRA_FLAGS: "--continue continue" },
       configDirEscapeHatch: false,
-      resolvedIdentityName: "work",
+      identityId: "work",
       identitiesDir: "/home/testuser/.agent-shim/identities",
     });
     expect(env.CLAUDE_EXTRA_FLAGS).toBe("--continue continue");
@@ -297,7 +297,7 @@ describe("buildEnv", () => {
   }
 
   it("applies a resolved provider on top of the identity's CLAUDE_CONFIG_DIR", () => {
-    const env = buildEnv({ sessionId: "session-test", remoteControl: false, baseEnv, configDirEscapeHatch: false, resolvedIdentityName: "work", identitiesDir, provider: resolvedProvider() });
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false, baseEnv, configDirEscapeHatch: false, identityId: "work", identitiesDir, provider: resolvedProvider() });
     expect(env.CLAUDE_CONFIG_DIR).toBe("/home/testuser/.agent-shim/identities/work");
     // The child keeps the OAuth shape: no base URL (it believes it talks to api.anthropic.com through the door's CONNECT surface), and what it presents is a placeholder, never the provider's own token (the door attaches that at its route).
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
@@ -306,14 +306,14 @@ describe("buildEnv", () => {
   });
 
   it("carries no credential variable for a provider session with Remote Control on, which needs Claude Code's OAuth mode", () => {
-    const env = buildEnv({ sessionId: "session-test", baseEnv: { ...baseEnv, ANTHROPIC_AUTH_TOKEN: "tok-ambient" }, configDirEscapeHatch: false, resolvedIdentityName: "work", identitiesDir, provider: resolvedProvider(), remoteControl: true });
+    const env = buildEnv({ sessionId: "session-test", baseEnv: { ...baseEnv, ANTHROPIC_AUTH_TOKEN: "tok-ambient" }, configDirEscapeHatch: false, identityId: "work", identitiesDir, provider: resolvedProvider(), remoteControl: true });
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
   });
 
   it("never hands a provider session the provider's own token as what it presents", () => {
-    const env = buildEnv({ sessionId: "session-test", remoteControl: false, baseEnv, configDirEscapeHatch: false, resolvedIdentityName: "work", identitiesDir, provider: resolvedProvider({ token: "tok-the-provider-secret" }) });
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false, baseEnv, configDirEscapeHatch: false, identityId: "work", identitiesDir, provider: resolvedProvider({ token: "tok-the-provider-secret" }) });
     expect(JSON.stringify(env)).not.toContain("tok-the-provider-secret");
   });
 
@@ -351,7 +351,7 @@ describe("buildEnv", () => {
     const env = buildEnv({ sessionId: "session-test", remoteControl: false,
       baseEnv: { ...baseEnv, ANTHROPIC_API_KEY: "sk-ambient" },
       configDirEscapeHatch: false,
-      resolvedIdentityName: "work",
+      identityId: "work",
       identitiesDir,
       identityCredential: { target: "oauthToken", token: "oauth-work", source: { op: "op://v/work/token" }, warnings: [] },
     });
@@ -364,7 +364,7 @@ describe("buildEnv", () => {
     const env = buildEnv({ sessionId: "session-test", remoteControl: false,
       baseEnv,
       configDirEscapeHatch: false,
-      resolvedIdentityName: "work",
+      identityId: "work",
       identitiesDir,
       provider: resolvedProvider(),
       identityCredential: { target: "oauthToken", token: "oauth-work", source: { op: "op://v/work/token" }, warnings: [] },
@@ -391,7 +391,7 @@ describe("buildEnv", () => {
      
       baseEnv,
       configDirEscapeHatch: false,
-      resolvedIdentityName: "work",
+      identityId: "work",
       identitiesDir: "/home/testuser/.agent-shim/identities",
       provider: resolvedProvider(),
       frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/home/testuser/.agent-shim/frontdoor/ca/bundles/0123abcd.pem", sessionToken: "launch-token-for-tests" },
@@ -413,7 +413,7 @@ describe("buildEnv", () => {
      
       baseEnv: { ...baseEnv, HTTPS_PROXY: "http://agent-shim:parent-token@127.0.0.1:4200", NO_PROXY: "corp.example", no_proxy: "corp.example" },
       configDirEscapeHatch: false,
-      resolvedIdentityName: "work",
+      identityId: "work",
       identitiesDir: "/home/testuser/.agent-shim/identities",
       provider: resolvedProvider(),
       frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/bundle.pem", sessionToken: "launch-token-for-tests" },
@@ -443,7 +443,7 @@ describe("buildEnv", () => {
      
       baseEnv,
       configDirEscapeHatch: false,
-      resolvedIdentityName: "work",
+      identityId: "work",
       identitiesDir,
       provider: resolvedProvider(),
       frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/ca.pem", sessionToken: "launch-token-for-tests" },
@@ -458,7 +458,7 @@ describe("buildEnv", () => {
      
       baseEnv,
       configDirEscapeHatch: false,
-      resolvedIdentityName: "work",
+      identityId: "work",
       identitiesDir: "/home/testuser/.agent-shim/identities",
       frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/home/testuser/.agent-shim/frontdoor/ca/ca.pem", sessionToken: "launch-token-for-tests" },
       headroom: { socketPath: "/home/testuser/.agent-shim/headroom/run/8123.sock", projectId: "/home/testuser/work/repo" },
@@ -505,7 +505,7 @@ describe("buildEnv", () => {
      
       baseEnv,
       configDirEscapeHatch: false,
-      resolvedIdentityName: "work",
+      identityId: "work",
       identitiesDir,
     });
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();

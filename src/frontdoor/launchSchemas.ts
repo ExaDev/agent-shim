@@ -32,6 +32,7 @@ const LaunchPoolDecisionSchema = z.strictObject({
 /** What the launch resolved to and where each decision came from: names, sources and paths, never a credential. */
 const LaunchDecisionSchema = z.strictObject({
   identity: z.string().optional(),
+  identityId: z.string().optional(),
   identitySource: z.enum(IDENTITY_DECISION_SOURCES),
   pool: LaunchPoolDecisionSchema.optional(),
   configDirEscapeHatch: z.boolean(),

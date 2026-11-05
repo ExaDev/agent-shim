@@ -1,8 +1,12 @@
 import { ClaudeShimStateSchema, commandFilename, findPathShadow, resolveOwnBinaryCheck, type ClaudeShimState, type PathShadowStatus } from "./claudeShim";
 import type { LayoutPaths } from "./paths";
+import { readableOr } from "./readableConfig";
 import { FILE_NAME_RULE, isFileName, isStoredName } from "./config/names";
 import { readJson } from "./config/store";
-import { listIdentityDirectories, type UnreachableIdentityEntry } from "./identityStore";
+import { identityIdExists, identityRecords, listIdentityDirectories, type UnreachableIdentityEntry } from "./identityStore";
+import { identityNameIn, type IdentityRecord } from "./identityRecords";
+import { identityRecordFindings, type DisplacedIdentityRecord } from "./doctorIdentityRecords";
+import { describeInterruptedNameRename, strayNameRenameRecordFiles, unfinishedNameRenames } from "./identityNameRenameRecord";
 import { findExecutableInDir, realContentSourcePath, realFarmFs, realFsPort, realHeadroomSocketTrust, realInstalledClaudeVersions, realFrontDoorLiveness, realIsProcessRunning, realOwnExecutablePath, realProcessCommandLine, realResolveClaudeBinary, realRunPort } from "./realPorts";
 import fs from "node:fs";
 import { realpathOrSelf, resolveMiseDispatcher } from "./doctorPath";
@@ -18,7 +22,7 @@ import { SIWC_PLAN_SCOPE } from "./codex/siwc";
 import { ConfigValidationError } from "./config/load";
 import { describeIgnoredKeys, parseIgnoringUnrecognisedKeys } from "./config/unrecognisedKeys";
 import { CategoryClassificationOverlaySchema, ConfigProfileSchema, DirectoryRulesSchema, GlobalConfigSchema, IdentitySchema, isCodexProvider, poolMemberIdentity, ProviderSchema, type Credential, type ModelsConfig, isRouterProvider } from "./config/schema";
-import { describeCredential, type CredentialCacheEnv } from "./credential";
+import { describeCredential, identityCacheKey, type CredentialCacheEnv } from "./credential";
 import { describeCachedCredential, formatCachedCredentialState } from "./credentialCache";
 import { realCredentialCacheEnv } from "./realCredentialCache";
 import { isMovingGitSource } from "./headroom/source";
@@ -89,10 +93,13 @@ export interface DoctorReport {
 
 /** One identity's raw `identity.json`, unparsed — `runDoctor` does its own JSON.parse/schema validation so one malformed file never aborts the rest of the report. */
 export interface DoctorIdentityInput {
+  /** The name its `identity.json` gives it when that much of the file can be read, and otherwise its id (the record of such a file claims no name). */
   readonly name: string;
+  /** Its storage id: the directory under the identities directory it is stored in. */
+  readonly id: string;
   readonly path: string;
   readonly raw: string | undefined;
-  /** The identity's own farm root (`identitiesDir/<name>`) — the account name the Keychain lookup uses. */
+  /** The identity's own farm root (`identitiesDir/<id>`): the account name the Keychain lookup uses. */
   readonly farmRoot: string;
   /** Whether the identity's `.credentials.json` exists, pre-resolved by the wiring layer since it is a file-existence check. */
   readonly credentialsFilePresent: boolean;
@@ -174,6 +181,8 @@ export interface RunDoctorParams {
   readonly renameJournals?: RenameJournalListing;
   /** The entries of the identities directory that cannot be reached (a symlink the filesystem would not follow, or a directory nobody can enter), which are not counted as identities. Omit to leave them out of the findings. */
   readonly unreachableIdentities?: readonly UnreachableIdentityEntry[];
+  /** Every identity's record as the resolver reads it (`all`, see `readIdentityRecords`), which a name two of them claim is found in, and those whose directory is missing, or present without `identity.json`, while a superseded farm a resync left holds their `identity.json` (`displaced`), which the next launch puts back, and the renames of the name alone left half done, each with the sentence that says what it rewrote and how it is finished (`unfinishedNameRenames`), and the files under `identity-name-renames/` holding a record that no rename filed there (`strayNameRenameFiles`, see `strayNameRenameRecordFiles`). Omit to leave them out of the findings. */
+  readonly identityRecords?: { readonly all: readonly IdentityRecord[]; readonly displaced: readonly DisplacedIdentityRecord[]; readonly nameRenames?: readonly { readonly from: string; readonly description: string }[]; readonly strayNameRenameFiles?: readonly string[] };
   readonly directoryRules: DoctorFileInput;
   readonly globalConfig: DoctorFileInput;
   /** The parsed `models` block of the global config, when one is defined. Omit to skip the models checks. */
@@ -398,7 +407,7 @@ function pushProvider(push: (section: DoctorSection, severity: DoctorSeverity, m
 /**
  * Reports what an installation still takes from the former `claude-use` name, each as a `warn` naming its replacement: a `CLAUDE_USE_*` variable (the process environment has already had it aliased to `AGENT_SHIM_*` by the time this runs, so the legacy name is still present beside it), and a state root still living at `~/.claude-use`.
  *
- * The root is a note, not something to move: macOS Claude Code names each identity's Keychain login after a hash of its exact `CLAUDE_CONFIG_DIR`, so relocating `~/.claude-use/identities/<name>` would sign that identity out.
+ * The root is a note, not something to move: macOS Claude Code names each identity's Keychain login after a hash of its exact `CLAUDE_CONFIG_DIR`, so relocating `~/.claude-use/identities/<id>` would sign that identity out.
  */
 function pushLegacyName(
   push: (section: DoctorSection, severity: DoctorSeverity, message: string, subject?: string) => void,
@@ -428,11 +437,6 @@ function pushLegacyName(
  *
  * Every check aggregates rather than throws: a malformed file becomes one `fail` finding for that file, not an aborted report. This is the one place in the codebase that deliberately breaks the "throw a validation error and let it propagate" convention every other command relies on — `doctor`'s whole purpose is to survive a broken file and keep auditing everything else.
  */
-/** The global config's `models` block, parsed for the doctor's checks; undefined when the file has none. */
-function parsedModelsOf(paths: LayoutPaths): ModelsConfig | undefined {
-  return readGlobalConfig(paths)?.models;
-}
-
 export function runDoctor(params: RunDoctorParams): DoctorReport {
   const findings: DoctorFinding[] = [];
   const push = (section: DoctorSection, severity: DoctorSeverity, message: string, subject?: string): void => {
@@ -520,10 +524,13 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   // A recorded former name still resolves to the provider it became, so an identity may name a provider by either.
   const validProviderNames = new Set([...params.providers.map((entry) => entry.name), ...Object.keys(params.providerAliases ?? {})]);
 
-  // A name is an identity when it has an `identity.json`, the test `identityExists` makes, so that the hint below says what the rename will do. A directory without one is not.
-  const identityNames = new Set(params.identities.filter((entry) => entry.raw !== undefined).map((entry) => entry.name));
+  // An id is an identity's when its directory has an `identity.json`, the test `identityIdExists` makes, so that the hint below says what the rename will do. A directory without one is not.
+  const identityIds = new Set(params.identities.filter((entry) => entry.raw !== undefined).map((entry) => entry.id));
   for (const journal of params.renameJournals?.journals ?? []) {
-    push("identity", "fail", `There is ${describeUnfinishedRename(journal, finishabilityOf(journal, (name) => identityNames.has(name)))}`, journal.from);
+    push("identity", "fail", `There is ${describeUnfinishedRename(journal, finishabilityOf(journal, (name) => identityIds.has(name)))}`, journal.from);
+  }
+  for (const finding of identityRecordFindings(params.identityRecords?.all ?? [], params.identityRecords?.displaced ?? [], params.identityRecords?.nameRenames ?? [], params.identityRecords?.strayNameRenameFiles ?? [])) {
+    push("identity", finding.severity, finding.message, finding.subject);
   }
   for (const { name, code } of params.unreachableIdentities ?? []) {
     push("identity", "warn", `identities/${name} cannot be reached (${code}), so it is not counted as an identity. Repair the permissions of the directory or of what a symlink points through, or remove the entry.`, name);
@@ -561,7 +568,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
       continue;
     }
     const credential = validated.data.credential;
-    const cache = credential === undefined ? { text: "", unreadable: false } : cacheClause(params.credentialCache, `identity ${entry.name}`, credential);
+    const cache = credential === undefined ? { text: "", unreadable: false } : cacheClause(params.credentialCache, identityCacheKey(entry.id), credential);
     const authenticatesWith =
       credential !== undefined ? `credential ${describeCredential(credential)}` : identityProvider !== undefined ? `the credential of provider "${identityProvider}"` : "its stored login";
     push(
@@ -932,17 +939,21 @@ function servingDoorListeners(paths: LayoutPaths): readonly FrontDoorListenerRea
 export function collectDoctorReport(params: CollectDoctorReportParams): DoctorReport {
   const { paths } = params;
   const { names: identityNames, unreachable: unreachableIdentities } = listIdentityDirectories(paths);
-  const identities: DoctorIdentityInput[] = identityNames.map((name) => {
-    const farmRoot = path.join(paths.identitiesDir, name);
+  const records = identityRecords(paths);
+  // A record whose entry holds no identity.json was read from a superseded farm (its directory missing, or swapped in before the file was carried over): it is reported as displaced, with what puts it back, rather than as a missing file; an entry that cannot be reached is reported as that instead.
+  const displacedIdentities = records.filter((record) => !identityIdExists(paths, record.id) && !unreachableIdentities.some((entry) => entry.name === record.id));
+  // An entry that is one directory with another (a symlink beside an identity's directory) holds an identity.json but has no record of its own: it is reported once, under the entry that holds it, as `identity list` lists it.
+  const identities: DoctorIdentityInput[] = identityNames.filter((id) => (records.some((record) => record.id === id) || !fs.existsSync(path.join(paths.identitiesDir, id, "identity.json"))) && !displacedIdentities.some((record) => record.id === id)).map((id) => {
+    const farmRoot = path.join(paths.identitiesDir, id);
     const identityPath = path.join(farmRoot, "identity.json");
-    return { name, path: identityPath, raw: realFsPort.readFileUtf8(identityPath), farmRoot, credentialsFilePresent: fs.existsSync(credentialsFilePath(farmRoot)), account: readIdentityAccount(realFsPort, paths.identitiesDir, name)?.account };
+    return { name: identityNameIn(records, id) ?? id, id, path: identityPath, raw: realFsPort.readFileUtf8(identityPath), farmRoot, credentialsFilePresent: fs.existsSync(credentialsFilePath(farmRoot)), account: readIdentityAccount(realFsPort, paths.identitiesDir, id)?.account };
   });
 
-  // An unreadable snapshot leaves that identity's windows unknown, which the window checks report nothing for, rather than failing the audit.
+  // An unreadable snapshot leaves that identity's windows unknown, which the window checks report nothing for, rather than failing the audit. Snapshots are filed by id and looked up by the name the checks reason in.
   const usageSnapshots: Record<string, UsageSnapshot> = {};
-  for (const name of identityNames) {
+  for (const { id, name } of identities) {
     try {
-      const snapshot = readUsageSnapshot(realFsPort, paths.usageSnapshotsDir, name);
+      const snapshot = readUsageSnapshot(realFsPort, paths.usageSnapshotsDir, id);
       if (snapshot !== undefined) {
         usageSnapshots[name] = snapshot;
       }
@@ -1026,9 +1037,10 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
     providerAliases: readProviderAliases(paths),
     renameJournals: listRenameJournals(realFarmFs, paths.identityRenamesDir),
     unreachableIdentities,
+    identityRecords: { all: records, displaced: displacedIdentities.map((record) => ({ ...record, directoryPresent: fs.existsSync(path.join(paths.identitiesDir, record.id)) })), nameRenames: unfinishedNameRenames(paths).map((record) => ({ from: record.from, description: describeInterruptedNameRename(paths, record) })), strayNameRenameFiles: strayNameRenameRecordFiles(paths) },
     directoryRules: { path: paths.directoryRulesFile, raw: realFsPort.readFileUtf8(paths.directoryRulesFile) },
     globalConfig: { path: paths.globalConfigFile, raw: realFsPort.readFileUtf8(paths.globalConfigFile) },
-    models: parsedModelsOf(paths),
+    models: readableOr(() => readGlobalConfig(paths)?.models, undefined),
     modelTargets: targetRefs(paths),
     categoriesLocal: { path: paths.categoriesLocalFile, raw: realFsPort.readFileUtf8(paths.categoriesLocalFile) },
     activeIdentity: { path: paths.activeIdentityFile, raw: realFsPort.readFileUtf8(paths.activeIdentityFile) },

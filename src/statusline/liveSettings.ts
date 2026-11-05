@@ -2,9 +2,14 @@ import { STATUSLINE_ENV, type StatuslineSettings } from "../config/statusline";
 import { assembleCascade } from "../resolve/walk";
 import { flattenLayers } from "../resolve/flatten";
 import { loadCascadeInput, readDirectorySelections } from "../launcher/cascade";
-import { decideConfigProfile, loadIdentity } from "../launcher/identity";
+import path from "node:path";
+import { loadConfigFile } from "../config/load";
+import { IdentitySchema } from "../config/schema";
+import { IDENTITY_FILE } from "../identityRecords";
+import { decideConfigProfile } from "../launcher/identity";
 import type { FsPort } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
+import { requireIdentityDirectoryId } from "../usage/account";
 import { identityOf } from "./enrich";
 import { checkedStatusline, statuslineSettingsFromEnv } from "./settings";
 
@@ -52,7 +57,11 @@ function statuslineSettingsFromCascade(inputs: StatuslineRenderInputs): Statusli
   const { env, cwd, home, paths, fs } = inputs;
   const loaded = loadCascadeInput({ paths, home, cwd, read: fs.readConfigFile });
   const identity = identityOf(env);
-  const identityConfig = identity === undefined ? undefined : loadIdentity(paths.identitiesDir, identity, fs);
+  // The session carries its identity's id, so its identity.json is read from the directory of that id, wherever its name has gone since. An id that could not be a directory id is reported as the problem it is, with the rule it breaks.
+  if (identity !== undefined) {
+    requireIdentityDirectoryId(identity);
+  }
+  const identityConfig = identity === undefined ? undefined : loadConfigFile(path.join(paths.identitiesDir, identity, IDENTITY_FILE), IdentitySchema, fs.readConfigFile);
   const configProfile = decideConfigProfile({
     env,
     directoryRuleConfigProfile: readDirectorySelections(loaded).configProfile,

@@ -6,10 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EXIT_FAILURE, EXIT_USAGE } from "./cliError";
 import { reportFatalError } from "./cliReport";
 import type { CredentialCachePort } from "./credentialCache";
+import { KeychainCacheDeleteError } from "./keychainLogin";
+import { IdentityNamesLockBusyError, nonWaitingIdentityNamesLockPorts } from "./identityNamesLock";
 import type { IdentityRenamePorts } from "./identityRename";
 import { readRenameJournal, renameJournalFile, writeRenameJournal } from "./identityRenameJournal";
 import type { SessionProcess } from "./identitySessions";
-import { addIdentity, identityExists, readActiveIdentity, useIdentity } from "./identityStore";
+import { addIdentity, identityExists, identityIdOf, readActiveIdentity, useIdentity } from "./identityStore";
 import { createFakeKeychain } from "./keychainTestWorld";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { buildProgram } from "./program";
@@ -22,12 +24,20 @@ import { claudeCodeKeychainService } from "./usage/signIn";
 const NOW_MS = 1_000;
 const OWN_PID = 4242;
 
+/** A failure `security` gives that is not an item it cannot find, as a locked Keychain gives. */
+const LOCKED_KEYCHAIN_STATUS = 51;
+
 describe("identity rename", () => {
   let root: string;
   let paths: LayoutPaths;
   let out: string[];
   let warnings: string[];
   let sessions: readonly SessionProcess[];
+  /** Every cached credential the commands forgot, as `<store>:<owner>`. */
+  let cacheRemovals: string[];
+  /** When true, deleting from the Keychain store fails as a locked Keychain makes it. */
+  let keychainDeleteFails: boolean;
+  let duringCacheRemoval: (() => void) | undefined;
   const keychain = createFakeKeychain();
 
   beforeEach(() => {
@@ -36,6 +46,9 @@ describe("identity rename", () => {
     out = [];
     warnings = [];
     sessions = [];
+    cacheRemovals = [];
+    keychainDeleteFails = false;
+    duringCacheRemoval = undefined;
     keychain.items.clear();
     keychain.calls.length = 0;
     process.exitCode = undefined;
@@ -54,7 +67,17 @@ describe("identity rename", () => {
   });
 
   function ports(): IdentityRenamePorts {
-    const cache: CredentialCachePort = { read: () => undefined, write: () => undefined, remove: () => undefined };
+    const cache: CredentialCachePort = {
+      read: () => undefined,
+      write: () => undefined,
+      remove: (store, owner) => {
+        cacheRemovals.push(`${store}:${owner}`);
+        duringCacheRemoval?.();
+        if (store === "keychain" && keychainDeleteFails) {
+          throw new KeychainCacheDeleteError(owner, LOCKED_KEYCHAIN_STATUS);
+        }
+      },
+    };
     return {
       fs: realFarmFs,
       credentialCache: { port: cache, platform: "darwin" },
@@ -98,7 +121,7 @@ describe("identity rename", () => {
 
   it("renames the identity, its active selection and its Keychain login, and lists what it did", async () => {
     seed();
-    expect(await run(["identity", "rename", "work", "client"])).toBe(0);
+    expect(await run(["identity", "rename", "work", "client", "--move"])).toBe(0);
     expect(identityExists(paths, "client")).toBe(true);
     expect(identityExists(paths, "work")).toBe(false);
     expect(readActiveIdentity(paths)).toBe("client");
@@ -111,7 +134,7 @@ describe("identity rename", () => {
 
   it("with --dry-run prints the plan and changes nothing", async () => {
     seed();
-    expect(await run(["identity", "rename", "work", "client", "--dry-run"])).toBe(0);
+    expect(await run(["identity", "rename", "work", "client", "--move", "--dry-run"])).toBe(0);
     expect(out[0]).toBe('Would rename identity "work" to "client":');
     expect(out.at(-1)).toBe("Nothing was changed.");
     expect(identityExists(paths, "work")).toBe(true);
@@ -122,11 +145,11 @@ describe("identity rename", () => {
 
   it("prints the result as JSON, naming a dry run as planned", async () => {
     seed();
-    expect(await run(["identity", "rename", "work", "client", "--dry-run", "--json"])).toBe(0);
+    expect(await run(["identity", "rename", "work", "client", "--move", "--dry-run", "--json"])).toBe(0);
     const planned = JSON.parse(out.join("\n")) as { action: string; kind: string; name: string; value: { dryRun: boolean; steps: string[] } };
     expect(planned).toMatchObject({ action: "planned", kind: "identity", name: "client", value: { dryRun: true } });
     out.length = 0;
-    expect(await run(["identity", "rename", "work", "client", "--json"])).toBe(0);
+    expect(await run(["identity", "rename", "work", "client", "--move", "--json"])).toBe(0);
     const renamed = JSON.parse(out.join("\n")) as typeof planned;
     expect(renamed).toMatchObject({ action: "renamed", name: "client", value: { dryRun: false } });
     expect(renamed.value.steps).toEqual(planned.value.steps);
@@ -135,9 +158,126 @@ describe("identity rename", () => {
   it("fails with the blocking session named, exit status 1 and nothing changed", async () => {
     seed();
     sessions = [{ pid: 4711, program: "claude" }];
-    expect(await run(["identity", "rename", "work", "client"])).toBe(EXIT_FAILURE);
+    expect(await run(["identity", "rename", "work", "client", "--move"])).toBe(EXIT_FAILURE);
     expect(out.join("\n")).toContain("pid 4711 (claude)");
     expect(identityExists(paths, "work")).toBe(true);
+  });
+
+  it("without --move changes the name alone, while a session runs on the identity, and asks nothing of the Keychain", async () => {
+    seed();
+    sessions = [{ pid: 4711, program: "claude" }];
+    const keychainCalls = keychain.calls.length;
+    expect(await run(["identity", "rename", "work", "client"])).toBe(0);
+    expect(identityIdOf(paths, "client")).toBe("work");
+    expect(fs.existsSync(path.join(paths.identitiesDir, "work"))).toBe(true);
+    expect(readActiveIdentity(paths)).toBe("client");
+    expect(keychain.calls).toHaveLength(keychainCalls);
+    expect(out[0]).toBe('Renamed identity "work" to "client".');
+    expect(out.join("\n")).toContain("  rewrite identities/work/identity.json: name");
+    expect(out.join("\n")).not.toContain("move identities/work");
+  });
+
+  it("with --id renames the identity stored under that id, and refuses --id with --move", async () => {
+    seed();
+    expect(await run(["identity", "rename", "work", "client", "--id", "--move"])).toBe(EXIT_USAGE);
+    expect(await run(["identity", "rename", "work", "client", "--id"])).toBe(0);
+    expect(identityIdOf(paths, "client")).toBe("work");
+  });
+
+  it("lists, shows and renames by --id an identity whose directory id starts with a hyphen or lies outside isFileName, while still refusing unknown options", async () => {
+    seed();
+    for (const [id, name] of [
+      ["-work", "work"],
+      ["wörk", "umlaut"],
+      ['wo"rk', "quoted"],
+    ] as const) {
+      fs.mkdirSync(path.join(paths.identitiesDir, id), { recursive: true });
+      fs.writeFileSync(path.join(paths.identitiesDir, id, "identity.json"), JSON.stringify({ name, allowAmbientCredential: false }));
+    }
+    expect(await run(["identity", "list"])).toBe(0);
+    expect(await run(["identity", "show", "umlaut"])).toBe(0);
+    expect(await run(["identity", "show", "quoted"])).toBe(0);
+    // The command DuplicateIdentityNameError, doctor and an interrupted rename print when id is -work.
+    expect(await run(["identity", "rename", "-work", "work-old", "--id"])).toBe(0);
+    expect(identityIdOf(paths, "work-old")).toBe("-work");
+    expect(identityIdOf(paths, "work")).toBe("work");
+    expect(await run(["identity", "rename", "-work", "other"])).toBe(EXIT_USAGE);
+    expect(await run(["identity", "rename", "work", "other", "--bogus"])).toBe(EXIT_USAGE);
+  });
+
+  it("with --id reports the identity's old name, not the id it was given, in text and JSON, and says the references stay with the other identity when the name was shared", async () => {
+    seed();
+    // A second identity claiming work, stored under dup.
+    fs.mkdirSync(path.join(paths.identitiesDir, "dup"), { recursive: true });
+    fs.writeFileSync(path.join(paths.identitiesDir, "dup", "identity.json"), JSON.stringify({ name: "work", allowAmbientCredential: false }));
+    expect(await run(["identity", "rename", "dup", "office", "--id"])).toBe(0);
+    const printed = out.join("\n");
+    expect(printed).toContain('Renamed identity "work" to "office".');
+    expect(printed).not.toContain('"dup"');
+    expect(printed).toContain('Another identity also has the name "work", so the references to it, here and in any committed .agent-shim.json, stay with that identity.');
+    out.length = 0;
+    expect(await run(["identity", "rename", "work", "client", "--id", "--json"])).toBe(0);
+    const json: unknown = JSON.parse(out.join("\n"));
+    expect(json).toMatchObject({ action: "renamed", value: { from: "work", to: "client", shared: false } });
+  });
+
+  it("with --id --dry-run reports the identity's old name, not the id it was given, in text and JSON, and changes nothing", async () => {
+    seed();
+    // An identity named office stored under desk, so the id the command is given is not its name.
+    fs.mkdirSync(path.join(paths.identitiesDir, "desk"), { recursive: true });
+    fs.writeFileSync(path.join(paths.identitiesDir, "desk", "identity.json"), JSON.stringify({ name: "office", allowAmbientCredential: false }));
+    expect(await run(["identity", "rename", "desk", "client", "--id", "--dry-run"])).toBe(0);
+    expect(out[0]).toBe('Would rename identity "office" to "client":');
+    expect(out.join("\n")).not.toContain('"desk"');
+    out.length = 0;
+    expect(await run(["identity", "rename", "desk", "client", "--id", "--dry-run", "--json"])).toBe(0);
+    expect(JSON.parse(out.join("\n"))).toMatchObject({ action: "planned", value: { from: "office", to: "client", dryRun: true } });
+    expect(identityIdOf(paths, "office")).toBe("desk");
+    expect(identityIdOf(paths, "client")).toBeUndefined();
+  });
+
+  it("identity remove forgets the credential the Keychain store caches under the removed identity's id, not its name", async () => {
+    seed();
+    expect(await run(["identity", "rename", "work", "client"])).toBe(0);
+    expect(await run(["identity", "remove", "client", "--yes"])).toBe(0);
+    expect(cacheRemovals).toEqual(["keychain:identity work"]);
+  });
+
+  it("keeps the removed id reserved until the CLI deletes its Keychain cache", async () => {
+    seed();
+    let refusal: unknown;
+    duringCacheRemoval = () => {
+      try {
+        addIdentity(paths, "work", { namesLock: nonWaitingIdentityNamesLockPorts });
+      } catch (error: unknown) {
+        refusal = error;
+      }
+    };
+    expect(await run(["identity", "remove", "work", "--yes"])).toBe(0);
+    expect(refusal).toBeInstanceOf(IdentityNamesLockBusyError);
+  });
+
+  it("says in the help of identity remove what it deletes, and that it never deletes another identity's cached credential", () => {
+    const program = buildProgram({ ...fakeCommandDeps(paths), runClaude: vi.fn(), identityRenamePorts: ports() });
+    const remove = program.commands.find((command) => command.name() === "identity")?.commands.find((command) => command.name() === "remove");
+    expect(remove?.description()).toContain("its cached credential (never one recorded for another identity whose id names the same file; one cached before owners were recorded names no owner and is deleted whichever identity whose id names that file cached it)");
+  });
+
+  it("identity remove whose Keychain delete fails says the identity was removed and names the command that deletes what is left", async () => {
+    seed();
+    expect(await run(["identity", "rename", "work", "client"])).toBe(0);
+    keychainDeleteFails = true;
+    expect(await run(["identity", "remove", "client", "--yes"])).toBe(EXIT_FAILURE);
+    const printed = out.join("\n");
+    expect(printed).toContain('Removed identity "client", but could not delete its cached credential (identity work) from the Keychain');
+    expect(printed).toContain("security delete-generic-password -s 'agent-shim-credential-cache' -a 'identity work'");
+    expect(identityIdOf(paths, "client")).toBeUndefined();
+  });
+
+  it("refuses --discard-journal without --move, whose record it removes", async () => {
+    seed();
+    expect(await run(["identity", "rename", "work", "client", "--discard-journal"])).toBe(EXIT_USAGE);
+    expect(out.join("\n")).toContain("is given with --move");
   });
 
   it("is a usage error when the new name is missing", async () => {
@@ -150,7 +290,7 @@ describe("identity rename", () => {
     const original = keychain.run;
     const stubborn = { run: (command: string, args: readonly string[], input?: string) => (args[0] === "delete-generic-password" ? { status: 1, stdout: "", stderr: "denied" } : original.run(command, args, input)) };
     const program = buildProgram({ ...fakeCommandDeps(paths), runClaude: vi.fn(), identityRenamePorts: { ...ports(), run: stubborn } });
-    await program.parseAsync(["identity", "rename", "work", "client"], { from: "user" });
+    await program.parseAsync(["identity", "rename", "work", "client", "--move"], { from: "user" });
     expect(identityExists(paths, "client")).toBe(true);
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("security delete-generic-password");
@@ -165,11 +305,20 @@ describe("identity rename", () => {
     return file;
   }
 
-  it("says in its help what refuses it and how an interrupted rename is finished", () => {
+  it("says in its help that the rename leaves the directory and running sessions alone, and that --move is what running sessions refuse", () => {
     const program = buildProgram({ ...fakeCommandDeps(paths), runClaude: vi.fn(), identityRenamePorts: ports() });
     const rename = program.commands.find((command) => command.name() === "identity")?.commands.find((command) => command.name() === "rename");
-    expect(rename?.description()).toContain("Refused while a session is running on it or a launch is starting on it.");
+    expect(rename?.description()).toContain("Its directory, login and usage stay where they are, so it goes ahead while sessions run on it.");
     expect(rename?.description()).toContain("A rename that was interrupted is finished by running the same command again.");
+    const move = rename?.options.find((option) => option.long === "--move")?.description;
+    expect(move).toContain("refused while a session is running on it or a launch is starting on it.");
+    expect(move).toContain("One that was interrupted is finished by running the same command again.");
+  });
+
+  it("says in the help of --dry-run that it prints what would be rewritten, and moved only with --move", () => {
+    const program = buildProgram({ ...fakeCommandDeps(paths), runClaude: vi.fn(), identityRenamePorts: ports() });
+    const rename = program.commands.find((command) => command.name() === "identity")?.commands.find((command) => command.name() === "rename");
+    expect(rename?.options.find((option) => option.long === "--dry-run")?.description).toBe("Print what would be rewritten (and, with --move, moved), and change nothing.");
   });
 
   it("says in its help what --discard-journal does and when it refuses", () => {
@@ -177,6 +326,7 @@ describe("identity rename", () => {
     const rename = program.commands.find((command) => command.name() === "identity")?.commands.find((command) => command.name() === "rename");
     const discard = rename?.options.find((option) => option.long === "--discard-journal")?.description;
     // The rule the code checks, in its words: accepted for an identity under neither name or under both, or under <old> alone with no step recorded as begun or done.
+    expect(discard?.startsWith("Only with --move. Remove the record of an unfinished rename")).toBe(true);
     expect(discard).toContain("Accepted when the identity exists under neither name or under both, or under <old> alone and the record shows no step as begun or done");
     expect(discard).toContain("refused when the identity exists under only one name and the record shows a step as begun or done or the identity is under <new>");
     expect(discard).toContain("where running the rename again finishes it");
@@ -187,29 +337,29 @@ describe("identity rename", () => {
 
   it("with --discard-journal removes the record of a rename nothing can finish, and says so", async () => {
     const file = leaveUnfinishable();
-    expect(await run(["identity", "rename", "work", "client"])).toBe(EXIT_FAILURE);
-    expect(out.join("\n")).toContain("agent-shim identity rename work client --discard-journal");
+    expect(await run(["identity", "rename", "work", "client", "--move"])).toBe(EXIT_FAILURE);
+    expect(out.join("\n")).toContain("agent-shim identity rename work client --move --discard-journal");
     out.length = 0;
-    expect(await run(["identity", "rename", "work", "client", "--discard-journal"])).toBe(0);
+    expect(await run(["identity", "rename", "work", "client", "--move", "--discard-journal"])).toBe(0);
     expect(out).toEqual(['Discarded the record of the unfinished rename of "work" to "client".']);
     expect(readRenameJournal(realFarmFs, file)).toBeUndefined();
   });
 
   it("prints the discard as JSON", async () => {
     leaveUnfinishable();
-    expect(await run(["identity", "rename", "work", "client", "--discard-journal", "--json"])).toBe(0);
+    expect(await run(["identity", "rename", "work", "client", "--move", "--discard-journal", "--json"])).toBe(0);
     expect(JSON.parse(out.join("\n"))).toEqual({ action: "removed", kind: "rename-journal", name: "client", value: { from: "work", to: "client" } });
   });
 
   it("with --discard-journal is a usage error for the same name twice, as without it", async () => {
     const file = leaveUnfinishable();
-    expect(await run(["identity", "rename", "work", "work", "--discard-journal"])).toBe(EXIT_USAGE);
+    expect(await run(["identity", "rename", "work", "work", "--move", "--discard-journal"])).toBe(EXIT_USAGE);
     expect(readRenameJournal(realFarmFs, file)).toBeDefined();
   });
 
   it("refuses --discard-journal with --dry-run, which would have nothing to preview, and keeps the record", async () => {
     const file = leaveUnfinishable();
-    expect(await run(["identity", "rename", "work", "client", "--discard-journal", "--dry-run"])).toBe(EXIT_USAGE);
+    expect(await run(["identity", "rename", "work", "client", "--move", "--discard-journal", "--dry-run"])).toBe(EXIT_USAGE);
     expect(out.join("\n")).toContain("no dry run");
     expect(readRenameJournal(realFarmFs, file)).toBeDefined();
   });

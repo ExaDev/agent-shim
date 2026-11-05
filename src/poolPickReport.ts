@@ -1,5 +1,5 @@
 import type { Pool } from "./config/schema";
-import { loadIdentity } from "./launcher/identity";
+import { identityIdResolver } from "./launcher/identity";
 import type { FarmFs, FsPort } from "./launcher/ports";
 import type { LayoutPaths } from "./paths";
 import { rankPoolGraph, readStickyPick } from "./usage/poolPick";
@@ -33,7 +33,7 @@ export function collectPoolPick(params: Readonly<{ paths: LayoutPaths; fs: FsPor
     poolName: params.poolName,
     nowMs: params.nowMs,
     resuming: false,
-    identityExists: (name) => loadIdentity(params.paths.identitiesDir, name, params.fs) !== undefined,
+    identityIdOf: identityIdResolver(params.paths.identitiesDir, params.fs),
     ...(sticky.sticky === undefined ? {} : { sticky: sticky.sticky }),
   });
   return {

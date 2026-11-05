@@ -593,7 +593,7 @@ export function captureExitCode(run: () => void): number {
 /** Runs the launcher to its `proc.exit`, returning the exit code. Every launch engages the front door unless it is switched off, so a fake door is wired unless the test supplies its own. */
 export function runAndCaptureExit(params: RunLauncherParams): number {
   try {
-    runLauncher({ frontdoor: fakeFrontDoorPort(), ...params });
+    runLauncher({ frontdoor: fakeFrontDoorPort(), ...(params.paths.root === paths.root && params.farm === undefined ? { namesLock: { fs: createFakeFarmFs(), nowMs: () => FAKE_NOW_MS, pid: 42, isRunning: () => true, sleep: () => undefined } } : {}), ...params });
   } catch (error) {
     if (error instanceof ExitCalled) {
       return error.code;
@@ -617,7 +617,7 @@ export function fakeFarm(fs: FakeFarmFs, cliOverride?: CascadeInput["cliOverride
       ...(cliOverride === undefined ? {} : { cliOverride }),
     }),
     now: () => FAKE_NOW_MS,
-    uniqueSuffix: "launcher-test",
+    uniqueSuffix: "8888.88888888-0000-4000-8000-888888888888",
     lock: { pid: 42, isRunning: () => true, sleep: fakeSleep().sleep, maxAttempts: 2 },
   };
 }

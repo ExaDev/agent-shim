@@ -14,14 +14,14 @@ import { codexHome, collectCodexStatus, createCodexRoutePorts, runCodexLogout } 
 import type { LayoutPaths } from "../paths";
 import { realSessionFs } from "../agents/realFs";
 import { collectSessionList, showSession } from "../agents/sessions";
-import { listIdentities } from "../identityStore";
+import { identityDirectoryOfName, listIdentities } from "../identityStore";
 import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessAlive, realIsProcessRunning, realRunningAmong, realAsyncCredentialPort, realOwnExecutablePath, selfInvocation, spawnDetachedSupervisor, spawnSelfDetached } from "../realPorts";
 import { createHeadroomKeeper } from "../headroom/keeper";
 import { HEADROOM_POLL_MS } from "../headroom/supervisor";
-import { supervisedSessionOf, writeModelMove } from "../supervise/registry";
+import { requestAccountMove } from "../supervise/registry";
 import { createTargetObservationStore } from "../selection/targetStore";
 import { checkForUpdate } from "../update/commands";
-import { identityExists, listAnchoredIdentities } from "../identityStore";
+import { createIdentityNameReader, identityIdOf, identityLabeller, listAnchoredIdentities, usageSnapshotOfName } from "../identityStore";
 import { readJobs } from "../jobStore";
 import { refreshStalePoolMembers } from "../launcher/poolRefresh";
 import { ANTHROPIC_USAGE_FRESHNESS_MS } from "../usage/anthropicUsageRefresh";
@@ -58,7 +58,7 @@ import { listUsageSnapshots, readUsageSnapshot } from "../usage/read";
 import type { UsageSnapshot } from "../usage/schema";import { createDoorApiNodeHandler } from "./controlApi";
 import { createDoorHealthPublisher } from "./doorHealthEvents";
 import { createDoorEventHub, rcFanoutOnDoorHub } from "./eventHub";
-import { USAGE_EVENT_SOURCE } from "./eventSchemas";
+import { USAGE_EVENT_SOURCE, usageEventPublisher } from "./eventSchemas";
 import { createQuotaExpiringPublisher } from "./quotaExpiringEvents";
 import { createLiveSessionRegistry } from "./liveSessionRegistry";
 import { createLaunchEventPublisher } from "./launchEvents";
@@ -244,7 +244,12 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
   const doorEvents = createDoorEventHub();
   // The usage source's publisher, registered here so the store (created below) can hand it every snapshot it writes, and the expiring-quota checker that reads those same snapshots off the backbone rather than the disk.
   const usagePublisher = doorEvents.publisher(USAGE_EVENT_SOURCE);
-  const quotaExpiring = createQuotaExpiringPublisher(doorEvents, { seed: listUsageSnapshots(realFarmFs, paths.usageSnapshotsDir), now: () => Date.now() });
+  // One name reader for both events, so the usage and the expiring-quota events name an identity alike.
+  const usageEventNames = createIdentityNameReader(paths);
+  const publishUsageEvent = usageEventPublisher((event) => {
+    usagePublisher.publish(event);
+  }, usageEventNames.nameOf);
+  const quotaExpiring = createQuotaExpiringPublisher(doorEvents, { seed: listUsageSnapshots(realFarmFs, paths.usageSnapshotsDir), now: () => Date.now(), nameOf: usageEventNames.nameOf });
   // The door health publisher, fed by the supervisor's own transitions.
   const doorHealth = createDoorHealthPublisher(doorEvents, () => Date.now(), process.pid);
   // The live quota state, the backbone's first door-native consumer: subscribed to the rc source before any stream can publish, so every rate_limit_event the held client stream files becomes the door's latest per-session rate-limit observation, the state the control plane's `usage.live` read serves beside its snapshot readers.
@@ -297,13 +302,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       usageSnapshotOf: (identity) => (identity === undefined ? undefined : routingSnapshots.get(identity) ?? readUsageSnapshot(realFarmFs, paths.usageSnapshotsDir, identity)),
       // An `acct:` model member is served by relaunch: the door leaves a move request for the session's supervisor (found across every pool's registry, since the door does not know which pool launched the session) and answers the request with what is happening. A session nothing supervises gets the message naming the command to run instead.
       observations: (target) => observations.observation(target),
-      accountMoves: async (sessionId, to, model) => {
-        if ((await supervisedSessionOf(realFarmFs, paths, sessionId, realRunningAmong)) === undefined) {
-          return false;
-        }
-        writeModelMove(realFarmFs, paths, { sessionId, to, model, at: new Date().toISOString() });
-        return true;
-      },
+      accountMoves: async (sessionId, to, model) => await requestAccountMove({ fs: realFarmFs, paths, runningAmong: realRunningAmong, idOf: (name) => identityIdOf(paths, name), now: () => Date.now() }, sessionId, to, model),
       ...(rcSelfHostSurface === undefined ? {} : { rcSelfHostRoute: rcSelfHostSurface.route }),
     }),
     rcTracker,
@@ -323,7 +322,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     log,
     publish: (snapshot) => {
       routingSnapshots.set(snapshot.identity, snapshot);
-      usagePublisher.publish(snapshot);
+      // A snapshot is filed by id; the event names the identity both ways, read from that id's identity.json through a reader that stats the file and reads it again only when it changed.
+      publishUsageEvent(snapshot);
     },
     onRecord: (record) => {
       observations.observe(record);
@@ -369,7 +369,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     // A configuration this door cannot read (a key from a newer agent-shim sharing the file) is logged each tick and never ends the process: every session routed through this door depends on it.
     try {
       const pools = readPools(paths);
-      refreshStalePoolMembers({ poolNames: Object.keys(pools), pools, loadMembers: (identities) => loadPoolMembers(realFarmFs, paths, identities, Date.now()), refresher: anthropicRefresher }).catch((error: unknown) => {
+      refreshStalePoolMembers({ poolNames: Object.keys(pools), pools, loadMembers: (identities) => loadPoolMembers(realFarmFs, paths, identities, Date.now(), (name) => identityIdOf(paths, name)), refresher: anthropicRefresher }).catch((error: unknown) => {
         log(`pool usage refresh failed: ${error instanceof Error ? error.message : String(error)}`);
       });
     } catch (error) {
@@ -393,7 +393,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       nowMs: () => Date.now(),
       timeZone: machineTimeZone(),
       anchored: () => listAnchoredIdentities(paths),
-      snapshot: (identity) => readUsageSnapshot(realFarmFs, paths.usageSnapshotsDir, identity),
+      snapshot: (id) => readUsageSnapshot(realFarmFs, paths.usageSnapshotsDir, id),
       open: windowOpener,
       log,
     })
@@ -417,8 +417,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         nowMs: () => Date.now(),
         timeZone: machineTimeZone(),
         jobs: () => Object.entries(readJobs(paths)).map(([name, job]) => ({ name, job })),
-        resolveIdentity: (target) => resolveJobIdentity({ paths, fs: realFarmFs, pools: readPools(paths), nowMs: Date.now(), identityExists: (name) => identityExists(paths, name) }, target),
-        snapshot: (identity) => readUsageSnapshot(realFarmFs, paths.usageSnapshotsDir, identity),
+        resolveIdentity: (target) => resolveJobIdentity({ paths, fs: realFarmFs, pools: readPools(paths), nowMs: Date.now(), identityIdOf: (name) => identityIdOf(paths, name) }, target),
+        snapshot: (identity) => usageSnapshotOfName(paths, realFarmFs, identity),
         run: jobRunner,
         running: runningJobs,
         log,
@@ -537,8 +537,15 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         list: rcTracker.list,
         liveRateLimits: rcLiveUsage.liveOf,
         latestRateLimit: rcLiveUsage.latestOf,
-        usageSnapshots: () => listUsageSnapshots(realFarmFs, paths.usageSnapshotsDir),
-        usageSnapshotOf: (identity: string) => readUsageSnapshot(realFarmFs, paths.usageSnapshotsDir, identity),
+        // The API names identities as the CLI does, by name, over snapshots filed by id.
+        usageSnapshots: () => {
+          const label = identityLabeller(paths);
+          return listUsageSnapshots(realFarmFs, paths.usageSnapshotsDir).map((snapshot) => ({ ...snapshot, identity: label(snapshot.identity) }));
+        },
+        usageSnapshotOf: (identity: string) => {
+          const snapshot = usageSnapshotOfName(paths, realFarmFs, identity);
+          return snapshot === undefined ? undefined : { ...snapshot, identity };
+        },
         now: () => Date.now(),
         frontDoorStatus: () => collectFrontDoorStatus(realFarmFs, realHeadroomSocketTrust, paths, realIsProcessRunning),
         checkReport: (target: string, identity?: string) => collectCheckReport({ paths, cwd: target, ...(identity === undefined ? {} : { identity }), env: process.env }),
@@ -553,9 +560,9 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         resolveLaunch: async (request: { readonly path: string; readonly argv: readonly string[]; readonly env: Readonly<Record<string, string>> }) => resolveClaudeLaunchAsync({ argv: request.argv, cwd: request.path, env: request.env, paths }),
         // The identities are read per call, like the pool table, so an identity added after the door started is listed the moment the CLI would see it.
         sessionList: (filters: { readonly identity?: string | undefined; readonly all?: boolean | undefined }) =>
-          collectSessionList(realSessionFs, paths.identitiesDir, listIdentities(paths).map((entry) => entry.name), { ...(filters.identity === undefined ? {} : { identity: filters.identity }), ...(filters.all === undefined ? {} : { all: filters.all }) }),
+          collectSessionList(realSessionFs, (name) => identityDirectoryOfName(paths, name), listIdentities(paths).map((entry) => entry.name), { ...(filters.identity === undefined ? {} : { identity: filters.identity }), ...(filters.all === undefined ? {} : { all: filters.all }) }),
         liveTasks: () => rcTracker.liveTasksOf(),
-        sessionShow: (query: string, identity: string | undefined) => showSession(realSessionFs, paths.identitiesDir, listIdentities(paths).map((entry) => entry.name), query, identity),
+        sessionShow: (query: string, identity: string | undefined) => showSession(realSessionFs, (name) => identityDirectoryOfName(paths, name), listIdentities(paths).map((entry) => entry.name), query, identity),
       };
       // The lifecycle and Codex procedures: each the same function the CLI verb of that name runs. A restart replaces this very process, so it runs a detached copy of `frontdoor restart` (the restart's own wait for the old door to exit cannot run inside it), started only after the procedure's answer has been written.
       const lifecycleAndCodexDeps = {

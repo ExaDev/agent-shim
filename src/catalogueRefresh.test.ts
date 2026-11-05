@@ -2,9 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import { refreshProviderCatalogue, type RefreshCatalogueDeps } from "./catalogueRefresh";
 import { catalogueCredentialFingerprint } from "./codex/catalogueCredential";
+import { reportFatalError } from "./cliReport";
+import { resolveCredential } from "./credential";
 import type { Provider } from "./config/schema";
 import { buildLayoutPaths } from "./paths";
 import { CatalogueFetchError, catalogueCachePath, type CatalogueCache } from "./providerCatalogue";
+import { fakeCredentials } from "./test-helpers";
 
 const paths = buildLayoutPaths("/home/test/.agent-shim");
 const NOW = Date.parse("2026-01-01T00:00:00Z");
@@ -137,6 +140,19 @@ describe("refreshProviderCatalogue", () => {
     await expect(refreshProviderCatalogue("a", all)).rejects.toThrow("no source yielded a token");
     expect(fetch).not.toHaveBeenCalled();
     expect(write).not.toHaveBeenCalled();
+  });
+
+  it("reports a credential no source yields with the agent-shim prefix once, as the command line prints the refusal", async () => {
+    const { all } = deps({ resolveCredential: (name, provider) => resolveCredential({ credential: provider.credential, env: {}, port: fakeCredentials(), subject: `provider ${name}` }) });
+    const printed: string[] = [];
+    const refusal: unknown = await refreshProviderCatalogue("a", all).catch((error: unknown) => error);
+    reportFatalError(refusal, {
+      writeErr: (line) => {
+        printed.push(line);
+      },
+      env: {},
+    });
+    expect(printed).toEqual(["agent-shim: provider a has no usable credential: env TOKEN is unset or empty"]);
   });
 
   it("leaves the previous cache in place when no URL lists a model", async () => {

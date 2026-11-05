@@ -5,11 +5,12 @@ import { formatAge } from "./usage/preflight";
 
 const MS_PER_UNIT: Readonly<Record<string, number>> = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
 
-/** What a cache stores for one credential: the token, when it was fetched, and the source that produced it (a non-secret descriptor, kept so `check` and the launch log can still say where the token came from). */
+/** What a cache stores for one credential: the token, when it was fetched, the source that produced it (a non-secret descriptor, kept so `check` and the launch log can still say where the token came from), and, in the file store, the owner it was cached for (`identity <id>`, `provider <name>`), which the file store records on every write; the Keychain store files each entry under its owner's account and records none. A file-store entry with no `owner` was written before owners were recorded. */
 export const CachedCredentialSchema = z.strictObject({
   token: z.string().min(1),
   fetchedAt: z.number().int().nonnegative(),
   source: CredentialSourceSchema,
+  owner: z.string().min(1).optional(),
 });
 export type CachedCredential = z.infer<typeof CachedCredentialSchema>;
 
@@ -27,6 +28,12 @@ export interface AsyncCredentialCachePort {
   readonly read: (store: CredentialCacheStore, owner: string) => Promise<CachedCredential | undefined>;
   readonly write: (store: CredentialCacheStore, owner: string, entry: CachedCredential) => Promise<void>;
 }
+
+/** The Keychain service the Keychain store files every cached credential under, one item per owner (the account). */
+export const KEYCHAIN_CACHE_SERVICE = "agent-shim-credential-cache";
+
+/** The exit status `security find-generic-password` and `delete-generic-password` give an item that is not there (`errSecItemNotFound`). Any other failure, a locked Keychain included, is not an absence. */
+export const KEYCHAIN_ITEM_NOT_FOUND_STATUS = 44;
 
 /** The store a block uses: its own choice, else the Keychain on macOS and a file elsewhere. */
 export function effectiveStore(cache: Readonly<CredentialCache>, platform: NodeJS.Platform): CredentialCacheStore {

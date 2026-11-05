@@ -1,6 +1,7 @@
 import type { FarmFs } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
 import { resumedContextTokens } from "../usage/resumeContext";
+import { shellQuoted } from "../shellQuote";
 import { readSessionState, writeSessionState, type RegistryFs } from "./registry";
 
 /** Whether a turn is under way or the session is waiting for the next prompt. */
@@ -12,11 +13,6 @@ const MARK_HOOK_TIMEOUT_SECONDS = 10;
 /** The hidden command each hook runs. */
 export const SUPERVISE_MARK_COMMAND = "__supervise-mark";
 
-/** A string made safe to put in a POSIX shell command line. */
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`;
-}
-
 /**
  * The Claude Code settings, as the JSON `--settings` takes, whose hooks tell the supervisor when a turn begins and ends: `UserPromptSubmit` marks the session busy, and `Stop` and `StopFailure` (a turn that ended on an API error, such as a refused quota, does not fire `Stop`) mark it idle. Each hook runs this very executable (`invocation`) against the state root it was launched under. An older Claude Code that does not know an event name ignores it.
  */
@@ -26,7 +22,7 @@ export function markHooksSettings(invocation: { readonly command: string; readon
       hooks: [
         {
           type: "command",
-          command: `AGENT_SHIM_HOME=${shellQuote(root)} ${[invocation.command, ...invocation.args, SUPERVISE_MARK_COMMAND, pool, sessionId, mark].map(shellQuote).join(" ")}`,
+          command: `AGENT_SHIM_HOME=${shellQuoted(root)} ${[invocation.command, ...invocation.args, SUPERVISE_MARK_COMMAND, pool, sessionId, mark].map(shellQuoted).join(" ")}`,
           timeout: MARK_HOOK_TIMEOUT_SECONDS,
         },
       ],

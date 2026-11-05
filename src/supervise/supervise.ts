@@ -39,7 +39,7 @@ export interface CompactionDeps {
   readonly markCompacted: (sessionId: string, compacted: boolean) => void;
 }
 
-/** Everything the supervisor does that touches the outside world, injected so it runs against fakes. */
+/** Everything the supervisor does that touches the outside world, injected so it runs against fakes. Every identity the supervisor passes to or takes from them is an id (the directory the identity is stored in, which a rename of its name keeps): what it watches, checks, registers, compacts on and moves between, and the `to` of a move. Only a launch it prepares names the member by name, read through `nameOf` as it is prepared. */
 export interface SupervisorDeps {
   readonly pool: string;
   readonly cwd: string;
@@ -72,6 +72,30 @@ export interface SupervisorDeps {
   readonly resetTerminal: () => void;
   readonly now: () => number;
   readonly log: LogPort;
+  /** The name of the identity stored under an id, read fresh, or undefined when none is stored there any more. The supervisor keys everything by id, which a rename keeps, and asks for the name only to relaunch as the member and to say which it is. */
+  readonly nameOf: (id: string) => string | undefined;
+}
+
+/** Raised when the identity a supervised session runs as is no longer stored under its id, so there is no member to relaunch the session as. */
+class SupervisedIdentityGoneError extends Error {
+  constructor(id: string) {
+    super(`the identity stored under identities/${id} no longer exists, so the session cannot be relaunched on it`);
+    this.name = "SupervisedIdentityGoneError";
+  }
+}
+
+/** The name to relaunch as the identity stored under `id`, read now so a rename since the last launch is followed. Throws `SupervisedIdentityGoneError` when none is stored there. */
+function memberName(deps: Readonly<SupervisorDeps>, id: string): string {
+  const name = deps.nameOf(id);
+  if (name === undefined) {
+    throw new SupervisedIdentityGoneError(id);
+  }
+  return name;
+}
+
+/** How a line names the identity stored under `id`: its name now, or the id when none is stored there. */
+function labelOf(deps: Readonly<SupervisorDeps>, id: string): string {
+  return deps.nameOf(id) ?? id;
 }
 
 /** Why a child was stopped before it exited by itself. */
@@ -141,7 +165,7 @@ async function runChild(deps: Readonly<SupervisorDeps>, plan: LaunchPlan, identi
       depart(outcome);
     } else {
       state.declined = true;
-      deps.log.warn(`agent-shim: ${identity} is out of quota${hit.resetAt === undefined ? "" : ` until ${hit.resetAt}`}, and this session stays on it: ${outcome.reason}`);
+      deps.log.warn(`agent-shim: ${labelOf(deps, identity)} is out of quota${hit.resetAt === undefined ? "" : ` until ${hit.resetAt}`}, and this session stays on it: ${outcome.reason}`);
     }
   };
 
@@ -188,7 +212,7 @@ async function runChild(deps: Readonly<SupervisorDeps>, plan: LaunchPlan, identi
             state.leaving = true;
             depart({ kind: "remodel", to: outcome.to, model: move.model });
           } else {
-            deps.log.warn(`agent-shim: session ${plan.sessionId} picked a model under ${move.to}, but stays on ${identity}: ${outcome.reason}`);
+            deps.log.warn(`agent-shim: session ${plan.sessionId} picked a model under ${labelOf(deps, move.to)}, but stays on ${labelOf(deps, identity)}: ${outcome.reason}`);
           }
           continue;
         }
@@ -206,7 +230,7 @@ async function runChild(deps: Readonly<SupervisorDeps>, plan: LaunchPlan, identi
       } while (handled !== state.wakes);
     } catch (error) {
       // Said once per distinct problem: a snapshot that stays unreadable would otherwise repeat on every request.
-      const warning = `agent-shim: could not check whether ${identity} is out of quota: ${messageOf(error)}`;
+      const warning = `agent-shim: could not check whether ${labelOf(deps, identity)} is out of quota: ${messageOf(error)}`;
       if (warning !== state.lastWarning) {
         state.lastWarning = warning;
         deps.log.warn(warning);
@@ -232,10 +256,10 @@ async function runChild(deps: Readonly<SupervisorDeps>, plan: LaunchPlan, identi
     }
     deps.log.info(
       first.kind === "move"
-        ? `agent-shim: ${identity} is out of quota; resuming session ${plan.sessionId} under ${first.to} (${first.explanation})`
+        ? `agent-shim: ${labelOf(deps, identity)} is out of quota; resuming session ${plan.sessionId} under ${labelOf(deps, first.to)} (${first.explanation})`
         : first.kind === "remodel"
-          ? `agent-shim: resuming session ${plan.sessionId} under ${first.to} with ${first.model}, which only runs there`
-          : `agent-shim: ${first.reason}; compacting the ${String(first.contextTokens)}-token context of session ${plan.sessionId} on ${identity}`,
+          ? `agent-shim: resuming session ${plan.sessionId} under ${labelOf(deps, first.to)} with ${first.model}, which only runs there`
+          : `agent-shim: ${first.reason}; compacting the ${String(first.contextTokens)}-token context of session ${plan.sessionId} on ${labelOf(deps, identity)}`,
     );
     const result = await stopChild(deps, child);
     if (state.terminating) {
@@ -272,16 +296,16 @@ async function compactSession(deps: Readonly<SupervisorDeps>, compaction: Compac
     }),
   );
   try {
-    const result = await compaction.compact({ identity, sessionId, cwd: deps.cwd }, abort.signal);
+    const result = await compaction.compact({ identity: memberName(deps, identity), sessionId, cwd: deps.cwd }, abort.signal);
     if (result.kind === "unchanged") {
       deps.log.info(`agent-shim: session ${sessionId} was left as it was: ${result.reason}`);
     } else {
       const sizes = result.beforeTokens === undefined ? "" : `, ${String(result.beforeTokens)} tokens${result.afterTokens === undefined ? "" : ` down to ${String(result.afterTokens)}`}`;
-      deps.log.info(`agent-shim: compacted session ${sessionId} on ${identity}${sizes}`);
+      deps.log.info(`agent-shim: compacted session ${sessionId} on ${labelOf(deps, identity)}${sizes}`);
     }
   } catch (error) {
     if (interrupted.signal === undefined) {
-      deps.log.warn(`agent-shim: could not compact session ${sessionId} on ${identity}, which resumes as it was: ${messageOf(error)}`);
+      deps.log.warn(`agent-shim: could not compact session ${sessionId} on ${labelOf(deps, identity)}, which resumes as it was: ${messageOf(error)}`);
     }
   } finally {
     for (const stop of stopHandlers) {
@@ -310,10 +334,10 @@ export async function supervise(deps: Readonly<SupervisorDeps>, first: Supervise
   try {
     for (let moved = false; ; moved = true) {
       const plan = deps.prepare(launch);
-      const { identity } = plan.decision;
+      const identity = plan.decision.identityId;
       if (identity === undefined) {
         plan.release();
-        throw new Error("a supervised launch resolved no identity to supervise");
+        throw new Error("a supervised launch resolved no identity id to supervise");
       }
       // The launch's own pause or delay applies to the session's first child only: a relaunch under another member continues a session the person is already in.
       if (!moved && plan.hold() === "cancelled") {
@@ -343,10 +367,10 @@ export async function supervise(deps: Readonly<SupervisorDeps>, first: Supervise
         if (interrupted !== undefined) {
           return signalExit(interrupted);
         }
-        launch = { ...base, conversation: "resume", member: identity };
+        launch = { ...base, conversation: "resume", member: memberName(deps, identity) };
         continue;
       }
-      launch = { ...base, conversation: "resume", member: outcome.to, from: identity, ...(outcome.kind === "remodel" ? { model: outcome.model } : {}) };
+      launch = { ...base, conversation: "resume", member: memberName(deps, outcome.to), from: labelOf(deps, identity), ...(outcome.kind === "remodel" ? { model: outcome.model } : {}) };
       const compactedOnOld = compactedHere;
       compactedHere = false;
       if (compaction !== undefined) {

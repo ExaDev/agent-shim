@@ -71,7 +71,7 @@ describe("resolveCredential", () => {
     const result = resolve({ sources: [{ op: "op://vault/z/credential" }] }, {}, port);
     expect(result).toEqual({
       ok: false,
-      message: "agent-shim: provider z has no usable credential: op op://vault/z/credential needs a person to approve it, but there is no terminal or desktop session",
+      message: "provider z has no usable credential: op op://vault/z/credential needs a person to approve it, but there is no terminal or desktop session",
     });
     expect(port.runCommand).not.toHaveBeenCalled();
   });
@@ -94,7 +94,7 @@ describe("resolveCredential", () => {
     const result = resolve({ sources: [{ env: "Z_API_TOKEN" }, { command: ["op", "read", "ref"] }] }, {}, port);
     expect(result).toEqual({
       ok: false,
-      message: "agent-shim: provider z has no usable credential: env Z_API_TOKEN is unset or empty; command op exited with status 1: item not found",
+      message: "provider z has no usable credential: env Z_API_TOKEN is unset or empty; command op exited with status 1: item not found",
     });
     expect(JSON.stringify(result)).not.toContain("sk-leaked");
   });

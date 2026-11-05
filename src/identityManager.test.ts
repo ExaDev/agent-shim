@@ -204,7 +204,7 @@ describe("identityManager", () => {
     });
 
     it("rejects both farm-bookkeeping shapes, which an identity name could never take", () => {
-      expect(isIdentityDirectoryName(".work.previous.123.abc")).toBe(false);
+      expect(isIdentityDirectoryName(".work.previous.123.abcdef01-0000-4000-8000-000000000123")).toBe(false);
       expect(isIdentityDirectoryName(".work.scratch.123.abc")).toBe(false);
     });
   });
@@ -234,14 +234,14 @@ describe("identityManager", () => {
 
     it("skips a retained superseded farm even when a crash left a readable identity.json inside it", () => {
       addIdentity(paths, "work");
-      const retained = path.join(paths.identitiesDir, ".work.previous.123.abc");
+      const retained = path.join(paths.identitiesDir, ".work.previous.123.abcdef01-0000-4000-8000-000000000123");
       fs.mkdirSync(retained, { recursive: true });
       fs.writeFileSync(
         path.join(retained, "identity.json"),
         JSON.stringify({ name: "work", allowAmbientCredential: false }),
         "utf8",
       );
-      fs.mkdirSync(path.join(paths.identitiesDir, ".work.scratch.456.def"), { recursive: true });
+      fs.mkdirSync(path.join(paths.identitiesDir, ".work.scratch.456.def01234-0000-4000-8000-000000000456"), { recursive: true });
 
       expect(listIdentities(paths).map((entry) => entry.name)).toEqual(["work"]);
     });
@@ -257,9 +257,13 @@ describe("identityManager", () => {
       );
 
       const entries = listIdentities(paths);
-      expect(entries.map((entry) => entry.name)).toEqual(["work", "written-by-a-newer-agent-shim"]);
+      // The rejected file still says what the identity is called, so it is listed under that name and its directory's id.
+      expect(entries.map((entry) => [entry.name, entry.id])).toEqual([
+        ["a name a future naming rule allows!", "written-by-a-newer-agent-shim"],
+        ["work", "work"],
+      ]);
 
-      const rejected = entries.find((entry) => entry.name === "written-by-a-newer-agent-shim");
+      const rejected = entries.find((entry) => entry.id === "written-by-a-newer-agent-shim");
       expect(rejected?.identity).toBeUndefined();
       expect(rejected?.problem).toContain("must start with a letter or digit");
       expect(rejected?.problem).not.toContain("\n");

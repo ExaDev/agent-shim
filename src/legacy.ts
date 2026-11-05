@@ -12,7 +12,7 @@ export const LEGACY_ENV_PREFIX = "CLAUDE_USE_";
 /** The state root directory name under the home directory. */
 export const HOME_DIRNAME = ".agent-shim";
 /**
- * The former state root directory name. It is adopted in place rather than moved: macOS Claude Code keys each identity's Keychain login on the exact `CLAUDE_CONFIG_DIR` string (`<root>/identities/<name>`), so relocating the root would sign every identity out.
+ * The former state root directory name. It is adopted in place rather than moved: macOS Claude Code keys each identity's Keychain login on the exact `CLAUDE_CONFIG_DIR` string (`<root>/identities/<id>`), so relocating the root would sign every identity out.
  */
 export const LEGACY_HOME_DIRNAME = ".claude-use";
 

@@ -39,7 +39,7 @@ describe("doctor and an unfinished rename", () => {
     const finding = findingsFor(report, "identity").find((entry) => entry.subject === "work" && entry.severity === "fail");
     expect(finding?.message).toContain("cannot be finished: there is no identity under either name");
     expect(finding?.message).not.toContain("Finish it with");
-    expect(finding?.message).toContain("agent-shim identity rename work client --discard-journal");
+    expect(finding?.message).toContain("agent-shim identity rename work client --move --discard-journal");
   });
 
   it("says the same when both names are identities", () => {
@@ -47,7 +47,7 @@ describe("doctor and an unfinished rename", () => {
     const finding = findingsFor(report, "identity").find((entry) => entry.subject === "work" && entry.severity === "fail");
     expect(finding?.message).toContain("cannot be finished: both names are identities");
     expect(finding?.message).not.toContain("Finish it with");
-    expect(finding?.message).toContain("agent-shim identity rename work client --discard-journal");
+    expect(finding?.message).toContain("agent-shim identity rename work client --move --discard-journal");
   });
 
   it("counts a name as an identity only when it has an identity.json, as the rename does, so a directory without one is not a name that exists", () => {

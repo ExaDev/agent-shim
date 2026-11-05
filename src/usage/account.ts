@@ -1,6 +1,7 @@
 import path from "node:path";
 
 import { CliError } from "../cliError";
+import { isStoredName, STORED_NAME_RULE } from "../config/names";
 import { IdentitySchema } from "../config/schema";
 import type { FarmFs } from "../launcher/ports";
 import { AccountMetadataSchema, type AccountMetadata } from "./schema";
@@ -21,9 +22,32 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Whether `name` is a valid identity name, which is also what makes it safe as one path component under the identities and snapshots directories (no separator, no leading dot). */
+/** Whether `name` is a valid identity name. */
 export function isIdentityName(name: string): boolean {
   return IdentitySchema.shape.name.safeParse(name).success;
+}
+
+/** Whether `id` is a valid identity directory id under the identities and snapshots directories (a stored name that does not start with a dot, as `readIdentityRecords` reads). */
+export function isIdentityId(id: string): boolean {
+  return !id.startsWith(".") && isStoredName(id);
+}
+
+/** Raised for an identity directory id that cannot be one: it names the rule it breaks, which for an id is not the rule a name is held to. */
+class InvalidIdentityIdError extends CliError {
+  constructor(readonly attemptedId: string, rule: string) {
+    super(`${JSON.stringify(attemptedId)} is not a valid identity id: an id ${rule}.`);
+    this.name = "InvalidIdentityIdError";
+  }
+}
+
+/** Throws `InvalidIdentityIdError` unless `id` is an identity directory id (`isIdentityId`), naming the rule it breaks: the stored-name rule, which keeps an id inside the directory it is looked up in, or, for a stored name that starts with a dot, the leading-dot rule, since the identities directory's reader skips such an entry. */
+export function requireIdentityDirectoryId(id: string): void {
+  if (!isStoredName(id)) {
+    throw new InvalidIdentityIdError(id, STORED_NAME_RULE);
+  }
+  if (id.startsWith(".")) {
+    throw new InvalidIdentityIdError(id, "must not start with a dot, which the identities directory's reader skips");
+  }
 }
 
 /** The path of an identity's `.claude.json`. */
@@ -32,12 +56,10 @@ export function claudeJsonPath(identitiesDir: string, identity: string): string 
 }
 
 /**
- * Reads an identity's account metadata from the `oauthAccount` block Claude Code writes into the identity's `.claude.json` when it logs in: the fields `AccountMetadataSchema` names and nothing else (the token is never in this file; Claude Code keeps it in the Keychain or `.credentials.json`). Undefined when the identity has no `.claude.json` or no `oauthAccount` (a setup-token identity, or one never logged in). Throws `AccountMetadataError` for a file that is not a JSON object, and on an invalid identity name, which could otherwise name a path outside the identities directory.
+ * Reads an identity's account metadata from the `oauthAccount` block Claude Code writes into the identity's `.claude.json` when it logs in: the fields `AccountMetadataSchema` names and nothing else (the token is never in this file; Claude Code keeps it in the Keychain or `.credentials.json`). Undefined when the identity has no `.claude.json` or no `oauthAccount` (a setup-token identity, or one never logged in). Throws `AccountMetadataError` for a file that is not a JSON object, and on an invalid identity id, which could otherwise name a path outside the identities directory.
  */
 export function readAccountMetadata(fs: Pick<FarmFs, "readFileUtf8">, identitiesDir: string, identity: string): AccountMetadata | undefined {
-  if (!isIdentityName(identity)) {
-    throw new Error(`"${identity}" is not a valid identity name.`);
-  }
+  requireIdentityDirectoryId(identity);
   return readAccountMetadataFile(fs, claudeJsonPath(identitiesDir, identity));
 }
 
@@ -83,9 +105,7 @@ export function readAccountMetadataFile(fs: Pick<FarmFs, "readFileUtf8">, file: 
 export function createAccountReader(fs: Pick<FarmFs, "readFileUtf8" | "lstat">, identitiesDir: string): (identity: string) => AccountMetadata | undefined {
   const cache = new Map<string, { readonly stamp: string; readonly account: AccountMetadata | undefined }>();
   return (identity) => {
-    if (!isIdentityName(identity)) {
-      throw new Error(`"${identity}" is not a valid identity name.`);
-    }
+    requireIdentityDirectoryId(identity);
     const stat = fs.lstat(claudeJsonPath(identitiesDir, identity));
     const stamp = stat === undefined ? "absent" : `${String(stat.mtimeMs)}:${String(stat.sizeBytes)}`;
     const cached = cache.get(identity);

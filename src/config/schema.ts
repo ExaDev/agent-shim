@@ -834,7 +834,7 @@ export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;
 export const IdentitySchema = z.strictObject({
   $schema: z.string().optional(),
   name: FileNameSchema,
-  /** What the identity is for, in the person's words, drawn beside its name in `identity list` and `show`, the launch banner and the statusline. Display only: the name stays the key for lookup, paths, keychain service names and pools. */
+  /** What the identity is for, in the person's words, drawn beside its name in `identity list` and `show`, the launch banner and the statusline. Display only: the name stays the key for lookup and for the references to the identity (pools, rules, jobs, model refs), and the id for paths and Keychain service names. */
   label: IdentityLabelSchema.optional(),
   defaultConfigProfile: StoredNameSchema.optional(),
   /** The provider this identity exists for: a launch on the identity routes through it unless `--provider`, `--no-provider` or a cascade layer's `launch.provider` says otherwise. Its sessions run on the provider's credential, so the identity needs no stored login. */

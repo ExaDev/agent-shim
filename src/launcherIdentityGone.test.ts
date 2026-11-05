@@ -3,6 +3,9 @@ import { describe, expect, it } from "vitest";
 import type { FsPort } from "./launcher/ports";
 import { createFakeFarmFs, discovered, fakeFarm, fakeFs, fakeLog, fakeProc, fakeSpawn, runAndCaptureExit, FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS, paths } from "./test-helpers";
 
+/** The read of the identity's identity.json at which the rename starts: the first read after the farm's recovery. */
+const RENAME_STARTS_AT_READ = 2;
+
 describe("runLauncher for an identity renamed while the launch waited", () => {
   it("refuses, naming the identity and spawning nothing, instead of rebuilding the directory the rename moved", () => {
     const identitiesDir = `${FAKE_HOME}/.agent-shim/identities`;
@@ -10,6 +13,7 @@ describe("runLauncher for an identity renamed while the launch waited", () => {
     const fs = createFakeFarmFs({ [`${FAKE_CLAUDE_HOME}/skills/commit/SKILL.md`]: "commit" });
     const base = fakeFs({});
     let renameStarted = false;
+    let reads = 0;
     let renamed = false;
     // The launch has decided on `work` when a rename starts: it takes the identity's lock, and finishes while the launch waits to resync.
     const fsPort: FsPort = {
@@ -18,7 +22,9 @@ describe("runLauncher for an identity renamed while the launch waited", () => {
         if (filePath !== `${identitiesDir}/work/identity.json`) {
           return base.readConfigFile(filePath);
         }
-        if (!renameStarted) {
+        // The first read is the launcher resolving the name to its id, before the farm's recovery takes and releases the lock; the rename starts at the next one, as the identity is loaded.
+        reads += 1;
+        if (!renameStarted && reads === RENAME_STARTS_AT_READ) {
           renameStarted = true;
           fs.seed({ [lock]: `${JSON.stringify({ identity: "work", pid: 99, token: "the-rename", acquiredAtMs: FAKE_NOW_MS })}\n` });
           return base.readConfigFile(filePath);
@@ -37,7 +43,7 @@ describe("runLauncher for an identity renamed while the launch waited", () => {
     const code = runAndCaptureExit({ paths, fs: fsPort, spawn, proc: fakeProc({}, ["@work"]), log, resolveClaudeBinary: () => discovered, farm });
 
     expect(code).toBe(1);
-    expect(log.errors[0]).toContain('Identity "work" no longer exists');
+    expect(log.errors[0]).toContain("The identity stored under identities/work no longer exists");
     expect(spawn.spawnSync).not.toHaveBeenCalled();
     expect(fs.lstat(`${identitiesDir}/work`)).toBeUndefined();
   });

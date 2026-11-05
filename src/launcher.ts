@@ -9,10 +9,13 @@ import { parseEnvBool } from "./cli/envBool";
 import type { LayoutPaths } from "./paths";
 import { parseLauncherArgv, type ParsedLauncherArgv } from "./launcher/argv";
 import { buildCliOverride, type CliOverride } from "./launcher/cliOverride";
-import { IdentityGoneError, recoverFarm, recoveryDiagnostics, resyncFarm } from "./launcher/farm";
+import { IdentityGoneError, recoverFarmWarning, resyncFarm } from "./launcher/farm";
 import { registerLaunch } from "./launcher/launchRecords";
+import { acquireIdentityNamesLock, realIdentityNamesLockPorts, type IdentityNamesLockPorts } from "./identityNamesLock";
 import { evaluateAmbientCredentialGuard } from "./launcher/guard";
-import { decideConfigProfile, decideIdentity, loadIdentity, type ConfigProfileDecisionSource, type IdentityDecision, type IdentityDecisionSource } from "./launcher/identity";
+import { IDENTITY_FILE } from "./identityRecords";
+import { missingIdentityRemedy } from "./identityNameRenameRecord";
+import { decideConfigProfile, decideIdentity, loadIdentity, resolveIdentityId, type ConfigProfileDecisionSource, type IdentityDecision, type IdentityDecisionSource } from "./launcher/identity";
 import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedLaunchFlags, type ResolvedProvider } from "./launcher/flags";
 import { splitExtraFlags } from "./launcher/extraFlags";
 import { hasSettingsArgument, mergeSettings, withLauncherSettings, withSupervision, type SupervisedLaunch } from "./launcher/claudeSession";
@@ -37,7 +40,7 @@ import { flattenLayers } from "./resolve/flatten";
 import { assembleCascade } from "./resolve/walk";
 import { CREDENTIAL_TARGET_VARS, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type LaunchFlags, type Pool, type UpdateMode, isRouterProvider } from "./config/schema";
 import { GlobalConfigSchema } from "./config/schema";
-import { CREDENTIAL_UNAVAILABLE_EXIT, credentialVariables, describeSource, resolveCredential, summariseCredential, type CredentialPort, type CredentialSummary, type ResolvedCredential } from "./credential";
+import { CREDENTIAL_UNAVAILABLE_EXIT, credentialVariables, describeSource, identityCacheKey, resolveCredential, summariseCredential, type CredentialPort, type CredentialSummary, type ResolvedCredential } from "./credential";
 import type { CascadeInput } from "./resolve/walk";
 import { ANTHROPIC_PROVIDER } from "./usage/middleware";
 import { AccountMetadataError, readAccountMetadata } from "./usage/account";
@@ -83,6 +86,7 @@ export interface FarmRuntime {
 /** Inputs to `prepareLaunch`: everything a launch needs except the means of spawning the child. */
 export interface PrepareLaunchParams {
   readonly paths: LayoutPaths;
+  readonly namesLock?: IdentityNamesLockPorts;
   readonly fs: FsPort;
   readonly proc: ProcPort;
   readonly log: LogPort;
@@ -143,6 +147,8 @@ export interface LaunchPoolDecision {
 export interface LaunchDecision {
   /** The identity the launch runs as. Absent when the escape hatch applied or nothing resolved one. */
   readonly identity?: string;
+  /** The id `identity` is stored under: the directory under the identities directory, which a rename keeps. Absent exactly when `identity` is. */
+  readonly identityId?: string;
   /** Which precedence rule selected the identity (or the pool the identity was picked from). */
   readonly identitySource: IdentityDecisionSource;
   /** The pool pick behind `identity`, when the launch selected a pool. */
@@ -183,18 +189,18 @@ type IdentityCredentialResolution =
   | { readonly ok: true; readonly credential: ResolvedCredential }
   | { readonly ok: false; readonly status: number; readonly message: string };
 
-/** Resolves an identity's credential block, refusing with exit 1 when no credential port is wired and with `CREDENTIAL_UNAVAILABLE_EXIT` when no source yields a token. */
+/** Resolves an identity's credential block, refusing with exit 1 when no credential port is wired and with `CREDENTIAL_UNAVAILABLE_EXIT` when no source yields a token. The identity is named by `identity.name` in messages, and its cached credential is filed under its id. */
 function resolveIdentityCredential(
-  identity: string,
+  identity: { readonly name: string; readonly id: string },
   credential: Credential,
   env: Readonly<Record<string, string | undefined>>,
   port: CredentialPort | undefined,
 ): IdentityCredentialResolution {
   if (port === undefined) {
-    return { ok: false, status: 1, message: `agent-shim: identity ${identity} needs its credential resolved, but this launcher has no credential port wired` };
+    return { ok: false, status: 1, message: `agent-shim: identity ${identity.name} needs its credential resolved, but this launcher has no credential port wired` };
   }
-  const resolution = resolveCredential({ credential, env, port, subject: `identity ${identity}` });
-  return resolution.ok ? resolution : { ok: false, status: CREDENTIAL_UNAVAILABLE_EXIT, message: resolution.message };
+  const resolution = resolveCredential({ credential, env, port, subject: `identity ${identity.name}`, cacheKey: identityCacheKey(identity.id) });
+  return resolution.ok ? resolution : { ok: false, status: CREDENTIAL_UNAVAILABLE_EXIT, message: `agent-shim: ${resolution.message}` };
 }
 
 /** The identity decision after any pool selector has been resolved to one of the pool's members, and the pick's explanation for the decision log line. Exits the launch when no member can be picked. */
@@ -297,7 +303,7 @@ interface DecidedLaunch {
  *
  * A refusal is logged through `params.log` and ends in `params.proc.exit`, exactly as a launch is refused.
  */
-function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLaunch {
+function decideLaunch(params: PrepareLaunchParams, readOnly: boolean, onRecorded?: (remove: () => void) => void): DecidedLaunch {
   const { paths, fs, proc, log } = params;
   const { env, argv } = proc;
 
@@ -327,298 +333,304 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
   // A pool selector is resolved to one member here, ahead of everything that reads the identity: farm recovery, loading, the credential and the resync all work on the chosen name exactly as if it had been typed.
   const { identityDecision, poolPick, poolRanking, lastRanAs } = pickFromPool(decidedIdentity, params, parsedArgv, readOnly);
 
-  // There is a farm to manage only when an identity resolved and the caller did not name a configuration directory itself.
-  const farmIdentity = configDirEscapeHatchApplies ? undefined : identityDecision.name;
-  const farm = farmIdentity === undefined ? undefined : params.farm;
+  const lockFarm = !readOnly && !configDirEscapeHatchApplies && identityDecision.name !== undefined ? params.farm : undefined;
+  const lockPorts = params.namesLock ?? (lockFarm === undefined ? realIdentityNamesLockPorts : { fs: lockFarm.fs, nowMs: lockFarm.now, ...lockFarm.lock });
+  const namesLock = readOnly || configDirEscapeHatchApplies || identityDecision.name === undefined ? undefined : acquireIdentityNamesLock(paths, lockPorts);
+  try {
+    // The identity is reached on disk through its id, the directory it was created under, which a rename leaves alone: the farm, its lock and launch record, the usage snapshot, the login and the session's `CLAUDE_CONFIG_DIR` are all filed under it. There is a farm to manage only when an identity resolved and the caller did not name a configuration directory itself.
+    const farmIdentity = configDirEscapeHatchApplies || identityDecision.name === undefined ? undefined : resolveIdentityId(paths.identitiesDir, identityDecision.name, fs);
+    const farm = farmIdentity === undefined ? undefined : params.farm;
 
-  // Recovery runs before the identity is loaded, not merely before the farm is rebuilt: `identity.json` lives inside the farm root, so a crash between the swap's two renames leaves it in a superseded directory. Reading it first would launch with the identity's own configuration profile silently unset.
-  if (!readOnly && farm !== undefined && farmIdentity !== undefined) {
-    let recovery;
-    try {
-      recovery = recoverFarm({
-        fs: farm.fs,
-        identitiesDir: paths.identitiesDir,
-        identity: farmIdentity,
-        now: farm.now,
-        lock: farm.lock,
-        classification: farm.classification,
-      });
-    } catch (error) {
-      if (error instanceof IdentityLockBusyError) {
-        log.error(error.message);
+    // Recovery runs before the identity is loaded, not merely before the farm is rebuilt: `identity.json` lives inside the farm root, so a crash between the swap's two renames leaves it in a superseded directory. Reading it first would launch with the identity's own configuration profile silently unset.
+    if (!readOnly && farm !== undefined && farmIdentity !== undefined) {
+      try {
+        recoverFarmWarning(
+          { fs: farm.fs, identitiesDir: paths.identitiesDir, identity: farmIdentity, now: farm.now, lock: farm.lock, classification: farm.classification },
+          log.warn,
+        );
+      } catch (error) {
+        if (error instanceof IdentityLockBusyError) {
+          log.error(error.message);
+          proc.exit(1);
+        }
+        throw error;
+      }
+    }
+
+    let loadedIdentity: ReturnType<typeof loadIdentity>;
+    if (identityDecision.name !== undefined) {
+      loadedIdentity = loadIdentity(paths.identitiesDir, identityDecision.name, fs);
+      if (loadedIdentity === undefined) {
+        log.error(
+          `agent-shim: no identity named "${identityDecision.name}" (selected via ${identityDecision.source}). ${missingIdentityRemedy(paths, identityDecision.name)}`,
+        );
         proc.exit(1);
       }
-      throw error;
     }
-    for (const diagnostic of recoveryDiagnostics(recovery, farmIdentity)) {
-      log.warn(`agent-shim: ${diagnostic.code}: ${diagnostic.message}`);
-    }
-  }
 
-  let loadedIdentity: ReturnType<typeof loadIdentity>;
-  if (identityDecision.name !== undefined) {
-    loadedIdentity = loadIdentity(paths.identitiesDir, identityDecision.name, fs);
-    if (loadedIdentity === undefined) {
+    const configProfileDecision = decideConfigProfile({
+      env,
+      cliFlagConfigProfile: params.cliFlagConfigProfile ?? parsedArgv.configProfile,
+      directoryRuleConfigProfile: params.directoryRuleConfigProfile,
+      identityDefaultConfigProfile: loadedIdentity?.config.defaultConfigProfile,
+      globalDefaultConfigProfile: params.globalDefaultConfigProfile,
+    });
+    if (
+      configProfileDecision.name !== undefined &&
+      params.allowMissingConfigProfile !== true &&
+      fs.readConfigFile(profileFilePath(paths.configProfilesDir, configProfileDecision.name, `the configuration profile selected via ${configProfileDecision.source}`)) === undefined
+    ) {
       log.error(
-        `agent-shim: no identity named "${identityDecision.name}" (selected via ${identityDecision.source}). ` +
-          `Run \`agent-shim identity add ${identityDecision.name}\` first.`,
+        `agent-shim: no configuration profile named "${configProfileDecision.name}" (selected via ${configProfileDecision.source}). ` +
+          `Run \`agent-shim profile add ${configProfileDecision.name}\` first.`,
       );
       proc.exit(1);
     }
-  }
 
-  const configProfileDecision = decideConfigProfile({
-    env,
-    cliFlagConfigProfile: params.cliFlagConfigProfile ?? parsedArgv.configProfile,
-    directoryRuleConfigProfile: params.directoryRuleConfigProfile,
-    identityDefaultConfigProfile: loadedIdentity?.config.defaultConfigProfile,
-    globalDefaultConfigProfile: params.globalDefaultConfigProfile,
-  });
-  if (
-    configProfileDecision.name !== undefined &&
-    params.allowMissingConfigProfile !== true &&
-    fs.readConfigFile(profileFilePath(paths.configProfilesDir, configProfileDecision.name, `the configuration profile selected via ${configProfileDecision.source}`)) === undefined
-  ) {
-    log.error(
-      `agent-shim: no configuration profile named "${configProfileDecision.name}" (selected via ${configProfileDecision.source}). ` +
-        `Run \`agent-shim profile add ${configProfileDecision.name}\` first.`,
-    );
-    proc.exit(1);
-  }
+    // The cascade is loaded once here, ahead of both the provider decision below and the farm resync further down. A provider name can be pinned by any cascade layer exactly like a launch flag, so it has to be knowable before the ambient-credential guard runs: a provider launch injects its own credential into the child after the guard, which is exactly what the guard would otherwise refuse over. Loading once and passing the same value into the resync also avoids reading the config files twice.
+    const farmContext =
+      farm !== undefined && farmIdentity !== undefined
+        ? { farm, identity: farmIdentity, cascade: farm.loadCascade(configProfileDecision.name, cliOverride) }
+        : undefined;
 
-  // The cascade is loaded once here, ahead of both the provider decision below and the farm resync further down. A provider name can be pinned by any cascade layer exactly like a launch flag, so it has to be knowable before the ambient-credential guard runs: a provider launch injects its own credential into the child after the guard, which is exactly what the guard would otherwise refuse over. Loading once and passing the same value into the resync also avoids reading the config files twice.
-  const farmContext =
-    farm !== undefined && farmIdentity !== undefined
-      ? { farm, identity: farmIdentity, cascade: farm.loadCascade(configProfileDecision.name, cliOverride) }
-      : undefined;
-
-  // `--no-provider` opts this one launch out of whatever provider the cascade or the identity would otherwise select, so selection is skipped outright rather than asked to ignore its own cascade input. A read-only decision names the provider from its definition alone and resolves no credential.
-  const providerParams = {
-    paths,
-    port: fs,
-    ...(parsedArgv.provider === undefined || parsedArgv.provider === false ? {} : { cliProvider: parsedArgv.provider }),
-    ...(farmContext === undefined ? {} : { cascade: farmContext.cascade }),
-    ...(loadedIdentity?.config.provider === undefined ? {} : { identityProvider: loadedIdentity.config.provider }),
-  };
-  let selectedProvider: SelectedProvider | undefined;
-  let resolvedProvider: ResolvedProvider | undefined;
-  if (parsedArgv.provider !== false && readOnly) {
-    const selection = selectProvider(providerParams);
-    if (selection !== undefined && !selection.ok) {
-      log.error(selection.message);
-      proc.exit(selection.status);
-    }
-    selectedProvider = selection?.ok === true ? selection.provider : undefined;
-  } else if (parsedArgv.provider !== false) {
-    const provider = resolveProvider({ ...providerParams, env, ...(params.credentials === undefined ? {} : { credentials: params.credentials }) });
-    if (provider !== undefined && !provider.ok) {
-      log.error(provider.message);
-      proc.exit(provider.status);
-    }
-    resolvedProvider = provider?.ok === true ? provider.provider : undefined;
-    selectedProvider = resolvedProvider;
-    for (const warning of provider?.ok === true ? provider.warnings : []) {
-      log.warn(warning);
-    }
-  }
-
-  // A launch is never blocked by quota: the warning only says what the front door last saw for the provider this launch will use.
-  let billing: BillingFacts | undefined;
-  if (farm !== undefined && farmIdentity !== undefined) {
-    let snapshot: UsageSnapshot | undefined;
-    try {
-      snapshot = readUsageSnapshot(farm.fs, paths.usageSnapshotsDir, farmIdentity);
-      for (const warning of quotaWarnings(snapshot, selectedProvider?.name ?? ANTHROPIC_PROVIDER, farm.now())) {
+    // `--no-provider` opts this one launch out of whatever provider the cascade or the identity would otherwise select, so selection is skipped outright rather than asked to ignore its own cascade input. A read-only decision names the provider from its definition alone and resolves no credential.
+    const providerParams = {
+      paths,
+      port: fs,
+      ...(parsedArgv.provider === undefined || parsedArgv.provider === false ? {} : { cliProvider: parsedArgv.provider }),
+      ...(farmContext === undefined ? {} : { cascade: farmContext.cascade }),
+      ...(loadedIdentity?.config.provider === undefined ? {} : { identityProvider: loadedIdentity.config.provider }),
+    };
+    let selectedProvider: SelectedProvider | undefined;
+    let resolvedProvider: ResolvedProvider | undefined;
+    if (parsedArgv.provider !== false && readOnly) {
+      const selection = selectProvider(providerParams);
+      if (selection !== undefined && !selection.ok) {
+        log.error(selection.message);
+        proc.exit(selection.status);
+      }
+      selectedProvider = selection?.ok === true ? selection.provider : undefined;
+    } else if (parsedArgv.provider !== false) {
+      const provider = resolveProvider({ ...providerParams, env, ...(params.credentials === undefined ? {} : { credentials: params.credentials }) });
+      if (provider !== undefined && !provider.ok) {
+        log.error(provider.message);
+        proc.exit(provider.status);
+      }
+      resolvedProvider = provider?.ok === true ? provider.provider : undefined;
+      selectedProvider = resolvedProvider;
+      for (const warning of provider?.ok === true ? provider.warnings : []) {
         log.warn(warning);
       }
-    } catch (error) {
-      if (!(error instanceof UsageSnapshotError)) {
-        throw error;
+    }
+
+    // A launch is never blocked by quota: the warning only says what the front door last saw for the provider this launch will use.
+    let billing: BillingFacts | undefined;
+    if (farm !== undefined && farmIdentity !== undefined) {
+      let snapshot: UsageSnapshot | undefined;
+      try {
+        snapshot = readUsageSnapshot(farm.fs, paths.usageSnapshotsDir, farmIdentity);
+        // The snapshot is filed by id; the warning names the identity by the name it was launched as.
+        const named = snapshot === undefined || identityDecision.name === undefined ? snapshot : { ...snapshot, identity: identityDecision.name };
+        for (const warning of quotaWarnings(named, selectedProvider?.name ?? ANTHROPIC_PROVIDER, farm.now())) {
+          log.warn(warning);
+        }
+      } catch (error) {
+        if (!(error instanceof UsageSnapshotError)) {
+          throw error;
+        }
+        log.warn(`agent-shim: ${error.message}`);
       }
-      log.warn(`agent-shim: ${error.message}`);
-    }
-    // The report's account row reads the stored login, as the pool pick does; a login file that cannot be read is said so and leaves the row to the snapshot's copy.
-    let login: AccountMetadata | undefined;
-    try {
-      login = readAccountMetadata(farm.fs, paths.identitiesDir, farmIdentity);
-    } catch (error) {
-      if (!(error instanceof AccountMetadataError)) {
-        throw error;
+      // The report's account row reads the stored login, as the pool pick does; a login file that cannot be read is said so and leaves the row to the snapshot's copy.
+      let login: AccountMetadata | undefined;
+      try {
+        login = readAccountMetadata(farm.fs, paths.identitiesDir, farmIdentity);
+      } catch (error) {
+        if (!(error instanceof AccountMetadataError)) {
+          throw error;
+        }
+        log.warn(`agent-shim: ${error.message}`);
       }
-      log.warn(`agent-shim: ${error.message}`);
+      billing = { login, snapshot, provider: selectedProvider?.name, nowMs: farm.now() };
     }
-    billing = { login, snapshot, provider: selectedProvider?.name, nowMs: farm.now() };
-  }
 
-  // The identity's own credential applies only when no provider was selected (the provider's credential authenticates against its endpoint instead) and the identity owns this launch's configuration directory (under the CLAUDE_CONFIG_DIR escape hatch, the directory and whatever login it holds are the caller's). A read-only decision reports the block and resolves nothing.
-  const identityCredentialBlock = selectedProvider === undefined && farmIdentity !== undefined ? loadedIdentity?.config.credential : undefined;
-  const identityResolution =
-    !readOnly && identityCredentialBlock !== undefined && farmIdentity !== undefined
-      ? resolveIdentityCredential(farmIdentity, identityCredentialBlock, env, params.credentials)
-      : undefined;
-  if (identityResolution !== undefined && !identityResolution.ok) {
-    log.error(identityResolution.message);
-    proc.exit(identityResolution.status);
-  }
-  const identityCredential = identityResolution?.ok === true ? identityResolution.credential : undefined;
-  for (const warning of identityCredential?.warnings ?? []) {
-    log.warn(warning);
-  }
-
-  const guardResult = evaluateAmbientCredentialGuard({
-    env,
-    allowAmbientCredential: loadedIdentity?.config.allowAmbientCredential ?? false,
-    allowAmbientCredentialOverride: parseEnvBool("AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL", env.AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL) === true,
-    identityName: identityDecision.name,
-    providerSelected: selectedProvider !== undefined,
-    ...(identityCredential === undefined
-      ? {}
-      : { injectedCredential: { variable: CREDENTIAL_TARGET_VARS[identityCredential.target], token: identityCredential.token } }),
-  });
-  if (!guardResult.ok) {
-    // A read-only decision resolves no credential, so it cannot tell an ambient variable that merely equals the identity's own injected token (a nested launch inheriting its parent's environment, which the real launch exempts) from a foreign one. With a credential block that could be the case, the outcome is indeterminate and is reported as a warning instead of a refusal.
-    if (readOnly && identityCredentialBlock !== undefined) {
-      log.warn(`${guardResult.message} (not resolved here: the launch proceeds only if that value is the identity's own injected credential)`);
-    } else {
-      log.error(guardResult.message);
-      proc.exit(1);
+    // The identity's own credential applies only when no provider was selected (the provider's credential authenticates against its endpoint instead) and the identity owns this launch's configuration directory (under the CLAUDE_CONFIG_DIR escape hatch, the directory and whatever login it holds are the caller's). A read-only decision reports the block and resolves nothing.
+    const identityCredentialBlock = selectedProvider === undefined && farmIdentity !== undefined ? loadedIdentity?.config.credential : undefined;
+    const identityResolution =
+      !readOnly && identityCredentialBlock !== undefined && farmIdentity !== undefined && identityDecision.name !== undefined
+        ? resolveIdentityCredential({ name: identityDecision.name, id: farmIdentity }, identityCredentialBlock, env, params.credentials)
+        : undefined;
+    if (identityResolution !== undefined && !identityResolution.ok) {
+      log.error(identityResolution.message);
+      proc.exit(identityResolution.status);
     }
-  }
-
-  // Launch flags come from the cascade's `launch` block: the same flattening of the same assembled cascade the farm resync computes, so a decision made before the resync reports what the resync will carry. Escape-hatch and bare launches have no farm to resync, but launch flags are agent-shim's own behaviour, not the farm's: a global `launch.headroom` (or any other launch setting) must still apply when CLAUDE_CONFIG_DIR was already set or no identity resolved. This reads and flattens the cascade and writes nothing.
-  const launchCascade = farmContext?.cascade ?? (params.farm === undefined ? undefined : params.farm.loadCascade(configProfileDecision.name, cliOverride));
-  let cascadeLaunch: LaunchFlags | undefined;
-  let cascadeModels: ModelsConfig | undefined;
-  if (launchCascade !== undefined && params.farm !== undefined) {
-    const assembled = assembleCascade(launchCascade);
-    const flattened = flattenLayers(assembled.layers, { home: params.farm.home });
-    cascadeLaunch = flattened.launch;
-    cascadeModels = flattened.models;
-    // A launch that resyncs a farm reports these through the resync. One with no farm (the escape hatch, or no identity resolved) and a read-only decision resync nothing, so they are reported here rather than leaving a layer partly ignored without a word. A read-only decision has no way to refuse, so it reports an error as a warning.
-    if (readOnly || farmContext === undefined) {
-      reportDiagnostics(log, [...assembled.diagnostics, ...flattened.diagnostics], { errorsAsWarnings: readOnly });
+    const identityCredential = identityResolution?.ok === true ? identityResolution.credential : undefined;
+    for (const warning of identityCredential?.warnings ?? []) {
+      log.warn(warning);
     }
-  }
 
-  // A pinned Claude Code version comes from the same three forms as every launch setting, and is resolved before discovery because discovery has to run that exact version or fail.
-  const pinnedVersion = resolveClaudeVersion({ env, ...(parsedArgv.claudeVersion === undefined ? {} : { flag: parsedArgv.claudeVersion }), ...(cascadeLaunch?.claudeVersion === undefined ? {} : { cascade: cascadeLaunch.claudeVersion }) });
-  const discovered = params.resolveClaudeBinary(pinnedVersion === undefined ? undefined : { version: pinnedVersion.version });
-
-  const requestedFlags = resolveLaunchFlags({
-    env,
-    ...(cascadeLaunch === undefined ? {} : { cascade: cascadeLaunch }),
-    flags: {
-      ...(parsedArgv.skipPermissions === undefined ? {} : { skipPermissions: parsedArgv.skipPermissions }),
-      ...(parsedArgv.remoteControl === undefined ? {} : { remoteControl: parsedArgv.remoteControl }),
-      ...(parsedArgv.headroom === undefined ? {} : { headroom: parsedArgv.headroom }),
-      ...(parsedArgv.trackUsage === undefined ? {} : { trackUsage: parsedArgv.trackUsage }),
-      ...(parsedArgv.pause === undefined ? {} : { pause: parsedArgv.pause }),
-      ...(parsedArgv.explain === undefined ? {} : { explain: parsedArgv.explain }),
-      ...(parsedArgv.delay === undefined ? {} : { delay: parsedArgv.delay }),
-    },
-  });
-  // Remote Control is a claude.ai feature and needs the identity's own login. A provider session does not: the door attaches the provider's credential. So a provider launch on an identity with no stored login runs without Remote Control instead of failing at its first turn with "Not logged in".
-  const loginlessProvider =
-    requestedFlags.remoteControl && selectedProvider !== undefined && farmIdentity !== undefined && params.hasStoredLogin?.(farmIdentity) === false ? { identity: farmIdentity, provider: selectedProvider.name } : undefined;
-  const notes: string[] = [];
-  if (loginlessProvider !== undefined) {
-    notes.push(`${loginlessProvider.identity} has no stored login, so Remote Control is off; provider ${loginlessProvider.provider} runs without it`);
-  }
-  const flags = loginlessProvider === undefined ? requestedFlags : { ...requestedFlags, remoteControl: false };
-
-  // `/model` lists every provider's models qualified, which needs claude's `--settings`; a launch that passes its own keeps claude's names, since claude takes one value and a second replaces the first.
-  // A session that routes by model name (the flag, or a router provider) lists the whole catalogue: its virtual models first, then every provider's models qualified. Every other session lists the same qualified rows without the virtual and family ones (a bare name it has not opted in to route by name cannot serve), so a session can always select another provider's model by its qualified name, which the door resolves whatever the session launched on. A provider session's rows replace the built-in Claude names; a provider-less (OAuth) session keeps them and appends.
-
-  // The cascade's block when a cascade was read (a launch with a farm), else the global block alone; read through the launcher's own config port so a test sees its own filesystem.
-  const globalModels = loadConfigFile(paths.globalConfigFile, GlobalConfigSchema, params.fs.readConfigFile)?.config.models;
-  const models = launchCascade !== undefined && params.farm !== undefined ? cascadeModels : globalModels;
-  const callerSettings = hasSettingsArgument(parsedArgv.rest);
-  const startsSession = !isClaudeSubcommand(parsedArgv.rest);
-  const argsForSupervisor = (supervisorPid?: number): { readonly args: readonly string[]; readonly pickerSuppressed: boolean } => {
-  const door = readFrontDoorState(params.fs, paths.frontdoorStateFile);
-  const recordedPid = door?.port === undefined ? undefined : door.supervisorPid;
-  const doorPid = supervisorPid ?? (recordedPid !== undefined && proc.isProcessAlive(recordedPid) ? recordedPid : undefined);
-  const doorRecord = doorPid === undefined ? undefined : readFrontDoorCodexRecord(params.fs, paths.frontdoorDir, doorPid);
-  const doorHome = doorRecord?.codexHome;
-  const catalogueEnv = doorHome === undefined ? proc.env : { ...proc.env, CODEX_HOME: doorHome };
-  // The provider list is read through the launch's own filesystem port (a broken file lists no rows rather than failing the launch; `doctor` is where a broken file is reported), never the process's real one, so a test's fake filesystem is what decides.
-  const listedProviders = listProviderNames(fs.readdir, paths.providersDir).flatMap((name): readonly [string, Provider, readonly CatalogueModel[]][] => {
-    try {
-      const definition = loadProvider(paths.providersDir, name, fs);
-      if (definition === undefined) return [];
-      const catalogueOwner = definition.kind === "codex" ? doorPid : undefined;
-      const generation = definition.kind === "codex" ? doorRecord?.generation : undefined;
-      const cache = parseCatalogueCache(params.fs.readFileUtf8(catalogueCachePath(paths, name, catalogueOwner, generation)));
-      if (definition.kind === "codex" && cache !== undefined && cache.supervisorPid !== doorPid) return [];
-      if (definition.kind === "codex" && doorPid !== undefined && doorRecord === undefined) return [];
-      if (definition.kind === "codex" && readOnly && cache !== undefined) {
-        const binding = parseCatalogueBinding(params.fs.readFileUtf8(catalogueBindingPath(paths, name, catalogueOwner, generation)));
-        const configuredHome = catalogueEnv.CODEX_HOME;
-        const home = configuredHome === undefined || configuredHome === "" ? path.join(os.homedir(), ".codex") : configuredHome;
-        const source = definition.codex?.login === "chatgpt-sign-in" ? paths.chatgptSignInFile : path.resolve(home, "auth.json");
-        const revision = params.fs.fileRevision?.(source);
-        if (binding === undefined || binding.fingerprint !== cache.credentialFingerprint || binding.source !== source || revision === undefined || revision !== binding.revision) return [];
+    const guardResult = evaluateAmbientCredentialGuard({
+      env,
+      allowAmbientCredential: loadedIdentity?.config.allowAmbientCredential ?? false,
+      allowAmbientCredentialOverride: parseEnvBool("AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL", env.AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL) === true,
+      identityName: identityDecision.name,
+      providerSelected: selectedProvider !== undefined,
+      ...(identityCredential === undefined
+        ? {}
+        : { injectedCredential: { variable: CREDENTIAL_TARGET_VARS[identityCredential.target], token: identityCredential.token } }),
+    });
+    if (!guardResult.ok) {
+      // A read-only decision resolves no credential, so it cannot tell an ambient variable that merely equals the identity's own injected token (a nested launch inheriting its parent's environment, which the real launch exempts) from a foreign one. With a credential block that could be the case, the outcome is indeterminate and is reported as a warning instead of a refusal.
+      if (readOnly && identityCredentialBlock !== undefined) {
+        log.warn(`${guardResult.message} (not resolved here: the launch proceeds only if that value is the identity's own injected credential)`);
+      } else {
+        log.error(guardResult.message);
+        proc.exit(1);
       }
-      const fingerprint = definition.kind === "codex" && !readOnly ? savedCatalogueFingerprint(definition, paths, catalogueEnv, os.homedir(), params.fs.readFileUtf8) : undefined;
-      if (definition.kind === "codex" && !readOnly && cache !== undefined && (fingerprint === undefined || cache.credentialFingerprint !== fingerprint)) return [];
-      return [[name, definition, cache?.models ?? []]];
-    } catch {
-      return [];
     }
-  });
-  const pickerSettings = modelPickerSettingsFromRows(routedModelRows(models ?? {}, listedProviders), selectedProvider !== undefined);
-  const launcherSettings = mergeSettings([params.supervised?.settings, callerSettings ? undefined : pickerSettings]);
 
-  // A claude subcommand (`plugin install`, `auth status`) starts no session and rejects the options a session takes, so it receives the caller's arguments as typed.
-  const args = startsSession
-    ? buildArgv({
-        toolFlags: buildFlagArgs(flags),
-        extraFlags: splitExtraFlags(env.CLAUDE_EXTRA_FLAGS),
-        passthrough: withLauncherSettings(params.supervised === undefined ? parsedArgv.rest : withSupervision(parsedArgv.rest, params.supervised), launcherSettings),
-      })
-    : [...parsedArgv.rest];
-  return { args, pickerSuppressed: startsSession && pickerSettings !== undefined && callerSettings };
-  };
-  const args = argsForSupervisor().args;
+    // Launch flags come from the cascade's `launch` block: the same flattening of the same assembled cascade the farm resync computes, so a decision made before the resync reports what the resync will carry. Escape-hatch and bare launches have no farm to resync, but launch flags are agent-shim's own behaviour, not the farm's: a global `launch.headroom` (or any other launch setting) must still apply when CLAUDE_CONFIG_DIR was already set or no identity resolved. This reads and flattens the cascade and writes nothing.
+    const launchCascade = farmContext?.cascade ?? (params.farm === undefined ? undefined : params.farm.loadCascade(configProfileDecision.name, cliOverride));
+    let cascadeLaunch: LaunchFlags | undefined;
+    let cascadeModels: ModelsConfig | undefined;
+    if (launchCascade !== undefined && params.farm !== undefined) {
+      const assembled = assembleCascade(launchCascade);
+      const flattened = flattenLayers(assembled.layers, { home: params.farm.home });
+      cascadeLaunch = flattened.launch;
+      cascadeModels = flattened.models;
+      // A launch that resyncs a farm reports these through the resync. One with no farm (the escape hatch, or no identity resolved) and a read-only decision resync nothing, so they are reported here rather than leaving a layer partly ignored without a word. A read-only decision has no way to refuse, so it reports an error as a warning.
+      if (readOnly || farmContext === undefined) {
+        reportDiagnostics(log, [...assembled.diagnostics, ...flattened.diagnostics], { errorsAsWarnings: readOnly });
+      }
+    }
 
-  // The configuration directory the child runs with, as `buildEnv` will set it: the identity's own directory unless the caller named one.
-  const configDir = configDirEscapeHatchApplies || identityDecision.name === undefined ? env.CLAUDE_CONFIG_DIR : path.join(paths.identitiesDir, identityDecision.name);
-  const decision: LaunchDecision = {
-    identitySource: identityDecision.source,
-    configDirEscapeHatch: identityDecision.configDirEscapeHatch,
-    configProfileSource: configProfileDecision.source,
-    ...(identityDecision.name === undefined ? {} : { identity: identityDecision.name }),
-    ...(poolPick === undefined ? {} : { pool: poolPick }),
-    ...(configDir === undefined || configDir === "" ? {} : { configDir }),
-    ...(configProfileDecision.name === undefined ? {} : { configProfile: configProfileDecision.name }),
-    ...(selectedProvider === undefined ? {} : { provider: selectedProvider.name }),
-  };
-  return {
-    parsedArgv,
-    identityDecision,
-    identityLabel: loadedIdentity?.config.label,
-    poolPick,
-    poolRanking,
-    lastRanAs,
-    billing,
-    notes,
-    configDirEscapeHatch: configDirEscapeHatchApplies,
-    farmIdentity,
-    farmContext,
-    configProfileDecision,
-    provider: selectedProvider,
-    resolvedProvider,
-    identityCredentialBlock,
-    identityCredential,
-    pinnedVersion,
-    flags,
-    models,
-    globalModels,
-    bin: discovered.path,
-    args,
-    argsForSupervisor,
-    decision,
-  };
+    // A pinned Claude Code version comes from the same three forms as every launch setting, and is resolved before discovery because discovery has to run that exact version or fail.
+    const pinnedVersion = resolveClaudeVersion({ env, ...(parsedArgv.claudeVersion === undefined ? {} : { flag: parsedArgv.claudeVersion }), ...(cascadeLaunch?.claudeVersion === undefined ? {} : { cascade: cascadeLaunch.claudeVersion }) });
+    const discovered = params.resolveClaudeBinary(pinnedVersion === undefined ? undefined : { version: pinnedVersion.version });
+
+    const requestedFlags = resolveLaunchFlags({
+      env,
+      ...(cascadeLaunch === undefined ? {} : { cascade: cascadeLaunch }),
+      flags: {
+        ...(parsedArgv.skipPermissions === undefined ? {} : { skipPermissions: parsedArgv.skipPermissions }),
+        ...(parsedArgv.remoteControl === undefined ? {} : { remoteControl: parsedArgv.remoteControl }),
+        ...(parsedArgv.headroom === undefined ? {} : { headroom: parsedArgv.headroom }),
+        ...(parsedArgv.trackUsage === undefined ? {} : { trackUsage: parsedArgv.trackUsage }),
+        ...(parsedArgv.pause === undefined ? {} : { pause: parsedArgv.pause }),
+        ...(parsedArgv.explain === undefined ? {} : { explain: parsedArgv.explain }),
+        ...(parsedArgv.delay === undefined ? {} : { delay: parsedArgv.delay }),
+      },
+    });
+    // Remote Control is a claude.ai feature and needs the identity's own login. A provider session does not: the door attaches the provider's credential. So a provider launch on an identity with no stored login runs without Remote Control instead of failing at its first turn with "Not logged in".
+    const loginlessProvider =
+      requestedFlags.remoteControl && selectedProvider !== undefined && farmIdentity !== undefined && identityDecision.name !== undefined && params.hasStoredLogin?.(farmIdentity) === false ? { identity: identityDecision.name, provider: selectedProvider.name } : undefined;
+    const notes: string[] = [];
+    if (loginlessProvider !== undefined) {
+      notes.push(`${loginlessProvider.identity} has no stored login, so Remote Control is off; provider ${loginlessProvider.provider} runs without it`);
+    }
+    const flags = loginlessProvider === undefined ? requestedFlags : { ...requestedFlags, remoteControl: false };
+
+    // `/model` lists every provider's models qualified, which needs claude's `--settings`; a launch that passes its own keeps claude's names, since claude takes one value and a second replaces the first.
+    // A session that routes by model name (the flag, or a router provider) lists the whole catalogue: its virtual models first, then every provider's models qualified. Every other session lists the same qualified rows without the virtual and family ones (a bare name it has not opted in to route by name cannot serve), so a session can always select another provider's model by its qualified name, which the door resolves whatever the session launched on. A provider session's rows replace the built-in Claude names; a provider-less (OAuth) session keeps them and appends.
+
+    // The cascade's block when a cascade was read (a launch with a farm), else the global block alone; read through the launcher's own config port so a test sees its own filesystem.
+    const globalModels = loadConfigFile(paths.globalConfigFile, GlobalConfigSchema, params.fs.readConfigFile)?.config.models;
+    const models = launchCascade !== undefined && params.farm !== undefined ? cascadeModels : globalModels;
+    const callerSettings = hasSettingsArgument(parsedArgv.rest);
+    const startsSession = !isClaudeSubcommand(parsedArgv.rest);
+    const argsForSupervisor = (supervisorPid?: number): { readonly args: readonly string[]; readonly pickerSuppressed: boolean } => {
+    const door = readFrontDoorState(params.fs, paths.frontdoorStateFile);
+    const recordedPid = door?.port === undefined ? undefined : door.supervisorPid;
+    const doorPid = supervisorPid ?? (recordedPid !== undefined && proc.isProcessAlive(recordedPid) ? recordedPid : undefined);
+    const doorRecord = doorPid === undefined ? undefined : readFrontDoorCodexRecord(params.fs, paths.frontdoorDir, doorPid);
+    const doorHome = doorRecord?.codexHome;
+    const catalogueEnv = doorHome === undefined ? proc.env : { ...proc.env, CODEX_HOME: doorHome };
+    // The provider list is read through the launch's own filesystem port (a broken file lists no rows rather than failing the launch; `doctor` is where a broken file is reported), never the process's real one, so a test's fake filesystem is what decides.
+    const listedProviders = listProviderNames(fs.readdir, paths.providersDir).flatMap((name): readonly [string, Provider, readonly CatalogueModel[]][] => {
+      try {
+        const definition = loadProvider(paths.providersDir, name, fs);
+        if (definition === undefined) return [];
+        const catalogueOwner = definition.kind === "codex" ? doorPid : undefined;
+        const generation = definition.kind === "codex" ? doorRecord?.generation : undefined;
+        const cache = parseCatalogueCache(params.fs.readFileUtf8(catalogueCachePath(paths, name, catalogueOwner, generation)));
+        if (definition.kind === "codex" && cache !== undefined && cache.supervisorPid !== doorPid) return [];
+        if (definition.kind === "codex" && doorPid !== undefined && doorRecord === undefined) return [];
+        if (definition.kind === "codex" && readOnly && cache !== undefined) {
+          const binding = parseCatalogueBinding(params.fs.readFileUtf8(catalogueBindingPath(paths, name, catalogueOwner, generation)));
+          const configuredHome = catalogueEnv.CODEX_HOME;
+          const home = configuredHome === undefined || configuredHome === "" ? path.join(os.homedir(), ".codex") : configuredHome;
+          const source = definition.codex?.login === "chatgpt-sign-in" ? paths.chatgptSignInFile : path.resolve(home, "auth.json");
+          const revision = params.fs.fileRevision?.(source);
+          if (binding === undefined || binding.fingerprint !== cache.credentialFingerprint || binding.source !== source || revision === undefined || revision !== binding.revision) return [];
+        }
+        const fingerprint = definition.kind === "codex" && !readOnly ? savedCatalogueFingerprint(definition, paths, catalogueEnv, os.homedir(), params.fs.readFileUtf8) : undefined;
+        if (definition.kind === "codex" && !readOnly && cache !== undefined && (fingerprint === undefined || cache.credentialFingerprint !== fingerprint)) return [];
+        return [[name, definition, cache?.models ?? []]];
+      } catch {
+        return [];
+      }
+    });
+    const pickerSettings = modelPickerSettingsFromRows(routedModelRows(models ?? {}, listedProviders), selectedProvider !== undefined);
+    const launcherSettings = mergeSettings([params.supervised?.settings, callerSettings ? undefined : pickerSettings]);
+
+    // A claude subcommand (`plugin install`, `auth status`) starts no session and rejects the options a session takes, so it receives the caller's arguments as typed.
+    const args = startsSession
+      ? buildArgv({
+          toolFlags: buildFlagArgs(flags),
+          extraFlags: splitExtraFlags(env.CLAUDE_EXTRA_FLAGS),
+          passthrough: withLauncherSettings(params.supervised === undefined ? parsedArgv.rest : withSupervision(parsedArgv.rest, params.supervised), launcherSettings),
+        })
+      : [...parsedArgv.rest];
+    return { args, pickerSuppressed: startsSession && pickerSettings !== undefined && callerSettings };
+    };
+    const args = argsForSupervisor().args;
+
+    // The configuration directory the child runs with, as `buildEnv` will set it: the identity's own directory unless the caller named one.
+    const configDir = configDirEscapeHatchApplies || farmIdentity === undefined ? env.CLAUDE_CONFIG_DIR : path.join(paths.identitiesDir, farmIdentity);
+    const decision: LaunchDecision = {
+      identitySource: identityDecision.source,
+      configDirEscapeHatch: identityDecision.configDirEscapeHatch,
+      configProfileSource: configProfileDecision.source,
+      ...(identityDecision.name === undefined ? {} : { identity: identityDecision.name }),
+      ...(farmIdentity === undefined ? {} : { identityId: farmIdentity }),
+      ...(poolPick === undefined ? {} : { pool: poolPick }),
+      ...(configDir === undefined || configDir === "" ? {} : { configDir }),
+      ...(configProfileDecision.name === undefined ? {} : { configProfile: configProfileDecision.name }),
+      ...(selectedProvider === undefined ? {} : { provider: selectedProvider.name }),
+    };
+    if (farmContext !== undefined && onRecorded !== undefined) {
+      const { farm: launchFarm, identity: launchIdentity } = farmContext;
+      const unregister = registerLaunch(launchFarm.fs, paths.launchesDir, { pid: launchFarm.lock.pid, identity: launchIdentity, startedAtMs: launchFarm.now() }, launchFarm.lock.isRunning);
+      onRecorded(unregister);
+    }
+    return {
+      parsedArgv,
+      identityDecision,
+      identityLabel: loadedIdentity?.config.label,
+      poolPick,
+      poolRanking,
+      lastRanAs,
+      billing,
+      notes,
+      configDirEscapeHatch: configDirEscapeHatchApplies,
+      farmIdentity,
+      farmContext,
+      configProfileDecision,
+      provider: selectedProvider,
+      resolvedProvider,
+      identityCredentialBlock,
+      identityCredential,
+      pinnedVersion,
+      flags,
+      models,
+      globalModels,
+      bin: discovered.path,
+      args,
+      argsForSupervisor,
+      decision,
+    };
+  } finally {
+    namesLock?.release();
+  }
 }
 
 /**
@@ -652,7 +664,8 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
 function prepareRegisteredLaunch(params: PrepareLaunchParams, onRecorded: (remove: () => void) => void): LaunchPlan {
   const { paths, proc, log } = params;
   const { env } = proc;
-  const decided = decideLaunch(params, false);
+  let unregisterLaunch: (() => void) | undefined;
+  const decided = decideLaunch(params, false, (remove) => { unregisterLaunch = remove; onRecorded(remove); });
   const { identityDecision, configProfileDecision, resolvedProvider, identityCredential, poolPick, poolRanking, lastRanAs, billing, notes, flags: resolvedFlags, configDirEscapeHatch: configDirEscapeHatchApplies, decision } = decided;
 
   // Everything the launch has to say about itself is collected as it is decided and printed as one block once the launch is ready to start, so what a person reads is a single table of facts and not lines scattered between the steps. Warnings follow it.
@@ -672,7 +685,6 @@ function prepareRegisteredLaunch(params: PrepareLaunchParams, onRecorded: (remov
     }),
   ];
   let warnings: readonly DiagnosticLine[] = [];
-  let unregisterLaunch: (() => void) | undefined;
 
   // The launch-time update check sits directly after the launch's decisions are made: it is the last thing that may write to the terminal before the child owns it, it never awaits anything (its answer arrives, if at all, while the child runs), and it is wrapped so a network or filesystem failure never delays, blocks or fails the launch.
   const updateCheck = runLaunchUpdateCheck({
@@ -685,9 +697,6 @@ function prepareRegisteredLaunch(params: PrepareLaunchParams, onRecorded: (remov
   // The farm resync sits here, between the identity/profile decision above and the daemons below, because it needs the first: the launch flags it would otherwise have produced are already in `decided`, computed from the same assembled cascade it consumes.
   if (decided.farmContext !== undefined) {
     const { farm: resyncFarmRuntime, identity: resyncIdentity, cascade } = decided.farmContext;
-    // Recorded before the lock is asked for, not after the resync: a rename that takes the lock while this launch waits for it must still see the launch, and one that looks after the resync must find it until the child exists.
-    unregisterLaunch = registerLaunch(resyncFarmRuntime.fs, paths.launchesDir, { pid: resyncFarmRuntime.lock.pid, identity: resyncIdentity, startedAtMs: resyncFarmRuntime.now() }, resyncFarmRuntime.lock.isRunning);
-    onRecorded(unregisterLaunch);
     let result;
     try {
       result = resyncFarm({
@@ -705,7 +714,7 @@ function prepareRegisteredLaunch(params: PrepareLaunchParams, onRecorded: (remov
         classification: resyncFarmRuntime.classification,
         now: resyncFarmRuntime.now,
         uniqueSuffix: resyncFarmRuntime.uniqueSuffix,
-        identityExists: () => loadIdentity(paths.identitiesDir, resyncIdentity, params.fs) !== undefined,
+        identityExists: () => params.fs.readConfigFile(path.join(paths.identitiesDir, resyncIdentity, IDENTITY_FILE)) !== undefined,
         lock: resyncFarmRuntime.lock,
       });
     } catch (error) {
@@ -780,7 +789,7 @@ function prepareRegisteredLaunch(params: PrepareLaunchParams, onRecorded: (remov
   const finalEnv = buildEnv({
     baseEnv: env,
     configDirEscapeHatch: configDirEscapeHatchApplies,
-    resolvedIdentityName: identityDecision.name,
+    identityId: decided.farmIdentity,
     identitiesDir: paths.identitiesDir,
     ...(resolvedProvider === undefined ? {} : { provider: resolvedProvider }),
     ...(identityCredential === undefined ? {} : { identityCredential }),
@@ -845,7 +854,7 @@ export function resolveLaunch(params: PrepareLaunchParams): LaunchResolution {
   const built = buildEnv({
     baseEnv: env,
     configDirEscapeHatch: decided.configDirEscapeHatch,
-    resolvedIdentityName: decided.identityDecision.name,
+    identityId: decided.farmIdentity,
     identitiesDir: params.paths.identitiesDir,
     ...(decided.provider === undefined ? {} : { provider: decided.provider }),
     ...(frontDoor ? { frontdoor: { port: 0, connectPort: 0, trustBundlePath: "", sessionToken: "" } } : {}),
@@ -862,8 +871,8 @@ export function resolveLaunch(params: PrepareLaunchParams): LaunchResolution {
       ? isRouterProvider(decided.provider.definition)
         ? undefined
         : { subject: "provider" as const, name: decided.provider.name, summary: summariseCredential(decided.provider.definition.credential) }
-      : decided.identityCredentialBlock !== undefined && decided.farmIdentity !== undefined
-        ? { subject: "identity" as const, name: decided.farmIdentity, summary: summariseCredential(decided.identityCredentialBlock) }
+      : decided.identityCredentialBlock !== undefined && decided.farmIdentity !== undefined && decided.identityDecision.name !== undefined
+        ? { subject: "identity" as const, name: decided.identityDecision.name, summary: summariseCredential(decided.identityCredentialBlock) }
         : undefined;
   return {
     decision: decided.decision,

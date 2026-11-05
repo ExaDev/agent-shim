@@ -185,8 +185,8 @@ export function treeOf(root: string): Record<string, string> {
       if (entry.isSymbolicLink()) {
         tree[relative] = `symlink to ${fs.readlinkSync(full)}`;
       } else if (entry.isDirectory()) {
-        // The directory the rename's journals live in stays once created; empty, it is no state.
-        if (entry.name === "identity-renames" && fs.readdirSync(full).length === 0) {
+        // The directories the renames' journals and records live in stay once created; empty, they are no state.
+        if ((entry.name === "identity-renames" || entry.name === "identity-name-renames") && fs.readdirSync(full).length === 0) {
           continue;
         }
         tree[`${relative}/`] = "dir";

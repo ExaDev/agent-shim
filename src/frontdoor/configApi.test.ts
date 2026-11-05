@@ -55,6 +55,7 @@ describe("config API: authentication", () => {
     expect(await codeOf(clientWith("not-the-token").config.identity.add({ name: "work" }))).toBe("UNAUTHORIZED");
     expect(identityExists(paths, "work")).toBe(false);
   });
+
 });
 
 describe("config API: identities", () => {

@@ -12,7 +12,7 @@ import { HOME_DIRNAME, LEGACY_HOME_DIRNAME } from "./legacy";
 export interface LayoutPaths {
   /** The resolved root directory, see `resolveAgentShimHome`. */
   readonly root: string;
-  /** Directory holding one subdirectory per identity (symlink farm + local credentials/daemon state). */
+  /** Directory holding one subdirectory per identity (symlink farm + local credentials/daemon state), named by the identity's id: the name it was created with, or a free variant of it, kept for good by a rename, which changes only the `name` in its `identity.json`. */
   readonly identitiesDir: string;
   /** Directory holding named, reusable configuration profile JSON files. */
   readonly configProfilesDir: string;
@@ -86,7 +86,7 @@ export interface LayoutPaths {
   readonly usageDir: string;
   /** Directory of the append-only usage log: one `<YYYY-MM-DD>.<writer-pid>.jsonl` segment per writing process per UTC day. */
   readonly usageLogDir: string;
-  /** Directory of the latest-state snapshots, one `<identity>.json` per identity: the stable file other tools read. */
+  /** Directory of the latest-state snapshots, one `<id>.json` per identity, named by the id the identity is stored under (its directory's name, which a rename keeps), never by its name: the stable file other tools read. */
   readonly usageSnapshotsDir: string;
   /** Directory of the built-in statusline's own state (the day's cost ledger, under `session/` what it keeps between refreshes about each transcript it reads, and under `run/` the short-lived output files of the programs it runs), each file of the ledger and under `session/` read as absent when it is missing, is not a regular file or is not of its shape, and none restored: a session's entry for today in the cost ledger starts again from the cost reported by the session's next render that lists the `dailyCost` segment and has a cost to record (or from the previous day's total, by the rule a session's first render of the day carries it by), so the day's total no longer counts what the session spent before that figure, and its entry for the day before, which is only read, carries nothing; the transcript reader's cache is folded again from the start of the transcript; the speed sample is replaced by that of the next render that lists the `speed` segment and has a figure to measure, which draws no speed; and the transcript's last good context frame is none until the next good frame is written. */
   readonly statuslineDir: string;
@@ -104,7 +104,9 @@ export interface LayoutPaths {
   readonly jobLogsDir: string;
   /** Directory holding one journal per unfinished `identity rename`, written before its first step and removed when it ends: the trace a rename that was killed leaves, which a re-run resumes from and `doctor` reports. Runtime state, never configuration. */
   readonly identityRenamesDir: string;
-  /** Directory holding one `<launcher-pid>.<identity>.json` record per launch in progress, written before the identity's farm is resynced and removed once the child has exited. Runtime state, never configuration: it is what lets an identity rename see a launch that has resynced but not yet started its child. */
+  /** Directory holding one record per rename of the name alone that is applying, written before its first rewrite and removed when it ends or is rolled back: what tells a rename killed part way, whose references already name the new name, from references a person wrote. Runtime state, never configuration. */
+  readonly identityNameRenamesDir: string;
+  /** Directory holding one `<launcher-pid>.<id>.json` record per launch in progress, named by the id of the identity it launches, written before the identity's farm is resynced and removed once the child has exited. Runtime state, never configuration: it is what lets `identity rename --move` see a launch that has resynced but not yet started its child. */
   readonly launchesDir: string;
   /** Directory of the supervised sessions' shared state, one subdirectory per pool: the live sessions each launcher registers, so sessions on one account see each other, and the lock that serialises their moves. Runtime state, never configuration. */
   readonly superviseDir: string;
@@ -191,6 +193,7 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     usageJobsFile: path.join(root, "usage", "jobs.json"),
     jobLogsDir: path.join(root, "logs", "jobs"),
     identityRenamesDir: path.join(root, "identity-renames"),
+    identityNameRenamesDir: path.join(root, "identity-name-renames"),
     launchesDir: path.join(root, "launches"),
     superviseDir: path.join(root, "supervise"),
     modelMovesDir: path.join(root, "model-moves"),

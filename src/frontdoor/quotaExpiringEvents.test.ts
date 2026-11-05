@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { USAGE_SCHEMA_VERSION, type UsageSnapshot } from "../usage/schema";
-import { QUOTA_EXPIRING_EVENT_SOURCE, USAGE_EVENT_SOURCE, type DoorEvent } from "./eventSchemas";
+import { QUOTA_EXPIRING_EVENT_SOURCE, USAGE_EVENT_SOURCE, usageChangeEventOf, type DoorEvent } from "./eventSchemas";
 import { createDoorEventHub } from "./eventHub";
 import { FIVE_HOUR_WINDOW_MS } from "../usage/pick";
 import { createQuotaExpiringPublisher, QUOTA_EXPIRING_WINDOW_FRACTION } from "./quotaExpiringEvents";
@@ -39,14 +39,15 @@ function snapshot(identity: string, fiveHour: Readonly<{ utilization: number; re
 }
 
 /** Creates the hub, the publisher over it, and a subscriber collecting the expiring-quota events; `seed` is the snapshot directory's stand-in. */
-function world(seed: readonly UsageSnapshot[] = []) {
+function world(seed: readonly UsageSnapshot[] = [], names: Readonly<Record<string, string>> = {}) {
   const hub = createDoorEventHub();
   let now = NOW_MS;
   const received: DoorEvent[] = [];
   const detach = hub.subscribe([QUOTA_EXPIRING_EVENT_SOURCE], (event) => {
     received.push(event);
   });
-  const publisher = createQuotaExpiringPublisher(hub, { seed, now: () => now });
+  // An id the test names no name for is named by itself, as an identity never renamed is.
+  const publisher = createQuotaExpiringPublisher(hub, { seed, now: () => now, nameOf: (id) => names[id] ?? id });
   return {
     hub,
     publisher,
@@ -56,18 +57,25 @@ function world(seed: readonly UsageSnapshot[] = []) {
       now = ms;
     },
     publishUsage: (updated: UsageSnapshot) => {
-      hub.publisher(USAGE_EVENT_SOURCE).publish(updated);
+      hub.publisher(USAGE_EVENT_SOURCE).publish({ ...updated, id: updated.identity });
     },
   };
 }
 
 describe("the expiring-quota publisher", () => {
+  it("names the identity by its id and by the name it has when the event is published", () => {
+    const resettingAt = NOW_MS + FIVE_HOUR_FINAL_SPAN_MS - ONE_SECOND_MS;
+    const w = world([snapshot("work", { utilization: 0.5, resetsAtMs: resettingAt })], { work: "client" });
+    w.publisher.check();
+    expect(w.received.map((event) => event.payload)).toEqual([expect.objectContaining({ id: "work", name: "client" })]);
+  });
+
   it("publishes once when an unspent window enters its final span, and stays silent on the ticks inside it", () => {
     const resettingAt = NOW_MS + FIVE_HOUR_FINAL_SPAN_MS - ONE_SECOND_MS;
     const w = world([snapshot("work", { utilization: 0.5, resetsAtMs: resettingAt })]);
     w.publisher.check();
     w.publisher.check();
-    expect(w.received).toEqual([{ source: QUOTA_EXPIRING_EVENT_SOURCE, sequence: 1, payload: { identity: "work", provider: "anthropic", window: "fiveHour", utilization: 0.5, resetsAt: new Date(resettingAt).toISOString(), observedAt: NOW_MS } }]);
+    expect(w.received).toEqual([{ source: QUOTA_EXPIRING_EVENT_SOURCE, sequence: 1, payload: { id: "work", name: "work", provider: "anthropic", window: "fiveHour", utilization: 0.5, resetsAt: new Date(resettingAt).toISOString(), observedAt: NOW_MS } }]);
   });
 
   it("publishes nothing for a window outside its final span, one past its reset, or fully used", () => {
@@ -100,6 +108,22 @@ describe("the expiring-quota publisher", () => {
     w.publishUsage(snapshot("work", { utilization: 0.6, resetsAtMs: NOW_MS + ONE_SECOND_MS }));
     w.publisher.check();
     expect(w.received).toHaveLength(1);
-    expect(w.received[0]?.payload).toMatchObject({ identity: "work", utilization: 0.6 });
+    expect(w.received[0]?.payload).toMatchObject({ id: "work", name: "work", utilization: 0.6 });
+  });
+});
+
+describe("the usage change event the door publishes", () => {
+  it("carries the id and the name of a renamed identity, and the id alone for one no longer stored, and parses as the quota publisher reads it", () => {
+    const resettingAt = NOW_MS + FIVE_HOUR_FINAL_SPAN_MS - ONE_SECOND_MS;
+    const renamed = usageChangeEventOf(snapshot("work", { utilization: 0.5, resetsAtMs: resettingAt }), "client");
+    const gone = usageChangeEventOf(snapshot("gone", { utilization: 0.5, resetsAtMs: resettingAt }), undefined);
+    expect(renamed).toMatchObject({ identity: "work", id: "work", name: "client" });
+    expect(gone).toMatchObject({ identity: "gone", id: "gone" });
+    expect(gone).not.toHaveProperty("name");
+    const w = world([], { work: "client" });
+    w.hub.publisher(USAGE_EVENT_SOURCE).publish(renamed);
+    w.hub.publisher(USAGE_EVENT_SOURCE).publish(gone);
+    w.publisher.check();
+    expect(w.received.map((event) => event.payload)).toEqual([expect.objectContaining({ id: "gone" }), expect.objectContaining({ id: "work", name: "client" })]);
   });
 });

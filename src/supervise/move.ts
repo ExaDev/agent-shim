@@ -1,5 +1,6 @@
 import path from "node:path";
 
+import { identityIdOver, identityNameIn, identityRecordsOver } from "../identityRecords";
 import type { Pool } from "../config/schema";
 import { IdentityLockBusyError, acquireIdentityLock } from "../launcher/lock";
 import type { FarmFs, FsPort, LogPort } from "../launcher/ports";
@@ -13,7 +14,7 @@ import { committedContextTokens, liveSupervised, registerSupervised, superviseDi
 /** One session asking to leave the identity it has run out of quota on. */
 export interface MoveRequest {
   readonly sessionId: string;
-  /** The identity the session is leaving. */
+  /** The id of the identity the session is leaving. */
   readonly from: string;
   /** The size in tokens of the conversation's context, when its transcript was read: what the new member must write again. */
   readonly contextTokens: number | undefined;
@@ -21,7 +22,7 @@ export interface MoveRequest {
 
 /** What a move came to: the member the session now belongs to (already registered for it), or why it stays where it is. */
 export type MoveOutcome =
-  | { readonly kind: "move"; readonly to: string; readonly explanation: string }
+  | { readonly kind: "move"; /** The id of the identity the session now belongs to. */ readonly to: string; readonly explanation: string }
   | { readonly kind: "stay"; readonly reason: string };
 
 /** Everything the coordinator needs, injected so it runs against the same fakes as the rest of the launcher. */
@@ -67,8 +68,13 @@ export function createMover(deps: Readonly<MoverDeps>): (request: MoveRequest) =
     try {
       const others = liveSupervised(farmFs, paths, pool, deps.isRunning).filter((session) => session.sessionId !== request.sessionId);
       const carrying = others.filter((session) => session.carriedTokens !== undefined);
-      const records = carrying.length === 0 ? [] : readUsageLog(farmFs, paths.usageLogDir, { sinceMs: Math.min(...carrying.map((session) => Date.parse(session.since))) }).records;
-      const committed = committedContextTokens(others, records);
+      const usage = carrying.length === 0 ? [] : readUsageLog(farmFs, paths.usageLogDir, { sinceMs: Math.min(...carrying.map((session) => Date.parse(session.since))) }).records;
+      // The registry and the usage log are keyed by id, and the ranking by member name.
+      const records = identityRecordsOver(farmFs, paths.identitiesDir);
+      const committed = Object.fromEntries(Object.entries(committedContextTokens(others, usage)).flatMap(([id, tokens]) => {
+        const name = identityNameIn(records, id);
+        return name === undefined ? [] : [[name, tokens]];
+      }));
       const resolution = deps.pickMember({
         poolName: pool,
         selectedVia: "the supervising launcher",
@@ -90,11 +96,13 @@ export function createMover(deps: Readonly<MoverDeps>): (request: MoveRequest) =
       if (!resolution.ok) {
         return { kind: "stay", reason: resolution.message };
       }
-      if (resolution.identity === request.from) {
+      // The pick names the member by its name; the session and the member's history are filed under its id.
+      const pickedId = identityIdOver(farmFs, paths.identitiesDir, resolution.identity);
+      if (pickedId === request.from) {
         return { kind: "stay", reason: `no other member of pool "${pool}" can take it` };
       }
-      const transcript = path.join(paths.identitiesDir, resolution.identity, "projects", projectDirNameOf(deps.cwd), `${request.sessionId}.jsonl`);
-      if (farmFs.lstat(transcript)?.kind !== "file") {
+      const transcript = pickedId === undefined ? undefined : path.join(paths.identitiesDir, pickedId, "projects", projectDirNameOf(deps.cwd), `${request.sessionId}.jsonl`);
+      if (pickedId === undefined || transcript === undefined || farmFs.lstat(transcript)?.kind !== "file") {
         return { kind: "stay", reason: `${resolution.identity} does not share this conversation's history, so it could not resume it` };
       }
       const nowMs = deps.now();
@@ -103,12 +111,12 @@ export function createMover(deps: Readonly<MoverDeps>): (request: MoveRequest) =
         pid: deps.pid,
         sessionId: request.sessionId,
         pool,
-        identity: resolution.identity,
+        identity: pickedId,
         cwd: deps.cwd,
         since: new Date(nowMs).toISOString(),
         ...(request.contextTokens === undefined ? {} : { carriedTokens: request.contextTokens }),
       });
-      return { kind: "move", to: resolution.identity, explanation: resolution.explanation };
+      return { kind: "move", to: pickedId, explanation: resolution.explanation };
     } finally {
       lock.release();
     }
@@ -118,9 +126,9 @@ export function createMover(deps: Readonly<MoverDeps>): (request: MoveRequest) =
 /** One session's request to relaunch under a named identity, as the front door leaves it when the session picks an `acct:` model member. */
 export interface IdentityMoveRequest {
   readonly sessionId: string;
-  /** The identity the session is leaving. */
+  /** The id of the identity the session is leaving. */
   readonly from: string;
-  /** The identity the picked model runs under, named by the `acct:` member. */
+  /** The id of the identity the picked model runs under, which the door resolved the `acct:` member's name to. */
   readonly to: string;
   /** The size in tokens of the conversation's context, when its transcript was read: what the new member must write again. */
   readonly contextTokens: number | undefined;
@@ -142,15 +150,19 @@ export function createIdentityMover(deps: Readonly<MoverDeps>): (request: Identi
       throw error;
     }
     try {
-      if (farmFs.readFileUtf8(path.join(paths.identitiesDir, request.to, "identity.json")) === undefined) {
-        return { kind: "stay", reason: `no identity "${request.to}"` };
+      // The request names the member by the id the door resolved the model's `acct:` member to.
+      const toRecord = identityRecordsOver(farmFs, paths.identitiesDir).find((record) => record.id === request.to);
+      // An identity whose name cannot be read is still the one stored there, and is named by its id.
+      const toName = toRecord === undefined ? undefined : (toRecord.name ?? toRecord.id);
+      if (toName === undefined) {
+        return { kind: "stay", reason: `no identity is stored under identities/${request.to}` };
       }
       if (request.to === request.from) {
         return { kind: "stay", reason: `the model already runs under this session's identity` };
       }
       const transcript = path.join(paths.identitiesDir, request.to, "projects", projectDirNameOf(deps.cwd), `${request.sessionId}.jsonl`);
       if (farmFs.lstat(transcript)?.kind !== "file") {
-        return { kind: "stay", reason: `${request.to} does not share this conversation's history, so it could not resume it` };
+        return { kind: "stay", reason: `${toName} does not share this conversation's history, so it could not resume it` };
       }
       const nowMs = deps.now();
       registerSupervised(farmFs, paths, {
@@ -162,7 +174,7 @@ export function createIdentityMover(deps: Readonly<MoverDeps>): (request: Identi
         since: new Date(nowMs).toISOString(),
         ...(request.contextTokens === undefined ? {} : { carriedTokens: request.contextTokens }),
       });
-      return { kind: "move", to: request.to, explanation: `the picked model runs under ${request.to}` };
+      return { kind: "move", to: request.to, explanation: `the picked model runs under ${toName}` };
     } finally {
       lock.release();
     }

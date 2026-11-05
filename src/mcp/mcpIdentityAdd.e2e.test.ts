@@ -11,7 +11,7 @@ import { mountRouterClient } from "../frontdoor/apiTestMount";
 import { createConfigApiRouter } from "../frontdoor/configApi";
 import { RC_ORPC_PATH_PREFIX } from "../frontdoor/rcApi";
 import { identityExists } from "../identityStore";
-import { createFakeKeychain, type FakeKeychain } from "../keychainTestWorld";
+import { cacheEntryProbe, createFakeKeychain, type FakeKeychain } from "../keychainTestWorld";
 import { buildLayoutPaths, type LayoutPaths } from "../paths";
 import type { AsyncRun } from "../replayRun";
 import { claudeCodeKeychainService } from "../usage/signIn";
@@ -128,18 +128,18 @@ describe("the MCP tool that adds an identity, over the door's configuration rout
     keychain.seed(service("work"), "alex", LOGIN_BLOB);
     const client = await connect(WRITES);
     await client.callTool({ name: "config_identity_add", arguments: { name: "work" } });
-    expect(keychain.calls).toEqual([{ command: "security", args: ["find-generic-password", "-s", service("work")] }]);
+    expect(keychain.calls).toEqual([cacheEntryProbe("identity work"), { command: "security", args: ["find-generic-password", "-s", service("work")] }]);
     expect(keychain.calls.some((call) => call.args.includes("-w") || call.args.includes("-g") || call.args[0] === "-i")).toBe(false);
     await client.close();
   });
 
-  it("creates the identity with keepKeychainLogin, asking the Keychain nothing, and without it once the entry is deleted", async () => {
+  it("creates the identity with keepKeychainLogin, asking the Keychain only, by attributes, whether it caches a credential for the id, and without it once the entry is deleted", async () => {
     keychain.seed(service("work"), "alex", LOGIN_BLOB);
     const client = await connect(WRITES);
     const kept = await client.callTool({ name: "config_identity_add", arguments: { name: "work", keepKeychainLogin: true } });
     expect(kept.isError).not.toBe(true);
     expect(JSON.parse(textOf(kept))).toMatchObject({ action: "created", kind: "identity", name: "work" });
-    expect(keychain.calls).toEqual([]);
+    expect(keychain.calls).toEqual([cacheEntryProbe("identity work")]);
     expect(keychain.items.has(service("work"))).toBe(true);
 
     keychain.items.delete(service("other"));

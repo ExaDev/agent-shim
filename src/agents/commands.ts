@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 
 import { printJson, withExamples, type CommandDeps } from "../cli/commandDeps";
-import { listIdentities } from "../identityStore";
+import { identityDirectoryOfName, listIdentities } from "../identityStore";
 import { realSessionFs } from "./realFs";
 import type { AgentNode, SessionAgentTree } from "./schema";
 import { collectSessionList, showSession, type IdentitySession } from "./sessions";
@@ -64,7 +64,7 @@ export function registerSessionCommands(program: Command, deps: CommandDeps): vo
       .option("--all", "Include sessions that spawned no agent and ran no workflow.")
       .option("--json", "Print the sessions as JSON.")
       .action((options: Readonly<{ identity?: string; all?: boolean; json?: boolean }>) => {
-        const sessions = collectSessionList(realSessionFs, paths.identitiesDir, identityNames(), {
+        const sessions = collectSessionList(realSessionFs, (name) => identityDirectoryOfName(paths, name), identityNames(), {
           ...(options.identity === undefined ? {} : { identity: options.identity }),
           ...(options.all === undefined ? {} : { all: options.all }),
         });
@@ -85,7 +85,7 @@ export function registerSessionCommands(program: Command, deps: CommandDeps): vo
       .option("--identity <name>", "Look only in this identity.")
       .option("--json", "Print the tree as JSON.")
       .action((query: string, options: Readonly<{ identity?: string; json?: boolean }>) => {
-        const view = showSession(realSessionFs, paths.identitiesDir, identityNames(), query, options.identity);
+        const view = showSession(realSessionFs, (name) => identityDirectoryOfName(paths, name), identityNames(), query, options.identity);
         if (options.json === true) {
           printJson({ identities: view.identities, ...view.tree });
           return;

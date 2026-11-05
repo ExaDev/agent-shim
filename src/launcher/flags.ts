@@ -176,8 +176,8 @@ export interface BuildEnvParams {
   readonly baseEnv: Readonly<Record<string, string | undefined>>;
   /** True when `CLAUDE_CONFIG_DIR` was already set and the escape hatch applied — `buildEnv` must leave it untouched in that case. */
   readonly configDirEscapeHatch: boolean;
-  /** The identity name resolved for this launch, when one was resolved. */
-  readonly resolvedIdentityName?: string;
+  /** The id of the identity resolved for this launch (the directory it is stored under, which a rename leaves alone), when one was resolved. It is what `CLAUDE_CONFIG_DIR` names and what the identity header carries, so a session started before a rename keeps reaching its directory and keeps its usage filed under the same key after it. */
+  readonly identityId?: string;
   readonly identitiesDir: string;
   /** The provider resolved for this launch, when one was resolved. Its credential is resolved by the caller because refusing an unusable one needs the caller's log/exit ports; the credential itself is never handed to the child, only used for that refusal, because the door attaches it at the provider's route. */
   readonly provider?: Pick<ResolvedProvider, "name" | "definition">;
@@ -216,8 +216,8 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
   const parentCustomHeaders = params.baseEnv.ANTHROPIC_CUSTOM_HEADERS;
   let providerCustomHeaders: string | undefined;
 
-  if (!params.configDirEscapeHatch && params.resolvedIdentityName !== undefined) {
-    env.CLAUDE_CONFIG_DIR = path.join(params.identitiesDir, params.resolvedIdentityName);
+  if (!params.configDirEscapeHatch && params.identityId !== undefined) {
+    env.CLAUDE_CONFIG_DIR = path.join(params.identitiesDir, params.identityId);
   }
 
   if (params.provider !== undefined) {
@@ -258,7 +258,7 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
         ...(providerCustomHeaders === undefined ? [] : [providerCustomHeaders]),
       ],
       [
-        ...(params.resolvedIdentityName === undefined ? [] : [{ name: IDENTITY_HEADER, value: params.resolvedIdentityName }]),
+        ...(params.identityId === undefined ? [] : [{ name: IDENTITY_HEADER, value: params.identityId }]),
         { name: SESSION_HEADER, value: params.sessionId },
         { name: AUTH_HEADER, value: params.frontdoor.sessionToken },
         ...(params.provider === undefined ? [] : [{ name: PROVIDER_HEADER, value: params.provider.name }]),

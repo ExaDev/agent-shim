@@ -1,4 +1,7 @@
 import { checkedProxyBypass } from "../launcher/proxyBypass";
+import { InterruptedNameRenameError } from "../identityNameRenameRecord";
+import { identityCacheKey } from "../credential";
+import { keychainCacheDeleteArgs } from "../realCredentialCache";
 import { ORPCError } from "@orpc/client";
 import { openapi } from "@orpc/openapi";
 
@@ -8,25 +11,10 @@ import { applyProfileChange, createProfile, ProfileAlreadyExistsError, ProfileNo
 import { summariseCredential } from "../credential";
 import { mergeCredentialCache } from "../credentialCacheChange";
 import { addDirectoryRule, DirectoryRuleAlreadyExistsError, DirectoryRuleNotFoundError, listDirectoryRules, removeDirectoryRule, requireRuleSelector, updateDirectoryRule } from "../directoryRulesStore";
-import {
-  addIdentity,
-  IdentityAlreadyExistsError,
-  IdentityNotFoundError,
-  identityExists,
-  readIdentity,
-  removeIdentity,
-  requireIdentityAddable,
-  requireIdentityNames,
-  setAllowAmbientCredential,
-  setDefaultConfigProfile,
-  setIdentityLabel,
-  setIdentityProvider,
-  setIdentityAnchors,
-  setIdentityCredential,
-  useIdentity,
-  type IdentityCredentialChange,
-} from "../identityStore";
-import { KeychainLoginError, KeychainLookupError } from "../keychainLogin";
+import { addIdentity, IdentityAlreadyExistsError, IdentityNotFoundError, identityExists, readIdentity, removeIdentityWithLockHeld, REMOVED_STATE, loggedIdentityIds, requireIdentityAddable, requireIdentityNames, setAllowAmbientCredential, setDefaultConfigProfile, setIdentityLabel, setIdentityProvider, setIdentityAnchors, setIdentityCredential, useIdentity, type IdentityCredentialChange, identityNotFound } from "../identityStore";
+import { KeychainCacheDeleteError, KeychainLoginError, KeychainLookupError, requireKeychainCacheDeleted } from "../keychainLogin";
+import { acquireIdentityNamesLock, nonWaitingIdentityNamesLockPorts } from "../identityNamesLock";
+import { IdentityLockBusyError } from "../launcher/lock";
 import { poolNameOf } from "../launcher/identity";
 import type { LayoutPaths } from "../paths";
 import { resolveWithAsyncRuns, type AsyncRun } from "../replayRun";
@@ -91,9 +79,13 @@ export interface ConfigApiDeps {
 /** The OpenAPI tag the configuration procedures group under in the document. */
 const CONFIG_API_TAG = "config";
 
-/** Maps the stores' expected refusals onto the oRPC error a typed client reads: a missing name, a name or a Keychain login already in the way, a Keychain that could not be asked (a failure to retry, not a conflict), and everything else the store rejects as a malformed request. Anything that is not an expected refusal is a bug and propagates as one. */
+/** Maps the stores' expected refusals onto the oRPC error a typed client reads: a missing name, a name or a Keychain login already in the way, a Keychain that could not be asked (a failure to retry, not a conflict), a cached credential the Keychain would not delete, and everything else the store rejects as a malformed request. Anything that is not an expected refusal is a bug and propagates as one. */
 function refusal(error: unknown): never {
   // Before the conflicts, because a `KeychainLookupError` is a `KeychainLoginError`: the Keychain could not be asked (`security` stopped after its time limit, a locked Keychain, no `security`), so nothing is known to be in the way and asking again may succeed.
+  // The identity names lock is taken without waiting, since a wait would hold the door's event loop; a rename holding it ends soon, so asking again may succeed.
+  if (error instanceof IdentityLockBusyError) {
+    throw new ORPCError("SERVICE_UNAVAILABLE", { message: error.message });
+  }
   if (error instanceof KeychainLookupError) {
     throw new ORPCError("SERVICE_UNAVAILABLE", { message: error.message });
   }
@@ -107,6 +99,7 @@ function refusal(error: unknown): never {
     throw new ORPCError("NOT_FOUND", { message: error.message });
   }
   if (
+    error instanceof InterruptedNameRenameError ||
     error instanceof IdentityAlreadyExistsError ||
     error instanceof ProfileAlreadyExistsError ||
     error instanceof PoolAlreadyExistsError ||
@@ -116,6 +109,10 @@ function refusal(error: unknown): never {
   ) {
     throw new ORPCError("CONFLICT", { message: error.message });
   }
+  // The request was carried out but left a Keychain entry behind, so it is no fault of the request.
+  if (error instanceof KeychainCacheDeleteError) {
+    throw new ORPCError("INTERNAL_SERVER_ERROR", { message: error.message });
+  }
   if (error instanceof CliError) {
     throw new ORPCError("BAD_REQUEST", { message: error.message });
   }
@@ -123,11 +120,11 @@ function refusal(error: unknown): never {
 }
 
 /** Runs one write that awaits, converting the expected refusals as `guarded` does. */
-async function guardedAsync(write: () => Promise<void>): Promise<void> {
+async function guardedAsync<T>(write: () => Promise<T>): Promise<T> {
   try {
-    await write();
+    return await write();
   } catch (error: unknown) {
-    refusal(error);
+    return refusal(error);
   }
 }
 
@@ -158,7 +155,7 @@ function requireChange(given: boolean, fields: string): void {
 function identityValue(name: string, paths: LayoutPaths) {
   const identity = readIdentity(paths, name);
   if (identity === undefined) {
-    throw new IdentityNotFoundError(name);
+    throw identityNotFound(paths, name);
   }
   return {
     name: identity.name,
@@ -208,13 +205,12 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
           .output(ConfigIdentityAddOutputSchema)
           .handler(async ({ input }) => {
             // The Keychain is asked through the asynchronous runner, so the door's event loop is never held, by the same check the CLI makes (it changes nothing, which is what lets it run over the replaying port); the write follows once it has passed.
-            await guardedAsync(async () => {
-              await resolveWithAsyncRuns((run) => {
-                requireIdentityAddable(paths, input.name, { run, platform: deps.keychain.platform }, input.keepKeychainLogin === true);
-              }, deps.keychain.runAsync);
-            });
+            // The id it checked is the one the identity is created under, so a remove that frees another id in between cannot move the identity to a directory nothing checked.
+            // The decision starts again for each Keychain answer, so the usage log is read once, outside it, and every start answers from that read.
+            const loggedIds = loggedIdentityIds(paths);
+            const checkedId = await guardedAsync(async () => await resolveWithAsyncRuns((run) => requireIdentityAddable(paths, input.name, { run, platform: deps.keychain.platform }, input.keepKeychainLogin === true, loggedIds), deps.keychain.runAsync));
             return guarded(() => {
-              addIdentity(paths, input.name);
+              addIdentity(paths, input.name, { namesLock: nonWaitingIdentityNamesLockPorts, checkedId });
               return { action: "created" as const, kind: "identity" as const, name: input.name, value: identityValue(input.name, paths) };
             });
           }),
@@ -225,7 +221,7 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
             guarded(() => {
               requireChange(input.label !== undefined || input.defaultConfigProfile !== undefined || input.provider !== undefined || input.allowAmbientCredential !== undefined || input.credential !== undefined || input.anchors !== undefined, "label, defaultConfigProfile, provider, allowAmbientCredential, credential or anchors");
               if (!identityExists(paths, input.name)) {
-                throw new IdentityNotFoundError(input.name);
+                throw identityNotFound(paths, input.name);
               }
               if (typeof input.defaultConfigProfile === "string") {
                 requireProfileExists(paths, input.defaultConfigProfile);
@@ -266,12 +262,23 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
         remove: route("/rest/config/identity/remove", "Delete an identity and its directory")
           .input(ConfigIdentityRemoveInputSchema)
           .output(ConfigIdentityRemoveOutputSchema)
-          .handler(({ input }) => {
-            requireConfirmation(input.confirm, `identity "${input.name}" and its directory`);
-            return guarded(() => {
-              removeIdentity(paths, input.name);
+          .handler(async ({ input }) => {
+            requireConfirmation(input.confirm, `identity "${input.name}", its directory, and ${REMOVED_STATE}`);
+            const lock = guarded(() => acquireIdentityNamesLock(paths, nonWaitingIdentityNamesLockPorts));
+            try {
+              const id = guarded(() => removeIdentityWithLockHeld(paths, input.name, nonWaitingIdentityNamesLockPorts));
+              // The Keychain store's cached credential is forgotten too, through the runner that does not block the event loop; an item that is not there is no failure, and any other leaves the entry behind, so it is reported (the identity itself is removed by then).
+              if (deps.keychain.platform === "darwin") {
+                const owner = identityCacheKey(id);
+                const { status } = await deps.keychain.runAsync("security", keychainCacheDeleteArgs(owner));
+                guarded(() => {
+                  requireKeychainCacheDeleted(owner, status, input.name);
+                });
+              }
               return { action: "removed" as const, kind: "identity" as const, name: input.name };
-            });
+            } finally {
+              lock.release();
+            }
           }),
         use: route("/rest/config/identity/use", "Select the active identity")
           .input(ConfigNameInputSchema)
@@ -279,9 +286,9 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
           .handler(({ input }) =>
             guarded(() => {
               if (poolNameOf(input.name) === undefined && !identityExists(paths, input.name)) {
-                throw new IdentityNotFoundError(input.name);
+                throw identityNotFound(paths, input.name);
               }
-              useIdentity(paths, input.name);
+              useIdentity(paths, input.name, nonWaitingIdentityNamesLockPorts);
               return { action: "selected" as const, kind: "identity" as const, name: input.name };
             }),
           ),
@@ -392,7 +399,7 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
               if (readPools(paths)[input.name] === undefined) {
                 throw new PoolNotFoundError(input.name);
               }
-              useIdentity(paths, `pool:${input.name}`);
+              useIdentity(paths, `pool:${input.name}`, nonWaitingIdentityNamesLockPorts);
               return { action: "selected" as const, kind: "pool" as const, name: input.name };
             }),
           ),

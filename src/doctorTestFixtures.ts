@@ -32,6 +32,7 @@ export function provider(name: string, body: unknown): DoctorProviderInput {
 export function identity(name: string, overrides: Partial<DoctorIdentityInput> = {}): DoctorIdentityInput {
   return {
     name,
+    id: name,
     path: `/agent-shim/identities/${name}/identity.json`,
     raw: JSON.stringify({ name, allowAmbientCredential: false }),
     farmRoot: `/agent-shim/identities/${name}`,

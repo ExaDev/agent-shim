@@ -1,5 +1,6 @@
 import path from "node:path";
 
+import { isResyncFarmOf } from "../identityRecords";
 import { carryOver } from "./farm";
 import type { CategoryClassification, CategoryClassificationOverlay } from "../config/schema";
 import type { FarmFs } from "./ports";
@@ -54,9 +55,8 @@ export interface ResolveFarmConflictsResult {
  */
 export async function resolveFarmConflicts(params: ResolveFarmConflictsParams): Promise<ResolveFarmConflictsResult> {
   const farmRoot = path.join(params.identitiesDir, params.identity);
-  const previousPrefix = `.${params.identity}.previous.`;
   const previousRoots = [...params.fs.readdir(params.identitiesDir)]
-    .filter((name) => name.startsWith(previousPrefix))
+    .filter((name) => isResyncFarmOf(name, params.identity, "previous"))
     .sort()
     .map((name) => path.join(params.identitiesDir, name));
 

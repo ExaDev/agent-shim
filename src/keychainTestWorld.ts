@@ -1,3 +1,4 @@
+import { KEYCHAIN_CACHE_SERVICE } from "./credentialCache";
 import type { RunPort } from "./launcher/ports";
 
 /** The longest line `security -i` keeps, measured against the real tool: it cuts a longer line there and treats the rest as further input. */
@@ -14,6 +15,11 @@ interface SecurityCall {
 interface FakeItem {
   readonly account: string;
   readonly secret: Buffer;
+}
+
+/** The call that asks the Keychain store, by attributes alone, whether it holds a cached credential for `owner`, as choosing a new identity's id asks for each id it tries. */
+export function cacheEntryProbe(owner: string): SecurityCall {
+  return { command: "security", args: ["find-generic-password", "-s", KEYCHAIN_CACHE_SERVICE, "-a", owner] };
 }
 
 /** A `security` that keeps its items in memory and records every call, so a test can see exactly what crossed the process boundary. */

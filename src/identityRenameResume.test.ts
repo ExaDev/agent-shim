@@ -3,7 +3,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { CliError } from "./cliError";
-import { describeIdentityRename, discardRenameJournal, renameIdentity } from "./identityRename";
+import { describeIdentityMove, discardRenameJournal, moveIdentity } from "./identityRename";
 import { describeUnfinishedRename, readRenameJournal, renameJournalFile, writeRenameJournal, type RenameJournal } from "./identityRenameJournal";
 import { LOGIN_SECRET, NOW_MS, OWN_PID, createWorld, treeOf, type World, failingOnce } from "./identityRenameTestWorld";
 import { realFarmFs } from "./realPorts";
@@ -67,7 +67,7 @@ describe("the journal a rename keeps", () => {
         realFarmFs.writeFilePrivate(file, contents);
       },
     };
-    const report = await renameIdentity(world.paths, "work", "client", world.ports({ fs: watching }));
+    const report = await moveIdentity(world.paths, "work", "client", world.ports({ fs: watching }));
     const [observed] = seen;
     expect(first).toMatchObject({ version: 1, from: "work", to: "client", pid: OWN_PID });
     expect(first?.steps.map((step) => step.description)).toEqual(report.steps.slice(0, first?.steps.length));
@@ -78,19 +78,19 @@ describe("the journal a rename keeps", () => {
 
   it("is removed when a step fails and every earlier step was undone, since nothing is left half done", async () => {
     const failing = failingOnce(world);
-    await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: failing }))).rejects.toThrow(/disk full/);
+    await expect(moveIdentity(world.paths, "work", "client", world.ports({ fs: failing }))).rejects.toThrow(/disk full/);
     expect(journalOf(world)).toBeUndefined();
   });
 
   it("is left in place when the rollback could not undo everything, and no stray directory is made under the old name", async () => {
-    await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: leavingItHalfDone(world) }))).rejects.toThrow(/Rolling back also failed/);
+    await expect(moveIdentity(world.paths, "work", "client", world.ports({ fs: leavingItHalfDone(world) }))).rejects.toThrow(/Rolling back also failed/);
     expect(journalOf(world)).toMatchObject({ from: "work", to: "client" });
     expect(fs.existsSync(world.directory("work"))).toBe(false);
     expect(fs.existsSync(world.directory("client"))).toBe(true);
   });
 
   it("marks as done only the steps the rollback could not undo, so the count doctor reports is what is left", async () => {
-    await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: leavingItHalfDone(world) }))).rejects.toThrow(/Rolling back also failed/);
+    await expect(moveIdentity(world.paths, "work", "client", world.ports({ fs: leavingItHalfDone(world) }))).rejects.toThrow(/Rolling back also failed/);
     const journal = journalOf(world);
     expect(journal?.steps.length).toBeGreaterThan(1);
     expect(journal?.steps.filter((step) => step.done).map((step) => step.description)).toEqual(["move identities/work to identities/client"]);
@@ -111,7 +111,7 @@ describe("the journal a rename keeps", () => {
     }
 
     it("reports it beside the failure that caused the rollback, not in place of it, and names the command that discards the record of a rename that was rolled back", async () => {
-      const failure: unknown = await renameIdentity(world.paths, "work", "client", world.ports({ fs: failingThenJournalStuck() })).then(
+      const failure: unknown = await moveIdentity(world.paths, "work", "client", world.ports({ fs: failingThenJournalStuck() })).then(
         () => undefined,
         (error: unknown) => error,
       );
@@ -121,7 +121,7 @@ describe("the journal a rename keeps", () => {
       expect(message).toContain("could not be removed");
       expect(message).toContain("EACCES: permission denied");
       // Every step was undone and the journal says so, so the way out is to discard it; running the command again would perform the rename that was just rolled back.
-      expect(message).toContain("agent-shim identity rename work client --discard-journal");
+      expect(message).toContain("agent-shim identity rename work client --move --discard-journal");
       expect(message).toContain("the journal records no step as begun or done");
       expect(message).not.toContain("running the same command again finishes it");
       expect(journalOf(world)).toMatchObject({ from: "work", to: "client" });
@@ -129,7 +129,7 @@ describe("the journal a rename keeps", () => {
     });
 
     it("leaves a record that --discard-journal accepts, after which the names are free again", async () => {
-      await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: failingThenJournalStuck() }))).rejects.toBeInstanceOf(CliError);
+      await expect(moveIdentity(world.paths, "work", "client", world.ports({ fs: failingThenJournalStuck() }))).rejects.toBeInstanceOf(CliError);
       expect(() => addIdentity(world.paths, "client")).toThrow(/Cannot add identity "client"/);
       expect(discardRenameJournal(world.paths, "work", "client", world.ports())).toEqual({ from: "work", to: "client" });
       expect(journalOf(world)).toBeUndefined();
@@ -160,7 +160,7 @@ describe("the journal a rename keeps", () => {
           realFarmFs.removeRecursive(target);
         },
       };
-      const failure: unknown = await renameIdentity(world.paths, "work", "client", world.ports({ fs: bothBroken })).then(
+      const failure: unknown = await moveIdentity(world.paths, "work", "client", world.ports({ fs: bothBroken })).then(
         () => undefined,
         (error: unknown) => error,
       );
@@ -196,7 +196,7 @@ describe("the journal a rename keeps", () => {
 
     it("reports it apart from the steps it could not undo, says the rename was rolled back, and removes the record of a run that began here", async () => {
       const before = treeOf(world.root);
-      const failure: unknown = await renameIdentity(world.paths, "work", "client", world.ports({ fs: failingThenJournalFull() })).then(
+      const failure: unknown = await moveIdentity(world.paths, "work", "client", world.ports({ fs: failingThenJournalFull() })).then(
         () => undefined,
         (error: unknown) => error,
       );
@@ -211,8 +211,8 @@ describe("the journal a rename keeps", () => {
     });
 
     it("keeps the record of a run that was finishing an earlier one, which still describes the earlier run's state", async () => {
-      await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: leavingItHalfDone(world) }))).rejects.toThrow();
-      const failure: unknown = await renameIdentity(world.paths, "work", "client", world.ports({ fs: failingThenJournalFull() })).then(
+      await expect(moveIdentity(world.paths, "work", "client", world.ports({ fs: leavingItHalfDone(world) }))).rejects.toThrow();
+      const failure: unknown = await moveIdentity(world.paths, "work", "client", world.ports({ fs: failingThenJournalFull() })).then(
         () => undefined,
         (error: unknown) => error,
       );
@@ -223,12 +223,12 @@ describe("the journal a rename keeps", () => {
       expect(message).toContain("the steps this run applied were rolled back; the rename it was finishing is still unfinished, and running the same command again finishes it");
       expect(message).not.toContain("nothing was changed");
       expect(journalOf(world)).toMatchObject({ from: "work", to: "client" });
-      await expect(renameIdentity(world.paths, "work", "client", world.ports())).resolves.toBeDefined();
+      await expect(moveIdentity(world.paths, "work", "client", world.ports())).resolves.toBeDefined();
       expect(journalOf(world)).toBeUndefined();
     });
 
     it("says a rename that began here was rolled back and nothing was changed, once", async () => {
-      const failure: unknown = await renameIdentity(world.paths, "work", "client", world.ports({ fs: failingThenJournalFull() })).then(
+      const failure: unknown = await moveIdentity(world.paths, "work", "client", world.ports({ fs: failingThenJournalFull() })).then(
         () => undefined,
         (error: unknown) => error,
       );
@@ -248,7 +248,7 @@ describe("the journal a rename keeps", () => {
           realFarmFs.rename(from, to);
         },
       };
-      const failure: unknown = await renameIdentity(world.paths, "work", "client", world.ports({ fs: both })).then(
+      const failure: unknown = await moveIdentity(world.paths, "work", "client", world.ports({ fs: both })).then(
         () => undefined,
         (error: unknown) => error,
       );
@@ -263,7 +263,7 @@ describe("the journal a rename keeps", () => {
   });
 
   it("is not written by a dry run, which only says what a rename would do", () => {
-    describeIdentityRename(world.paths, "work", "client", world.ports());
+    describeIdentityMove(world.paths, "work", "client", world.ports());
     expect(fs.existsSync(world.paths.identityRenamesDir)).toBe(false);
   });
 });
@@ -280,15 +280,15 @@ describe("running a rename again after one was left unfinished", () => {
   });
 
   it("finishes it, plans only what is left, and ends in the state a rename that was never interrupted ends in", async () => {
-    await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: leavingItHalfDone(world) }))).rejects.toThrow();
-    const report = await renameIdentity(world.paths, "work", "client", world.ports());
+    await expect(moveIdentity(world.paths, "work", "client", world.ports({ fs: leavingItHalfDone(world) }))).rejects.toThrow();
+    const report = await moveIdentity(world.paths, "work", "client", world.ports());
     expect(report.steps.some((step) => step.startsWith("move identities/work to"))).toBe(false);
     expect(report.steps.some((step) => step.startsWith("rewrite config.json"))).toBe(true);
     expect(journalOf(world)).toBeUndefined();
 
     const clean = createWorld();
     try {
-      await renameIdentity(clean.paths, "work", "client", clean.ports());
+      await moveIdentity(clean.paths, "work", "client", clean.ports());
       expect(normalisedTree(world)).toEqual(normalisedTree(clean));
     } finally {
       fs.rmSync(clean.root, { recursive: true, force: true });
@@ -296,20 +296,20 @@ describe("running a rename again after one was left unfinished", () => {
   });
 
   it("keeps the earlier run's done marks when the run that finishes it fails and rolls back completely, since the state is the earlier run's again", async () => {
-    await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: leavingItHalfDone(world) }))).rejects.toThrow();
+    await expect(moveIdentity(world.paths, "work", "client", world.ports({ fs: leavingItHalfDone(world) }))).rejects.toThrow();
     const earlier = journalOf(world);
     const applied = earlier?.steps.filter((step) => step.done).map((step) => step.description);
     expect(applied).toEqual(["move identities/work to identities/client"]);
-    await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: failingOnce(world) }))).rejects.toThrow(/disk full/);
+    await expect(moveIdentity(world.paths, "work", "client", world.ports({ fs: failingOnce(world) }))).rejects.toThrow(/disk full/);
     const journal = journalOf(world);
     expect(journal?.steps.filter((step) => step.done).map((step) => step.description)).toEqual(applied);
     expect(journal === undefined ? "" : describeUnfinishedRename(journal, { finishable: true })).toContain(`(1 of ${String(journal?.steps.length)} steps recorded as begun or done)`);
-    await expect(renameIdentity(world.paths, "work", "client", world.ports())).resolves.toBeDefined();
+    await expect(moveIdentity(world.paths, "work", "client", world.ports())).resolves.toBeDefined();
     expect(journalOf(world)).toBeUndefined();
   });
 
   it("keeps the earlier run's done marks while the run that finishes it is applying its own steps, and adds its steps as they are applied", async () => {
-    await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: leavingItHalfDone(world) }))).rejects.toThrow();
+    await expect(moveIdentity(world.paths, "work", "client", world.ports({ fs: leavingItHalfDone(world) }))).rejects.toThrow();
     const seen: RenameJournal[] = [];
     const watching = {
       ...realFarmFs,
@@ -323,7 +323,7 @@ describe("running a rename again after one was left unfinished", () => {
         realFarmFs.writeFilePrivate(file, contents);
       },
     };
-    await renameIdentity(world.paths, "work", "client", world.ports({ fs: watching }));
+    await moveIdentity(world.paths, "work", "client", world.ports({ fs: watching }));
     const [during] = seen;
     const doneDuring = during?.steps.filter((step) => step.done).map((step) => step.description) ?? [];
     expect(doneDuring).toContain("move identities/work to identities/client");
@@ -343,37 +343,37 @@ describe("running a rename again after one was left unfinished", () => {
       pid: OWN_PID,
       steps: [{ description: "move identities/work to identities/client", started: false, done: false }],
     });
-    await renameIdentity(world.paths, "work", "client", world.ports());
+    await moveIdentity(world.paths, "work", "client", world.ports());
     expect(journalOf(world)).toBeUndefined();
     expect(world.json("config.json")).toMatchObject({ pools: { subs: { identities: ["client", "personal", "pool:fleet"] } } });
     expect(fs.existsSync(world.directory("work"))).toBe(false);
   });
 
   it("lists in a dry run only what is left, and writes nothing", async () => {
-    await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: leavingItHalfDone(world) }))).rejects.toThrow();
+    await expect(moveIdentity(world.paths, "work", "client", world.ports({ fs: leavingItHalfDone(world) }))).rejects.toThrow();
     const before = treeOf(world.root);
-    const planned = describeIdentityRename(world.paths, "work", "client", world.ports());
+    const planned = describeIdentityMove(world.paths, "work", "client", world.ports());
     expect(planned.steps.some((step) => step.startsWith("move identities/work to"))).toBe(false);
     expect(treeOf(world.root)).toEqual(before);
   });
 
   it("refuses a rename of the pair the other way round, or of either identity with another name, naming the unfinished one and the command that finishes it", async () => {
-    await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: leavingItHalfDone(world) }))).rejects.toThrow();
+    await expect(moveIdentity(world.paths, "work", "client", world.ports({ fs: leavingItHalfDone(world) }))).rejects.toThrow();
     const journal = journalOf(world);
     if (journal === undefined) {
       throw new Error("expected a journal");
     }
     const before = treeOf(world.root);
     for (const [from, to] of [["client", "work"], ["work", "other"], ["client", "other"], ["other", "client"]] as const) {
-      await expect(renameIdentity(world.paths, from, to, world.ports())).rejects.toThrow(describeUnfinishedRename(journal, { finishable: true }));
-      expect(() => describeIdentityRename(world.paths, from, to, world.ports())).toThrow(describeUnfinishedRename(journal, { finishable: true }));
+      await expect(moveIdentity(world.paths, from, to, world.ports())).rejects.toThrow(describeUnfinishedRename(journal, { finishable: true }));
+      expect(() => describeIdentityMove(world.paths, from, to, world.ports())).toThrow(describeUnfinishedRename(journal, { finishable: true }));
     }
     expect(treeOf(world.root)).toEqual(before);
   });
 
   it("leaves a rename of two other identities alone", async () => {
-    await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: leavingItHalfDone(world) }))).rejects.toThrow();
-    await expect(renameIdentity(world.paths, "personal", "home", world.ports())).resolves.toBeDefined();
+    await expect(moveIdentity(world.paths, "work", "client", world.ports({ fs: leavingItHalfDone(world) }))).rejects.toThrow();
+    await expect(moveIdentity(world.paths, "personal", "home", world.ports())).resolves.toBeDefined();
     expect(fs.existsSync(world.directory("home"))).toBe(true);
   });
 
@@ -382,13 +382,13 @@ describe("running a rename again after one was left unfinished", () => {
     fs.mkdirSync(world.paths.identityRenamesDir, { recursive: true });
     fs.writeFileSync(damaged, "{ not json");
     const before = treeOf(world.root);
-    await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow(damaged);
-    await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.toBeInstanceOf(CliError);
+    await expect(moveIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow(damaged);
+    await expect(moveIdentity(world.paths, "work", "client", world.ports())).rejects.toBeInstanceOf(CliError);
     expect(treeOf(world.root)).toEqual(before);
   });
 
   it("still refuses a name that is taken when there is no journal, so an ordinary clash is not mistaken for an unfinished rename", async () => {
-    await expect(renameIdentity(world.paths, "work", "personal", world.ports())).rejects.toThrow(/already exists/);
+    await expect(moveIdentity(world.paths, "work", "personal", world.ports())).rejects.toThrow(/already exists/);
   });
 });
 
@@ -415,7 +415,7 @@ describe("running a rename again with a macOS login already copied", () => {
       pid: OWN_PID,
       steps: [{ description: `copy the Keychain login "${oldService}" to "${newService}"`, started: true, done: true }],
     });
-    const report = await renameIdentity(world.paths, "work", "client", world.ports());
+    const report = await moveIdentity(world.paths, "work", "client", world.ports());
     expect(world.keychain.secretOf(newService)?.toString("utf8")).toBe(LOGIN_SECRET);
     expect(world.keychain.items.has(oldService)).toBe(false);
     expect(world.keychain.calls.some((call) => call.args[0] === "-i" || call.args.includes("-g"))).toBe(false);

@@ -1,7 +1,7 @@
 import path from "node:path";
 
 import type { FarmFs } from "../launcher/ports";
-import { isIdentityName } from "./account";
+import { requireIdentityDirectoryId, isIdentityId } from "./account";
 import { USAGE_SCHEMA_VERSION, UsageRecordSchema, UsageSnapshotSchema, type LimitKind, type UsageRecord, type UsageSnapshot } from "./schema";
 
 /**
@@ -148,15 +148,13 @@ export class UsageSnapshotError extends Error {
   }
 }
 
-/** The path of an identity's snapshot. Throws for an invalid identity name, which could otherwise name a path outside the snapshots directory. */
+/** The path of the snapshot filed under identity id `identity` (`<snapshotsDir>/<id>.json`). Throws for an id that is not a valid identity directory id, since such an id could name a path outside the snapshots directory. */
 export function snapshotPath(snapshotsDir: string, identity: string): string {
-  if (!isIdentityName(identity)) {
-    throw new Error(`"${identity}" is not a valid identity name.`);
-  }
+  requireIdentityDirectoryId(identity);
   return path.join(snapshotsDir, `${identity}.json`);
 }
 
-/** Reads one identity's snapshot: undefined when it has none yet, `UsageSnapshotError` when the file is there but unreadable. */
+/** Reads the snapshot filed under identity id `identity`: undefined when there is none yet, `UsageSnapshotError` when the file is there but unreadable. */
 export function readUsageSnapshot(fs: Pick<FarmFs, "readFileUtf8">, snapshotsDir: string, identity: string): UsageSnapshot | undefined {
   const file = snapshotPath(snapshotsDir, identity);
   const raw = fs.readFileUtf8(file);
@@ -176,7 +174,7 @@ export function readUsageSnapshot(fs: Pick<FarmFs, "readFileUtf8">, snapshotsDir
   return snapshot.data;
 }
 
-/** Reads every identity's snapshot, by identity name. */
+/** Reads every snapshot in the directory, each filed under the id of the identity it belongs to (its `identity` field is that id). */
 export function listUsageSnapshots(fs: UsageReadFs, snapshotsDir: string): readonly UsageSnapshot[] {
   return fs
     .readdir(snapshotsDir)
@@ -185,7 +183,7 @@ export function listUsageSnapshots(fs: UsageReadFs, snapshotsDir: string): reado
         return [];
       }
       const identity = name.slice(0, -".json".length);
-      if (!isIdentityName(identity)) {
+      if (!isIdentityId(identity)) {
         return [];
       }
       const snapshot = readUsageSnapshot(fs, snapshotsDir, identity);

@@ -94,11 +94,19 @@ describe("readAccountMetadata", () => {
     expect(() => readAccountMetadata(fs, IDENTITIES_DIR, "work")).toThrow(/emailAddress/);
   });
 
-  it("refuses an identity name that could name a path outside the identities directory", () => {
-    const fs = createFakeFarmFs();
+  it("accepts an identity stored under a legacy or hand-made directory id outside isIdentityName, and refuses one that could leave the directory or starts with a dot", () => {
+    const fs = createFakeFarmFs({
+      [claudeJsonPath(IDENTITIES_DIR, "-work")]: profile({ emailAddress: "dash@example.com" }),
+      [claudeJsonPath(IDENTITIES_DIR, "wörk")]: profile({ emailAddress: "umlaut@example.com" }),
+      [claudeJsonPath(IDENTITIES_DIR, 'wo"rk')]: profile({ emailAddress: "quote@example.com" }),
+    });
 
-    expect(() => readAccountMetadata(fs, IDENTITIES_DIR, "../escape")).toThrow('"../escape" is not a valid identity name.');
-    expect(() => readAccountMetadata(fs, IDENTITIES_DIR, "")).toThrow("is not a valid identity name");
+    expect(readAccountMetadata(fs, IDENTITIES_DIR, "-work")).toEqual({ emailAddress: "dash@example.com" });
+    expect(readAccountMetadata(fs, IDENTITIES_DIR, "wörk")).toEqual({ emailAddress: "umlaut@example.com" });
+    expect(readAccountMetadata(fs, IDENTITIES_DIR, 'wo"rk')).toEqual({ emailAddress: "quote@example.com" });
+    expect(() => readAccountMetadata(fs, IDENTITIES_DIR, "../escape")).toThrow('"../escape" is not a valid identity id: an id must be non-empty, at most');
+    expect(() => readAccountMetadata(fs, IDENTITIES_DIR, ".hidden")).toThrow('".hidden" is not a valid identity id: an id must not start with a dot, which the identities directory\'s reader skips.');
+    expect(() => readAccountMetadata(fs, IDENTITIES_DIR, "")).toThrow('"" is not a valid identity id');
   });
 });
 
@@ -166,9 +174,9 @@ describe("createAccountReader", () => {
     expect(() => read("work")).toThrow(AccountMetadataError);
   });
 
-  it("refuses an invalid identity name", () => {
+  it("refuses an invalid identity id", () => {
     const { read } = countingReader(createFakeFarmFs());
 
-    expect(() => read("../escape")).toThrow('"../escape" is not a valid identity name.');
+    expect(() => read("../escape")).toThrow('"../escape" is not a valid identity id: an id must be non-empty, at most');
   });
 });

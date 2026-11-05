@@ -60,7 +60,7 @@ function graph(pools: Readonly<Record<string, Pool>>, poolName: string, snapshot
     poolName,
     nowMs: FAKE_NOW_MS,
     resuming: options.resuming ?? false,
-    identityExists: () => true,
+    identityIdOf: (name) => name,
     ...(options.sticky === undefined ? {} : { sticky: { identity: options.sticky.identity, at: iso(options.sticky.atMs) } }),
   });
 }

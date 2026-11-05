@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
 import { USAGE_SCHEMA_VERSION, type UsageRecord } from "../usage/schema";
-import { committedContextTokens, liveSupervised, readModelMove, readSessionState, registerSupervised, removeModelMove, sessionStatePath, stateDirOf, supervisedSessionOf, unregisterSupervised, writeModelMove, writeSessionState, type SupervisedSession } from "./registry";
+import { committedContextTokens, liveSupervised, readModelMove, requestAccountMove, readSessionState, registerSupervised, removeModelMove, sessionStatePath, stateDirOf, supervisedSessionOf, unregisterSupervised, writeModelMove, writeSessionState, type SupervisedSession } from "./registry";
 
 const paths = buildLayoutPaths("/state");
 const T0 = "2026-10-16T10:00:00.000Z";
@@ -139,5 +139,24 @@ describe("committedContextTokens", () => {
       session({ sessionId: "d", identity: "spare", since: T0 }),
     ];
     expect(committedContextTokens(sessions, [])).toEqual({ spare: 2 * CONTEXT, third: 1 });
+  });
+});
+
+describe("requestAccountMove", () => {
+  const deps = (fs: ReturnType<typeof createFakeFarmFs>, idOf: (name: string) => string | undefined) => ({ fs, paths, runningAmong: async (pids: readonly number[]) => await Promise.resolve(new Set(pids)), idOf, now: () => Date.parse(T1) });
+
+  it("leaves the request under the id the acct: member's name resolves to now, which differs from the name", async () => {
+    const fs = createFakeFarmFs({});
+    registerSupervised(fs, paths, session());
+    expect(await requestAccountMove(deps(fs, (name) => (name === "client" ? "work" : undefined)), session().sessionId, "client", "opus")).toBe(true);
+    expect(readModelMove(fs, paths, session().sessionId)).toEqual({ sessionId: session().sessionId, to: "work", model: "opus", at: T1 });
+  });
+
+  it("leaves nothing for a session nothing supervises, or a name no identity has", async () => {
+    const fs = createFakeFarmFs({});
+    expect(await requestAccountMove(deps(fs, () => "work"), "unsupervised", "client", "opus")).toBe(false);
+    registerSupervised(fs, paths, session());
+    expect(await requestAccountMove(deps(fs, () => undefined), session().sessionId, "ghost", "opus")).toBe(false);
+    expect(readModelMove(fs, paths, session().sessionId)).toBeUndefined();
   });
 });

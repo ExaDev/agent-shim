@@ -3,7 +3,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { collectDoctorReport } from "./doctorReport";
-import { discardRenameJournal, renameIdentity } from "./identityRename";
+import { discardRenameJournal, moveIdentity } from "./identityRename";
 import { renameJournalFile, writeRenameJournal } from "./identityRenameJournal";
 import { createWorld, writeJson, type World } from "./identityRenameTestWorld";
 import { listIdentities, readIdentity } from "./identityStore";
@@ -78,7 +78,7 @@ describe("an identity whose directory is a symlink to a directory", () => {
       allowAmbientCredential: false,
       credential: { sources: [{ file: path.join(world.root, "credentials", "work.token") }, { command: ["cat", path.join(world.directory("work"), "secrets", "token")] }], target: "oauthToken" },
     });
-    const done = await renameIdentity(world.paths, "work", "client", world.ports());
+    const done = await moveIdentity(world.paths, "work", "client", world.ports());
     expect(readIdentity(world.paths, "personal")?.credential?.sources[0]).toEqual({ file: path.join(world.root, "credentials", "client.token") });
     expect(done.warnings).toContainEqual(expect.stringContaining('Identity "personal" has a command credential source'));
   });

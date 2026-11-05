@@ -47,15 +47,21 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Reads each member's snapshot, login metadata and the part of the log that reaches into the current five-hour window. A member whose state cannot be read is carried with the reason instead of failing the pick. */
-export function loadPoolMembers(fs: PoolPickFs, paths: PoolPickPaths, identities: readonly string[], nowMs: number): readonly PoolMember[] {
+/**
+ * Reads each member's snapshot, login metadata and the part of the log that reaches into the current five-hour window. Members are named by identity name, and their state is filed under the id `idOf` gives (the directory the identity is stored in, which a rename keeps): the snapshot, the login and the log records the front door wrote from the session's identity header. A name `idOf` knows no id for has no state. A member whose state cannot be read is carried with the reason instead of failing the pick.
+ */
+export function loadPoolMembers(fs: PoolPickFs, paths: PoolPickPaths, identities: readonly string[], nowMs: number, idOf: (name: string) => string | undefined): readonly PoolMember[] {
   const windowStartMs = nowMs - FIVE_HOUR_WINDOW_MS;
   const log = readUsageLog(fs, paths.usageLogDir, { sinceMs: windowStartMs });
   return identities.map((identity): PoolMember => {
-    const records = log.records.filter((record) => record.identity === identity && record.provider === ANTHROPIC_PROVIDER && Date.parse(record.at) >= windowStartMs);
+    const id = idOf(identity);
+    if (id === undefined) {
+      return { identity, records: [] };
+    }
+    const records = log.records.filter((record) => record.identity === id && record.provider === ANTHROPIC_PROVIDER && Date.parse(record.at) >= windowStartMs);
     try {
-      const snapshot = readUsageSnapshot(fs, paths.usageSnapshotsDir, identity);
-      const account = readAccountMetadata(fs, paths.identitiesDir, identity) ?? snapshot?.account;
+      const snapshot = readUsageSnapshot(fs, paths.usageSnapshotsDir, id);
+      const account = readAccountMetadata(fs, paths.identitiesDir, id) ?? snapshot?.account;
       return { identity, records, ...(snapshot === undefined ? {} : { snapshot }), ...(account === undefined ? {} : { account }) };
     } catch (error) {
       if (error instanceof UsageSnapshotError || error instanceof AccountMetadataError) {
@@ -111,8 +117,8 @@ export interface RankPoolGraphInput {
   readonly resumeContextTokens?: number;
   /** The context tokens already moving onto each member, by identity, so a pool ranked for several moving sessions counts the ones already placed. */
   readonly committedContextTokens?: Readonly<Record<string, number>>;
-  /** Whether an identity exists on disk, so a member whose identity was removed is skipped exactly as a launch skips it. */
-  readonly identityExists: (name: string) => boolean;
+  /** The id (the directory it is stored in) of the identity of a name, or undefined when none is named so: a member whose identity was removed is skipped exactly as a launch skips it, and a member's state is read from where it is filed. */
+  readonly identityIdOf: (name: string) => string | undefined;
 }
 
 /** A pool graph's ranking, plus the identity entries anywhere in it that no longer exist. */
@@ -138,8 +144,8 @@ function rankNamedPool(input: Readonly<RankPoolGraphInput>, poolName: string, st
 
   // One log read per level: the direct identity entries are loaded as a batch, then laid down in member order around the nested entries' contributions.
   const direct = pool.identities.filter((entry) => poolNameOf(poolMemberIdentity(entry)) === undefined);
-  const missing = direct.filter((entry) => !input.identityExists(poolMemberIdentity(entry))).map((entry) => ({ pool: poolName, identity: poolMemberIdentity(entry) }));
-  const loaded = new Map(loadPoolMembers(input.fs, input.paths, direct.filter((entry) => input.identityExists(poolMemberIdentity(entry))).map(poolMemberIdentity), input.nowMs).map((member) => [member.identity, member]));
+  const missing = direct.filter((entry) => input.identityIdOf(poolMemberIdentity(entry)) === undefined).map((entry) => ({ pool: poolName, identity: poolMemberIdentity(entry) }));
+  const loaded = new Map(loadPoolMembers(input.fs, input.paths, direct.filter((entry) => input.identityIdOf(poolMemberIdentity(entry)) !== undefined).map(poolMemberIdentity), input.nowMs, input.identityIdOf).map((member) => [member.identity, member]));
   const members: PoolMember[] = [];
   for (const entry of pool.identities) {
     const nestedName = poolNameOf(poolMemberIdentity(entry));
@@ -185,7 +191,7 @@ function nestedMember(input: Readonly<RankPoolGraphInput>, nestedName: string, c
   const nested = rankNamedPool(input, nestedName, childStack, sticky);
   const pick = nested.ranking.pick;
   if (pick !== undefined) {
-    const [member] = loadPoolMembers(input.fs, input.paths, [pick.identity], input.nowMs);
+    const [member] = loadPoolMembers(input.fs, input.paths, [pick.identity], input.nowMs, input.identityIdOf);
     return { member: { ...(member ?? { identity: pick.identity, records: [] }), nested: { kind: "pick", pool: nestedName, reasons: pick.reasons } }, missing: nested.missing };
   }
   const earliestReturn = nested.ranking.earliestReturn;

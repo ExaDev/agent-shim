@@ -194,6 +194,12 @@ describe("enrichStatuslinePayload", () => {
     expect(enrichStatuslinePayload(params).summary.identityLabel).toBeUndefined();
   });
 
+  it("names the identity by the name read for the id its session carries, and by that id when no identity is stored under it any more", () => {
+    const params = { payload: {}, env: { ANTHROPIC_CUSTOM_HEADERS: "x-agent-shim-identity: work" }, snapshot: undefined, account: undefined, providerName: undefined, nowMs: NOW_MS, headroom: undefined };
+    expect(enrichStatuslinePayload({ ...params, identityName: "client" }).summary.identity).toBe("client");
+    expect(enrichStatuslinePayload(params).summary.identity).toBe("work");
+  });
+
   it("adds the identity, provider, account and binding windows under one agent_shim key", () => {
     const { payload, summary } = enrichStatuslinePayload({
       payload: { model: { display_name: "gemini-3.8-flash" } },

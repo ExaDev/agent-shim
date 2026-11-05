@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { ConfigValidationError } from "../config/load";
 import { UnsafeNameError } from "../config/names";
-import { decideConfigProfile, decideIdentity, loadIdentity } from "./identity";
+import { decideConfigProfile, decideIdentity, loadIdentity, resolveIdentityId } from "./identity";
 import type { FsPort } from "./ports";
 
 function fakeFs(overrides: Partial<FsPort> = {}): FsPort {
@@ -156,6 +156,14 @@ describe("decideConfigProfile", () => {
 });
 
 describe("loadIdentity", () => {
+  it("reads the identity.json of the directory whose record carries the name, and nothing for a directory's own name the record does not carry", () => {
+    const files: Record<string, unknown> = { "/state/identities/work/identity.json": { name: "client" }, "/state/identities/personal/identity.json": { name: "personal" } };
+    const fs = fakeFs({ readdir: () => ["work", "personal"], readConfigFile: (filepath) => files[filepath] });
+    expect(loadIdentity("/state/identities", "client", fs)?.filepath).toBe("/state/identities/work/identity.json");
+    expect(loadIdentity("/state/identities", "work", fs)).toBeUndefined();
+    expect(resolveIdentityId("/state/identities", "client", fs)).toBe("work");
+  });
+
   it("returns undefined when the identity has no identity.json yet", () => {
     const fs = fakeFs({ readConfigFile: () => undefined });
     expect(loadIdentity("/home/testuser/.agent-shim/identities", "work", fs)).toBeUndefined();
@@ -163,6 +171,7 @@ describe("loadIdentity", () => {
 
   it("reads and validates identity.json via IdentitySchema, applying the allowAmbientCredential default", () => {
     const fs = fakeFs({
+      readdir: () => ["work"],
       readConfigFile: (filepath) => {
         expect(filepath).toBe("/home/testuser/.agent-shim/identities/work/identity.json");
         return { name: "work", defaultConfigProfile: "work-default" };
@@ -177,7 +186,8 @@ describe("loadIdentity", () => {
   });
 
   it("throws ConfigValidationError when identity.json fails validation", () => {
-    const fs = fakeFs({ readConfigFile: () => ({ name: "" }) });
+    // A name no file could have makes the record claim its directory's, so loading by that name reports the file.
+    const fs = fakeFs({ readdir: () => ["work"], readConfigFile: () => ({ name: "" }) });
     expect(() => loadIdentity("/home/testuser/.agent-shim/identities", "work", fs)).toThrow(ConfigValidationError);
   });
 });

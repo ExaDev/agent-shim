@@ -142,10 +142,16 @@ describe("statuslineSettingsForRender", () => {
       expect(render({ CLAUDE_CONFIG_DIR: bob }).settings).toEqual({ bar: { width: 8 } });
     });
 
-    it("takes the identity from the session header the launch injected", () => {
+    it("takes the identity from the session header the launch injected, including a legacy or hand-made directory id outside isFileName", () => {
       addProfile("alice-profile", { bar: { width: 5 } });
       addIdentity("alice", "alice-profile");
       expect(render({ ANTHROPIC_CUSTOM_HEADERS: "x-agent-shim-identity: alice" }).settings).toEqual({ bar: { width: 5 } });
+      writeJson(path.join(paths.identitiesDir, "-work", "identity.json"), { name: "work", defaultConfigProfile: "alice-profile" });
+      expect(render({ ANTHROPIC_CUSTOM_HEADERS: "x-agent-shim-identity: -work" }).settings).toEqual({ bar: { width: 5 } });
+    });
+
+    it("names the identity id rule a session's config directory breaks, a leading dot, as the id's rule and not a name's", () => {
+      expect(render({ CLAUDE_CONFIG_DIR: path.join(home, "identities", ".hidden") }).problem).toBe('".hidden" is not a valid identity id: an id must not start with a dot, which the identities directory\'s reader skips.');
     });
 
     it("assumes no identity when the session names none, so no identity's default applies", () => {

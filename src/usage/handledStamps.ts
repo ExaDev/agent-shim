@@ -45,7 +45,7 @@ export function writeHandled(fs: StampsFs, file: string, handled: Readonly<Recor
 }
 
 /**
- * The stamps file's text with the stamp under key `from` moved to key `to`, replacing any stamp already there: an identity's stamp follows its rename, and one left under the new name by a removed identity of that name is stale. Undefined when `raw` is not a stamps file this release can read or holds no stamp for `from`.
+ * The stamps file's text with the stamp under key `from` moved to key `to`, replacing any stamp already there: stamps are keyed by identity id, so an identity's stamp follows a `--move` (the one rename that changes the id), and one left under the new id by a removed identity stored there is stale. Undefined when `raw` is not a stamps file this release can read or holds no stamp for `from`.
  */
 export function stampsWithKeyRenamed(raw: string, from: string, to: string): string | undefined {
   let parsed: unknown;
