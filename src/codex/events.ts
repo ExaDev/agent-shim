@@ -45,6 +45,12 @@ const FunctionArgumentsDeltaSchema = z.looseObject({
 const OutputItemDoneSchema = z.looseObject({
   type: z.literal("response.output_item.done"),
   output_index: z.number(),
+  item: z.looseObject({
+    type: z.string(),
+    id: z.string().optional(),
+    action: z.looseObject({ sources: z.array(z.looseObject({ url: z.string().optional() })).optional() }).optional(),
+    content: z.array(z.looseObject({ annotations: z.array(z.looseObject({ url: z.string().optional(), title: z.string().optional() })).optional() })).optional(),
+  }).optional(),
 });
 
 const ResponseCompletedSchema = z.looseObject({

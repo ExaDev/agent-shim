@@ -68,7 +68,8 @@ interface FunctionTool {
   readonly strict: false;
 }
 
-type ResponsesToolChoice = "auto" | "none" | "required" | { readonly type: "function"; readonly name: string };
+type ResponsesToolChoice = "auto" | "none" | "required" | { readonly type: "function"; readonly name: string } | { readonly type: "allowed_tools"; readonly mode: "required"; readonly tools: readonly [{ readonly type: "web_search" }] };
+interface WebSearchTool { readonly type: "web_search"; readonly filters?: { readonly allowed_domains?: readonly string[]; readonly blocked_domains?: readonly string[] } }
 
 /** The Codex Responses API request the translator produces. */
 export interface ResponsesRequest {
@@ -81,8 +82,9 @@ export interface ResponsesRequest {
   readonly text: { readonly verbosity: "medium"; readonly format?: { readonly type: "json_schema"; readonly name: string; readonly schema: Readonly<Record<string, unknown>>; readonly strict: false } };
   readonly reasoning?: { readonly effort: Exclude<CodexEffort, "none">; readonly summary: "auto" };
   readonly prompt_cache_key?: string;
-  readonly tools?: readonly FunctionTool[];
+  readonly tools?: readonly (FunctionTool | WebSearchTool)[];
   readonly tool_choice?: ResponsesToolChoice;
+  readonly include?: readonly string[];
 }
 
 /** A translated request plus the reverse tool-name mapping the response relay needs to restore the names Claude Code dispatches on. */
@@ -230,11 +232,11 @@ function messagesToInput(messages: readonly AnthropicMessage[], names: Map<strin
 /** The parameters schema offered for a tool that declares none (a server tool, say): an object with no properties. */
 const EMPTY_PARAMETERS: Readonly<Record<string, unknown>> = { type: "object", properties: {} };
 
-function mapTools(tools: readonly AnthropicTool[] | undefined, names: Map<string, string>): FunctionTool[] | undefined {
+function mapTools(tools: readonly AnthropicTool[] | undefined, names: Map<string, string>): (FunctionTool | WebSearchTool)[] | undefined {
   if (tools === undefined || tools.length === 0) {
     return undefined;
   }
-  return tools.map((tool) => ({
+  return tools.map((tool) => tool.type === "web_search_20250305" ? { type: "web_search", ...(tool.allowed_domains === undefined && tool.blocked_domains === undefined ? {} : { filters: { ...(tool.allowed_domains === undefined ? {} : { allowed_domains: tool.allowed_domains }), ...(tool.blocked_domains === undefined ? {} : { blocked_domains: tool.blocked_domains }) } }) } : ({
     type: "function",
     name: shortToolName(tool.name, names),
     description: tool.description ?? "",
@@ -269,7 +271,8 @@ export function translateRequest(body: MessagesRequest, config: ResolvedCodexCon
   const names = new Map<string, string>();
   const effort = mapEffort(body, config);
   const tools = mapTools(body.tools, names);
-  const toolChoice = mapToolChoice(body.tool_choice, names);
+  const webSearch = body.tools?.some((tool) => tool.type === "web_search_20250305") === true;
+  const toolChoice: ResponsesToolChoice | undefined = webSearch && body.tool_choice?.type === "tool" && body.tool_choice.name === "web_search" ? { type: "allowed_tools", mode: "required", tools: [{ type: "web_search" }] } : mapToolChoice(body.tool_choice, names);
   const userId = body.metadata?.user_id;
   const request: ResponsesRequest = {
     model: mapModel(body.model ?? "", config),
@@ -282,6 +285,7 @@ export function translateRequest(body: MessagesRequest, config: ResolvedCodexCon
     ...(userId === undefined ? {} : { prompt_cache_key: userId }),
     ...(tools === undefined ? {} : { tools }),
     ...(toolChoice === undefined ? {} : { tool_choice: toolChoice }),
+    ...(webSearch ? { include: ["web_search_call.action.sources"] } : {}),
   };
   return { request, toolNames: names };
 }
