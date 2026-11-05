@@ -14,6 +14,8 @@ const THIRD_PARTY_WEEKLY_USED = 1 - THIRD_PARTY_WEEKLY_REMAINING;
 const ARGON_RESET_SECONDS = 7200;
 const LIVE_FIVE_HOUR_USED_PERCENT = 5;
 const LIVE_SEVEN_DAY_USED_PERCENT = 34;
+const CODEX_FIVE_HOUR_USED_PERCENT = 67;
+const CODEX_SEVEN_DAY_USED_PERCENT = 34;
 const NO_RESET_FIVE_HOUR_USED_PERCENT = 40;
 const GEMINI_FIVE_HOUR_RESET_SECONDS = 9000;
 const GEMINI_WEEKLY_RESET_SECONDS = 500_000;
@@ -131,6 +133,40 @@ describe("enrichStatuslinePayload", () => {
     const byPayloadModel = enrichStatuslinePayload({ ...base, payload: { ...base.payload, model: { id: "antigravity/gemini-4-argon-high", display_name: "antigravity / gemini-4-argon-high" } } }).summary;
     expect(byPayloadModel.quotaFamilies.map((window) => window.measures)).toEqual(["Gem 5h", "Gem Wk", "3P 5h", "3P Wk"]);
     expect(byPayloadModel.sevenDayUsed).toBe(GEMINI_WEEKLY_USED_PERCENT);
+  });
+
+  it("shows the switched provider's quota instead of the launch provider's", () => {
+    const snapshot: UsageSnapshot = { ...SNAPSHOT, providers: { ...SNAPSHOT.providers, codex: { rateLimit: { observedAt: SNAPSHOT.updatedAt, headers: {}, unified: { fiveHour: { utilization: 0.67 }, sevenDay: { utilization: 0.34 } } } } } };
+    const { summary } = enrichStatuslinePayload({ payload: { model: { id: "codex/gpt-6.1-terra" } }, env: { AGENT_SHIM_PROVIDER: "Antigravity" }, snapshot, account: undefined, providerName: "antigravity", nowMs: NOW_MS, headroom: undefined, routedTarget: "codex/gpt-6.1-terra" });
+    expect(summary.fiveHourUsed).toBe(CODEX_FIVE_HOUR_USED_PERCENT);
+    expect(summary.sevenDayUsed).toBe(CODEX_SEVEN_DAY_USED_PERCENT);
+    expect(summary.quotaFamilies).toEqual([]);
+  });
+
+  it("uses the selected model's quota when the last request was for a different provider", () => {
+    const snapshot: UsageSnapshot = { ...SNAPSHOT, providers: { ...SNAPSHOT.providers, codex: { rateLimit: { observedAt: SNAPSHOT.updatedAt, headers: {}, unified: { fiveHour: { utilization: 0.67 } } } } } };
+    const { summary } = enrichStatuslinePayload({ payload: { model: { id: "codex/gpt-6.1-terra" } }, env: { AGENT_SHIM_PROVIDER: "Antigravity" }, snapshot, account: undefined, providerName: "antigravity", nowMs: NOW_MS, headroom: undefined, routedTarget: "antigravity/claude-haiku-5-5" });
+    expect(summary.fiveHourUsed).toBe(CODEX_FIVE_HOUR_USED_PERCENT);
+  });
+
+  it("labels the switched provider's account with that provider", () => {
+    const snapshot: UsageSnapshot = { ...SNAPSHOT, providers: { ...SNAPSHOT.providers, codex: { quota: { observedAt: SNAPSHOT.updatedAt, source: "codex", account: { email: "codex@example.com" }, windows: [] } } } };
+    const { summary } = enrichStatuslinePayload({ payload: { model: { id: "codex/gpt-6.1-terra" } }, env: { AGENT_SHIM_PROVIDER: "Antigravity" }, snapshot, account: undefined, providerName: "antigravity", nowMs: NOW_MS, headroom: undefined, routedTarget: "codex/gpt-6.1-terra" });
+    expect(summary.provider).toBe("codex");
+    expect(summary.providerAccountEmail).toBe("codex@example.com");
+  });
+
+  it("labels the selected provider when the session was launched without a provider", () => {
+    const snapshot: UsageSnapshot = { ...SNAPSHOT, providers: { ...SNAPSHOT.providers, codex: { quota: { observedAt: SNAPSHOT.updatedAt, source: "codex", account: { email: "codex@example.com" }, windows: [] } } } };
+    const { summary } = enrichStatuslinePayload({ payload: { model: { id: "codex/gpt-6.1-terra" } }, env: {}, snapshot, account: undefined, providerName: undefined, nowMs: NOW_MS, headroom: undefined, routedTarget: "codex/gpt-6.1-terra" });
+    expect(summary.provider).toBe("codex");
+  });
+
+  it("leaves quota unknown when the switched provider has no recorded state", () => {
+    const { summary } = enrichStatuslinePayload({ payload: { model: { id: "codex/gpt-6.1-terra" }, rate_limits: { five_hour: { used_percentage: 100 } } }, env: { AGENT_SHIM_PROVIDER: "Antigravity" }, snapshot: SNAPSHOT, account: undefined, providerName: "antigravity", nowMs: NOW_MS, headroom: undefined, routedTarget: "codex/gpt-6.1-terra" });
+    expect(summary.fiveHourUsed).toBeUndefined();
+    expect(summary.sevenDayUsed).toBeUndefined();
+    expect(summary.quotaFamilies).toEqual([]);
   });
 
   it("does not show another account's quota when the routed provider has no recorded state", () => {
