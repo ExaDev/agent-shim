@@ -343,6 +343,7 @@ describe("library surface", () => {
       "listSessions",
       "listUsageSnapshots",
       "locateSession",
+      "loginKeyOf",
       "matchBranch",
       "mergeLiveTasks",
       "mintLeaf",
@@ -477,6 +478,29 @@ describe("library surface", () => {
       library.createProfile(paths, "base");
       expect(library.listProfiles(paths).map((entry) => entry.name)).toEqual(["base"]);
       expect(() => library.readPools(paths)).not.toThrow();
+    } finally {
+      nodeFs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keys a login by account and organisation, so one email's personal subscription and team seat stay two logins", () => {
+    const personal: library.AccountMetadata = { accountUuid: "00000000-0000-4000-8000-000000000001", organizationUuid: "00000000-0000-4000-8000-0000000000a1", emailAddress: "me@example.com" };
+    const team: library.AccountMetadata = { ...personal, organizationUuid: "00000000-0000-4000-8000-0000000000b2" };
+    expect(library.loginKeyOf(personal)).toBe(library.loginKeyOf({ ...personal, emailAddress: "renamed@example.com" }));
+    expect(library.loginKeyOf(personal)).not.toBe(library.loginKeyOf(team));
+    expect(library.loginKeyOf({ accountUuid: personal.accountUuid })).not.toBe(library.loginKeyOf(personal));
+    expect(library.loginKeyOf({ emailAddress: "me@example.com" })).toBeUndefined();
+  });
+
+  it("lists an identity's provider beside its name, so a caller can tell an identity that bills another provider from a login", () => {
+    const root = nodeFs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-library-"));
+    try {
+      const paths = library.buildLayoutPaths(root);
+      library.addIdentity(paths, "relay");
+      const file = path.join(paths.identitiesDir, "relay", "identity.json");
+      const stored: unknown = JSON.parse(nodeFs.readFileSync(file, "utf8"));
+      nodeFs.writeFileSync(file, JSON.stringify({ ...(typeof stored === "object" && stored !== null ? stored : {}), provider: "example" }));
+      expect(library.listIdentities(paths).map((entry) => entry.identity?.provider)).toEqual(["example"]);
     } finally {
       nodeFs.rmSync(root, { recursive: true, force: true });
     }

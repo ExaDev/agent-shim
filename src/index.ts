@@ -319,7 +319,7 @@ export { ensureFrontDoor, FrontDoorStartError, type EnsureFrontDoorPorts } from 
 export { createLiveSessionRegistry, type LiveSessionRegistry, type LiveSessionRegistryPorts } from "./frontdoor/liveSessionRegistry";
 export { runFrontDoorSupervisor, watchedInstallEntry, type FrontDoorSupervisorPorts, type OwnExecutableStat, type RunFrontDoorSupervisorOptions } from "./frontdoor/supervisor";
 export { listUsageSnapshots, readUsageSnapshot, snapshotPath, UsageSnapshotError, type UsageReadFs } from "./usage/read";
-export { UsageSnapshotSchema, type UsageSnapshot } from "./usage/schema";
+export { UsageSnapshotSchema, type AccountMetadata, type UsageSnapshot } from "./usage/schema";
 export { effectiveWindow, type EffectiveWindow } from "./usage/preflight";
 export { collectResets } from "./usage/resets";
 export { ResetRowSchema, ResetScheduleSchema, type ResetRow, type ResetSchedule } from "./usage/resetsSchema";
@@ -428,6 +428,7 @@ export {
   type IdentityListing,
   type UnreadableIdentityListEntry,
 } from "./identityStore";
+export { loginKeyOf, type IdentityAccountSummary } from "./identityAccounts";
 export {
   createProfile,
   InvalidCategoryNameError,
