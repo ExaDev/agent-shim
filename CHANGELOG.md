@@ -1,3 +1,9 @@
+## [11.86.0](https://github.com/ExaDev/agent-shim/compare/v11.85.0...v11.86.0) (2026-11-05)
+
+### Features
+
+* decouple identity names from storage ids ([7430912](https://github.com/ExaDev/agent-shim/commit/7430912dc4dab8af0cb06c28efa8ba8689a5bd81))
+
 ## [11.85.0](https://github.com/ExaDev/agent-shim/compare/v11.84.1...v11.85.0) (2026-11-05)
 
 ### Features
