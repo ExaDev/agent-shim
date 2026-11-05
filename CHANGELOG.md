@@ -1,3 +1,9 @@
+## [11.85.0](https://github.com/ExaDev/agent-shim/compare/v11.84.1...v11.85.0) (2026-11-05)
+
+### Features
+
+* configure model picker label spacing ([03faa96](https://github.com/ExaDev/agent-shim/commit/03faa962528b9d7c22f8b4617e2a4b28128be9b4))
+
 ## [11.84.1](https://github.com/ExaDev/agent-shim/compare/v11.84.0...v11.84.1) (2026-11-05)
 
 ### Bug Fixes
