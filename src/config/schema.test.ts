@@ -174,6 +174,9 @@ describe("WhenSchema", () => {
 });
 
 describe("ConfigProfileSchema", () => {
+  it("accepts a picker label spacing preference in a profile", () => {
+    expect(ConfigProfileSchema.parse({ models: { pickerLabelSpaces: false } }).models).toMatchObject({ pickerLabelSpaces: false });
+  });
   it("takes `extends` as a flat list of profile names", () => {
     const profile = ConfigProfileSchema.parse({ extends: ["base", "work"], categories: { history: false } });
     expect(profile.extends).toEqual(["base", "work"]);

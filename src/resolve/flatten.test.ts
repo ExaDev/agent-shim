@@ -129,6 +129,14 @@ describe("phase one: malformed keys", () => {
 describe("phase one: models", () => {
   const withModels = (models: unknown): Layer => layer(0, { models: models as Layer["models"] });
 
+  it("keeps picker label spacing from a models layer", () => {
+    expect(flattenLayers([withModels({ pickerLabelSpaces: false })], { home: FAKE_HOME }).models).toMatchObject({ pickerLabelSpaces: false });
+  });
+
+  it("lets a deeper layer restore spaces in picker labels", () => {
+    expect(flattenLayers([withModels({ pickerLabelSpaces: false }), withModels({ pickerLabelSpaces: true })], { home: FAKE_HOME }).models).toMatchObject({ pickerLabelSpaces: true });
+  });
+
   it("merges definitions per name, the deeper layer winning, and hides and shows replace wholesale", () => {
     const flattened = flattenLayers(
       [

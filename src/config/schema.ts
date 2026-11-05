@@ -518,6 +518,8 @@ export type FamilySettings = z.infer<typeof FamilySettingsSchema>;
 
 /** The global `models` block: the virtual models, the tier pointers, the prices and the visibility filter. */
 export const ModelsConfigSchema = z.strictObject({
+  /** Whether picker labels put spaces around the provider/model slash. */
+  pickerLabelSpaces: z.boolean().optional(),
   /** Virtual models, by name. */
   virtual: z.record(z.string().min(1), VirtualModelSchema).optional(),
   /** Which model ref each Claude tier (`fable`, `opus`, `sonnet`, `haiku`) points at: a concrete target, an account model, a virtual model, or a family. */
@@ -546,6 +548,7 @@ export type ModelsConfig = z.infer<typeof ModelsConfigSchema>;
  * The `models` block as a cascade layer writes it: identical to the global block except that any definition may be `null`, which removes what the shallower layers set rather than replacing it. A profile, directory rule or committed `.agent-shim.json` carries this form.
  */
 const ModelsLayerSchema = z.strictObject({
+  pickerLabelSpaces: z.boolean().optional(),
   virtual: z.record(z.string().min(1), z.union([VirtualModelSchema, z.null()])).optional(),
   tiers: z
     .strictObject({
