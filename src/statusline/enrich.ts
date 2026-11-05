@@ -220,7 +220,7 @@ export interface EnrichParams {
 }
 
 /**
- * Adds what the door knows to the client's statusline payload, under one `agent_shim` key a renderer reads instead of reopening the door's files or guessing from filtered environment: the identity, the provider the session's launch selected, the account that provider's own credential belongs to, and that provider's usage windows. A session whose launch named a provider spends that provider's quota, so its windows are that provider's alone; a session that named none (plain OAuth) shows the binding windows across every provider the identity has used. A payload that is not a JSON object passes through unchanged.
+ * Adds what the door knows to the client's statusline payload under `agent_shim`: the identity, the selected or routed provider, its account and its usage windows. A selected or routed provider scopes the windows to that provider; a session with neither a selected nor a launch provider shows the binding windows across every provider the identity has used. A payload that is not a JSON object passes through unchanged.
  */
 export function enrichStatuslinePayload(params: EnrichParams): { readonly payload: unknown; readonly summary: StatuslineSummary } {
   const identity = identityOf(params.env);
