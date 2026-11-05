@@ -25,7 +25,7 @@ describe("collectDoctorReport: PATH dispatchers", () => {
     ownDir = path.join(root, "own");
     for (const dir of [shimDir, fallbackDir, ownDir]) fs.mkdirSync(dir);
     own = path.join(ownDir, "agent-shim");
-    mise = path.join(root, "mise");
+    mise = path.join(ownDir, "mise");
     fs.writeFileSync(own, "installed", { mode: EXECUTABLE_MODE });
     vi.spyOn(realPorts, "realOwnExecutablePath").mockImplementation(() => own);
   });
@@ -56,6 +56,7 @@ describe("collectDoctorReport: PATH dispatchers", () => {
     ownDir = path.join(root, "own*");
     fs.mkdirSync(ownDir);
     own = path.join(ownDir, "agent-shim");
+    mise = path.join(ownDir, "mise");
     fs.writeFileSync(own, "installed", { mode: EXECUTABLE_MODE });
     inactiveMise();
     fs.writeFileSync(path.join(fallbackDir, "agent-shim"), `#!/bin/sh\nexec ${own} "$@"\n`, { mode: EXECUTABLE_MODE });
@@ -122,6 +123,14 @@ describe("collectDoctorReport: PATH dispatchers", () => {
   it("reports a real shadow selected by an active mise shim", () => {
     writeMise("#!/bin/sh\nprintf '%s\\n' '/different/agent-shim'\n");
     expect(severity()).toBe("fail");
+  });
+
+  it("does not execute a PATH-controlled mise impersonator", () => {
+    const marker = path.join(root, "attacker-ran");
+    mise = path.join(root, "mise");
+    writeMise(`#!/bin/sh\nprintf run > '${marker}'\nprintf '%s\\n' '${own}'\n`);
+    expect(severity()).toBe("fail");
+    expect(fs.existsSync(marker)).toBe(false);
   });
 
   it("recognises an active mise shim that selects the running executable", () => {
