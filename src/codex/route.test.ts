@@ -167,6 +167,26 @@ describe("codex route: streaming", () => {
     expect(relayed.at(-1)).toEqual({ event: "error", data: { type: "error", error: { type: "api_error", message: "overloaded" } } });
   });
 
+  it("forwards the message in a backend error event's nested error", async () => {
+    const { route } = harness(() => fakeResponse({ events: [{ type: "error", error: { type: "server_error", code: "backend_overloaded", message: "The backend is overloaded." } }] }));
+    const response = await route(post(MESSAGES_PATH, { messages: [], stream: true }));
+    const relayed = parseAnthropicSse(await collectBody(response.body));
+    expect(relayed.at(-1)?.data).toMatchObject({ error: { message: "The backend is overloaded." } });
+  });
+
+  it("reports Codex context exhaustion in the form Claude Code can compact", async () => {
+    const error = { type: "invalid_request_error", code: "context_length_exceeded", message: "The input exceeds the model context window." };
+    for (const event of [{ type: "error", error }, { type: "response.failed", response: { error } }]) {
+      const { route } = harness(() => fakeResponse({ events: [event] }));
+      const streamed = await route(post(MESSAGES_PATH, { messages: [], stream: true }));
+      const frames = parseAnthropicSse(await collectBody(streamed.body));
+      expect(frames.at(-1)?.data).toMatchObject({ error: { type: "invalid_request_error", message: "Prompt is too long: The input exceeds the model context window." } });
+      const single = await route(post(MESSAGES_PATH, { messages: [] }));
+      expect(single.status).toBe(HTTP_STATUS.badRequest);
+      expect(JSON.parse(await collectBody(single.body))).toMatchObject({ error: { type: "invalid_request_error", message: "Prompt is too long: The input exceeds the model context window." } });
+    }
+  });
+
   it("reports a stream that ends without completing", async () => {
     const { route, logs } = harness(() => fakeResponse({ events: [{ type: "response.created", response: {} }] }));
     const response = await route(post(MESSAGES_PATH, { messages: [], stream: true }));

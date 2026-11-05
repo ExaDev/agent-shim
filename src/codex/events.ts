@@ -62,10 +62,10 @@ const ResponseCompletedSchema = z.looseObject({
 
 const ResponseFailedSchema = z.looseObject({
   type: z.literal("response.failed"),
-  response: z.looseObject({ error: z.looseObject({ message: z.string().optional() }).nullish() }).optional(),
+  response: z.looseObject({ error: z.looseObject({ message: z.string().optional(), code: z.string().nullish() }).nullish() }).optional(),
 });
 
-const StreamErrorSchema = z.looseObject({ type: z.literal("error"), message: z.string().optional() });
+const StreamErrorSchema = z.looseObject({ type: z.literal("error"), message: z.string().optional(), error: z.looseObject({ message: z.string().optional(), code: z.string().nullish() }).nullish() });
 
 const CodexEventSchema = z.union([
   ResponseCreatedSchema,

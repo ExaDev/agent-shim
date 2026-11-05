@@ -58,7 +58,7 @@ export interface RelayStep {
   /** Present on the event that finishes the response successfully. */
   readonly completed?: { readonly message: AnthropicMessageResponse; readonly usage: ResponsesUsage | undefined };
   /** Present on an event that ends the response with a backend error. */
-  readonly failed?: { readonly message: string };
+  readonly failed?: { readonly message: string; readonly code?: string | null | undefined };
 }
 
 /** Parses a tool call's accumulated arguments. Truncated or malformed arguments become an empty object so the agent loop keeps going instead of failing the turn. */
@@ -222,9 +222,9 @@ export function createRelay(params: RelayParams): { readonly push: (event: Codex
         };
       }
       case "response.failed":
-        return { frames: [], failed: { message: event.response?.error?.message ?? STREAM_ERROR } };
+        return { frames: [], failed: { message: event.response?.error?.message ?? STREAM_ERROR, code: event.response?.error?.code } };
       case "error":
-        return { frames: [], failed: { message: event.message ?? STREAM_ERROR } };
+        return { frames: [], failed: { message: event.error?.message ?? event.message ?? STREAM_ERROR, code: event.error?.code } };
       default:
         return event satisfies never;
     }

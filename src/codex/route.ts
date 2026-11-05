@@ -76,6 +76,11 @@ function errorFrame(status: number, message: string): string {
   return `event: error\ndata: ${errorBody(status, message)}\n\n`;
 }
 
+/** Claude Code recognises context exhaustion by its Anthropic error type and wording and can then compact the conversation. */
+function relayFailure(failure: { readonly message: string; readonly code?: string | null | undefined }): { readonly status: number; readonly message: string } {
+  return failure.code === "context_length_exceeded" ? { status: HTTP_STATUS.badRequest, message: `Prompt is too long: ${failure.message}` } : { status: HTTP_STATUS.internalServerError, message: failure.message };
+}
+
 /** How much of a refused upstream response's body is echoed back to the client and kept in the log. */
 const UPSTREAM_DETAIL_CHARS = 2000;
 const UPSTREAM_LOG_DETAIL_CHARS = 300;
@@ -179,7 +184,8 @@ export function createCodexRoute(ports: CodexRoutePorts): (request: RouteRequest
             }
             if (step.failed !== undefined) {
               ports.log(`${upstreamRequest.model} stream error: ${step.failed.message}`);
-              yield errorFrame(HTTP_STATUS.internalServerError, step.failed.message);
+              const failure = relayFailure(step.failed);
+              yield errorFrame(failure.status, failure.message);
               return;
             }
           }
@@ -209,7 +215,8 @@ export function createCodexRoute(ports: CodexRoutePorts): (request: RouteRequest
         }
         if (step.failed !== undefined) {
           ports.log(`${upstreamRequest.model} stream error: ${step.failed.message}`);
-          return errorResponse(HTTP_STATUS.internalServerError, step.failed.message);
+          const failure = relayFailure(step.failed);
+          return errorResponse(failure.status, failure.message);
         }
       }
     } catch (error) {
