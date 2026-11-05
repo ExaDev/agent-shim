@@ -11,10 +11,11 @@ export function realpathOrSelf(target: string): string {
 /** A literal forwarding script needs only a shebang, an exec line and a platform-length path. */
 const MAX_FORWARDING_SCRIPT_BYTES = 8192;
 
-/** Resolves an active mise shim through mise, or its first PATH fallback when mise reports that the tool is inactive. */
-export function resolveMiseDispatcher(target: string, pathDirs: readonly string[], env: NodeJS.ProcessEnv): string | undefined {
+/** Resolves a mise shim only when it points to the mise executable beside the running installation; an inactive tool falls through to its first PATH fallback. */
+export function resolveMiseDispatcher(target: string, pathDirs: readonly string[], env: NodeJS.ProcessEnv, trustedExecutable: string): string | undefined {
   const executable = realpathOrSelf(target);
-  if (path.basename(executable) !== "mise") return undefined;
+  const trustedMise = path.join(path.dirname(trustedExecutable), "mise");
+  if (path.basename(executable) !== "mise" || realpathOrSelf(trustedMise) !== executable) return undefined;
   const result = spawnSyncBlocking("a mise shim lookup", executable, ["which", path.basename(target)], { encoding: "utf8", env });
   if (result.error !== undefined) return undefined;
   if (result.status === 0 && result.stdout.trim() !== "") return result.stdout.trim();

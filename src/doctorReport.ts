@@ -1002,7 +1002,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
           }),
           shimState.targetPath,
           realpathOrSelf,
-          (target) => resolveMiseDispatcher(target, pathDirs, params.env),
+          (target) => resolveMiseDispatcher(target, pathDirs, params.env, shimState.targetPath),
         );
 
   // Process listing needs a POSIX uid; where there is none the front-door check is skipped rather than guessed.
@@ -1046,7 +1046,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
         }),
         ownExecutablePath,
         realpathOrSelf,
-        (target) => resolveMiseDispatcher(target, pathDirs, params.env),
+        (target) => resolveMiseDispatcher(target, pathDirs, params.env, ownExecutablePath),
       ),
       ...(claudeShimShadow === undefined ? {} : { claude: claudeShimShadow }),
     },
