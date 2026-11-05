@@ -163,7 +163,8 @@ export function routedModelRows(models: ModelsConfig, providers: readonly (reado
   const hidden = new Set(models.hide ?? []);
   const shown = models.show === undefined ? undefined : new Set(models.show);
   const visible = (model: string): boolean => (shown === undefined ? !hidden.has(model) : shown.has(model));
-  const concrete = providers.flatMap(([name, provider, catalogue]) => providerModelRows(provider, catalogue).map((row) => ({ ...row, model: `${name}/${row.model}`, label: `${name} / ${row.label}`, description: `${name}: ${row.description}` })));
+  const separator = models.pickerLabelSpaces === false ? "/" : " / ";
+  const concrete = providers.flatMap(([name, provider, catalogue]) => providerModelRows(provider, catalogue).map((row) => ({ ...row, model: `${name}/${row.model}`, label: `${name}${separator}${row.label}`, description: `${name}: ${row.description}` })));
   const concreteByRef = new Map(concrete.map((row) => [row.model, row]));
   const families = buildFamilies([...concrete.map((row) => row.model), ...accountRefsOf(models)], models);
   const handlingOf = (refs: readonly string[]): string => refs.map((ref) => concreteByRef.get(ref)?.behavesAs).find((behavesAs) => behavesAs !== undefined) ?? TIER_BEHAVES_AS.sonnet;

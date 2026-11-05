@@ -192,6 +192,11 @@ describe("routedModelRows", () => {
     ["m", http({ ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M2.7" }), []],
   ];
 
+  it("can show qualified model labels without spaces around the slash", () => {
+    const rows = routedModelRows({ pickerLabelSpaces: false }, providers);
+    expect(rows.find((row) => row.model === "z/glm-5.3")?.label).toBe("z/glm-5.3");
+  });
+
   it("lists the virtual models first, then every provider's models qualified with the provider's name", () => {
     const rows = routedModelRows({ virtual: { fast: { mode: "soonest-reset", members: ["z/glm-5.3"] } } }, providers);
     expect(rows.map((row) => row.model)).toEqual(["fast", "z/glm-5.3", "m/MiniMax-M2.7"]);

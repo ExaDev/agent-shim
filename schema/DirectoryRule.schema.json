@@ -1353,6 +1353,9 @@
     "models": {
       "type": "object",
       "properties": {
+        "pickerLabelSpaces": {
+          "type": "boolean"
+        },
         "virtual": {
           "type": "object",
           "propertyNames": {

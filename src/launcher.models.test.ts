@@ -31,6 +31,15 @@ describe("the models block a launch resolves", () => {
     });
     return { spawn, frontdoor };
   };
+
+  it("passes compact provider labels to Claude Code when configured", () => {
+    const { spawn } = launch({ pickerLabelSpaces: false }, undefined);
+    const args = spawn.spawnSync.mock.calls[0]?.[1] ?? [];
+    const settings: unknown = JSON.parse(args[args.indexOf("--settings") + 1] ?? "{}");
+    if (typeof settings !== "object" || settings === null || !("modelPicker" in settings) || typeof settings.modelPicker !== "object" || settings.modelPicker === null || !("options" in settings.modelPicker) || !Array.isArray(settings.modelPicker.options)) throw new Error("Missing model picker options");
+    const rows: readonly unknown[] = settings.modelPicker.options;
+    expect(rows.some((row) => typeof row === "object" && row !== null && "model" in row && row.model === "z/glm-5.3" && "label" in row && row.label === "z/glm-5.3")).toBe(true);
+  });
   const globalOnly = { virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } };
 
   it("carries definitions a committed file adds into the /model rows, the tier setting and the door's record of the session", () => {

@@ -183,6 +183,7 @@ export function matchingRules(flattened: FlattenedCascade, relPath: string): Com
 /** Merges one layer's models into the accumulated block: every definition the layer names is set (or, when `null`, removed), `hide`/`show` replace what the shallower layers listed, and identity assertions accumulate across layers. */
 function mergeModels(current: ModelsConfig | undefined, layer: ModelsLayer): ModelsConfig | undefined {
   const pieces = { ...(current ?? {}) };
+  if (layer.pickerLabelSpaces !== undefined) pieces.pickerLabelSpaces = layer.pickerLabelSpaces;
   if (layer.virtual !== undefined) {
     const virtual: NonNullable<ModelsConfig["virtual"]> = {};
     for (const [name, definition] of Object.entries(current?.virtual ?? {})) {
@@ -258,8 +259,9 @@ function mergeModels(current: ModelsConfig | undefined, layer: ModelsLayer): Mod
 }
 
 /** Builds the merged block's sub-objects into a fresh `ModelsConfig`, dropping the pieces nothing filled. */
-function modelsOf(pieces: { virtual?: NonNullable<ModelsConfig["virtual"]>; tiers?: NonNullable<ModelsConfig["tiers"]>; prices?: NonNullable<ModelsConfig["prices"]>; hide?: readonly string[]; show?: readonly string[]; same?: NonNullable<ModelsConfig["same"]>; distinct?: NonNullable<ModelsConfig["distinct"]>; families?: NonNullable<ModelsConfig["families"]> }): ModelsConfig {
+function modelsOf(pieces: { pickerLabelSpaces?: boolean; virtual?: NonNullable<ModelsConfig["virtual"]>; tiers?: NonNullable<ModelsConfig["tiers"]>; prices?: NonNullable<ModelsConfig["prices"]>; hide?: readonly string[]; show?: readonly string[]; same?: NonNullable<ModelsConfig["same"]>; distinct?: NonNullable<ModelsConfig["distinct"]>; families?: NonNullable<ModelsConfig["families"]> }): ModelsConfig {
   return {
+    ...(pieces.pickerLabelSpaces === undefined ? {} : { pickerLabelSpaces: pieces.pickerLabelSpaces }),
     ...(pieces.virtual === undefined || Object.keys(pieces.virtual).length === 0 ? {} : { virtual: pieces.virtual }),
     ...(pieces.tiers === undefined || Object.keys(pieces.tiers).length === 0 ? {} : { tiers: pieces.tiers }),
     ...(pieces.prices === undefined || Object.keys(pieces.prices).length === 0 ? {} : { prices: pieces.prices }),
