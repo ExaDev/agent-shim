@@ -1,3 +1,10 @@
+## [11.84.1](https://github.com/ExaDev/agent-shim/compare/v11.84.0...v11.84.1) (2026-11-05)
+
+### Bug Fixes
+
+* resolve mise shims in doctor path checks ([82e5343](https://github.com/ExaDev/agent-shim/commit/82e534379285ee47b7ad9a6f3132171c89b873ef))
+* restrict doctor to the installed mise executable ([8d1e2d9](https://github.com/ExaDev/agent-shim/commit/8d1e2d92a593e4b1d543ba1c617bd99d07b66c65))
+
 ## [11.84.0](https://github.com/ExaDev/agent-shim/compare/v11.83.8...v11.84.0) (2026-11-04)
 
 ### Features
