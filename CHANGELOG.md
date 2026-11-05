@@ -1,3 +1,13 @@
+## [11.86.4](https://github.com/ExaDev/agent-shim/compare/v11.86.3...v11.86.4) (2026-11-05)
+
+### Bug Fixes
+
+* **statusline:** scope quota to the selected provider ([4d3b509](https://github.com/ExaDev/agent-shim/commit/4d3b5097db67aabb292978b40c237a27727d329c))
+
+### Documentation
+
+* **statusline:** describe selected provider precedence ([bb23932](https://github.com/ExaDev/agent-shim/commit/bb23932cc938fb7031ff79c38d4040b83dfee13d))
+
 ## [11.86.3](https://github.com/ExaDev/agent-shim/compare/v11.86.2...v11.86.3) (2026-11-05)
 
 ### Bug Fixes
