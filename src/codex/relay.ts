@@ -104,6 +104,8 @@ export function createRelay(params: RelayParams): { readonly push: (event: Codex
   /** Backend output index to Anthropic block index; undefined for an item the relay skips. */
   const blockByOutput = new Map<number, number>();
   const blocks: AggregatedBlock[] = [];
+  const searches: { id: string; urls: string[] }[] = [];
+  const titles = new Map<string, string>();
   let messageId: string | undefined;
   let sawToolUse = false;
 
@@ -178,6 +180,14 @@ export function createRelay(params: RelayParams): { readonly push: (event: Codex
         };
       }
       case "response.output_item.done": {
+        if (event.item?.type === "web_search_call" && event.item.id !== undefined) {
+          searches.push({ id: event.item.id, urls: (event.item.action?.sources ?? []).flatMap((source) => source.url === undefined ? [] : [source.url]) });
+        }
+        for (const part of event.item?.content ?? []) {
+          for (const annotation of part.annotations ?? []) {
+            if (annotation.url !== undefined && annotation.title !== undefined) titles.set(annotation.url, annotation.title);
+          }
+        }
         const target = block(event.output_index);
         return target === undefined ? { frames: [] } : { frames: [{ event: "content_block_stop", data: { type: "content_block_stop", index: target.index } }] };
       }
@@ -185,9 +195,14 @@ export function createRelay(params: RelayParams): { readonly push: (event: Codex
         const usage = event.response?.usage ?? undefined;
         const stopReason: StopReason = sawToolUse ? "tool_use" : event.response?.status === "incomplete" ? "max_tokens" : "end_turn";
         const converted = anthropicUsage(usage);
-        const content = blocks.map(finalBlock);
+        const content = [...blocks.map(finalBlock), ...searches.map((search) => ({ type: "web_search_tool_result", tool_use_id: search.id, content: search.urls.map((url) => ({ type: "web_search_result", url, title: titles.get(url) ?? url })) }))];
         return {
           frames: [
+            ...searches.flatMap((search, offset) => {
+              const index = blocks.length + offset;
+              const contentBlock = content[index];
+              return [{ event: "content_block_start", data: { type: "content_block_start", index, content_block: contentBlock } }, { event: "content_block_stop", data: { type: "content_block_stop", index } }];
+            }),
             { event: "message_delta", data: { type: "message_delta", delta: { stop_reason: stopReason, stop_sequence: null }, usage: converted } },
             { event: "message_stop", data: { type: "message_stop" } },
           ],

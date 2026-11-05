@@ -85,6 +85,23 @@ describe("mapEffort", () => {
 });
 
 describe("translateRequest", () => {
+  it("preserves native web search domain filters", () => {
+    const { request: translated } = translateRequest(request({ messages: [], tools: [{ type: "web_search_20250305", name: "web_search", allowed_domains: ["example.org"], blocked_domains: ["example.net"] }] }), defaults);
+    expect(translated.tools).toEqual([{ type: "web_search", filters: { allowed_domains: ["example.org"], blocked_domains: ["example.net"] } }]);
+  });
+
+  it("translates Claude Code's hosted web search to Codex's native search", () => {
+    const { request: translated } = translateRequest(request({ messages: [{ role: "user", content: "Find a source" }], tools: [{ type: "web_search_20250305", name: "web_search" }], tool_choice: { type: "tool", name: "web_search" } }), defaults);
+    expect(translated.tools).toEqual([{ type: "web_search" }]);
+    expect(translated.tool_choice).toEqual({ type: "allowed_tools", mode: "required", tools: [{ type: "web_search" }] });
+    expect(translated).toMatchObject({ include: ["web_search_call.action.sources"] });
+  });
+
+  it("forces native search when another tool is also offered", () => {
+    const { request: translated } = translateRequest(request({ messages: [], tools: [{ type: "web_search_20250305", name: "web_search" }, { name: "other_tool", input_schema: { type: "object", properties: {} } }], tool_choice: { type: "tool", name: "web_search" } }), defaults);
+    expect(translated.tool_choice).toEqual({ type: "allowed_tools", mode: "required", tools: [{ type: "web_search" }] });
+  });
+
   it("preserves the goal evaluator's structured output schema", () => {
     const schema = { type: "object", properties: { ok: { type: "boolean" }, reason: { type: "string" }, impossible: { type: "boolean" } }, required: ["ok", "reason"], additionalProperties: false };
     const { request: translated } = translateRequest(request({ messages: [], output_config: { format: { type: "json_schema", schema } } }), defaults);
@@ -265,7 +282,8 @@ describe("translateRequest", () => {
       }),
       defaults,
     );
-    const short = translated.tools?.[0]?.name;
+    const tool = translated.tools?.[0];
+    const short = tool?.type === "function" ? tool.name : undefined;
     expect(short).toBeDefined();
     expect(short?.length).toBe(CODEX_TOOL_NAME_LIMIT);
     expect(translated.input[0]).toMatchObject({ type: "function_call", name: short });

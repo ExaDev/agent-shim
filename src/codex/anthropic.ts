@@ -53,6 +53,8 @@ const ToolSchema = z.looseObject({
   name: z.string().min(1),
   description: z.string().optional(),
   input_schema: z.record(z.string(), z.unknown()).optional(),
+  allowed_domains: z.array(z.string()).optional(),
+  blocked_domains: z.array(z.string()).optional(),
 });
 export type AnthropicTool = z.infer<typeof ToolSchema>;
 

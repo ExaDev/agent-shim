@@ -94,6 +94,20 @@ function upstreamBody(call: RecordedCall | undefined): Record<string, unknown> {
 }
 
 describe("codex route: streaming", () => {
+  it("returns Codex web search sources as Claude Code search results", async () => {
+    const events = [
+      { type: "response.created", response: { id: "resp_search" } },
+      { type: "response.output_item.done", output_index: 0, item: { type: "web_search_call", id: "search_1", action: { type: "search", query: "example", sources: [{ type: "url", url: "https://example.org/" }] } } },
+      { type: "response.output_item.done", output_index: 1, item: { type: "message", content: [{ type: "output_text", text: "Example", annotations: [{ type: "url_citation", url: "https://example.org/", title: "Example" }] }] } },
+      { type: "response.completed", response: { id: "resp_search", status: "completed" } },
+    ];
+    const { route } = harness(() => fakeResponse({ events }));
+    const response = await route(post(MESSAGES_PATH, { messages: [], tools: [{ type: "web_search_20250305", name: "web_search" }] }));
+    const body: unknown = JSON.parse(await collectBody(response.body));
+    if (typeof body !== "object" || body === null || !("content" in body) || !Array.isArray(body.content)) throw new Error("response has no content");
+    expect(body.content).toContainEqual({ type: "web_search_tool_result", tool_use_id: "search_1", content: [{ type: "web_search_result", title: "Example", url: "https://example.org/" }] });
+  });
+
   it("relays a text turn as Anthropic SSE, skipping reasoning, with cache-aware usage", async () => {
     const { route, fetch } = harness(() => fakeResponse({ events: TEXT_TURN, headers: { "x-codex-primary-used-percent": "12" } }));
     const response = await route(post(MESSAGES_PATH, { model: "claude-sonnet-4-5", messages: [{ role: "user", content: "Hi" }], stream: true }));
