@@ -78,7 +78,7 @@ export interface ResponsesRequest {
   /** Always true: the relay aggregates the stream itself when the client asked for a single JSON response. */
   readonly stream: true;
   readonly store: false;
-  readonly text: { readonly verbosity: "medium" };
+  readonly text: { readonly verbosity: "medium"; readonly format?: { readonly type: "json_schema"; readonly name: string; readonly schema: Readonly<Record<string, unknown>>; readonly strict: false } };
   readonly reasoning?: { readonly effort: Exclude<CodexEffort, "none">; readonly summary: "auto" };
   readonly prompt_cache_key?: string;
   readonly tools?: readonly FunctionTool[];
@@ -277,7 +277,7 @@ export function translateRequest(body: MessagesRequest, config: ResolvedCodexCon
     input: messagesToInput(body.messages, names),
     stream: true,
     store: false,
-    text: { verbosity: "medium" },
+    text: { verbosity: "medium", ...(body.output_config?.format === undefined ? {} : { format: { type: "json_schema", name: "response", schema: body.output_config.format.schema, strict: false } }) },
     ...(effort === "none" ? {} : { reasoning: { effort, summary: "auto" } }),
     ...(userId === undefined ? {} : { prompt_cache_key: userId }),
     ...(tools === undefined ? {} : { tools }),
