@@ -554,7 +554,7 @@ function attachingProviderCredential(
         // 502 with the api_error type, the shape the pass-through itself answers an unreachable upstream with: the door cannot authenticate this request at its upstream, which is a gateway failure, never the client's credential to fix.
         response.start(HTTP_STATUS.badGateway, { "Content-Type": "application/json" });
         await response.write(
-          JSON.stringify({ type: "error", error: { type: "api_error", message: `provider ${deps.provider} has no usable credential for the front door to attach: ${resolution.message}` } }),
+          JSON.stringify({ type: "error", error: { type: "api_error", message: `the front door has no credential to attach: ${resolution.message}` } }),
         );
         response.end();
         return;

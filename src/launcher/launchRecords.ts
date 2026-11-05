@@ -1,4 +1,5 @@
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 
 import { z } from "zod";
 
@@ -26,9 +27,9 @@ export interface LaunchRecordOwner {
 
 const RECORD_SUFFIX = ".json";
 
-/** The record of one launcher's launch of one identity. A launcher that launches two identities in turn (a supervised relaunch) keeps a record for each. */
-function recordFile(directory: string, pid: number, identity: string): string {
-  return path.join(directory, `${String(pid)}.${identity}${RECORD_SUFFIX}`);
+/** Each launch has its own record, even when the same process launches the same identity concurrently. */
+function recordFile(directory: string, pid: number): string {
+  return path.join(directory, `${String(pid)}.${randomUUID()}${RECORD_SUFFIX}`);
 }
 
 /** The record in file `name`, or undefined when it is not one: another kind of file, unparseable, or of another shape. */
@@ -61,7 +62,7 @@ export function registerLaunch(fs: LaunchRecordFs, directory: string, owner: Lau
       fs.removeRecursive(path.join(directory, name));
     }
   }
-  const file = recordFile(directory, owner.pid, owner.identity);
+  const file = recordFile(directory, owner.pid);
   const record: z.infer<typeof LaunchRecordSchema> = { pid: owner.pid, identity: owner.identity, startedAt: new Date(owner.startedAtMs).toISOString() };
   fs.writeFilePrivate(file, `${JSON.stringify(record)}\n`);
   return () => {

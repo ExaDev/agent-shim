@@ -3,10 +3,12 @@ import os from "node:os";
 import path from "node:path";
 
 import { createRouterClient } from "@orpc/server";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { requireIdentityAddable, identityExists } from "../identityStore";
-import { createFakeKeychain, type FakeKeychain } from "../keychainTestWorld";
+import { addIdentity, requireIdentityAddable, identityExists } from "../identityStore";
+import { nonWaitingIdentityNamesLockPorts, IdentityNamesLockBusyError } from "../identityNamesLock";
+import { KEYCHAIN_CACHE_SERVICE, KEYCHAIN_ITEM_NOT_FOUND_STATUS } from "../credentialCache";
+import { cacheEntryProbe, createFakeKeychain, type FakeKeychain } from "../keychainTestWorld";
 import { buildLayoutPaths, type LayoutPaths } from "../paths";
 import type { AsyncRun } from "../replayRun";
 import { claudeCodeKeychainService } from "../usage/signIn";
@@ -14,6 +16,9 @@ import { createConfigApiRouter } from "./configApi";
 import { ConfigIdentityAddInputSchema } from "./configSchemas";
 
 const TOKEN = "control-token-for-the-config-api-keychain-tests";
+
+/** A failure `security` gives that is not an item it cannot find, as a locked Keychain gives. */
+const LOCKED_KEYCHAIN_STATUS = 51;
 
 /** A made-up login, which no message or call of the check may carry. */
 const LOGIN_BLOB = "a-made-up-login-blob";
@@ -86,17 +91,29 @@ describe("config.identity.add and a Keychain login left behind for the directory
   it("asks the Keychain for attributes only, never for the login, and nothing of it reaches the refusal", async () => {
     keychain.seed(service("work"), "alex", LOGIN_BLOB);
     const refused = await refusalOf(client().identity.add({ name: "work" }));
-    expect(keychain.calls).toEqual([{ command: "security", args: ["find-generic-password", "-s", service("work")] }]);
+    expect(keychain.calls).toEqual([cacheEntryProbe("identity work"), { command: "security", args: ["find-generic-password", "-s", service("work")] }]);
     expect(keychain.calls.some((call) => call.args.includes("-w") || call.args.includes("-g") || call.args[0] === "-i")).toBe(false);
     expect(refused?.message).not.toContain(LOGIN_BLOB);
   });
 
-  it("is allowed with keepKeychainLogin, which says the login is wanted, without asking the Keychain anything", async () => {
+  it("is allowed with keepKeychainLogin, which says the login is wanted, asking the Keychain only, by attributes, whether it caches a credential for the id", async () => {
     keychain.seed(service("work"), "alex", LOGIN_BLOB);
     const created = await client().identity.add({ name: "work", keepKeychainLogin: true });
     expect(created).toMatchObject({ action: "created", kind: "identity", name: "work" });
     expect(identityExists(paths, "work")).toBe(true);
-    expect(keychain.calls).toEqual([]);
+    expect(keychain.calls).toEqual([cacheEntryProbe("identity work")]);
+  });
+
+  it("reads the usage log once for the check, however often the Keychain's answers start it again, and once under the names lock", async () => {
+    fs.mkdirSync(paths.usageLogDir, { recursive: true });
+    const at = new Date().toISOString();
+    fs.writeFileSync(path.join(paths.usageLogDir, `${at.slice(0, "YYYY-MM-DD".length)}.1.jsonl`), `${JSON.stringify({ schemaVersion: 1, at, identity: "other", provider: "anthropic", route: "r", method: "POST", endpoint: "/v1/messages", status: 200, latencyMs: 1, durationMs: 1, outcome: "completed" })}\n`);
+    const readdir = vi.spyOn(fs, "readdirSync");
+    expect(await client().identity.add({ name: "work" })).toMatchObject({ action: "created" });
+    // The cache probe and the login lookup each start the check again; the log is read by the first start that needs it and once more for the write.
+    expect(keychain.calls).toHaveLength(2);
+    expect(readdir.mock.calls.filter(([directory]) => directory === paths.usageLogDir)).toHaveLength(2);
+    readdir.mockRestore();
   });
 
   it("is allowed once the entry is deleted, with the command the refusal gave", async () => {
@@ -119,7 +136,8 @@ describe("config.identity.add and a Keychain login left behind for the directory
     { case: "security killed after its time limit, or never started (no exit status)", answer: { status: null, stdout: "", stderr: "" } },
     { case: "a locked Keychain (an exit status that is not an absence)", answer: { status: 36, stdout: "", stderr: "User interaction is not allowed." } },
   ])("is SERVICE_UNAVAILABLE, which a client may retry, and not CONFLICT, when the Keychain could not be asked: $case", async ({ answer }) => {
-    const refused = await refusalOf(client("darwin", async () => await Promise.resolve(answer)).identity.add({ name: "work" }));
+    // The cache probe is answered, so it is the login's lookup that fails.
+    const refused = await refusalOf(client("darwin", async (_command, args) => await Promise.resolve(args.includes(KEYCHAIN_CACHE_SERVICE) ? { status: KEYCHAIN_ITEM_NOT_FOUND_STATUS, stdout: "", stderr: "" } : answer)).identity.add({ name: "work" }));
     expect(refused?.code).toBe("SERVICE_UNAVAILABLE");
     expect(refused?.message).toContain(`Could not look up the Keychain item ${service("work")}`);
     expect(identityExists(paths, "work")).toBe(false);
@@ -139,5 +157,71 @@ describe("config.identity.add and a Keychain login left behind for the directory
     await client("linux").identity.add({ name: "work" });
     expect(keychain.calls).toEqual([]);
     expect(identityExists(paths, "work")).toBe(true);
+  });
+});
+
+describe("config.identity.remove and the credential the Keychain store caches", () => {
+  let root: string;
+  let paths: LayoutPaths;
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-config-api-remove-"));
+    paths = buildLayoutPaths(root);
+  });
+
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("prevents reusing an id until its Keychain cache deletion finishes", async () => {
+    addIdentity(paths, "work");
+    let refusal: unknown;
+    const runAsync: AsyncRun = async () => {
+      try {
+        addIdentity(paths, "work", { namesLock: nonWaitingIdentityNamesLockPorts });
+      } catch (error: unknown) {
+        refusal = error;
+      }
+      return await Promise.resolve({ status: 0, stdout: "", stderr: "" });
+    };
+    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" } }), {
+      context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
+    }).config;
+    await api.identity.remove({ name: "work", confirm: true });
+    expect(refusal).toBeInstanceOf(IdentityNamesLockBusyError);
+  });
+
+  it("forgets it under the removed identity's id, through the runner that does not block", async () => {
+    // An identity stored under work and named client, as a rename of the name alone leaves it.
+    fs.mkdirSync(path.join(paths.identitiesDir, "work"), { recursive: true });
+    fs.writeFileSync(path.join(paths.identitiesDir, "work", "identity.json"), JSON.stringify({ name: "client", allowAmbientCredential: false }));
+    const asked: (readonly string[])[] = [];
+    const runAsync: AsyncRun = async (_command, args) => {
+      asked.push(args);
+      return await Promise.resolve({ status: 0, stdout: "", stderr: "" });
+    };
+    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" } }), {
+      context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
+    }).config;
+    expect(await api.identity.remove({ name: "client", confirm: true })).toEqual({ action: "removed", kind: "identity", name: "client" });
+    expect(asked).toEqual([["delete-generic-password", "-s", "agent-shim-credential-cache", "-a", "identity work"]]);
+    expect(fs.existsSync(path.join(paths.identitiesDir, "work"))).toBe(false);
+  });
+
+  it("reports a delete security refused as INTERNAL_SERVER_ERROR naming the command, with the identity removed", async () => {
+    fs.mkdirSync(path.join(paths.identitiesDir, "work"), { recursive: true });
+    fs.writeFileSync(path.join(paths.identitiesDir, "work", "identity.json"), JSON.stringify({ name: "client", allowAmbientCredential: false }));
+    const runAsync: AsyncRun = async () => await Promise.resolve({ status: LOCKED_KEYCHAIN_STATUS, stdout: "", stderr: "" });
+    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" } }), {
+      context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
+    }).config;
+    const failure: unknown = await api.identity.remove({ name: "client", confirm: true }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(failure).toMatchObject({ code: "INTERNAL_SERVER_ERROR" });
+    expect(failure).toHaveProperty("message", expect.stringContaining('Removed identity "client", but could not delete its cached credential (identity work) from the Keychain'));
+    expect(failure).toHaveProperty("message", expect.stringContaining(`security delete-generic-password -s '${KEYCHAIN_CACHE_SERVICE}' -a 'identity work'`));
+    expect(fs.existsSync(path.join(paths.identitiesDir, "work"))).toBe(false);
   });
 });

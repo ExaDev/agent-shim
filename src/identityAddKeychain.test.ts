@@ -6,10 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CliError, EXIT_FAILURE } from "./cliError";
 import { reportFatalError } from "./cliReport";
 import { runIdentityWizard, tryRunAtIdentityShortcut } from "./identityManager";
-import { renameIdentity } from "./identityRename";
+import { moveIdentity } from "./identityRename";
 import { createWorld, type World } from "./identityRenameTestWorld";
 import { IdentityAlreadyExistsError, InvalidIdentityNameError, addNewIdentity, identityExists } from "./identityStore";
-import { createFakeKeychain, type FakeKeychain } from "./keychainTestWorld";
+import { KEYCHAIN_CACHE_SERVICE } from "./credentialCache";
+import { cacheEntryProbe, createFakeKeychain, type FakeKeychain } from "./keychainTestWorld";
 import { KeychainLoginError, KeychainLookupError, type KeychainProbe } from "./keychainLogin";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { buildProgram } from "./program";
@@ -86,6 +87,10 @@ describe("creating an identity while the Keychain still holds a login filed for 
     const printed = out.join("\n");
     expect(printed).toContain("If another identity holds a copy of that login");
     expect(printed).toContain("keeping it makes the two share one login");
+    // Only --move copies a login, so it is the one rename that can leave two items holding one.
+    expect(printed).toContain("as an identity moved with `identity rename --move` does when its old item could not be deleted");
+    // The login is filed for the directory, which only a --move or a removal leaves behind.
+    expect(printed).toContain("left by an identity stored there that was moved with `identity rename --move` or removed.");
     expect(printed).not.toMatch(/rotat|refresh token|invalidat/u);
   });
 
@@ -94,13 +99,14 @@ describe("creating an identity while the Keychain still holds a login filed for 
     const add = program.commands.find((command) => command.name() === "identity")?.commands.find((command) => command.name() === "add");
     const option = add?.options.find((candidate) => candidate.long === "--keep-keychain-login");
     expect(option?.description).toContain("If another identity holds that login, the two share it");
+    expect(option?.description).toContain("left by an identity stored there that was moved with `identity rename --move` or removed");
   });
 
-  it("is allowed with --keep-keychain-login, which says the login is wanted, without asking the Keychain anything", async () => {
+  it("is allowed with --keep-keychain-login, which says the login is wanted, asking the Keychain only, by attributes, whether it caches a credential for the id", async () => {
     keychain.seed(service("work"), "alex", LOGIN_BLOB);
     expect(await run(["identity", "add", "work", "--keep-keychain-login"])).toBe(0);
     expect(identityExists(paths, "work")).toBe(true);
-    expect(keychain.calls).toEqual([]);
+    expect(keychain.calls).toEqual([cacheEntryProbe("identity work")]);
     expect(keychain.items.has(service("work"))).toBe(true);
     expect(out).toContain('Created identity "work".');
   });
@@ -140,7 +146,7 @@ describe("creating an identity while the Keychain still holds a login filed for 
   it("asks the Keychain for attributes only, never for the login, and the message carries none of it", async () => {
     keychain.seed(service("work"), "alex", LOGIN_BLOB);
     await run(["identity", "add", "work"]);
-    expect(keychain.calls).toEqual([{ command: "security", args: ["find-generic-password", "-s", service("work")] }]);
+    expect(keychain.calls).toEqual([cacheEntryProbe("identity work"), { command: "security", args: ["find-generic-password", "-s", service("work")] }]);
     expect(keychain.calls.some((call) => call.args.includes("-w") || call.args.includes("-g") || call.args[0] === "-i")).toBe(false);
     expect(out.join("\n")).not.toContain(LOGIN_BLOB);
   });
@@ -158,7 +164,7 @@ describe("creating an identity while the Keychain still holds a login filed for 
   it("is not refused for a login filed for a different directory, and asks only about its own", async () => {
     keychain.seed(service("other"), "alex", LOGIN_BLOB);
     expect(await run(["identity", "add", "work"])).toBe(0);
-    expect(keychain.calls.map((call) => call.args[2])).toEqual([service("work")]);
+    expect(keychain.calls.map((call) => call.args[2])).toEqual([KEYCHAIN_CACHE_SERVICE, service("work")]);
   });
 
   it("asks nothing of the Keychain off macOS", () => {
@@ -267,7 +273,7 @@ describe("creating an identity while the Keychain still holds a login filed for 
     it("does not ask the Keychain a second time after the question, since the check was made before it", async () => {
       const { prompts } = askedPrompts(["create", "skip"]);
       await runIdentityWizard(prompts, paths, "work", darwin);
-      expect(keychain.calls).toEqual([{ command: "security", args: ["find-generic-password", "-s", service("work")] }]);
+      expect(keychain.calls).toEqual([cacheEntryProbe("identity work"), { command: "security", args: ["find-generic-password", "-s", service("work")] }]);
     });
 
     it("is not asked at all when the person declines, and creates nothing", async () => {
@@ -283,7 +289,7 @@ describe("creating an identity while the Keychain still holds a login filed for 
       try {
         const oldService = claudeCodeKeychainService(renamed.directory("work"));
         const stubborn = { run: (command: string, args: readonly string[], input?: string) => (args[0] === "delete-generic-password" ? { status: 1, stdout: "", stderr: "denied" } : renamed.keychain.run.run(command, args, input)) };
-        const report = await renameIdentity(renamed.paths, "work", "client", renamed.ports({ run: stubborn }));
+        const report = await moveIdentity(renamed.paths, "work", "client", renamed.ports({ run: stubborn }));
         const warning = report.warnings.find((entry) => entry.includes(oldService));
         expect(warning).toContain("could not be deleted");
         expect(warning).not.toContain("harmless");

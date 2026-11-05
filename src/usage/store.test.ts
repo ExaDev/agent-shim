@@ -164,15 +164,16 @@ describe("createUsageStore", () => {
     expect(fs.readdir(paths.usageSnapshotsDir)).toEqual([]);
   });
 
-  it("logs the record but names no snapshot after an identity that is not a valid file name", () => {
+  it("logs the record but names no snapshot after an identity that is not a valid directory id, while writing snapshots for legacy or hand-made directory ids", () => {
     const { fs, logged, store } = harness();
     const traversal = makeRecord({ identity: "../escape" });
 
     store.record(traversal);
+    store.record(makeRecord({ identity: "-work" }));
 
-    expect(readUsageLog(fs, paths.usageLogDir).records).toEqual([traversal]);
-    expect(fs.readdir(paths.usageSnapshotsDir)).toEqual([]);
-    expect(logged).toEqual(['usage: no snapshot for identity "../escape", which is not a valid identity name']);
+    expect(readUsageLog(fs, paths.usageLogDir).records.map((record) => record.identity)).toEqual(["../escape", "-work"]);
+    expect(fs.readdir(paths.usageSnapshotsDir)).toEqual(["-work.json"]);
+    expect(logged).toEqual(['usage: no snapshot for identity id "../escape", which is not a valid identity id']);
   });
 
   it("replaces an unreadable snapshot with a fresh one and says so", () => {

@@ -63,6 +63,8 @@ describe("planKeychainLogin", () => {
     const keychain = seeded();
     keychain.seed(TO_SERVICE, "alex", "left over from a removed identity");
     expect(() => planKeychainLogin(keychain.run, FROM_DIR, TO_DIR)).toThrow(/already holds a login/);
+    // Removing an identity deletes its cached credential but not its Claude Code login, which is what is left here.
+    expect(() => planKeychainLogin(keychain.run, FROM_DIR, TO_DIR)).toThrow("left by an identity stored there that was removed, since `identity remove` does not delete the Claude Code login");
   });
 });
 

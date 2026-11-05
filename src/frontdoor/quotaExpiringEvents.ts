@@ -1,7 +1,7 @@
-import { QUOTA_EXPIRING_EVENT_SOURCE, USAGE_EVENT_SOURCE, type QuotaExpiringEvent } from "./eventSchemas";
+import { QUOTA_EXPIRING_EVENT_SOURCE, USAGE_EVENT_SOURCE, UsageChangeEventSchema, type QuotaExpiringEvent } from "./eventSchemas";
 import type { DoorEventHub } from "./eventHub";
 import { FIVE_HOUR_WINDOW_MS, SEVEN_DAY_WINDOW_MS } from "../usage/pick";
-import { UsageSnapshotSchema, type UsageSnapshot } from "../usage/schema";
+import type { UsageSnapshot } from "../usage/schema";
 
 /**
  * The expiring-quota publisher: an identity's window with allowance still unspent that is about to reset, published once when it enters its final span, so a scheduler can spend what would otherwise be lost. Computed from the same per-identity snapshots and unified windows the pool ranking reads (`rankPool`'s own inputs), without the ranking itself: the event is finer than a pick, one identity, one provider, one window, independent of any pool.
@@ -33,15 +33,15 @@ interface WindowView {
   readonly resetsAtMs: number;
 }
 
-/** Creates the expiring-quota publisher. One per door process, checked on the supervisor's tick. */
-export function createQuotaExpiringPublisher(hub: DoorEventHub, deps: { readonly seed: readonly UsageSnapshot[]; readonly now: () => number }): QuotaExpiringPublisher {
+/** Creates the expiring-quota publisher. One per door process, checked on the supervisor's tick. Snapshots are held by identity id, and `nameOf` names the identity of an id when an event is published, so a rename since the snapshot was written shows. */
+export function createQuotaExpiringPublisher(hub: DoorEventHub, deps: { readonly seed: readonly UsageSnapshot[]; readonly now: () => number; readonly nameOf: (id: string) => string | undefined }): QuotaExpiringPublisher {
   const publisher = hub.publisher(QUOTA_EXPIRING_EVENT_SOURCE);
   const latest = new Map<string, UsageSnapshot>();
   for (const snapshot of deps.seed) {
     latest.set(snapshot.identity, snapshot);
   }
   hub.subscribe([USAGE_EVENT_SOURCE], (event) => {
-    const snapshot = UsageSnapshotSchema.parse(event.payload);
+    const snapshot = UsageChangeEventSchema.parse(event.payload);
     latest.set(snapshot.identity, snapshot);
   });
   /** The reset instants already published, so one span publishes once; a new reset instant (the next window) is a new key and publishes again. */
@@ -65,8 +65,8 @@ export function createQuotaExpiringPublisher(hub: DoorEventHub, deps: { readonly
   return {
     check: () => {
       const now = deps.now();
-      for (const identity of [...latest.keys()].sort()) {
-        const snapshot = latest.get(identity);
+      for (const id of [...latest.keys()].sort()) {
+        const snapshot = latest.get(id);
         if (snapshot === undefined) {
           continue;
         }
@@ -75,12 +75,13 @@ export function createQuotaExpiringPublisher(hub: DoorEventHub, deps: { readonly
           if (view.utilization >= 1 || view.resetsAtMs <= now || view.resetsAtMs - now >= view.spanMs * QUOTA_EXPIRING_WINDOW_FRACTION) {
             continue;
           }
-          const key = `${identity}:${provider}:${view.window}:${String(view.resetsAtMs)}`;
+          const key = `${id}:${provider}:${view.window}:${String(view.resetsAtMs)}`;
           if (announced.has(key)) {
             continue;
           }
           announced.add(key);
-          publisher.publish({ identity, provider, window: view.window, utilization: view.utilization, resetsAt: new Date(view.resetsAtMs).toISOString(), observedAt: now } satisfies QuotaExpiringEvent);
+          const name = deps.nameOf(id);
+          publisher.publish({ id, ...(name === undefined ? {} : { name }), provider, window: view.window, utilization: view.utilization, resetsAt: new Date(view.resetsAtMs).toISOString(), observedAt: now } satisfies QuotaExpiringEvent);
         }
       }
     },

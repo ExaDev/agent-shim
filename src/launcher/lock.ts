@@ -38,17 +38,19 @@ export class IdentityLockLostError extends CliError {
   }
 }
 
-/** Raised when another process holds the identity's lock and did not release it within the retry budget. */
+/** Raised when another process holds the identity's lock and did not release it within the retry budget. `message`, when given, says what holds a lock that is not an identity's resync lock (see `IdentityNamesLockBusyError`). */
 export class IdentityLockBusyError extends CliError {
   constructor(
     readonly identity: string,
     readonly lockPath: string,
     readonly holderPid: number | undefined,
+    message?: string,
   ) {
     super(
-      `Another agent-shim resync is already running for identity "${identity}"` +
-        (holderPid === undefined ? "" : ` (pid ${String(holderPid)})`) +
-        `. Its lock at ${lockPath} was still held after the full retry budget; nothing was changed.`,
+      message ??
+        `Another agent-shim resync is already running for the identity stored under identities/${identity}` +
+          (holderPid === undefined ? "" : ` (pid ${String(holderPid)})`) +
+          `. Its lock at ${lockPath} was still held after the full retry budget; nothing was changed.`,
     );
     this.name = "IdentityLockBusyError";
   }

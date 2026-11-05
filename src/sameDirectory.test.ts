@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ignoresCase, sameDirectory } from "./sameDirectory";
 
+
 describe("sameDirectory", () => {
   let root: string;
 
@@ -24,6 +25,16 @@ describe("sameDirectory", () => {
     expect(sameDirectory(path.join(root, "a"), path.join(root, "b"))).toBe(false);
     expect(sameDirectory(path.join(root, "a"), path.join(root, "missing"))).toBe(false);
     expect(sameDirectory(path.join(root, "missing"), path.join(root, "also-missing"))).toBe(false);
+  });
+
+  it("is false, not thrown, for a path that cannot be reached: a cycle of links, or a path through a file", () => {
+    fs.mkdirSync(path.join(root, "a"));
+    fs.symlinkSync(path.join(root, "loop-b"), path.join(root, "loop-a"));
+    fs.symlinkSync(path.join(root, "loop-a"), path.join(root, "loop-b"));
+    fs.writeFileSync(path.join(root, "file"), "");
+    expect(sameDirectory(path.join(root, "loop-a"), path.join(root, "loop-b"))).toBe(false);
+    expect(sameDirectory(path.join(root, "a"), path.join(root, "loop-a"))).toBe(false);
+    expect(sameDirectory(path.join(root, "file", "below"), path.join(root, "a"))).toBe(false);
   });
 
   it("is true for two spellings of a name only where the filesystem ignores case", () => {

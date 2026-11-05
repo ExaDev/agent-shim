@@ -1,4 +1,5 @@
 import path from "node:path";
+import { identityCacheKey } from "./credential";
 import { Option, type Command } from "commander";
 import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDeps } from "./cli/commandDeps";
 import { addCredentialCacheOptions, cacheChange, collectCredentialSource, CREDENTIAL_SOURCE_SYNTAX, type CredentialCacheOptions } from "./cli/credentialOption";
@@ -15,10 +16,11 @@ import { requireProviderExists } from "./providersStore";
 import { poolNameOf } from "./launcher/identity";
 import type { LayoutPaths } from "./paths";
 import { realFarmFs } from "./realPorts";
-import { describeIdentityRename, discardRenameJournal, renameIdentity, type IdentityRenamePorts } from "./identityRename";
+import { describeIdentityMove, describeIdentityRename, discardRenameJournal, moveIdentity, renameIdentity, type IdentityRenamePorts } from "./identityRename";
 import { realIdentityRenamePorts } from "./realIdentityRename";
-import { KEEP_KEYCHAIN_LOGIN_DESCRIPTION, type KeychainProbe } from "./keychainLogin";
-import { IdentityNotFoundError, InvalidIdentityNameError, identityExists, readIdentity, addIdentity, addNewIdentity, requireIdentityAddable, useIdentity, type IdentityListing, listIdentities, setDefaultConfigProfile, setIdentityLabel, setIdentityProvider, setAllowAmbientCredential, setIdentityCredential, setIdentityAnchors, removeIdentity, requireNoUnfinishedRenameNaming } from "./identityStore";
+import { KEEP_KEYCHAIN_LOGIN_DESCRIPTION, KeychainCacheDeleteError, type KeychainProbe } from "./keychainLogin";
+import { InvalidIdentityNameError, REMOVED_STATE, identityExists, readIdentity, addIdentity, addNewIdentity, requireIdentityAddable, useIdentity, type IdentityListing, listIdentities, setDefaultConfigProfile, setIdentityLabel, setIdentityProvider, setAllowAmbientCredential, setIdentityCredential, setIdentityAnchors, removeIdentityWithLockHeld, requireNoUnfinishedRenameNaming, identityDirectory, requireIdentityId, identityNotFound } from "./identityStore";
+import { realIdentityNamesLockPorts, withIdentityNamesLock } from "./identityNamesLock";
 import { describeAccountHolder, describeIdentityAccount, groupByLogin, loginKeyOf, readIdentityAccount, summariseIdentityAccount, type IdentityAccountRead, type IdentityAccountSummary } from "./identityAccounts";
 import { describeAccountPlan } from "./usage/accountDescription";
 import { ANCHOR_SYNTAX, formatAnchor } from "./usage/anchor";
@@ -43,7 +45,7 @@ export async function runIdentityWizard(
     throw new InvalidIdentityNameError(name);
   }
   // Refused here, before the question, so that nobody is asked to create what would then be refused; the refusal names the flag of `identity add` that keeps a login on purpose, since this offer has none.
-  requireIdentityAddable(paths, name, keychain, false);
+  const checkedId = requireIdentityAddable(paths, name, keychain, false);
   const choice = await prompts.select({
     message: `No identity named "${name}" exists yet. Create it now?`,
     options: [
@@ -55,7 +57,7 @@ export async function runIdentityWizard(
     return false;
   }
 
-  addIdentity(paths, name);
+  addIdentity(paths, name, { checkedId });
 
   const profileChoice = await prompts.select({
     message: `Create a default configuration profile for "${name}"?`,
@@ -93,7 +95,7 @@ async function selectIdentity(deps: CommandDeps, name: string, keychain: Keychai
       throw new PromptCancelledError();
     }
   } else {
-    throw new IdentityNotFoundError(name);
+    throw identityNotFound(deps.paths, name);
   }
   reportMutation(json, { action: "selected", kind: "identity", name }, () => {
     console.log(`Active identity is now "${name}".`);
@@ -123,6 +125,9 @@ export async function tryRunAtIdentityShortcut(deps: CommandDeps, argv: readonly
 interface IdentityView {
   readonly name: string;
   readonly active: boolean;
+  /** The identity's storage id: the name of its directory under the identities directory, chosen when it was created and kept by a rename, so it names the identity in everything filed on disk or held by a running session (`CLAUDE_CONFIG_DIR`, the usage snapshot and the usage log). */
+  readonly id: string;
+  /** The identity's directory, `<identities>/<id>`. */
   readonly directory: string;
   /** What the identity is for, in the person's words; display only. Absent when it has none. */
   readonly label?: string;
@@ -140,7 +145,10 @@ interface IdentityView {
   readonly accountProblem?: string;
   /** The other identities holding the same login (same account and organisation); absent when none does. */
   readonly sharesLoginWith?: readonly string[];
+  /** Why `identity.json` cannot be read, in place of what it holds; with `displaced`, where it is instead and what puts it back. */
   readonly problem?: string;
+  /** Set when the identity's `identity.json` is displaced (left only in a superseded farm by an interrupted resync) rather than unreadable. */
+  readonly displaced?: true;
 }
 
 /** One identity's listing entry with the stored login read for it. */
@@ -154,7 +162,8 @@ function toIdentityView(paths: LayoutPaths, { entry, read }: IdentityWithAccount
   return {
     name: entry.name,
     active: entry.isActive,
-    directory: path.join(paths.identitiesDir, entry.name),
+    id: entry.id,
+    directory: path.join(paths.identitiesDir, entry.id),
     ...(entry.problem === undefined
       ? {
           ...(entry.identity.label === undefined ? {} : { label: entry.identity.label }),
@@ -164,7 +173,7 @@ function toIdentityView(paths: LayoutPaths, { entry, read }: IdentityWithAccount
           ...(entry.identity.credential === undefined ? {} : { credential: summariseCredential(entry.identity.credential) }),
           ...(entry.identity.anchors === undefined ? {} : { anchors: entry.identity.anchors }),
         }
-      : { problem: entry.problem }),
+      : { problem: entry.problem, ...(entry.displaced === undefined ? {} : { displaced: entry.displaced }) }),
     ...(account === undefined ? {} : { account }),
     ...(read?.problem === undefined ? {} : { accountProblem: read.problem }),
     ...(sharesLoginWith.length === 0 ? {} : { sharesLoginWith }),
@@ -181,7 +190,7 @@ interface IdentityRow {
  * Gathers every identity's row, reading each one's stored login and ordering the list so identities sharing a login (the same account in the same organisation) sit together. Data only: `identity list` and `identity show` render what this returns.
  */
 function collectIdentityRows(paths: LayoutPaths, entries: readonly IdentityListing[]): readonly IdentityRow[] {
-  const items: readonly IdentityWithAccount[] = entries.map((entry) => ({ entry, read: readIdentityAccount(realFarmFs, paths.identitiesDir, entry.name) }));
+  const items: readonly IdentityWithAccount[] = entries.map((entry) => ({ entry, read: readIdentityAccount(realFarmFs, paths.identitiesDir, entry.id) }));
   const loginOf = (item: IdentityWithAccount): string | undefined => (item.read?.account === undefined ? undefined : loginKeyOf(item.read.account));
   return groupByLogin(items, loginOf).map((item) => {
     const login = loginOf(item);
@@ -190,13 +199,14 @@ function collectIdentityRows(paths: LayoutPaths, entries: readonly IdentityListi
   });
 }
 
-/** Renders one identity as the single line `identity list` prints for it, its account details last. */
-function formatIdentityLine(entry: IdentityListing, view: IdentityView): string {
+/** Renders one identity as the single line `identity list` prints for it, its account details last. `shared` says another listed identity claims the same name. The id follows the name whenever it differs from it or the name is shared, so two identities claiming one name can be told apart and renamed by id (`identity rename <id> <new> --id`). */
+function formatIdentityLine(entry: IdentityListing, view: IdentityView, shared: boolean): string {
   const marker = entry.isActive ? "* " : "  ";
+  const named = entry.id === entry.name && !shared ? entry.name : `${entry.name} (id: ${entry.id})`;
   const account = view.account === undefined ? "" : `  ${describeIdentityAccount(view.account)}`;
   const accountProblem = view.accountProblem === undefined ? "" : `  [account unreadable: ${view.accountProblem}]`;
   if (entry.problem !== undefined) {
-    return `${marker}${entry.name} [unreadable: ${entry.problem}]${account}${accountProblem}`;
+    return `${marker}${named} [${entry.displaced === undefined ? "unreadable" : "displaced"}: ${entry.problem}]${account}${accountProblem}`;
   }
   const label = entry.identity.label === undefined ? "" : ` (label: ${entry.identity.label})`;
   const defaultProfile =
@@ -204,7 +214,7 @@ function formatIdentityLine(entry: IdentityListing, view: IdentityView): string 
   const provider = entry.identity.provider === undefined ? "" : ` (provider: ${entry.identity.provider})`;
   const ambient = entry.identity.allowAmbientCredential ? " [allows ambient credential]" : "";
   const credential = entry.identity.credential === undefined ? "" : ` [credential ${describeCredential(entry.identity.credential)}]`;
-  return `${marker}${entry.name}${label}${defaultProfile}${provider}${ambient}${credential}${account}${accountProblem}`;
+  return `${marker}${named}${label}${defaultProfile}${provider}${ambient}${credential}${account}${accountProblem}`;
 }
 
 /** Options `identity set` accepts. `label` is `false` for `--no-label`, `defaultProfile` is `false` for `--no-default-profile`, `provider` is `false` for `--no-provider`, `credential` is `false` for `--no-credential` and `anchor` is `false` for `--no-anchor`. */
@@ -219,9 +229,13 @@ interface IdentitySetOptions extends CredentialCacheOptions {
   readonly json?: boolean;
 }
 
-/** What `identity rename --help` says it does, as the README and the configuration model describe it: a running session and a starting launch both refuse it, and a rename that was interrupted is finished by running it again. */
+/** What `identity rename --help` says it does, as the README and the configuration model describe it: the name and its references change and the directory stays, so running sessions are unaffected; `--move` is the physical rename. */
 const RENAME_DESCRIPTION =
-  "Rename an identity: move its directory, carry its login across and rewrite every reference to its name. Refused while a session is running on it or a launch is starting on it. A rename that was interrupted is finished by running the same command again.";
+  "Rename an identity: change its name and rewrite every reference to it. Its directory, login and usage stay where they are, so it goes ahead while sessions run on it. A rename that was interrupted is finished by running the same command again.";
+
+/** What `--move` does, as `moveIdentity` does it. */
+const MOVE_DESCRIPTION =
+  "Also move the identity's directory to the new name and carry its login across. Only for an identity whose directory has its name; refused while a session is running on it or a launch is starting on it. One that was interrupted is finished by running the same command again.";
 
 /** What `--discard-journal` does and exactly when it accepts and refuses, as `discardRenameJournal` checks it: it removes a record and nothing else. */
 const DISCARD_JOURNAL_DESCRIPTION =
@@ -269,10 +283,14 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
           return;
         }
         for (const row of rows) {
-          console.log(formatIdentityLine(row.entry, row.view));
+          console.log(formatIdentityLine(row.entry, row.view, entries.some((other) => other.id !== row.entry.id && other.name === row.entry.name)));
         }
-        if (entries.some((entry) => entry.problem !== undefined)) {
-          console.log("\nRun `agent-shim doctor` for the full detail on every unreadable entry.");
+        const kinds = [
+          ...(entries.some((entry) => entry.problem !== undefined && entry.displaced === undefined) ? ["unreadable"] : []),
+          ...(entries.some((entry) => entry.displaced !== undefined) ? ["displaced"] : []),
+        ];
+        if (kinds.length > 0) {
+          console.log(`\nRun \`agent-shim doctor\` for the full detail on every ${kinds.join(" or ")} entry.`);
         }
       }),
     ["agent-shim identity list", "agent-shim identity list --json"],
@@ -284,9 +302,10 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
       .description("Show one identity's settings and directory.")
       .option("--json", "Print the identity as JSON.")
       .action((name: string, options: Readonly<{ json?: boolean }>) => {
-        const row = collectIdentityRows(paths, listIdentities(paths)).find((candidate) => candidate.entry.name === name);
+        const id = requireIdentityId(paths, name);
+        const row = collectIdentityRows(paths, listIdentities(paths)).find((candidate) => candidate.entry.id === id);
         if (row === undefined) {
-          throw new IdentityNotFoundError(name);
+          throw identityNotFound(paths, name);
         }
         const { entry, view } = row;
         if (options.json === true) {
@@ -313,7 +332,7 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
           console.log(`Shares login with: ${view.sharesLoginWith.join(", ")}`);
         }
         if (view.problem !== undefined) {
-          console.log(`Unreadable: ${view.problem}`);
+          console.log(`${view.displaced === undefined ? "Unreadable" : "Displaced"}: ${view.problem}`);
           return;
         }
         console.log(`Label: ${view.label ?? "(none)"}`);
@@ -367,7 +386,7 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
           );
         }
         if (!identityExists(paths, name)) {
-          throw new IdentityNotFoundError(name);
+          throw identityNotFound(paths, name);
         }
         const label = typeof options.label === "string" ? IdentityLabelSchema.safeParse(options.label) : undefined;
         if (label?.success === false) {
@@ -443,17 +462,29 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
     identity
       .command("remove <name>")
       .description(
-        "Delete an identity and its directory, including its credentials and anything it does not share with ~/.claude. Shared data in ~/.claude is kept.",
+        `Delete an identity and its directory, including its credentials and anything it does not share with ~/.claude, and ${REMOVED_STATE}. Shared data in ~/.claude is kept.`,
       )
       .option("--yes", "Remove without asking for confirmation (required when standard input is not a terminal).")
       .option("--json", "Print the result as JSON.")
       .action(async (name: string, options: Readonly<{ yes?: boolean; json?: boolean }>) => {
         requireNoUnfinishedRenameNaming(paths, name, "remove");
-        if (!identityExists(paths, name)) {
-          throw new IdentityNotFoundError(name);
+        const id = requireIdentityId(paths, name);
+        await confirmRemoval(deps, options.yes, `identity "${name}", its directory ${identityDirectory(paths, id)}, and ${REMOVED_STATE}`);
+        withIdentityNamesLock(paths, realIdentityNamesLockPorts, () => {
+        const removed = removeIdentityWithLockHeld(paths, name, realIdentityNamesLockPorts);
+        // The Keychain store holds a cached credential the store function cannot reach; forgetting it keeps a later identity given the same id from reading it.
+        if (renamePorts.credentialCache.platform === "darwin") {
+          // The identity is removed by now, so a delete that fails says so beside the command that deletes the entry left behind.
+          try {
+            renamePorts.credentialCache.port.remove("keychain", identityCacheKey(removed));
+          } catch (error: unknown) {
+            if (error instanceof KeychainCacheDeleteError) {
+              throw error.afterRemoving(name);
+            }
+            throw error;
+          }
         }
-        await confirmRemoval(deps, options.yes, `identity "${name}" and its directory ${path.join(paths.identitiesDir, name)}`);
-        removeIdentity(paths, name);
+        });
         reportMutation(options.json, { action: "removed", kind: "identity", name }, () => {
           console.log(`Removed identity "${name}".`);
         });
@@ -465,12 +496,26 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
     identity
       .command("rename <old> <new>")
       .description(RENAME_DESCRIPTION)
-      .option("--dry-run", "Print what would be moved and rewritten, and change nothing.")
-      .option("--discard-journal", DISCARD_JOURNAL_DESCRIPTION)
+      .allowUnknownOption(true)
+      .option("--move", MOVE_DESCRIPTION)
+      .option("--id", "Take <old> as the identity's id (its directory under identities/) rather than its name: how one of two identities that claim one name is renamed. References to a name two identities claim are left as they are. Not with --move.")
+      .option("--dry-run", "Print what would be rewritten (and, with --move, moved), and change nothing.")
+      .option("--discard-journal", `Only with --move. ${DISCARD_JOURNAL_DESCRIPTION}`)
       .option("--json", "Print the result as JSON.")
-      .action(async (from: string, to: string, options: Readonly<{ dryRun?: boolean; discardJournal?: boolean; json?: boolean }>) => {
+      .action(async (from: string, to: string, options: Readonly<{ move?: boolean; id?: boolean; dryRun?: boolean; discardJournal?: boolean; json?: boolean }>) => {
         const dryRun = options.dryRun === true;
+        const move = options.move === true;
+        const byId = options.id === true;
+        if (!byId && from.startsWith("-")) {
+          throw new UsageError(`unknown option '${from}'`);
+        }
+        if (byId && move) {
+          throw new UsageError("--id renames the name alone, and --move moves an identity whose directory has its name; give one or the other.");
+        }
         if (options.discardJournal === true) {
+          if (!move) {
+            throw new UsageError("--discard-journal removes the record of an unfinished rename with --move, and is given with --move.");
+          }
           if (dryRun) {
             throw new UsageError("--discard-journal removes a record and has no dry run; it changes no identity.");
           }
@@ -480,19 +525,27 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
           });
           return;
         }
-        const report = dryRun ? describeIdentityRename(paths, from, to, renamePorts) : await renameIdentity(paths, from, to, renamePorts);
+        const report = move ? (dryRun ? describeIdentityMove(paths, from, to, renamePorts) : await moveIdentity(paths, from, to, renamePorts)) : dryRun ? describeIdentityRename(paths, from, to, renamePorts, { byId }) : await renameIdentity(paths, from, to, renamePorts, { byId });
         reportMutation(options.json, { action: dryRun ? "planned" : "renamed", kind: "identity", name: to, value: report }, () => {
-          console.log(dryRun ? `Would rename identity "${from}" to "${to}":` : `Renamed identity "${from}" to "${to}".`);
+          console.log(dryRun ? `Would rename identity "${report.from}" to "${to}":` : `Renamed identity "${report.from}" to "${to}".`);
           for (const step of report.steps) {
             console.log(`  ${step}`);
           }
           for (const warning of report.warnings) {
             console.warn(`warning: ${warning}`);
           }
-          console.log(dryRun ? "Nothing was changed." : `A committed .agent-shim.json that names "${from}" is yours to update, and the usage log keeps its past records under that name.`);
+          console.log(
+          dryRun
+            ? "Nothing was changed."
+            : move
+              ? `A committed .agent-shim.json that names "${report.from}" is yours to update, and the usage log keeps its past records under the identity's former id, "${report.from}".`
+              : report.shared
+                ? `Another identity also has the name "${report.from}", so the references to it, here and in any committed .agent-shim.json, stay with that identity.`
+                : `A committed .agent-shim.json that names "${report.from}" is yours to update.`,
+        );
         });
       }),
-    ["agent-shim identity rename work client", "agent-shim identity rename work client --dry-run"],
+    ["agent-shim identity rename work client", "agent-shim identity rename work client --dry-run", "agent-shim identity rename work client --move"],
   );
 
   withExamples(
@@ -514,7 +567,8 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
         const result = await resolveFarmConflicts({
           fs: realFarmFs,
           identitiesDir: paths.identitiesDir,
-          identity: name,
+          // The farm and its superseded copies are filed under the identity's id.
+          identity: requireIdentityId(paths, name),
           classification: loadClassification(paths),
           decide: async (conflict) => {
             const choice = await deps.prompts.select<FarmConflictChoice>({

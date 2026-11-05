@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { CREDENTIAL_UNAVAILABLE_EXIT } from "./credential";
-import { discovered, FAKE_HOME, fakeCredentials, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv , fakeFrontDoorPort, reportedRow } from "./test-helpers";
+import { buildLayoutPaths } from "./paths";
+import { realIdentityNamesLockPorts } from "./identityNamesLock";
+import { createFakeFarmFs, discovered, FAKE_HOME, fakeCredentials, fakeFarm, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv , fakeFrontDoorPort, reportedRow } from "./test-helpers";
 
 const WORK_TOKEN = "oauth-work-token";
 
@@ -15,6 +20,71 @@ const workWithCredential = {
 };
 
 describe("runLauncher identity credential", () => {
+  it("registers an identity launch while holding the names lock", () => {
+    const farmFs = createFakeFarmFs();
+    const original = farmFs.mkdirPrivate;
+    let locked = false;
+    const farm = fakeFarm({ ...farmFs, mkdirPrivate: (directory) => {
+      if (directory === paths.launchesDir) locked = farmFs.lstat(`${paths.root}/.identity-names.lock`) !== undefined;
+      original(directory);
+    } });
+    runAndCaptureExit({ paths, fs: fakeFs(workWithCredential), farm, spawn: fakeSpawn(), proc: fakeProc({}, ["@work"]), log: fakeLog(), resolveClaudeBinary: () => discovered, credentials: fakeCredentials({ command: { stdout: `${WORK_TOKEN}\n` } }) });
+    expect(locked).toBe(true);
+  });
+  it("uses the caller's non-waiting names lock when a farm is present", () => {
+    const lockFs = createFakeFarmFs();
+    const credentials = fakeCredentials({ command: { stdout: `${WORK_TOKEN}\n` } });
+    let locked = false;
+    credentials.runCommand.mockImplementation(() => {
+      locked = lockFs.lstat(`${paths.root}/.identity-names.lock`) !== undefined;
+      return { status: 0, stdout: `${WORK_TOKEN}\n`, stderr: "", timedOut: false };
+    });
+    runAndCaptureExit({ paths, namesLock: { fs: lockFs, nowMs: () => Date.now(), pid: process.pid, isRunning: () => true, sleep: () => undefined, maxAttempts: 1 }, fs: fakeFs(workWithCredential), farm: fakeFarm(createFakeFarmFs()), spawn: fakeSpawn(), proc: fakeProc({}, ["@work"]), log: fakeLog(), resolveClaudeBinary: () => discovered, credentials });
+    expect(locked).toBe(true);
+  });
+  it("locks identity credential resolution by default without a farm runtime", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-launch-lock-default-"));
+    try {
+      const localPaths = buildLayoutPaths(root);
+      const credentials = fakeCredentials({ command: { stdout: `${WORK_TOKEN}\n` } });
+      let locked = false;
+      credentials.runCommand.mockImplementation(() => {
+        locked = fs.existsSync(path.join(root, ".identity-names.lock"));
+        return { status: 0, stdout: `${WORK_TOKEN}\n`, stderr: "", timedOut: false };
+      });
+      runAndCaptureExit({ paths: localPaths, fs: fakeFs({ [`${localPaths.identitiesDir}/work/identity.json`]: workWithCredential[`${paths.identitiesDir}/work/identity.json`] }), spawn: fakeSpawn(), proc: fakeProc({}, ["@work"]), log: fakeLog(), resolveClaudeBinary: () => discovered, credentials });
+      expect(locked).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+  it("locks identity credential resolution even without a farm runtime", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-launch-lock-"));
+    try {
+      const localPaths = buildLayoutPaths(root);
+      const credentials = fakeCredentials({ command: { stdout: `${WORK_TOKEN}\n` } });
+      let locked = false;
+      credentials.runCommand.mockImplementation(() => {
+        locked = fs.existsSync(path.join(root, ".identity-names.lock"));
+        return { status: 0, stdout: `${WORK_TOKEN}\n`, stderr: "", timedOut: false };
+      });
+      runAndCaptureExit({ paths: localPaths, namesLock: realIdentityNamesLockPorts, fs: fakeFs({ [`${localPaths.identitiesDir}/work/identity.json`]: workWithCredential[`${paths.identitiesDir}/work/identity.json`] }), spawn: fakeSpawn(), proc: fakeProc({}, ["@work"]), log: fakeLog(), resolveClaudeBinary: () => discovered, credentials });
+      expect(locked).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+  it("holds the names lock while resolving an identity credential", () => {
+    const farmFs = createFakeFarmFs();
+    const credentials = fakeCredentials({ command: { stdout: `${WORK_TOKEN}\n` } });
+    let locked = false;
+    credentials.runCommand.mockImplementation(() => {
+      locked = farmFs.lstat(`${paths.root}/.identity-names.lock`) !== undefined;
+      return { status: 0, stdout: `${WORK_TOKEN}\n`, stderr: "", timedOut: false };
+    });
+    runAndCaptureExit({ paths, fs: fakeFs(workWithCredential), farm: fakeFarm(farmFs), spawn: fakeSpawn(), proc: fakeProc({}, ["@work", "--print"]), log: fakeLog(), resolveClaudeBinary: () => discovered, credentials });
+    expect(locked).toBe(true);
+  });
   it("exports the identity's resolved token as CLAUDE_CODE_OAUTH_TOKEN in the child's environment only", () => {
     const spawn = fakeSpawn();
     const log = fakeLog();

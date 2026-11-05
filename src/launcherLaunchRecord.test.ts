@@ -4,8 +4,6 @@ import { prepareLaunch } from "./launcher";
 import type { FrontDoorPort } from "./launcher/ports";
 import { createFakeFarmFs, discovered, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, paths } from "./test-helpers";
 
-const RECORD = `${paths.launchesDir}/42.work.json`;
-
 function prepared(options: { readonly env?: Record<string, string>; readonly frontdoor?: FrontDoorPort } = {}) {
   const fs = createFakeFarmFs({});
   const plan = prepareLaunch({
@@ -29,16 +27,16 @@ describe("a launch's record", () => {
     const resynced = writes.findIndex((target) => target.includes(".work.scratch."));
     expect(recorded).toBeGreaterThanOrEqual(0);
     expect(resynced).toBeGreaterThan(recorded);
-    expect(JSON.parse(fs.readFileUtf8(RECORD) ?? "")).toMatchObject({ pid: 42, identity: "work" });
+    expect(JSON.parse(fs.readFileUtf8(`${paths.launchesDir}/${String(fs.readdir(paths.launchesDir)[0])}`) ?? "")).toMatchObject({ pid: 42, identity: "work" });
   });
 
   it("stays while the child could still be starting or running, and goes when the plan is released", () => {
     const { fs, plan } = prepared();
-    expect(fs.lstat(RECORD)).toBeDefined();
+    expect(fs.readdir(paths.launchesDir)).toHaveLength(1);
     plan.release();
-    expect(fs.lstat(RECORD)).toBeUndefined();
+    expect(fs.readdir(paths.launchesDir)).toHaveLength(0);
     plan.release();
-    expect(fs.lstat(RECORD)).toBeUndefined();
+    expect(fs.readdir(paths.launchesDir)).toHaveLength(0);
   });
 
   it("goes when the launch fails after it was written, so a library host that outlives the failure does not block a rename for ever", () => {
@@ -52,7 +50,7 @@ describe("a launch's record", () => {
     expect(() =>
       prepareLaunch({ paths, fs: fakeFs({}), proc: fakeProc({}, ["@work"]), log: fakeLog(), resolveClaudeBinary: () => discovered, farm: fakeFarm(fs), frontdoor: failing }),
     ).toThrow("the front door is down");
-    expect(fs.lstat(RECORD)).toBeUndefined();
+    expect(fs.readdir(paths.launchesDir)).toHaveLength(0);
   });
 
   it("is not written for a launch that resyncs no farm", () => {

@@ -23,14 +23,20 @@ const ATOMIC_WRITE_OVERHEAD_BYTES = ".".length + ".json".length + ".".length + M
 const FARM_SWAP_OVERHEAD_BYTES = ".".length + ".previous.".length + MAX_PID_DIGITS + ".".length + UUID_CHARS;
 
 /**
- * The longest a name may be, in bytes of its UTF-8 encoding (the limit is on bytes, and a name the contained rule allows can hold any characters): a component of 255 bytes less the most any file derived from a name adds to it. A longer name would pass the shape only to fail on creation or on the first launch with a raw system error from a derived file.
+ * The longest a name may be, in bytes of its UTF-8 encoding (the limit is on bytes, and a name the contained rule allows can hold any characters): a component of 255 bytes less the most a file derived from a name adds to it, the atomic write's temporary file or the farm swap's directory. The credential cache's file adds less (`identity_` or `provider_`, and `.json`), and its write's temporary file is named apart from the name, so neither bounds it. A longer name would pass the shape only to fail on creation or on the first launch with a raw system error from a derived file.
  */
 export const MAX_NAME_BYTES = FILESYSTEM_COMPONENT_BYTES - Math.max(ATOMIC_WRITE_OVERHEAD_BYTES, FARM_SWAP_OVERHEAD_BYTES);
+
+/** The characters a name may start with, as the body of a bracket expression that a regular expression and a POSIX shell pattern read alike: ASCII letters and digits. */
+export const FILE_NAME_FIRST_CHARS = "A-Za-z0-9";
+
+/** The characters a name may hold after its first, as the body of a bracket expression that a regular expression and a POSIX shell pattern read alike (the `-` last, so both read it as itself): ASCII letters, digits and `.`, `_`, `@`, `-`. */
+export const FILE_NAME_CHARS = "A-Za-z0-9._@-";
 
 /**
  * The shape of a name a project file may use, and a new profile, provider or identity may be given: a letter or digit first, then letters, digits, dots, dashes, underscores and at signs (an email address names its own identity, and an email-shaped identity name is offered as the default name of a profile, so the two share one rule; the first character stays a letter or digit because a leading `@` would collide with the `@name` selector syntax), no more than `MAX_NAME_BYTES` bytes. It can be neither empty, nor `.`, nor `..`, nor a hidden file, and it holds no path separator and no NUL, so it names one file inside the directory it is looked up in. A committed project file arrives with a clone, from whoever wrote the repository, so every name in one is held to this shape.
  */
-export const FILE_NAME_PATTERN = `[A-Za-z0-9][A-Za-z0-9._@-]{0,${String(MAX_NAME_BYTES - 1)}}`;
+export const FILE_NAME_PATTERN = `[${FILE_NAME_FIRST_CHARS}][${FILE_NAME_CHARS}]{0,${String(MAX_NAME_BYTES - 1)}}`;
 
 const FILE_NAME = new RegExp(`^${FILE_NAME_PATTERN}$`);
 
@@ -38,7 +44,7 @@ const FILE_NAME = new RegExp(`^${FILE_NAME_PATTERN}$`);
 export const FILE_NAME_RULE = `must start with a letter or digit, contain only letters, digits, dots, dashes, underscores and at signs, and be at most ${String(MAX_NAME_BYTES)} bytes`;
 
 /** What a name that fails `isStoredName` is told. */
-const STORED_NAME_RULE = `must be non-empty, at most ${String(MAX_NAME_BYTES)} bytes, not "." or "..", and contain no path separator or NUL`;
+export const STORED_NAME_RULE = `must be non-empty, at most ${String(MAX_NAME_BYTES)} bytes, not "." or "..", and contain no path separator or NUL`;
 
 /** Whether `name` has the shape a project file may use and a new profile, provider or identity may be given. */
 export function isFileName(name: string): boolean {

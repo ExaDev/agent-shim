@@ -23,6 +23,7 @@ import {
 import { CliError, UsageError } from "./cliError";
 import { canonicalProviderName, loadProviderAliases, readProviderAliases } from "./providerAliases";
 import { CREDENTIAL_UNAVAILABLE_EXIT, resolveCredential, type CredentialPort } from "./credential";
+import { createRealCredentialCache } from "./realCredentialCache";
 import type { ResolvedProvider } from "./launcher/flags";
 import type { FsPort } from "./launcher/ports";
 import { assembleCascade, type CascadeInput } from "./resolve/walk";
@@ -446,12 +447,13 @@ export function updateProvider(paths: LayoutPaths, name: string, input: UpdatePr
   return parsed.data;
 }
 
-/** Deletes a provider definition. Throws `ProviderNotFoundError` when it does not exist. */
+/** Deletes a provider definition and its file-cached credential, leaving another provider's entry in the same file alone. Throws `ProviderNotFoundError` when it does not exist. */
 export function removeProvider(paths: LayoutPaths, name: string): void {
   if (!providerExists(paths, name)) {
     throw new ProviderNotFoundError(name);
   }
   fs.rmSync(providerJsonPath(paths, name));
+  createRealCredentialCache(paths.root).remove("file", `provider ${name}`);
 }
 
 /**
@@ -550,7 +552,7 @@ export function resolveProvider(params: ResolveProviderParams): ProviderResoluti
   }
   const resolution = resolveCredential({ credential: definition.credential, env: params.env, port: params.credentials, subject: `provider ${name}` });
   if (!resolution.ok) {
-    return { ok: false, status: CREDENTIAL_UNAVAILABLE_EXIT, message: resolution.message };
+    return { ok: false, status: CREDENTIAL_UNAVAILABLE_EXIT, message: `agent-shim: ${resolution.message}` };
   }
   return { ok: true, provider: { name, definition, credential: resolution.credential }, warnings: resolution.credential.warnings };
 }
@@ -630,7 +632,7 @@ export function resolveRoutedProviderCredentials(params: ResolveRoutedProviderCr
     }
     const resolution = resolveCredential({ credential: definition.credential, env: params.env, port: params.credentials, subject: `provider ${name}` });
     if (!resolution.ok) {
-      failures.push(resolution.message.replace(/^agent-shim: /, ""));
+      failures.push(resolution.message);
       credentialFailure = true;
     }
   }

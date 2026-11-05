@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { CliError } from "./cliError";
 import { collectDoctorReport } from "./doctorReport";
-import { describeIdentityRename, discardRenameJournal, renameIdentity } from "./identityRename";
+import { describeIdentityMove, discardRenameJournal, moveIdentity } from "./identityRename";
 import { readRenameJournal, renameJournalFile, writeRenameJournal, type RenameJournal } from "./identityRenameJournal";
 import { LOGIN_SECRET, OWN_PID, createWorld, failingOnce, treeOf, type World } from "./identityRenameTestWorld";
 import { addIdentity, removeIdentity } from "./identityStore";
@@ -55,7 +55,7 @@ describe("the journal is written ahead of each step", () => {
         realFarmFs.writeFilePrivate(file, contents);
       },
     };
-    const report = await renameIdentity(world.paths, "work", "client", world.ports({ fs: watching }));
+    const report = await moveIdentity(world.paths, "work", "client", world.ports({ fs: watching }));
     const stepCount = written[0]?.length ?? 0;
     expect(stepCount).toBeGreaterThan(1);
     for (let index = 0; index < stepCount; index += 1) {
@@ -76,7 +76,7 @@ describe("the journal is written ahead of each step", () => {
         realFarmFs.writeFilePrivate(file, contents, options);
       },
     };
-    await renameIdentity(world.paths, "work", "client", world.ports({ fs: watching }));
+    await moveIdentity(world.paths, "work", "client", world.ports({ fs: watching }));
     const journalWrites = writes.filter((write) => write.file.startsWith(world.paths.identityRenamesDir));
     expect(journalWrites.length).toBeGreaterThan(2);
     expect(journalWrites.every((write) => write.durable)).toBe(true);
@@ -99,7 +99,7 @@ describe("the journal is written ahead of each step", () => {
         realFarmFs.rename(from, to);
       },
     };
-    await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: failing }))).rejects.toThrow(/Rolling back also failed/);
+    await expect(moveIdentity(world.paths, "work", "client", world.ports({ fs: failing }))).rejects.toThrow(/Rolling back also failed/);
     const journal = readRenameJournal(realFarmFs, renameJournalFile(world.paths.identityRenamesDir, "work", "client"));
     expect(journal?.steps.filter((step) => step.done).map((step) => step.description)).toEqual(["move identities/work to identities/client"]);
     // The step that failed was begun and could not be undone either, so it may be partly applied; every other step was undone and is no longer marked.
@@ -114,7 +114,7 @@ describe("a journal that shows a step begun but not done", () => {
 
   beforeEach(() => {
     world = createWorld("darwin");
-    before = describeIdentityRename(world.paths, "work", "client", world.ports()).steps;
+    before = describeIdentityMove(world.paths, "work", "client", world.ports()).steps;
   });
 
   afterEach(() => {
@@ -160,7 +160,7 @@ describe("a journal that shows a step begun but not done", () => {
       writeRenameJournal(realFarmFs, renameJournalFile(world.paths.identityRenamesDir, "work", "client"), journalWithStepBegun(index));
       const report = collectDoctorReport({ paths: world.paths, env: { PATH: "" } });
       const message = report.findings.find((entry) => entry.section === "identity" && entry.subject === "work" && entry.severity === "fail")?.message ?? "";
-      expect(message, description).toContain("Finish it with `agent-shim identity rename work client`");
+      expect(message, description).toContain("Finish it with `agent-shim identity rename work client --move`");
       expect(message, description).toContain("(1 of");
       expect(message, description).not.toContain("--discard-journal");
       expect(message, description).not.toContain("loses nothing");
@@ -178,13 +178,13 @@ describe("a journal that shows a step begun but not done", () => {
       return "";
     })();
     expect(refusal).toContain("Cannot remove identity \"work\"");
-    expect(refusal).toContain("Finish it with `agent-shim identity rename work client`");
+    expect(refusal).toContain("Finish it with `agent-shim identity rename work client --move`");
     expect(refusal).not.toContain("--discard-journal");
   });
 
   it("is carried into a run that finishes the rename, as applied, and is finished by it", async () => {
     writeRenameJournal(realFarmFs, renameJournalFile(world.paths.identityRenamesDir, "work", "client"), journalWithStepBegun(0));
-    await renameIdentity(world.paths, "work", "client", world.ports());
+    await moveIdentity(world.paths, "work", "client", world.ports());
     expect(fs.existsSync(world.directory("client"))).toBe(true);
     expect(readRenameJournal(realFarmFs, renameJournalFile(world.paths.identityRenamesDir, "work", "client"))).toBeUndefined();
     expect(path.basename(world.directory("client"))).toBe("client");
@@ -243,7 +243,7 @@ describe("a journal write that fails", () => {
 
   it("before the first step stops the rename with an error that says so and that nothing was changed, not with the bare error of the disk", async () => {
     const before = treeOf(world.root);
-    const message = await failureOf(async () => renameIdentity(world.paths, "work", "client", world.ports({ fs: failingJournalWrite(INITIAL_WRITE) })));
+    const message = await failureOf(async () => moveIdentity(world.paths, "work", "client", world.ports({ fs: failingJournalWrite(INITIAL_WRITE) })));
     expect(message).toContain("could not be written");
     expect(message).toContain("no space left on device");
     expect(message).toContain("the rename was rolled back and nothing was changed");
@@ -269,7 +269,7 @@ describe("a journal write that fails", () => {
 
   it("before the first step, when the file landed and the flush after it failed, leaves no journal behind to block other renames and the add of either name", async () => {
     const before = treeOf(world.root);
-    const message = await failureOf(async () => renameIdentity(world.paths, "work", "client", world.ports({ fs: landingThenFailing(INITIAL_WRITE) })));
+    const message = await failureOf(async () => moveIdentity(world.paths, "work", "client", world.ports({ fs: landingThenFailing(INITIAL_WRITE) })));
     expect(message).toContain("could not be written before the first step");
     expect(message).toContain("input/output error");
     expect(message).toContain("the rename was rolled back and nothing was changed");
@@ -294,8 +294,8 @@ describe("a journal write that fails", () => {
         realFarmFs.writeFilePrivate(file, contents);
       },
     };
-    await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: half }))).rejects.toThrow(/Rolling back also failed/);
-    const message = await failureOf(async () => renameIdentity(world.paths, "work", "client", world.ports({ fs: landingThenFailing(INITIAL_WRITE) })));
+    await expect(moveIdentity(world.paths, "work", "client", world.ports({ fs: half }))).rejects.toThrow(/Rolling back also failed/);
+    const message = await failureOf(async () => moveIdentity(world.paths, "work", "client", world.ports({ fs: landingThenFailing(INITIAL_WRITE) })));
     expect(message).toContain("could not be written before the first step");
     expect(message).toContain("the steps this run applied were rolled back; the rename it was finishing is still unfinished");
     const journal = readRenameJournal(realFarmFs, renameJournalFile(world.paths.identityRenamesDir, "work", "client"));
@@ -304,7 +304,7 @@ describe("a journal write that fails", () => {
 
   it("ahead of a step stops before the step runs, rolls back the steps before it, and says so", async () => {
     const before = treeOf(world.root);
-    const message = await failureOf(async () => renameIdentity(world.paths, "work", "client", world.ports({ fs: failingJournalWrite(BEGUN_WRITE_OF_SECOND_STEP) })));
+    const message = await failureOf(async () => moveIdentity(world.paths, "work", "client", world.ports({ fs: failingJournalWrite(BEGUN_WRITE_OF_SECOND_STEP) })));
     expect(message).toContain("could not be written");
     expect(message).toContain("no space left on device");
     expect(message).toContain("the rename was rolled back and nothing was changed");
@@ -314,7 +314,7 @@ describe("a journal write that fails", () => {
 
   it("after a step rolls that step back too, and says so", async () => {
     const before = treeOf(world.root);
-    const message = await failureOf(async () => renameIdentity(world.paths, "work", "client", world.ports({ fs: failingJournalWrite(DONE_WRITE_OF_FIRST_STEP) })));
+    const message = await failureOf(async () => moveIdentity(world.paths, "work", "client", world.ports({ fs: failingJournalWrite(DONE_WRITE_OF_FIRST_STEP) })));
     expect(message).toContain("could not be written");
     expect(message).toContain("the rename was rolled back and nothing was changed");
     expect(treeOf(world.root)).toEqual(before);
@@ -322,9 +322,9 @@ describe("a journal write that fails", () => {
 
   it("ahead of a step leaves a step that never ran unmarked in the journal a later write saves, so a rename that was rolled back can still be discarded", async () => {
     // The begun write of the second step fails, the first step is rolled back, and the record then cannot be removed: what is left on disk must show nothing begun.
-    const message = await failureOf(async () => renameIdentity(world.paths, "work", "client", world.ports({ fs: failingJournalWrite(BEGUN_WRITE_OF_SECOND_STEP, true) })));
+    const message = await failureOf(async () => moveIdentity(world.paths, "work", "client", world.ports({ fs: failingJournalWrite(BEGUN_WRITE_OF_SECOND_STEP, true) })));
     expect(message).toContain("could not be removed");
-    expect(message).toContain("agent-shim identity rename work client --discard-journal");
+    expect(message).toContain("agent-shim identity rename work client --move --discard-journal");
     const journal = readRenameJournal(realFarmFs, renameJournalFile(world.paths.identityRenamesDir, "work", "client"));
     expect(journal?.steps.filter((step) => step.started || step.done)).toEqual([]);
     expect(discardRenameJournal(world.paths, "work", "client", world.ports())).toEqual({ from: "work", to: "client" });
@@ -346,8 +346,8 @@ describe("a journal write that fails", () => {
         realFarmFs.writeFilePrivate(file, contents);
       },
     };
-    await expect(renameIdentity(world.paths, "work", "client", world.ports({ fs: half }))).rejects.toThrow(/Rolling back also failed/);
-    const message = await failureOf(async () => renameIdentity(world.paths, "work", "client", world.ports({ fs: failingJournalWrite(BEGUN_WRITE_OF_SECOND_STEP) })));
+    await expect(moveIdentity(world.paths, "work", "client", world.ports({ fs: half }))).rejects.toThrow(/Rolling back also failed/);
+    const message = await failureOf(async () => moveIdentity(world.paths, "work", "client", world.ports({ fs: failingJournalWrite(BEGUN_WRITE_OF_SECOND_STEP) })));
     expect(message).toContain("could not be written");
     expect(message).toContain("the steps this run applied were rolled back; the rename it was finishing is still unfinished");
     const journal = readRenameJournal(realFarmFs, renameJournalFile(world.paths.identityRenamesDir, "work", "client"));
@@ -382,7 +382,7 @@ describe("a resumed run that fails and rolls back, after an earlier run's Keycha
 
   it("keeps the copy marked begun in the journal it keeps, so --discard-journal still refuses a rename whose login is already under the new service", async () => {
     // The step that fails does so once, so its undo works and the rollback is complete.
-    const message = await renameIdentity(world.paths, "work", "client", world.ports({ fs: failingOnce(world) })).then(
+    const message = await moveIdentity(world.paths, "work", "client", world.ports({ fs: failingOnce(world) })).then(
       () => "",
       (error: unknown) => (error instanceof Error ? error.message : String(error)),
     );

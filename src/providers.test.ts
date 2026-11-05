@@ -334,13 +334,22 @@ describe("providers", () => {
   });
 
   describe("removeProvider", () => {
-    it("deletes the provider file and then reports it as gone", () => {
+    it("deletes the provider file and its own file-cached credential, leaving another provider's entry in the same file alone", () => {
       addProvider(paths, "z", zInput);
+      const cache = realCredentialCacheEnv(paths).port;
+      cache.write("file", "provider z", { token: "z-token", fetchedAt: 1, source: { env: "Z_API_TOKEN" } });
       removeProvider(paths, "z");
       expect(providerExists(paths, "z")).toBe(false);
+      expect(cache.read("file", "provider z")).toBeUndefined();
       expect(() => {
         removeProvider(paths, "z");
       }).toThrow(ProviderNotFoundError);
+
+      addProvider(paths, "a@b", zInput);
+      addProvider(paths, "a_b", zInput);
+      cache.write("file", "provider a_b", { token: "ab-token", fetchedAt: 1, source: { env: "Z_API_TOKEN" } });
+      removeProvider(paths, "a@b");
+      expect(cache.read("file", "provider a_b")?.token).toBe("ab-token");
     });
   });
 

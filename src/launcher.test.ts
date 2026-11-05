@@ -833,7 +833,7 @@ describe("runLauncher farm resync", () => {
 
     expect(code).toBe(1);
     expect(spawn.spawnSync).not.toHaveBeenCalled();
-    expect(log.errors[0]).toContain("already running for identity");
+    expect(log.errors[0]).toContain("already running for the identity stored under identities/work (pid");
   });
 });
 
@@ -843,9 +843,10 @@ describe("runLauncher crash recovery ordering", () => {
     const fs = createFakeFarmFs({
       [`${FAKE_CLAUDE_HOME}/skills/commit/SKILL.md`]: "commit",
       // Exactly what a crash between the swap's two renames leaves: no farm, and everything in a superseded copy.
-      [`${identitiesDir}/.work.previous.crashed/identity.json`]: '{"name":"work"}',
+      [`${identitiesDir}/.work.previous.4242.0f8fad5b-d9cb-469f-a165-70867728950e/identity.json`]: '{"name":"work"}',
     });
 
+    // The configuration port reads the same tree, so the identity is found by name in the superseded farm before recovery puts it back.
     let identityWasReadableWhenLoaded: boolean | undefined;
     const fsPort: FsPort = {
       readFileUtf8: () => undefined,
@@ -853,9 +854,10 @@ describe("runLauncher crash recovery ordering", () => {
         if (filePath === `${identitiesDir}/work/identity.json`) {
           identityWasReadableWhenLoaded = fs.lstat(filePath) !== undefined;
         }
-        return undefined;
+        const text = fs.readFileUtf8(filePath);
+        return text === undefined ? undefined : (JSON.parse(text) as unknown);
       },
-      readdir: () => [],
+      readdir: (dir) => fs.readdir(dir),
     };
 
     runAndCaptureExit({

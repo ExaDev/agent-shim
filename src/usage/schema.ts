@@ -51,7 +51,7 @@ export const UsageRecordSchema = z.strictObject({
   schemaVersion: VersionSchema,
   /** When the front door received the request. */
   at: InstantSchema,
-  /** The launching identity, when the launch resolved one. */
+  /** The id of the launching identity (the directory it is stored in, which a rename of its name keeps), when the launch resolved one: what the session's identity header carries. */
   identity: z.string().optional(),
   /** `anthropic` for an OAuth session's request to Claude Code's own API, otherwise the provider's name. */
   provider: z.string(),
@@ -234,7 +234,7 @@ export const AccountMetadataSchema = z.strictObject({
 export type AccountMetadata = z.infer<typeof AccountMetadataSchema>;
 
 /**
- * The latest state for one identity, rewritten atomically after each recorded response: the snapshot file other tools read (`~/.agent-shim/usage/snapshots/<identity>.json`) without shelling out to `agent-shim`.
+ * The latest state for one identity, rewritten atomically after each recorded response: the snapshot file other tools read (`~/.agent-shim/usage/snapshots/<id>.json`, named and keyed in `identity` by the identity's id) without shelling out to `agent-shim`.
  */
 export const UsageSnapshotSchema = z.strictObject({
   schemaVersion: VersionSchema,

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { ConfigProfileSchema, GlobalConfigSchema, ProviderSchema, isHttpProvider, isRouterProvider, type LaunchFlags, type ModelsConfig, type ModelsLayer } from "./config/schema";
+import { ConfigProfileSchema, GlobalConfigSchema, ProviderSchema, isHttpProvider, isRouterProvider, type CredentialCacheStore, type LaunchFlags, type ModelsConfig, type ModelsLayer, type Provider } from "./config/schema";
 import { applyPatch, writeJsonAtomic } from "./config/store";
 import { ConfigValidationError } from "./config/load";
 import { UsageError } from "./cliError";
@@ -128,16 +128,25 @@ function moveState(paths: LayoutPaths, from: string, to: string, ports: Provider
       }
     }
   }
-  const renamed = readProvider(paths, to);
+  let renamed: Provider | undefined;
+  try {
+    renamed = readProvider(paths, to);
+  } catch {
+    renamed = undefined;
+  }
   const cache = renamed === undefined || isRouterProvider(renamed) ? undefined : renamed.credential.cache;
-  if (cache !== undefined) {
-    const store = effectiveStore(cache, ports.credentialCache.platform);
+  const stores: readonly CredentialCacheStore[] = cache !== undefined && effectiveStore(cache, ports.credentialCache.platform) === "keychain" ? ["file", "keychain"] : ["file"];
+  let movedCache = false;
+  for (const store of stores) {
     const entry = ports.credentialCache.port.read(store, `provider ${from}`);
     if (entry !== undefined) {
       ports.credentialCache.port.write(store, `provider ${to}`, entry);
       ports.credentialCache.port.remove(store, `provider ${from}`);
-      moved.push("credential cache");
+      movedCache = true;
     }
+  }
+  if (movedCache) {
+    moved.push("credential cache");
   }
   return moved;
 }

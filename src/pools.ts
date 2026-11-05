@@ -4,7 +4,8 @@ import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDe
 import { UsageError } from "./cliError";
 import { collectRepeated, parseUtilisationPercent } from "./cli/parsers";
 import { POOL_PREFERENCES, POOL_SELECTOR_PREFIX, type Pool, type PoolPreference } from "./config/schema";
-import { readActiveIdentity, requireIdentityNames, useIdentity } from "./identityStore";
+import { identityIdOf, readActiveIdentity, requireIdentityNames, useIdentity } from "./identityStore";
+import type { AccountMetadata } from "./usage/schema";
 import { addPool, changePool, isPoolChange, poolPolicyOf, readPools, removePool, requirePool } from "./poolStore";
 import { poolMemberIdentity } from "./config/schema";
 import { realFarmFs, realFsPort } from "./realPorts";
@@ -28,8 +29,13 @@ function formatPoolPick(report: PoolPickReport, nowMs: number): string[] {
 }
 
 /** Warns on stderr, so `--json` output stays parseable, for each set of the pool's direct members that hold one login. The change is not refused: the pool is valid, only redundant. */
-function warnSharedLogins(paths: Pick<LayoutPaths, "identitiesDir">, poolName: string, members: readonly string[]): void {
-  for (const shared of sharedLoginMembers(members, (identity) => readIdentityAccount(realFsPort, paths.identitiesDir, identity)?.account)) {
+function warnSharedLogins(paths: LayoutPaths, poolName: string, members: readonly string[]): void {
+  // Members are names; each login is read from the directory of the member's id.
+  const loginOf = (identity: string): AccountMetadata | undefined => {
+    const id = identityIdOf(paths, identity);
+    return id === undefined ? undefined : readIdentityAccount(realFsPort, paths.identitiesDir, id)?.account;
+  };
+  for (const shared of sharedLoginMembers(members, loginOf)) {
     console.error(`agent-shim: warning: ${describeSharedLoginMembers(poolName, shared)}`);
   }
 }

@@ -21,7 +21,7 @@ function recordLine(identity: string, offsetMs: number, provider = "anthropic"):
 describe("loadPoolMembers", () => {
   it("carries a member with a corrupt snapshot as unreadable instead of failing the pick", () => {
     const fs = createFakeFarmFs({ [`${paths.usageSnapshotsDir}/work.json`]: "{ not json" });
-    const [member] = loadPoolMembers(fs, paths, ["work"], FAKE_NOW_MS);
+    const [member] = loadPoolMembers(fs, paths, ["work"], FAKE_NOW_MS, (name) => name);
     expect(member?.readError).toContain("not valid JSON");
   });
 
@@ -34,12 +34,24 @@ describe("loadPoolMembers", () => {
       recordLine("personal", -MINUTE_MS),
     ].join("");
     const fs = createFakeFarmFs({ [`${paths.usageLogDir}/${day}.1.jsonl`]: log });
-    const [member] = loadPoolMembers(fs, paths, ["work"], FAKE_NOW_MS);
+    const [member] = loadPoolMembers(fs, paths, ["work"], FAKE_NOW_MS, (name) => name);
     expect(member?.records.map((record) => record.at)).toEqual([iso(-MINUTE_MS)]);
   });
 
+  it("reads a member named by its name from where its state is filed, under the id the name resolves to", () => {
+    const day = iso(0).slice(0, "YYYY-MM-DD".length);
+    const fs = createFakeFarmFs({
+      [`${paths.usageSnapshotsDir}/work.json`]: JSON.stringify({ schemaVersion: 1, identity: "work", updatedAt: iso(-MINUTE_MS), providers: {} }),
+      [`${paths.usageLogDir}/${day}.1.jsonl`]: [recordLine("work", -MINUTE_MS), recordLine("client", -MINUTE_MS)].join(""),
+    });
+    const [member] = loadPoolMembers(fs, paths, ["client"], FAKE_NOW_MS, (name) => (name === "client" ? "work" : undefined));
+    expect(member?.identity).toBe("client");
+    expect(member?.snapshot?.identity).toBe("work");
+    expect(member?.records.map((record) => record.identity)).toEqual(["work"]);
+  });
+
   it("has no snapshot or account for an identity that was never recorded", () => {
-    const [member] = loadPoolMembers(createFakeFarmFs({}), paths, ["work"], FAKE_NOW_MS);
+    const [member] = loadPoolMembers(createFakeFarmFs({}), paths, ["work"], FAKE_NOW_MS, (name) => name);
     expect(member).toEqual({ identity: "work", records: [] });
   });
 });
@@ -129,7 +141,7 @@ describe("rankPoolGraph", () => {
       poolName,
       nowMs: FAKE_NOW_MS,
       resuming: false,
-      identityExists: () => true,
+      identityIdOf: (name) => name,
       ...(extra.sticky === undefined ? {} : { sticky: { identity: extra.sticky.identity, at: iso(extra.sticky.atMs) } }),
     });
   }
@@ -192,7 +204,7 @@ describe("rankPoolGraph", () => {
       poolName: "outer",
       nowMs: FAKE_NOW_MS,
       resuming: false,
-      identityExists: (name) => name !== "gone",
+      identityIdOf: (name) => (name === "gone" ? undefined : name),
     });
     expect(missing).toEqual([{ pool: "fleet", identity: "gone" }]);
     expect(ranking.pick).toMatchObject({ identity: "kept" });

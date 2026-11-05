@@ -81,7 +81,7 @@ export function credentialsFilePath(farmRoot: string): string {
 /**
  * Reads whether an identity is signed in from where Claude Code keeps the login, without starting `claude` and without reading the token: the Keychain is asked for the item's existence only and the file is checked for presence, never opened.
  *
- * `farmRoot` is the identity's own directory (`identitiesDir/<name>`), which is both the Keychain account name and the directory a `.credentials.json` lives in.
+ * `farmRoot` is the identity's own directory (`identitiesDir/<id>`), whose path the Keychain item's service name is derived from (`claudeCodeKeychainService`) and in which a `.credentials.json` lives.
  */
 export function identitySignIn(
   fs: Pick<FarmFs, "lstat">,

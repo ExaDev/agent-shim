@@ -1,9 +1,8 @@
 import { CliError } from "./cliError";
 import type { RunPort } from "./launcher/ports";
 import { claudeCodeKeychainService } from "./usage/signIn";
-
-/** The exit status `security find-generic-password` and `delete-generic-password` give an item that is not there (`errSecItemNotFound`). Any other failure, a locked Keychain included, is not an absence. */
-const ITEM_NOT_FOUND_STATUS = 44;
+import { KEYCHAIN_CACHE_SERVICE, KEYCHAIN_ITEM_NOT_FOUND_STATUS } from "./credentialCache";
+import { shellQuoted } from "./shellQuote";
 
 /**
  * The longest line `security -i` keeps, in characters, measured against the real tool: it cuts a longer line at this length and treats the rest as further input, so a command that does not fit would store a truncated secret.
@@ -71,7 +70,7 @@ function lookup(run: RunPort, service: string): Lookup {
   if (result.status === 0) {
     return { found: true, attributes: result.stdout };
   }
-  if (result.status === ITEM_NOT_FOUND_STATUS) {
+  if (result.status === KEYCHAIN_ITEM_NOT_FOUND_STATUS) {
     return { found: false };
   }
   throw new KeychainLookupError(`Could not look up the Keychain item ${service}: security exited ${statusPhrase(result.status)}${describe(result.stderr)}.`);
@@ -109,14 +108,9 @@ export function keychainDeleteCommand(service: string, account: string | undefin
   return `security delete-generic-password -s ${shellQuoted(service)}${account === undefined ? "" : ` -a ${shellQuoted(account)}`}`;
 }
 
-/** `value` as one POSIX shell word that the shell takes literally: in single quotes, with each single quote inside it closed, escaped and reopened. An account name is whatever the Keychain item holds, so nothing about it can be assumed safe to paste into a shell. */
-function shellQuoted(value: string): string {
-  return `'${value.replace(/'/gu, "'\\''")}'`;
-}
-
 /** What `identity add --keep-keychain-login`, and the door's `keepKeychainLogin`, do: the person says that a login the Keychain holds for the directory is wanted, which is otherwise refused because the new identity would start signed in as that account. One text, so the command line, the typed API and the MCP tool derived from it say the same. */
 export const KEEP_KEYCHAIN_LOGIN_DESCRIPTION =
-  "Create the identity even though the macOS Keychain already holds a Claude Code login filed for its directory (left by an identity of that name that was renamed or removed); the identity starts signed in as that account. If another identity holds that login, the two share it. Without it that login is refused and the command that deletes it is printed.";
+  "Create the identity even though the macOS Keychain already holds a Claude Code login filed for its directory (left by an identity stored there that was moved with `identity rename --move` or removed); the identity starts signed in as that account. If another identity holds that login, the two share it. Without it that login is refused and the command that deletes it is printed.";
 
 /** What a question to the Keychain needs: the runner of `security` and the platform, since only macOS has a Keychain. */
 export interface KeychainProbe {
@@ -125,7 +119,7 @@ export interface KeychainProbe {
 }
 
 /**
- * Throws `KeychainLoginError` when, on macOS, the Keychain already holds a Claude Code login filed for `configDir`: a new identity created there would start signed in as that account, because Claude Code finds its login by the hash of the directory and not by anything the identity owns. Such an item is left by an identity of that name that was renamed or removed, since `identity remove` does not touch the Keychain and a rename's last step can fail or be cut short. The message names the entry, the exact command that deletes it, and the flag that keeps it on purpose, and says that keeping a login another identity holds shares it between the two. It cannot name that identity: the Keychain item carries the operating system account, not an identity, and a finished rename leaves no record of the pair. Throws `KeychainLookupError` instead when the Keychain could not be asked, which says nothing about a leftover.
+ * Throws `KeychainLoginError` when, on macOS, the Keychain already holds a Claude Code login filed for `configDir`: a new identity created there would start signed in as that account, because Claude Code finds its login by the hash of the directory and not by anything the identity owns. Such an item is left by an identity stored there that was moved with `identity rename --move` or removed, since `identity remove` does not delete the Claude Code login (it deletes only the cached credential) and the last step of `--move` can fail or be cut short; a rename of the name alone leaves the directory, and so the login, where it was. The message names the entry, the exact command that deletes it, and the flag that keeps it on purpose, and says that keeping a login another identity holds shares it between the two. It cannot name that identity: the Keychain item carries the operating system account, not an identity, and a finished rename leaves no record of the pair. Throws `KeychainLookupError` instead when the Keychain could not be asked, which says nothing about a leftover.
  *
  * `keepLogin` is the person's statement that the login is wanted (`identity add --keep-keychain-login`): nothing is asked of the Keychain and nothing is refused. Otherwise only attributes are asked for, so the login is never read and the Keychain is never asked for access to it. Off macOS there is no Keychain and nothing is asked.
  */
@@ -140,8 +134,52 @@ export function requireNoLeftoverKeychainLogin(keychain: KeychainProbe, configDi
   }
   const account = plainAccountOf(found.attributes);
   throw new KeychainLoginError(
-    `Cannot create identity "${name}": the Keychain already holds a Claude Code login filed for ${configDir} (service ${service}${account === undefined ? "" : `, account ${account}`}), left behind by an identity of that name that was renamed or removed. A new identity there would start signed in as that account. If you do not need it, delete it with \`${keychainDeleteCommand(service, account)}\` and run the command again. To create the identity signed in as that account on purpose, run \`agent-shim identity add ${name} --keep-keychain-login\`. If another identity holds a copy of that login, as a renamed identity does when its old item could not be deleted, keeping it makes the two share one login.`,
+    `Cannot create identity "${name}": the Keychain already holds a Claude Code login filed for ${configDir} (service ${service}${account === undefined ? "" : `, account ${account}`}), left by an identity stored there that was moved with \`identity rename --move\` or removed. A new identity there would start signed in as that account. If you do not need it, delete it with \`${keychainDeleteCommand(service, account)}\` and run the command again. To create the identity signed in as that account on purpose, run \`agent-shim identity add ${name} --keep-keychain-login\`. If another identity holds a copy of that login, as an identity moved with \`identity rename --move\` does when its old item could not be deleted, keeping it makes the two share one login.`,
   );
+}
+
+/**
+ * Whether the Keychain store holds a cached credential for `owner` (`identity <id>` for an identity), asked by attributes alone, so no secret is read and nothing prompts. Off macOS there is no Keychain and the answer is no. Throws `KeychainLookupError` when the Keychain could not be asked, which says nothing about whether an entry is there.
+ */
+export function keychainCacheEntryExists(keychain: KeychainProbe, owner: string): boolean {
+  if (keychain.platform !== "darwin") {
+    return false;
+  }
+  const result = keychain.run.run("security", ["find-generic-password", "-s", KEYCHAIN_CACHE_SERVICE, "-a", owner]);
+  if (result.status === 0) {
+    return true;
+  }
+  if (result.status === KEYCHAIN_ITEM_NOT_FOUND_STATUS) {
+    return false;
+  }
+  throw new KeychainLookupError(`Could not look up the cached credential ${owner} in the Keychain: security exited ${statusPhrase(result.status)}${describe(result.stderr)}.`);
+}
+
+/** Raised when `security` could not delete the cached credential the Keychain store keeps for an owner: the entry is still there, so the message names the command that deletes it. */
+export class KeychainCacheDeleteError extends CliError {
+  /** `removedIdentity` names the identity `identity remove` (or the door's `config.identity.remove`) had already removed when the delete failed, so the message says that the removal itself is done and only the entry is left. */
+  constructor(
+    readonly owner: string,
+    readonly status: number | null,
+    removedIdentity?: string,
+  ) {
+    super(
+      `${removedIdentity === undefined ? "Could not delete" : `Removed identity "${removedIdentity}", but could not delete its`} cached credential ${removedIdentity === undefined ? `for ${owner} ` : `(${owner}) `}from the Keychain: security exited ${statusPhrase(status)}. It is still there; delete it with \`${keychainDeleteCommand(KEYCHAIN_CACHE_SERVICE, owner)}\`.`,
+    );
+    this.name = "KeychainCacheDeleteError";
+  }
+
+  /** The same failure, said as one met after identity `name` was removed. */
+  afterRemoving(name: string): KeychainCacheDeleteError {
+    return new KeychainCacheDeleteError(this.owner, this.status, name);
+  }
+}
+
+/** Throws `KeychainCacheDeleteError` unless `status`, the exit status of deleting the cached credential for `owner` (`keychainCacheDeleteArgs`), says it was deleted or was not there. `removedIdentity` is as `KeychainCacheDeleteError` takes it. */
+export function requireKeychainCacheDeleted(owner: string, status: number | null, removedIdentity?: string): void {
+  if (status !== 0 && status !== KEYCHAIN_ITEM_NOT_FOUND_STATUS) {
+    throw new KeychainCacheDeleteError(owner, status, removedIdentity);
+  }
 }
 
 /**
@@ -159,7 +197,7 @@ export function planKeychainLogin(run: RunPort, fromDir: string, toDir: string, 
   const alreadyCopied = lookup(run, toService).found;
   if (alreadyCopied && !resuming) {
     throw new KeychainLoginError(
-      `The Keychain already holds a login filed for ${toDir} (service ${toService}). It is left behind by an identity of that name that was removed, since \`identity remove\` does not touch the Keychain. If you do not need it, remove it with \`${keychainDeleteCommand(toService, undefined)}\`, or choose another name.`,
+      `The Keychain already holds a login filed for ${toDir} (service ${toService}). It is left by an identity stored there that was removed, since \`identity remove\` does not delete the Claude Code login. If you do not need it, remove it with \`${keychainDeleteCommand(toService, undefined)}\`, or choose another name.`,
     );
   }
   return { fromService, toService, account: accountOf(from.attributes, fromService), alreadyCopied };
@@ -242,7 +280,7 @@ function abandonCopy(run: RunPort, plan: KeychainLoginPlan, message: string): ne
 /** Deletes the login filed under `service` for `account`. An item already gone is fine, so this serves the final removal of the old login and the rollback of a copy alike. */
 export function deleteKeychainLogin(run: RunPort, service: string, account: string): void {
   const result = run.run("security", ["delete-generic-password", "-s", service, "-a", account]);
-  if (result.status !== 0 && result.status !== ITEM_NOT_FOUND_STATUS) {
+  if (result.status !== 0 && result.status !== KEYCHAIN_ITEM_NOT_FOUND_STATUS) {
     throw new KeychainLoginError(`Could not delete the Keychain item ${service}: security exited ${statusPhrase(result.status)}${describe(result.stderr)}.`);
   }
 }

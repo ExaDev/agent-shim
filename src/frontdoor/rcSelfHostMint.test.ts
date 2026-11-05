@@ -18,9 +18,16 @@ const PRIVATE_FILE_MODE = 0o600;
 
 describe("the self-hosted credential minting", () => {
   /** Builds the minting over a fake filesystem and returns the fs with the result. */
+  /** Makes `rig` an identity, stored in the directory of its name, unless the test stored an identity there already. */
+  const withRig = (fs: ReturnType<typeof createFakeFarmFs>): ReturnType<typeof createFakeFarmFs> => {
+    if (fs.readFileUtf8("/state/identities/rig/identity.json") === undefined) {
+      fs.seed({ "/state/identities/rig/identity.json": '{"name":"rig"}' });
+    }
+    return fs;
+  };
   const mint = (fs: ReturnType<typeof createFakeFarmFs>, options: Readonly<{ identity?: string; force?: boolean }> = {}) =>
     mintRcSelfHostCredential({
-      fs,
+      fs: withRig(fs),
       identitiesDir: "/state/identities",
       frontdoorDir: "/state/frontdoor",
       identity: options.identity ?? "rig",
@@ -35,6 +42,13 @@ describe("the self-hosted credential minting", () => {
       force: options.force ?? false,
       now: () => MINT_CLOCK_START_MS,
     });
+
+  it("mints into the directory of the identity's id, which a rename of its name keeps", () => {
+    const fs = createFakeFarmFs({ "/state/identities/rig/identity.json": '{"name":"rack"}' });
+    const result = mint(fs, { identity: "rack" });
+    expect(result.credentialsFile).toBe("/state/identities/rig/.credentials.json");
+    expect(() => mint(createFakeFarmFs({ "/state/identities/rig/identity.json": '{"name":"rack"}' }), { identity: "rig" })).toThrow('No identity named "rig"');
+  });
 
   it("writes the credential, the account block and the feature seed, and the door's record", () => {
     const fs = createFakeFarmFs();

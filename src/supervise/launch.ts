@@ -6,6 +6,7 @@ import { hasSettingsArgument, initialConversationOf, type SupervisedLaunch } fro
 import { isClaudeSubcommand } from "../launcher/claudeSubcommand";
 import { resolvePoolLaunch } from "../launcher/pool";
 import type { LogPort } from "../launcher/ports";
+import { identityRecordsOver } from "../identityRecords";
 import type { LayoutPaths } from "../paths";
 import { refreshPools } from "../poolUsageRefresh";
 import { realFarmFs, realFsPort, selfInvocation, type DaemonSpawner } from "../realPorts";
@@ -155,6 +156,11 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
       resetTerminal,
       now: farm.now,
       log,
+      // An identity whose name cannot be read is named by its id, which reaches it, so its relaunch reports the file.
+      nameOf: (id) => {
+        const record = identityRecordsOver(realFarmFs, paths.identitiesDir).find((candidate) => candidate.id === id);
+        return record === undefined ? undefined : (record.name ?? record.id);
+      },
     },
     launch,
   );

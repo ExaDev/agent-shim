@@ -269,6 +269,7 @@ export {
   type LaunchLifecycleEvent,
   type QuotaExpiringEvent,
   type UsageChangeEvent,
+  UsageChangeEventSchema,
 } from "./frontdoor/eventSchemas";
 export { createLaunchEventPublisher, type LaunchEventPublisher } from "./frontdoor/launchEvents";
 export { createDoorHealthPublisher, type DoorHealthPublisher } from "./frontdoor/doorHealthEvents";
@@ -413,11 +414,15 @@ export {
   IdentityAlreadyExistsError,
   IdentityNotFoundError,
   identityExists,
+  identityIdOf,
+  identityNameOf,
+  identityRecords,
   InvalidIdentityNameError,
   isIdentityDirectoryName,
   listIdentities,
   readActiveIdentity,
   readIdentity,
+  readIdentityById,
   removeIdentity,
   setAllowAmbientCredential,
   setDefaultConfigProfile,
@@ -428,6 +433,7 @@ export {
   type IdentityListing,
   type UnreadableIdentityListEntry,
 } from "./identityStore";
+export { DuplicateIdentityNameError, readIdentityRecords, type IdentityRecord, type IdentityRecordsPort, type IdentityNameRead } from "./identityRecords";
 export {
   createProfile,
   InvalidCategoryNameError,

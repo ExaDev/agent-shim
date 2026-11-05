@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createFakeFarmFs } from "../test-helpers";
@@ -45,7 +46,7 @@ describe("collectSessionList", () => {
   });
 
   it("lists sessions that have agents or workflow runs across identities, and counts them", () => {
-    const sessions = collectSessionList(fs, IDENTITIES, ["work", "personal"], {});
+    const sessions = collectSessionList(fs, (identity) => path.join(IDENTITIES, identity), ["work", "personal"], {});
     expect(sessions.map((session) => `${session.identities.join("+")}/${session.sessionId}:${String(session.agentCount)}:${String(session.workflowRunCount)}`).sort()).toEqual([
       "personal/cccc3333:1:0",
       "work/aaaa1111:2:0",
@@ -54,11 +55,11 @@ describe("collectSessionList", () => {
   });
 
   it("includes sessions with nothing to inspect when asked, and narrows to one identity", () => {
-    expect(collectSessionList(fs, IDENTITIES, ["work", "personal"], { all: true, identity: "work" }).map((session) => session.sessionId).sort()).toEqual(["aaaa1111", "bbbb2222", "dddd4444"]);
+    expect(collectSessionList(fs, (identity) => path.join(IDENTITIES, identity), ["work", "personal"], { all: true, identity: "work" }).map((session) => session.sessionId).sort()).toEqual(["aaaa1111", "bbbb2222", "dddd4444"]);
   });
 
   it("fails for an identity that does not exist rather than listing nothing", () => {
-    expect(() => collectSessionList(fs, IDENTITIES, ["work"], { identity: "nope" })).toThrow(SessionLookupError);
+    expect(() => collectSessionList(fs, (identity) => path.join(IDENTITIES, identity), ["work"], { identity: "nope" })).toThrow(SessionLookupError);
   });
 
   it("orders newest transcript first", () => {
@@ -67,21 +68,21 @@ describe("collectSessionList", () => {
       ...seedSession(WORK, "newer", ["a"]),
     });
     // The fake filesystem stamps entries in creation order, so the later seed has the later mtime.
-    expect(collectSessionList(ordered, IDENTITIES, ["work"], {}).map((session) => session.sessionId)).toEqual(["newer", "older"]);
+    expect(collectSessionList(ordered, (identity) => path.join(IDENTITIES, identity), ["work"], {}).map((session) => session.sessionId)).toEqual(["newer", "older"]);
   });
 });
 
 describe("shared history", () => {
   it("lists a session once, naming every identity whose projects directory is the same store", () => {
     const fs = withRealpath(seedSession(WORK, "aaaa1111", ["x"]), { [`${WORK}/projects`]: "/store/projects", [`${PERSONAL}/projects`]: "/store/projects" });
-    const sessions = collectSessionList(fs, IDENTITIES, ["work", "personal"], {});
+    const sessions = collectSessionList(fs, (identity) => path.join(IDENTITIES, identity), ["work", "personal"], {});
     expect(sessions).toHaveLength(1);
     expect(sessions[0]?.identities).toEqual(["work", "personal"]);
   });
 
   it("skips an identity that has no projects directory", () => {
     const fs = withRealpath(seedSession(WORK, "aaaa1111", ["x"]));
-    expect(collectSessionList(fs, IDENTITIES, ["work", "never-ran"], {}).map((session) => session.identities)).toEqual([["work"]]);
+    expect(collectSessionList(fs, (identity) => path.join(IDENTITIES, identity), ["work", "never-ran"], {}).map((session) => session.identities)).toEqual([["work"]]);
   });
 });
 
@@ -89,17 +90,17 @@ describe("locateSession", () => {
   const fs = withRealpath({ ...seedSession(WORK, "abcd1111", ["a"]), ...seedSession(PERSONAL, "abef2222", ["b"]) });
 
   it("resolves an exact id and an unambiguous prefix", () => {
-    expect(locateSession(fs, IDENTITIES, ["work", "personal"], "abcd1111").identities).toEqual(["work"]);
-    expect(locateSession(fs, IDENTITIES, ["work", "personal"], "abcd").ref.sessionId).toBe("abcd1111");
+    expect(locateSession(fs, (identity) => path.join(IDENTITIES, identity), ["work", "personal"], "abcd1111").identities).toEqual(["work"]);
+    expect(locateSession(fs, (identity) => path.join(IDENTITIES, identity), ["work", "personal"], "abcd").ref.sessionId).toBe("abcd1111");
   });
 
   it("names every candidate when a prefix is ambiguous, and fails when nothing matches", () => {
-    expect(() => locateSession(fs, IDENTITIES, ["work", "personal"], "ab")).toThrow(/abcd1111 \(work\); abef2222 \(personal\)/);
-    expect(() => locateSession(fs, IDENTITIES, ["work", "personal"], "zz")).toThrow(/no session matches/);
+    expect(() => locateSession(fs, (identity) => path.join(IDENTITIES, identity), ["work", "personal"], "ab")).toThrow(/abcd1111 \(work\); abef2222 \(personal\)/);
+    expect(() => locateSession(fs, (identity) => path.join(IDENTITIES, identity), ["work", "personal"], "zz")).toThrow(/no session matches/);
   });
 
   it("narrows to the identity asked for", () => {
-    expect(locateSession(fs, IDENTITIES, ["work", "personal"], "ab", "personal").ref.sessionId).toBe("abef2222");
+    expect(locateSession(fs, (identity) => path.join(IDENTITIES, identity), ["work", "personal"], "ab", "personal").ref.sessionId).toBe("abef2222");
   });
 });
 
@@ -107,13 +108,13 @@ describe("formatting", () => {
   it("prints a placeholder for an empty list and one line per session otherwise", () => {
     expect(formatSessionList([])).toEqual(["no sessions with agents or workflow runs found"]);
     const fs = withRealpath(seedSession(WORK, "aaaa1111", ["x"]));
-    const [line] = formatSessionList(collectSessionList(fs, IDENTITIES, ["work"], {}));
+    const [line] = formatSessionList(collectSessionList(fs, (identity) => path.join(IDENTITIES, identity), ["work"], {}));
     expect(line).toMatch(/^work {2}aaaa1111 {2}\S+ {2}agents=1 runs=0 {2}-repo$/);
   });
 
   it("abbreviates the identities of a session several of them expose", () => {
     const fs = withRealpath(seedSession(WORK, "aaaa1111", ["x"]), { [`${WORK}/projects`]: "/store/projects", [`${PERSONAL}/projects`]: "/store/projects" });
-    const [line] = formatSessionList(collectSessionList(fs, IDENTITIES, ["work", "personal"], {}));
+    const [line] = formatSessionList(collectSessionList(fs, (identity) => path.join(IDENTITIES, identity), ["work", "personal"], {}));
     expect(line?.startsWith("work +1  aaaa1111")).toBe(true);
   });
 

@@ -192,10 +192,17 @@ export interface ResolveCredentialParams {
   /** The launching environment: where `env` sources are read, and what decides whether `op` is interactive. */
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly port: CredentialPort;
-  /** What the credential belongs to, for messages and as its cache key: `provider z` or `identity work`. */
+  /** What the credential belongs to, for messages and, unless `cacheKey` is given, as its cache key: `provider z` or `identity work`. */
   readonly subject: string;
+  /** The key the credential is cached under, when it is not `subject`. An identity is named in messages by its name, which a rename changes, and its cached credential is filed under `identity <id>`, its storage id, which a rename keeps, so the cache needs no move. Absent for a provider, whose name is its key. */
+  readonly cacheKey?: string;
   /** True to skip a cached token and fetch from the sources, replacing the cached copy: what `credential warm` does. */
   readonly refresh?: boolean;
+}
+
+/** The key the credential is cached under: `cacheKey` when the subject gives one, else the subject itself. */
+function cacheKeyOf(params: Pick<ResolveCredentialParams, "subject" | "cacheKey">): string {
+  return params.cacheKey ?? params.subject;
 }
 
 /** What caching a credential needs beyond the block's own `cache` setting: the port holding entries, the platform that picks the default store, and the clock the TTL is measured on. */
@@ -352,10 +359,10 @@ function liveResolution(target: CredentialTarget, token: string, source: Credent
   return { ok: true, credential: { target, token, source, warnings } };
 }
 
-/** The resolution when no source yielded a token: a message naming every source and why. */
+/** The resolution when no source yielded a token: a message naming every source and why, with no `agent-shim: ` prefix, which each consumer adds where its output needs one (a `CliError` is printed with it, a launch's log line is given it). */
 function unresolved(subject: string, cacheBlock: Readonly<CredentialCache> | undefined, attempts: readonly string[]): CredentialResolution {
   const hint = cacheBlock === undefined ? "" : `; fill the cache from a terminal with \`${warmCommandFor(subject)}\``;
-  return { ok: false, message: `agent-shim: ${subject} has no usable credential: ${attempts.join("; ")}${hint}` };
+  return { ok: false, message: `${subject} has no usable credential: ${attempts.join("; ")}${hint}` };
 }
 
 /** The line reported for a source that yielded nothing, and the warning form of it when the source asked to be reported. */
@@ -373,7 +380,7 @@ export function resolveCredential(params: ResolveCredentialParams): CredentialRe
   const cache = cacheBlock === undefined ? undefined : params.port.cache;
   const store = cacheBlock === undefined || cache === undefined ? undefined : effectiveStore(cacheBlock, cache.platform);
   if (cacheBlock !== undefined && cache !== undefined && store !== undefined && params.refresh !== true) {
-    const entry = cache.port.read(store, params.subject);
+    const entry = cache.port.read(store, cacheKeyOf(params));
     if (entry !== undefined && isFresh(entry, cacheBlock, cache.now())) {
       return cachedResolution(target, entry);
     }
@@ -384,7 +391,7 @@ export function resolveCredential(params: ResolveCredentialParams): CredentialRe
     const outcome = trySource(source, params);
     if (outcome.ok) {
       if (cache !== undefined && store !== undefined) {
-        cache.port.write(store, params.subject, { token: outcome.token, fetchedAt: cache.now(), source });
+        cache.port.write(store, cacheKeyOf(params), { token: outcome.token, fetchedAt: cache.now(), source });
       }
       return liveResolution(target, outcome.token, source, warnings);
     }
@@ -411,7 +418,7 @@ export async function resolveCredentialAsync(params: ResolveCredentialAsyncParam
   const cache = cacheBlock === undefined ? undefined : params.port.cache;
   const store = cacheBlock === undefined || cache === undefined ? undefined : effectiveStore(cacheBlock, cache.platform);
   if (cacheBlock !== undefined && cache !== undefined && store !== undefined && params.refresh !== true) {
-    const entry = await cache.port.read(store, params.subject);
+    const entry = await cache.port.read(store, cacheKeyOf(params));
     if (entry !== undefined && isFresh(entry, cacheBlock, cache.now())) {
       return cachedResolution(target, entry);
     }
@@ -422,7 +429,7 @@ export async function resolveCredentialAsync(params: ResolveCredentialAsyncParam
     const outcome = await trySourceAsync(source, params);
     if (outcome.ok) {
       if (cache !== undefined && store !== undefined) {
-        await cache.port.write(store, params.subject, { token: outcome.token, fetchedAt: cache.now(), source });
+        await cache.port.write(store, cacheKeyOf(params), { token: outcome.token, fetchedAt: cache.now(), source });
       }
       return liveResolution(target, outcome.token, source, warnings);
     }
@@ -441,7 +448,7 @@ export async function resolveCredentialAsync(params: ResolveCredentialAsyncParam
 export function shareInFlightResolutions(resolve: (params: ResolveCredentialAsyncParams) => Promise<CredentialResolution>): (params: ResolveCredentialAsyncParams) => Promise<CredentialResolution> {
   const inFlight = new Map<string, Promise<CredentialResolution>>();
   return async (params) => {
-    const key = JSON.stringify([params.subject, params.credential, params.refresh === true]);
+    const key = JSON.stringify([cacheKeyOf(params), params.credential, params.refresh === true]);
     const running = inFlight.get(key);
     if (running !== undefined) {
       return await running;
@@ -463,4 +470,9 @@ export function credentialVariables(target: CredentialTarget, token: string): Re
     ANTHROPIC_API_KEY: target === "apiKey" ? token : undefined,
     CLAUDE_CODE_OAUTH_TOKEN: target === "oauthToken" ? token : undefined,
   };
+}
+
+/** The key an identity's cached credential is filed under: its storage id, which a rename keeps, so the cached copy, in a file or the Keychain, never has to move. */
+export function identityCacheKey(id: string): string {
+  return `identity ${id}`;
 }

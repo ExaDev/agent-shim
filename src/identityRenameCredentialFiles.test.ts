@@ -3,7 +3,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { CliError } from "./cliError";
-import { describeIdentityRename, renameIdentity } from "./identityRename";
+import { describeIdentityMove, moveIdentity } from "./identityRename";
 import { createWorld, treeOf, writeJson, type World } from "./identityRenameTestWorld";
 import { claudeCodeKeychainService } from "./usage/signIn";
 
@@ -30,9 +30,9 @@ describe("a file that holds credential sources and cannot be re-pointed", () => 
 
   async function refusedEverywhere(file: string): Promise<void> {
     const before = treeOf(world.root);
-    expect(() => describeIdentityRename(world.paths, "work", "client", world.ports())).toThrow(file);
-    await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow(file);
-    await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.toBeInstanceOf(CliError);
+    expect(() => describeIdentityMove(world.paths, "work", "client", world.ports())).toThrow(file);
+    await expect(moveIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow(file);
+    await expect(moveIdentity(world.paths, "work", "client", world.ports())).rejects.toBeInstanceOf(CliError);
     expect(treeOf(world.root)).toEqual(before);
   }
 
@@ -49,7 +49,7 @@ describe("a file that holds credential sources and cannot be re-pointed", () => 
 
     it("leaves a rename alone when the invalid file names a keychain service that is not the moved login's", async () => {
       writeInvalidProvider("z", [{ keychain: { service: OTHER_SERVICE } }, { env: "Z_API_TOKEN" }]);
-      await expect(renameIdentity(world.paths, "work", "client", world.ports())).resolves.toBeDefined();
+      await expect(moveIdentity(world.paths, "work", "client", world.ports())).resolves.toBeDefined();
       expect(fs.existsSync(world.directory("client"))).toBe(true);
     });
   });
@@ -58,8 +58,8 @@ describe("a file that holds credential sources and cannot be re-pointed", () => 
     it("does not stop a rename of an identity it has nothing to do with, and is left as it was", async () => {
       fs.mkdirSync(world.paths.providersDir, { recursive: true });
       fs.writeFileSync(providerFile("garbled"), "{ not json");
-      expect(() => describeIdentityRename(world.paths, "work", "client", world.ports())).not.toThrow();
-      await expect(renameIdentity(world.paths, "work", "client", world.ports())).resolves.toBeDefined();
+      expect(() => describeIdentityMove(world.paths, "work", "client", world.ports())).not.toThrow();
+      await expect(moveIdentity(world.paths, "work", "client", world.ports())).resolves.toBeDefined();
       expect(fs.readFileSync(providerFile("garbled"), "utf8")).toBe("{ not json");
     });
 
@@ -67,7 +67,7 @@ describe("a file that holds credential sources and cannot be re-pointed", () => 
       fs.mkdirSync(world.paths.providersDir, { recursive: true });
       fs.writeFileSync(providerFile("garbled"), `{ "credential": { "sources": [{ "file": "${path.join(world.root, "credentials", "work.token")}" `);
       await refusedEverywhere("providers/garbled.json");
-      await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.not.toBeInstanceOf(SyntaxError);
+      await expect(moveIdentity(world.paths, "work", "client", world.ports())).rejects.not.toBeInstanceOf(SyntaxError);
     });
 
     it("refuses when its text names the moved login's service", async () => {
@@ -79,7 +79,7 @@ describe("a file that holds credential sources and cannot be re-pointed", () => 
     it("says nothing of the file's text in the refusal", async () => {
       fs.mkdirSync(world.paths.providersDir, { recursive: true });
       fs.writeFileSync(providerFile("garbled"), `made-up-secret-text ${oldService()}`);
-      const failure: unknown = await renameIdentity(world.paths, "work", "client", world.ports()).catch((error: unknown) => error);
+      const failure: unknown = await moveIdentity(world.paths, "work", "client", world.ports()).catch((error: unknown) => error);
       expect(failure).toBeInstanceOf(CliError);
       expect(failure instanceof Error ? failure.message : "").not.toContain("made-up-secret-text");
     });

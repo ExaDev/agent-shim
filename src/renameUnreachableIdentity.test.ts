@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { CliError } from "./cliError";
 import { collectDoctorReport } from "./doctorReport";
-import { describeIdentityRename, renameIdentity } from "./identityRename";
+import { describeIdentityMove, moveIdentity } from "./identityRename";
 import { createWorld, writeJson, type World } from "./identityRenameTestWorld";
 import { renameProvider, type ProviderRenamePorts } from "./providerRename";
 import { providerExists } from "./providersStore";
@@ -72,7 +72,7 @@ describe.skipIf(runningAsRoot)("a rename while an identity under identities/ can
     ["a symlink to a directory", leaveClosedIdentityBehindLink],
   ])("is refused in the dry run and the real run when %s nobody can enter may name what moves, naming the entry and why, and changes nothing", async (_kind, leave) => {
     leave();
-    for (const attempt of [async () => Promise.resolve(describeIdentityRename(world.paths, "work", "client", world.ports())), async () => renameIdentity(world.paths, "work", "client", world.ports())]) {
+    for (const attempt of [async () => Promise.resolve(describeIdentityMove(world.paths, "work", "client", world.ports())), async () => moveIdentity(world.paths, "work", "client", world.ports())]) {
       const message = await failureOf(attempt);
       expect(message).toContain("identities/closed");
       expect(message).toContain("EACCES");
@@ -87,9 +87,9 @@ describe.skipIf(runningAsRoot)("a rename while an identity under identities/ can
 
   it("is allowed again once the entry is repaired, and re-points what it names", async () => {
     leaveClosedIdentity();
-    await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.toBeInstanceOf(CliError);
+    await expect(moveIdentity(world.paths, "work", "client", world.ports())).rejects.toBeInstanceOf(CliError);
     fs.chmodSync(world.directory("closed"), OWNER_ALL);
-    await renameIdentity(world.paths, "work", "client", world.ports());
+    await moveIdentity(world.paths, "work", "client", world.ports());
     const repointed: unknown = JSON.parse(fs.readFileSync(path.join(world.directory("closed"), "identity.json"), "utf8"));
     expect(JSON.stringify(repointed)).toContain(path.join(world.root, "credentials", "client.token"));
   });

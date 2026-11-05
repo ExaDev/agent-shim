@@ -377,7 +377,7 @@ describe("the credential an http provider's route attaches", () => {
       expect(response.status).toBe(HTTP_STATUS.badGateway);
       const body = (await response.json()) as { type: string; error: { type: string; message: string } };
       expect(body.error.type).toBe("api_error");
-      expect(body.error.message).toContain("provider z");
+      expect(body.error.message).toBe("the front door has no credential to attach: provider z has no usable credential: env NOT_SET_ANYWHERE is unset or empty");
       expect(upstream.seen()).toHaveLength(0);
     } finally {
       await door.close();

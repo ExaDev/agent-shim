@@ -13,8 +13,9 @@ import type { UsageSnapshot } from "./schema";
 /** Opens a five-hour window for an identity by sending the smallest real request, or throws with why it could not. */
 export type WindowOpener = (identity: string) => Promise<void>;
 
-/** An identity with the anchors the keeper acts on. */
+/** An identity with the anchors the keeper acts on: its id, which its handled stamp and its usage snapshot are filed under and a rename keeps, and its name, which a window is opened under. */
 export interface AnchoredIdentity {
+  readonly id: string;
   readonly identity: string;
   readonly anchors: readonly Anchor[];
 }
@@ -27,7 +28,8 @@ export interface WindowKeeperPorts {
   readonly timeZone: string;
   /** The identities that have anchors, read fresh each run so a change takes effect without a restart. */
   readonly anchored: () => readonly AnchoredIdentity[];
-  readonly snapshot: (identity: string) => UsageSnapshot | undefined;
+  /** The usage snapshot of the identity stored under an id. */
+  readonly snapshot: (id: string) => UsageSnapshot | undefined;
   readonly open: WindowOpener;
   readonly log: (line: string) => void;
 }
@@ -77,12 +79,14 @@ export async function runWindowKeeper(ports: Readonly<WindowKeeperPorts>): Promi
   const anchored = ports.anchored();
   const previous = readHandled(ports.fs, ports.stampsFile);
   // Identities that lost their anchors drop out of the file with them.
-  const handled: Record<string, number> = Object.fromEntries(anchored.flatMap(({ identity }) => (previous[identity] === undefined ? [] : [[identity, previous[identity]]])));
+  const handled: Record<string, number> = Object.fromEntries(anchored.flatMap(({ id }) => (previous[id] === undefined ? [] : [[id, previous[id]]])));
+  // The stamps this run sets, written over what is on disk when the run ends, not over what it read: another writer, or a `--move` that rekeyed a stamp while a window was being opened, keeps what it wrote.
+  const changed: Record<string, number> = {};
   const outcomes: KeeperOutcome[] = [];
-  for (const { identity, anchors } of anchored) {
-    const last = handled[identity];
+  for (const { id, identity, anchors } of anchored) {
+    const last = handled[id];
     if (last === undefined) {
-      handled[identity] = nowMs;
+      changed[id] = nowMs;
       outcomes.push({ identity, status: "armed", detail: "anchors noted; the next anchor to fall is the first acted on" });
       continue;
     }
@@ -91,8 +95,8 @@ export async function runWindowKeeper(ports: Readonly<WindowKeeperPorts>): Promi
       outcomes.push({ identity, status: "waiting", detail: "no anchor has fallen since the last handled" });
       continue;
     }
-    handled[identity] = nowMs;
-    const reason = reasonNotToOpen(identity, ports.snapshot(identity), nowMs);
+    changed[id] = nowMs;
+    const reason = reasonNotToOpen(identity, ports.snapshot(id), nowMs);
     if (reason !== undefined) {
       outcomes.push({ identity, status: "skipped", detail: `anchor ${new Date(due).toISOString()}: ${reason}` });
       continue;
@@ -104,7 +108,9 @@ export async function runWindowKeeper(ports: Readonly<WindowKeeperPorts>): Promi
       outcomes.push({ identity, status: "failed", detail: `anchor ${new Date(due).toISOString()}: could not open a window: ${error instanceof Error ? error.message : String(error)}` });
     }
   }
-  writeHandled(ports.fs, ports.stampsFile, handled);
+  const stillAnchored = new Set(ports.anchored().map(({ id }) => id));
+  const latest = readHandled(ports.fs, ports.stampsFile);
+  writeHandled(ports.fs, ports.stampsFile, Object.fromEntries(Object.entries({ ...latest, ...changed }).filter(([id]) => stillAnchored.has(id))));
   for (const outcome of outcomes) {
     if (outcome.status === "opened" || outcome.status === "skipped" || outcome.status === "failed") {
       ports.log(`window keeper: ${outcome.identity}: ${outcome.detail}`);

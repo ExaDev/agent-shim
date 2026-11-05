@@ -22,10 +22,8 @@ export class SessionLookupError extends CliError {
   }
 }
 
-/** The configuration directory an identity's sessions live under. */
-function identityConfigDir(identitiesDir: string, identity: string): string {
-  return path.join(identitiesDir, identity);
-}
+/** The configuration directory an identity's sessions live under, by the identity's name: its directory under the identities directory, which is named by the identity's id and so not necessarily by its name. */
+export type IdentityConfigDirOf = (identity: string) => string;
 
 /** Identities whose `projects` directory is the same store on disk, scanned once for all of them. */
 interface HistoryStore {
@@ -35,10 +33,10 @@ interface HistoryStore {
 }
 
 /** Groups identities by the real location of their `projects` directory, in the order the identities were given. An identity with no projects directory belongs to no store. */
-function historyStores(fs: SessionCommandFs, identitiesDir: string, identities: readonly string[]): readonly HistoryStore[] {
+function historyStores(fs: SessionCommandFs, configDirOf: IdentityConfigDirOf, identities: readonly string[]): readonly HistoryStore[] {
   const byRealPath = new Map<string, { configDir: string; identities: string[] }>();
   for (const identity of identities) {
-    const configDir = identityConfigDir(identitiesDir, identity);
+    const configDir = configDirOf(identity);
     const real = fs.realpath(path.join(configDir, "projects"));
     if (real === undefined) {
       continue;
@@ -64,13 +62,13 @@ export interface SessionListFilters {
 /**
  * Collects `session list`, read-only: every session of the given identities with its agent and workflow-run counts, newest transcript first. Sessions with nothing to inspect are left out unless `all` is set, because most sessions never spawn an agent and listing them would bury the ones that did.
  */
-export function collectSessionList(fs: SessionCommandFs, identitiesDir: string, identities: readonly string[], filters: Readonly<SessionListFilters>): readonly IdentitySession[] {
+export function collectSessionList(fs: SessionCommandFs, configDirOf: IdentityConfigDirOf, identities: readonly string[], filters: Readonly<SessionListFilters>): readonly IdentitySession[] {
   const names = filters.identity === undefined ? identities : identities.filter((name) => name === filters.identity);
   if (filters.identity !== undefined && names.length === 0) {
     throw new SessionLookupError(`no identity named "${filters.identity}"`);
   }
   const sessions: IdentitySession[] = [];
-  for (const store of historyStores(fs, identitiesDir, names)) {
+  for (const store of historyStores(fs, configDirOf, names)) {
     for (const ref of listSessions(fs, store.configDir)) {
       const summary = summariseSession(fs, store.configDir, ref);
       if (filters.all === true || summary.agentCount > 0 || summary.workflowRunCount > 0) {
@@ -91,13 +89,13 @@ export interface LocatedSession {
 /**
  * Resolves a session id, or an unambiguous prefix of one, across the given identities. Fails with every candidate named when the prefix matches several, so the caller can say which it meant.
  */
-export function locateSession(fs: SessionCommandFs, identitiesDir: string, identities: readonly string[], query: string, onlyIdentity?: string): LocatedSession {
+export function locateSession(fs: SessionCommandFs, configDirOf: IdentityConfigDirOf, identities: readonly string[], query: string, onlyIdentity?: string): LocatedSession {
   const names = onlyIdentity === undefined ? identities : identities.filter((name) => name === onlyIdentity);
   if (onlyIdentity !== undefined && names.length === 0) {
     throw new SessionLookupError(`no identity named "${onlyIdentity}"`);
   }
   const matches: LocatedSession[] = [];
-  for (const store of historyStores(fs, identitiesDir, names)) {
+  for (const store of historyStores(fs, configDirOf, names)) {
     for (const ref of listSessions(fs, store.configDir)) {
       if (ref.sessionId.startsWith(query)) {
         matches.push({ identities: store.identities, configDir: store.configDir, ref });
@@ -123,8 +121,8 @@ export interface SessionView {
 }
 
 /** Resolves a session id or prefix and reads its tree: what `session show` and the door's `sessions.show` both answer. */
-export function showSession(fs: SessionCommandFs, identitiesDir: string, identities: readonly string[], query: string, onlyIdentity?: string): SessionView {
-  const located = locateSession(fs, identitiesDir, identities, query, onlyIdentity);
+export function showSession(fs: SessionCommandFs, configDirOf: IdentityConfigDirOf, identities: readonly string[], query: string, onlyIdentity?: string): SessionView {
+  const located = locateSession(fs, configDirOf, identities, query, onlyIdentity);
   return { identities: located.identities, tree: readSessionAgentTree(fs, located.configDir, located.ref) };
 }
 

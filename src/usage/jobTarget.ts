@@ -9,7 +9,8 @@ export interface JobTargetDeps {
   readonly fs: UsageReadFs;
   readonly pools: Readonly<Record<string, Pool>>;
   readonly nowMs: number;
-  readonly identityExists: (name: string) => boolean;
+  /** The id of the identity of a name, or undefined when none is named so (see `RankPoolGraphInput.identityIdOf`). */
+  readonly identityIdOf: (name: string) => string | undefined;
 }
 
 /**
@@ -19,5 +20,5 @@ export function resolveJobIdentity(deps: Readonly<JobTargetDeps>, target: Job["t
   if ("identity" in target) {
     return target.identity;
   }
-  return rankPoolGraph({ fs: deps.fs, paths: deps.paths, pools: deps.pools, poolName: target.pool, nowMs: deps.nowMs, resuming: false, identityExists: deps.identityExists }).ranking.pick?.identity;
+  return rankPoolGraph({ fs: deps.fs, paths: deps.paths, pools: deps.pools, poolName: target.pool, nowMs: deps.nowMs, resuming: false, identityIdOf: deps.identityIdOf }).ranking.pick?.identity;
 }

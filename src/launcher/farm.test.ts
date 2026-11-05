@@ -39,7 +39,7 @@ function params(fs: FakeFarmFs, overrides: Partial<ResyncFarmParams> = {}): Resy
     cascade: cascade(),
     classification: { defaults: shippedClassification },
     now: () => FAKE_NOW_MS,
-    uniqueSuffix: "test",
+    uniqueSuffix: "1111.11111111-0000-4000-8000-111111111111",
     lock: { pid: 42, isRunning: () => true, sleep: fakeSleep().sleep },
     ...overrides,
   };
@@ -82,7 +82,7 @@ describe("resyncFarm", () => {
     resyncFarm(params(fs));
 
     fs.writes.length = 0;
-    const second = resyncFarm(params(fs, { uniqueSuffix: "second", cwd: `${FAKE_HOME}/elsewhere` }));
+    const second = resyncFarm(params(fs, { uniqueSuffix: "2222.22222222-0000-4000-8000-222222222222", cwd: `${FAKE_HOME}/elsewhere` }));
 
     expect(second.noOp).toBe(true);
     expect(farmWrites(fs)).toEqual([]);
@@ -96,7 +96,7 @@ describe("resyncFarm", () => {
 
     const result = resyncFarm(
       params(fs, {
-        uniqueSuffix: "second",
+        uniqueSuffix: "2222.22222222-0000-4000-8000-222222222222",
         cascade: cascade({ categories: { history: true, knowledge: false } }),
       }),
     );
@@ -130,7 +130,7 @@ describe("resyncFarm", () => {
       }),
     );
 
-    resyncFarm(params(fs, { uniqueSuffix: "second" }));
+    resyncFarm(params(fs, { uniqueSuffix: "2222.22222222-0000-4000-8000-222222222222" }));
 
     expect(fs.linkTarget(`${FARM}/skills`)).toBe(`${FAKE_CLAUDE_HOME}/skills`);
     expect(readFarmManifest(fs, FARM)?.materialised).toEqual([]);
@@ -144,7 +144,7 @@ describe("resyncFarm", () => {
     // Claude Code creates a new skill inside the materialised directory, where it is invisible to every other identity.
     fs.seed({ [`${FARM}/skills/newthing/SKILL.md`]: "brand new" });
 
-    const result = resyncFarm(params(fs, { uniqueSuffix: "second", cascade: split }));
+    const result = resyncFarm(params(fs, { uniqueSuffix: "2222.22222222-0000-4000-8000-222222222222", cascade: split }));
 
     expect(result.adopted).toEqual(["skills/newthing/SKILL.md"]);
     expect(fs.readFileUtf8(`${FAKE_CLAUDE_HOME}/skills/newthing/SKILL.md`)).toBe("brand new");
@@ -159,7 +159,7 @@ describe("resyncFarm", () => {
     resyncFarm(params(fs, { cascade: split }));
     fs.seed({ [`${FARM}/skills/review/SKILL.md`]: "diverged in the farm" });
 
-    const result = resyncFarm(params(fs, { uniqueSuffix: "second", cascade: split }));
+    const result = resyncFarm(params(fs, { uniqueSuffix: "2222.22222222-0000-4000-8000-222222222222", cascade: split }));
 
     expect(fs.readFileUtf8(`${FAKE_CLAUDE_HOME}/skills/review/SKILL.md`)).toBe("review skill");
     expect(fs.readFileUtf8(`${FAKE_CLAUDE_HOME}/skills/review/SKILL.md.farm-conflict-${String(FAKE_NOW_MS)}`)).toBe("diverged in the farm");
@@ -174,7 +174,7 @@ describe("resyncFarm", () => {
     fs.seed({ [`${FARM}/.claude-use-farm.json`]: current ?? "" });
     expect(readFarmManifest(fs, FARM)?.identity).toBe("work");
 
-    const result = resyncFarm(params(fs, { uniqueSuffix: "second", cascade: cascade({ categories: { history: false } }) }));
+    const result = resyncFarm(params(fs, { uniqueSuffix: "2222.22222222-0000-4000-8000-222222222222", cascade: cascade({ categories: { history: false } }) }));
 
     expect(result.noOp).toBe(false);
     expect(result.diagnostics.some((diagnostic) => diagnostic.code === "FARM_MANIFEST_MISSING")).toBe(false);
@@ -192,7 +192,7 @@ describe("resyncFarm", () => {
       [`${FARM}/todos/local.json`]: "local todo",
     });
 
-    const result = resyncFarm(params(fs, { uniqueSuffix: "second" }));
+    const result = resyncFarm(params(fs, { uniqueSuffix: "2222.22222222-0000-4000-8000-222222222222" }));
 
     expect(fs.lstat(`${FAKE_CLAUDE_HOME}/backups/leaked.json`)).toBeUndefined();
     expect(result.diagnostics.some((diagnostic) => diagnostic.code === "RECONCILE_SECRET_BLOCKED")).toBe(true);
@@ -208,12 +208,12 @@ describe("resyncFarm", () => {
       [`${FARM}/.claude.json`]: '{"oauth":"local"}',
     });
 
-    resyncFarm(params(fs, { uniqueSuffix: "second", cascade: cascade({ categories: { history: true } }) }));
+    resyncFarm(params(fs, { uniqueSuffix: "2222.22222222-0000-4000-8000-222222222222", cascade: cascade({ categories: { history: true } }) }));
 
     expect(fs.readFileUtf8(`${FARM}/identity.json`)).toBe('{"name":"work"}');
     expect(fs.readFileUtf8(`${FARM}/.claude.json`)).toBe('{"oauth":"local"}');
     expect(fs.linkTarget(`${FARM}/projects`)).toBe(`${FAKE_CLAUDE_HOME}/projects`);
-    expect(fs.lstat(`${IDENTITIES_DIR}/.work.previous.second`)).toBeUndefined();
+    expect(fs.lstat(`${IDENTITIES_DIR}/.work.previous.2222.22222222-0000-4000-8000-222222222222`)).toBeUndefined();
   });
 
   it("restores the farm and clears abandoned scratch trees after a crash between the two renames", () => {
@@ -222,30 +222,66 @@ describe("resyncFarm", () => {
     fs.seed({ [`${FARM}/identity.json`]: '{"name":"work"}' });
 
     // Exactly what a crash between `rename(farm -> previous)` and `rename(scratch -> farm)` leaves behind: no farm, a complete superseded copy, and a half-built scratch tree from the run before it.
-    fs.rename(FARM, `${IDENTITIES_DIR}/.work.previous.crashed`);
-    fs.seed({ [`${IDENTITIES_DIR}/.work.scratch.abandoned/skills`]: { symlink: `${FAKE_CLAUDE_HOME}/skills` } });
+    fs.rename(FARM, `${IDENTITIES_DIR}/.work.previous.4444.44444444-0000-4000-8000-444444444444`);
+    fs.seed({ [`${IDENTITIES_DIR}/.work.scratch.5555.55555555-0000-4000-8000-555555555555/skills`]: { symlink: `${FAKE_CLAUDE_HOME}/skills` } });
 
-    const result = resyncFarm(params(fs, { uniqueSuffix: "recovered" }));
+    const result = resyncFarm(params(fs, { uniqueSuffix: "3333.33333333-0000-4000-8000-333333333333" }));
 
-    expect(result.recovery.restoredFrom).toBe(".work.previous.crashed");
-    expect(result.recovery.removedScratch).toEqual([".work.scratch.abandoned"]);
-    expect(fs.lstat(`${IDENTITIES_DIR}/.work.scratch.abandoned`)).toBeUndefined();
+    expect(result.recovery.restoredFrom).toBe(".work.previous.4444.44444444-0000-4000-8000-444444444444");
+    expect(result.recovery.removedScratch).toEqual([".work.scratch.5555.55555555-0000-4000-8000-555555555555"]);
+    expect(fs.lstat(`${IDENTITIES_DIR}/.work.scratch.5555.55555555-0000-4000-8000-555555555555`)).toBeUndefined();
     expect(fs.readFileUtf8(`${FARM}/identity.json`)).toBe('{"name":"work"}');
     expect(fs.linkTarget(`${FARM}/skills`)).toBe(`${FAKE_CLAUDE_HOME}/skills`);
     expect(result.diagnostics.some((diagnostic) => diagnostic.code === "FARM_SWAP_RECOVERED")).toBe(true);
+  });
+
+  it("restores the superseded farm that holds identity.json, not an older retained one that sorts first by its pid", () => {
+    const fs = createFakeFarmFs(CANONICAL);
+    resyncFarm(params(fs));
+    fs.seed({ [`${FARM}/identity.json`]: '{"name":"work"}' });
+    // A farm retained from an earlier swap for its conflicts, whose pid sorts first as text, and the farm the killed swap moved aside.
+    fs.seed({ [`${IDENTITIES_DIR}/.work.previous.1.11111111-0000-4000-8000-111111111111/notes.txt`]: "STALE" });
+    fs.rename(FARM, `${IDENTITIES_DIR}/.work.previous.9.99999999-0000-4000-8000-999999999999`);
+
+    const result = resyncFarm(params(fs, { uniqueSuffix: "3333.33333333-0000-4000-8000-333333333333" }));
+
+    expect(result.recovery.restoredFrom).toBe(".work.previous.9.99999999-0000-4000-8000-999999999999");
+    expect(fs.readFileUtf8(`${FARM}/identity.json`)).toBe('{"name":"work"}');
+  });
+
+  it("touches only its own farms, never those of an identity whose id begins with its id and a farm word", () => {
+    const fs = createFakeFarmFs(CANONICAL);
+    resyncFarm(params(fs));
+    fs.seed({ [`${FARM}/identity.json`]: '{"name":"work"}' });
+    // Identities stored under work.scratch.x and work.previous.y, with their resync locks, which a prefix match would take for work's farms.
+    fs.seed({
+      [`${IDENTITIES_DIR}/work.scratch.x/identity.json`]: '{"name":"one"}',
+      [`${IDENTITIES_DIR}/work.previous.y/identity.json`]: '{"name":"two"}',
+      [`${IDENTITIES_DIR}/.work.scratch.x.lock`]: '{"held":true}',
+      [`${IDENTITIES_DIR}/.work.previous.y.lock`]: '{"held":true}',
+    });
+    fs.rename(FARM, `${IDENTITIES_DIR}/.work.previous.9.99999999-0000-4000-8000-999999999999`);
+
+    const result = resyncFarm(params(fs, { uniqueSuffix: "3333.33333333-0000-4000-8000-333333333333" }));
+
+    expect(result.recovery.removedScratch).toEqual([]);
+    expect(result.recovery.restoredFrom).toBe(".work.previous.9.99999999-0000-4000-8000-999999999999");
+    expect(fs.readFileUtf8(`${IDENTITIES_DIR}/.work.scratch.x.lock`)).toBe('{"held":true}');
+    expect(fs.readFileUtf8(`${IDENTITIES_DIR}/.work.previous.y.lock`)).toBe('{"held":true}');
+    expect(fs.readFileUtf8(`${IDENTITIES_DIR}/work.previous.y/identity.json`)).toBe('{"name":"two"}');
   });
 
   it("finishes carrying local state out of a superseded farm left behind by a crash after the swap", () => {
     const fs = createFakeFarmFs(CANONICAL);
     resyncFarm(params(fs));
     // A crash after `rename(scratch -> farm)` but before carry-over: both directories exist and the identity's own file is still in the old one.
-    fs.seed({ [`${IDENTITIES_DIR}/.work.previous.crashed/identity.json`]: '{"name":"work"}' });
+    fs.seed({ [`${IDENTITIES_DIR}/.work.previous.4444.44444444-0000-4000-8000-444444444444/identity.json`]: '{"name":"work"}' });
 
-    const result = resyncFarm(params(fs, { uniqueSuffix: "recovered" }));
+    const result = resyncFarm(params(fs, { uniqueSuffix: "3333.33333333-0000-4000-8000-333333333333" }));
 
-    expect(result.recovery.completed).toEqual([".work.previous.crashed"]);
+    expect(result.recovery.completed).toEqual([".work.previous.4444.44444444-0000-4000-8000-444444444444"]);
     expect(fs.readFileUtf8(`${FARM}/identity.json`)).toBe('{"name":"work"}');
-    expect(fs.lstat(`${IDENTITIES_DIR}/.work.previous.crashed`)).toBeUndefined();
+    expect(fs.lstat(`${IDENTITIES_DIR}/.work.previous.4444.44444444-0000-4000-8000-444444444444`)).toBeUndefined();
   });
 
   it("discards a runtime-category collision automatically rather than retaining the superseded farm for it", () => {
@@ -253,26 +289,26 @@ describe("resyncFarm", () => {
     resyncFarm(params(fs));
     fs.seed({
       [`${FARM}/mcp-needs-auth-cache.json`]: "current",
-      [`${IDENTITIES_DIR}/.work.previous.crashed/mcp-needs-auth-cache.json`]: "stale, from the crashed launch",
+      [`${IDENTITIES_DIR}/.work.previous.4444.44444444-0000-4000-8000-444444444444/mcp-needs-auth-cache.json`]: "stale, from the crashed launch",
     });
 
-    const result = resyncFarm(params(fs, { uniqueSuffix: "recovered" }));
+    const result = resyncFarm(params(fs, { uniqueSuffix: "3333.33333333-0000-4000-8000-333333333333" }));
 
     expect(result.recovery.autoResolved).toEqual(["mcp-needs-auth-cache.json"]);
     expect(result.recovery.retained).toEqual([]);
-    expect(fs.lstat(`${IDENTITIES_DIR}/.work.previous.crashed`)).toBeUndefined();
+    expect(fs.lstat(`${IDENTITIES_DIR}/.work.previous.4444.44444444-0000-4000-8000-444444444444`)).toBeUndefined();
     expect(fs.readFileUtf8(`${FARM}/mcp-needs-auth-cache.json`)).toBe("current");
   });
 
   it("keeps a superseded farm on disk rather than discarding data the new farm also has an entry for", () => {
     const fs = createFakeFarmFs(CANONICAL);
     resyncFarm(params(fs));
-    fs.seed({ [`${IDENTITIES_DIR}/.work.previous.crashed/settings.json`]: "a real file, not a link" });
+    fs.seed({ [`${IDENTITIES_DIR}/.work.previous.4444.44444444-0000-4000-8000-444444444444/settings.json`]: "a real file, not a link" });
 
-    const result = resyncFarm(params(fs, { uniqueSuffix: "recovered" }));
+    const result = resyncFarm(params(fs, { uniqueSuffix: "3333.33333333-0000-4000-8000-333333333333" }));
 
-    expect(result.recovery.retained).toEqual([`${IDENTITIES_DIR}/.work.previous.crashed`]);
-    expect(fs.readFileUtf8(`${IDENTITIES_DIR}/.work.previous.crashed/settings.json`)).toBe("a real file, not a link");
+    expect(result.recovery.retained).toEqual([`${IDENTITIES_DIR}/.work.previous.4444.44444444-0000-4000-8000-444444444444`]);
+    expect(fs.readFileUtf8(`${IDENTITIES_DIR}/.work.previous.4444.44444444-0000-4000-8000-444444444444/settings.json`)).toBe("a real file, not a link");
     expect(fs.linkTarget(`${FARM}/settings.json`)).toBe(`${FAKE_CLAUDE_HOME}/settings.json`);
   });
 
@@ -292,7 +328,7 @@ describe("resyncFarm", () => {
     expect(() =>
       resyncFarm(
         params(fs, {
-          uniqueSuffix: "blocked",
+          uniqueSuffix: "6666.66666666-0000-4000-8000-666666666666",
           cascade: cascade({ categories: { history: true } }),
           lock: { pid: 42, isRunning: () => true, sleep: fakeSleep().sleep, maxAttempts: 2 },
         }),
@@ -303,7 +339,7 @@ describe("resyncFarm", () => {
 
     // Once the sibling releases, the same resync goes through.
     fs.removeRecursive(identityLockPath(IDENTITIES_DIR, "work"));
-    const result = resyncFarm(params(fs, { uniqueSuffix: "unblocked", cascade: cascade({ categories: { history: true } }) }));
+    const result = resyncFarm(params(fs, { uniqueSuffix: "7777.77777777-0000-4000-8000-777777777777", cascade: cascade({ categories: { history: true } }) }));
     expect(result.noOp).toBe(false);
     expect(fs.linkTarget(`${FARM}/projects`)).toBe(`${FAKE_CLAUDE_HOME}/projects`);
   });
@@ -317,7 +353,7 @@ describe("resyncFarm", () => {
   it("leaves no scratch or superseded directory behind after a clean resync", () => {
     const fs = createFakeFarmFs(CANONICAL);
     resyncFarm(params(fs));
-    resyncFarm(params(fs, { uniqueSuffix: "second", cascade: cascade({ categories: { history: true } }) }));
+    resyncFarm(params(fs, { uniqueSuffix: "2222.22222222-0000-4000-8000-222222222222", cascade: cascade({ categories: { history: true } }) }));
 
     const strays = fs
       .snapshot(IDENTITIES_DIR)
@@ -356,7 +392,7 @@ describe("recoveryDiagnostics", () => {
         ...base,
         recovered: true,
         autoResolved: ["mcp-needs-auth-cache.json"],
-        retained: [`${IDENTITIES_DIR}/.work.previous.crashed`],
+        retained: [`${IDENTITIES_DIR}/.work.previous.4444.44444444-0000-4000-8000-444444444444`],
       },
       "work",
     );
@@ -383,13 +419,13 @@ describe("resyncFarm for an identity that is gone", () => {
     expect(fs.lstat(LOCK)).toBeUndefined();
   });
 
-  it("names the identity and says to launch it under its current name", () => {
+  it("names the directory of the id it resolved, never calling the id a name, and says to launch again by the current name if there is one", () => {
     const fs = createFakeFarmFs(CANONICAL);
-    expect(() => resyncFarm(params(fs, { identityExists: () => false }))).toThrow(/Identity "work" no longer exists.*renamed or removed/u);
+    expect(() => resyncFarm(params(fs, { identityExists: () => false }))).toThrow("The identity stored under identities/work no longer exists: its directory was moved with `identity rename --move`, or it was removed, while this launch waited for it. Launch again by the identity's current name, if it has one.");
   });
 
   it("asks only once the lock is held and a swap a crash interrupted has been recovered, so a farm left mid-swap is not mistaken for a missing identity", () => {
-    const fs = createFakeFarmFs({ ...CANONICAL, [`${IDENTITIES_DIR}/.work.previous.crashed/identity.json`]: '{"name":"work"}' });
+    const fs = createFakeFarmFs({ ...CANONICAL, [`${IDENTITIES_DIR}/.work.previous.4444.44444444-0000-4000-8000-444444444444/identity.json`]: '{"name":"work"}' });
     const seen: boolean[] = [];
     resyncFarm(params(fs, { identityExists: () => (seen.push(fs.lstat(`${FARM}/identity.json`) !== undefined), true) }));
     expect(seen).toEqual([true]);

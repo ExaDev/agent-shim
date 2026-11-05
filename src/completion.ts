@@ -3,6 +3,7 @@ import { Help, type Command } from "commander";
 import { UsageError } from "./cliError";
 import { LAUNCHER_FLAG_NAMES } from "./launcher/argv";
 import { LEGACY_COMMAND_NAME } from "./legacy";
+import { shellQuoted } from "./shellQuote";
 
 /** The shells `agent-shim completion` can generate a script for. */
 const COMPLETION_SHELLS = ["bash", "zsh", "fish"] as const;
@@ -56,11 +57,6 @@ function collectNodes(program: Command): CompletionNode[] {
   return nodes;
 }
 
-/** Quotes `text` for a POSIX-style shell single-quoted string (bash, zsh). */
-function singleQuote(text: string): string {
-  return `'${text.replaceAll("'", `'\\''`)}'`;
-}
-
 /** Quotes `text` for a fish single-quoted string, where only `\` and `'` need escaping. */
 function fishQuote(text: string): string {
   return `'${text.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
@@ -69,13 +65,13 @@ function fishQuote(text: string): string {
 /** The `case` arms, shared by bash and zsh, that walk from one node to a child as each completed word is read. */
 function transitionArms(nodes: readonly CompletionNode[], indent: string): string {
   return nodes
-    .flatMap((node) => [...node.children].map(([name, child]) => `${indent}${singleQuote(`${node.id}:${name}`)}) node=${singleQuote(child)} ;;`))
+    .flatMap((node) => [...node.children].map(([name, child]) => `${indent}${shellQuoted(`${node.id}:${name}`)}) node=${shellQuoted(child)} ;;`))
     .join("\n");
 }
 
 function bashScript(nodes: readonly CompletionNode[]): string {
   const arms = nodes
-    .map((node) => `    ${singleQuote(node.id)}) candidates=${singleQuote(node.words.map((word) => word.word).join(" "))} ;;`)
+    .map((node) => `    ${shellQuoted(node.id)}) candidates=${shellQuoted(node.words.map((word) => word.word).join(" "))} ;;`)
     .join("\n");
   return `# agent-shim bash completion. Load with: source <(agent-shim completion bash)
 _agent_shim() {
@@ -97,8 +93,8 @@ complete -o default -F _agent_shim agent-shim ${LEGACY_COMMAND_NAME}
 function zshScript(nodes: readonly CompletionNode[]): string {
   const arms = nodes
     .map((node) => {
-      const entries = node.words.map((word) => singleQuote(`${word.word}:${word.description.replaceAll(":", "\\:")}`)).join(" ");
-      return `    ${singleQuote(node.id)}) candidates=(${entries}) ;;`;
+      const entries = node.words.map((word) => shellQuoted(`${word.word}:${word.description.replaceAll(":", "\\:")}`)).join(" ");
+      return `    ${shellQuoted(node.id)}) candidates=(${entries}) ;;`;
     })
     .join("\n");
   return `#compdef agent-shim ${LEGACY_COMMAND_NAME}

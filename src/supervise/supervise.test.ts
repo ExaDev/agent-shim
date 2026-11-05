@@ -63,6 +63,8 @@ interface World {
   held: HoldOutcome;
   readonly registered: SupervisedSession[];
   readonly unregistered: string[];
+  /** The name of each identity id that is not its own name; a test renames an identity by setting it. */
+  readonly names: Map<string, string>;
   readonly log: ReturnType<typeof fakeLog>;
   readonly resetTerminal: ReturnType<typeof vi.fn>;
   readonly decideMove: MockedFunction<SupervisorDeps["decideMove"]>;
@@ -76,7 +78,10 @@ interface World {
 }
 
 /** A supervisor over fakes. The first child runs as `work`; a relaunch runs as the member it is given. */
-function world(): World {
+function world(options: Readonly<{ first?: string; ids?: Readonly<Record<string, string>> }> = {}): World {
+  // The name each identity id is stored under; an id with none listed is named by itself, as an identity never renamed is.
+  const names = new Map(Object.entries(options.ids ?? {}).map(([name, id]) => [id, name]));
+  const idOf = (name: string): string => [...names].find(([, held]) => held === name)?.[0] ?? name;
   const children: FakeChild[] = [];
   const launches: SupervisedLaunch[] = [];
   const released: string[] = [];
@@ -98,7 +103,7 @@ function world(): World {
     pid: 4000,
     prepare: (launch) => {
       launches.push(launch);
-      const identity = launch.member ?? "work";
+      const identity = launch.member ?? options.first ?? "work";
       const plan: LaunchPlan = {
         bin: "/real/claude",
         args: ["--model", "opus"],
@@ -107,7 +112,7 @@ function world(): World {
         release: () => {
           released.push(identity);
         },
-        decision: { identity, identitySource: "argv", configDirEscapeHatch: false, configProfileSource: "none" },
+        decision: { identity, identityId: idOf(identity), identitySource: "argv", configDirEscapeHatch: false, configProfileSource: "none" },
         markChildStarted: () => undefined,
         hold: () => {
           holds.push(launch.member ?? "first");
@@ -168,8 +173,10 @@ function world(): World {
     },
     now: () => START_MS,
     log,
+    nameOf: (id) => names.get(id) ?? id,
   };
   return {
+    names,
     deps,
     children,
     launches,
@@ -247,6 +254,43 @@ describe("supervise", () => {
     expect(w.decideMove).not.toHaveBeenCalled();
     expect(w.watchers.size).toBe(0);
     expect(w.handlers.size).toBe(0);
+  });
+
+  it("watches, checks and registers the usage of the identity's id, not its name, when the two differ", async () => {
+    const w = world({ first: "client", ids: { client: "work-2" } });
+    const seen: string[] = [];
+    w.quotaHit = (identity) => {
+      seen.push(identity);
+      return undefined;
+    };
+    const done = supervise(w.deps, FIRST);
+    await settle();
+    expect([...w.watchers.keys()]).toEqual(["work-2"]);
+    expect(w.registered.map((session) => session.identity)).toEqual(["work-2"]);
+    w.watchers.get("work-2")?.();
+    await settle();
+    expect(seen).toEqual(["work-2"]);
+    w.children[0]?.exitWith(0);
+    await expect(done).resolves.toBe(0);
+  });
+
+  it("relaunches as the member's name read when it relaunches, so a rename while the session ran is followed", async () => {
+    const w = world({ first: "client", ids: { client: "work-2" } });
+    w.decideMove.mockResolvedValue({ kind: "move", to: "spare-1", explanation: "pool subs: spare is next" });
+    w.names.set("spare-1", "spare");
+    const done = supervise(w.deps, FIRST);
+    await settle();
+    // Both identities are renamed while the first child runs.
+    w.names.set("work-2", "renamed");
+    w.names.set("spare-1", "reserve");
+    w.quotaHit = () => HIT;
+    w.watchers.get("work-2")?.();
+    await settle();
+    expect(w.decideMove).toHaveBeenCalledWith({ sessionId: SESSION, from: "work-2", contextTokens: CONTEXT_TOKENS });
+    expect(w.launches[1]).toEqual({ sessionId: SESSION, conversation: "resume", member: "reserve", from: "renamed" });
+    expect(w.log.infos.join("\n")).toContain(`agent-shim: renamed is out of quota; resuming session ${SESSION} under reserve`);
+    w.children[1]?.exitWith(0);
+    await expect(done).resolves.toBe(0);
   });
 
   it("stops the child and relaunches the session under the new member when its own request met a quota refusal", async () => {

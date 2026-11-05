@@ -5,6 +5,7 @@ import { runIdentityWizard } from "./identityManager";
 import { pickLaunchIdentity } from "./launchPicker";
 import { buildFarmRuntime, realClaudeBinaryResolver, realPrepareLaunchParams } from "./launchWiring";
 import { resolveLayoutPaths } from "./paths";
+import { readyTerminalIdentity } from "./terminalIdentity";
 import { refreshPools } from "./poolUsageRefresh";
 import { runSupervised, supervisesLaunch } from "./supervise/launch";
 import { prepareLaunch, runLauncher } from "./launcher";
@@ -35,10 +36,17 @@ export async function runClaude(argvOverride?: readonly string[]): Promise<void>
     readActiveIdentityFile: () => readActiveIdentity(realFsPort, paths.activeIdentityFile),
   });
   if (process.stdin.isTTY) {
+    // An identity an interrupted resync displaced is put back here, as a launch with no terminal puts it back, so only a name no identity claims is offered the wizard. Under the CLAUDE_CONFIG_DIR escape hatch no identity is selected, so there is nothing to put back or offer.
     if (
       identityDecision.name !== undefined &&
-      loadIdentity(paths.identitiesDir, identityDecision.name, realFsPort) === undefined &&
-      !(await runIdentityWizard(realPromptsPort, paths, identityDecision.name, { run: realRunPort, platform: process.platform }, { activate: false }))
+      !(await readyTerminalIdentity({
+        identitiesDir: paths.identitiesDir,
+        name: identityDecision.name,
+        fs: realFsPort,
+        farm: farm.runtime,
+        warn: realLogPort.warn,
+        runWizard: async (name) => runIdentityWizard(realPromptsPort, paths, name, { run: realRunPort, platform: process.platform }, { activate: false }),
+      }))
     ) {
       throw new PromptCancelledError();
     }

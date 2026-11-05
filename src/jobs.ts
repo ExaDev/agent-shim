@@ -6,7 +6,7 @@ import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDe
 import { collectAnchor, collectRepeated, parseDurationLiteral } from "./cli/parsers";
 import { UsageError } from "./cliError";
 import { JOB_WINDOWS, type Anchor, type Job, type JobWindow } from "./config/schema";
-import { identityExists, requireIdentityNames } from "./identityStore";
+import { identityIdOf, requireIdentityNames } from "./identityStore";
 import { addJob, readJobs, removeJob, requireJob } from "./jobStore";
 import { readPools, requirePool } from "./poolStore";
 import { realFarmFs, spawnDetachedSupervisor } from "./realPorts";
@@ -179,7 +179,7 @@ export function registerJobCommand(program: Command, deps: CommandDeps): void {
       .description("Run a job now, in this terminal, as its trigger would: for a pool the member is picked at this moment. The result is appended to the job's log, and a failure exits non-zero.")
       .action(async (name: string) => {
         const entry = requireJob(paths, name);
-        const identity = resolveJobIdentity({ paths, fs: realFarmFs, pools: readPools(paths), nowMs: Date.now(), identityExists: (candidate) => identityExists(paths, candidate) }, entry.target);
+        const identity = resolveJobIdentity({ paths, fs: realFarmFs, pools: readPools(paths), nowMs: Date.now(), identityIdOf: (candidate) => identityIdOf(paths, candidate) }, entry.target);
         if (identity === undefined) {
           throw new UsageError(`No member of the job's pool can be picked right now.`);
         }

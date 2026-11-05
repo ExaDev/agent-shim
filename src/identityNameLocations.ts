@@ -1,24 +1,24 @@
 import type { LayoutPaths } from "./paths";
 
-/** What `identity rename` does about a place the state root keeps files: `rewritten` when files there hold an identity's name, `unaffected` when they hold nothing a rename could invalidate. */
-type NameLocation = "rewritten" | "unaffected";
+/** What a rename does about a place the state root keeps files. `name` places hold an identity's name, which both renames rewrite. `id` places are filed under an identity's id (the directory it is stored in), which only `identity rename --move` changes, so only it moves or rewrites them; the rename of the name alone leaves them as they are, and that is what lets it go ahead while sessions run. `unaffected` places hold nothing a rename could invalidate. */
+type NameLocation = "name" | "id" | "unaffected";
 
 /**
- * Every field of `LayoutPaths`, decided. A rename must rewrite each place an identity's name is filed, and a place added later is easy to forget, so this table is typed to be complete: adding a field to `LayoutPaths` without deciding it here is a compile error, and the decision is where a reviewer sees it.
+ * Every field of `LayoutPaths`, decided. A rename must rewrite each place an identity's name is filed, `--move` also each place filed under its id, and a place added later is easy to forget, so this table is typed to be complete: adding a field to `LayoutPaths` without deciding it here is a compile error, and the decision is where a reviewer sees it.
  *
- * `rewritten` places are the ones `renameIdentity` plans a step for. `root` is `rewritten` for the two directories it derives that `LayoutPaths` has no field for, `credentials/` (one token file per identity) and `credential-cache/` (one entry per owner). `providersDir` is `rewritten` because a provider's credential sources can name the identity's token file, its directory or its Keychain login, which the rename re-points; the provider's own name, which keys its file, does not change. The `unaffected` ones are keyed by something other than an identity (a provider's name, a job, a session, a process), hold the front door's and headroom's runtime state (which a rename that refuses while a session runs finds idle), or are history that keeps the name it was written under. A test renames an identity referenced from every place and checks that each file it changed lies in a `rewritten` place, so this table cannot drift from what the rename does.
+ * `identitiesDir` is `name` for the `identity.json` in each identity's directory and the credential sources it holds; the directories themselves are named by id, and `--move` renames one. `root` is `id` for the two directories it derives that `LayoutPaths` has no field for, `credentials/` (one token file per identity id) and `credential-cache/` (one entry per owner, `identity <id>` for an identity). `providersDir` is `id` because a provider's credential sources can name an identity's token file, its directory or its Keychain login, all of which only `--move` changes; the provider's own name, which keys its file, does not change. `usageSnapshotsDir` is `id`: the door files a snapshot under the id the session's identity header carries. `usageAnchorsFile` is `id`: the window keeper files each identity's handled anchor under its id. `superviseDir` and `modelMovesDir` are `id`: the supervisor registers each session and the door writes each model-move request under the id of the identity, so a rename of the name leaves them true. The `unaffected` ones are keyed by something other than an identity (a provider's name, a job, a session, a process), hold the front door's and headroom's runtime state, or are history that keeps the key it was written under (the usage log, keyed by id). Tests rename an identity referenced from every place, once each way, and check that each file a rename of the name changed lies in a `name` place and each file `--move` changed in a `name` or `id` place, so this table cannot drift from what the renames do.
  */
 export const IDENTITY_NAME_LOCATIONS = {
-  root: "rewritten",
-  identitiesDir: "rewritten",
-  configProfilesDir: "rewritten",
-  directoryRulesFile: "rewritten",
-  activeIdentityFile: "rewritten",
-  globalConfigFile: "rewritten",
-  usageSnapshotsDir: "rewritten",
-  usagePicksFile: "rewritten",
-  usageAnchorsFile: "rewritten",
-  providersDir: "rewritten",
+  root: "id",
+  identitiesDir: "name",
+  configProfilesDir: "name",
+  directoryRulesFile: "name",
+  activeIdentityFile: "name",
+  globalConfigFile: "name",
+  usageSnapshotsDir: "id",
+  usagePicksFile: "name",
+  usageAnchorsFile: "id",
+  providersDir: "id",
   providerAliasesFile: "unaffected",
   catalogueDir: "unaffected",
   categoriesLocalFile: "unaffected",
@@ -54,7 +54,8 @@ export const IDENTITY_NAME_LOCATIONS = {
   jobLogsDir: "unaffected",
   statuslineDir: "unaffected",
   identityRenamesDir: "unaffected",
+  identityNameRenamesDir: "unaffected",
   launchesDir: "unaffected",
-  superviseDir: "unaffected",
-  modelMovesDir: "unaffected",
+  superviseDir: "id",
+  modelMovesDir: "id",
 } as const satisfies Record<keyof LayoutPaths, NameLocation>;

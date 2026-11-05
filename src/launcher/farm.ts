@@ -11,6 +11,7 @@ import type { FarmPlan } from "../resolve/plan";
 import type { DescendPolicy } from "../resolve/walkPolicy";
 import { CliError } from "../cliError";
 import { LEGACY_FARM_MANIFEST_FILENAME } from "../legacy";
+import { IDENTITY_FILE, isResyncFarmOf } from "../identityRecords";
 import { acquireIdentityLock, type IdentityLock } from "./lock";
 import type { FarmFs } from "./ports";
 
@@ -394,28 +395,27 @@ export interface RecoveryResult {
 /**
  * Finishes, or undoes, a swap a previous launch was killed in the middle of.
  *
- * The swap has exactly three interruptible points and each leaves a distinguishable trace. A crash while the scratch tree was still being built leaves a `.<identity>.scratch.*` directory, which holds only freshly created symlinks and empty directories — never unique data, by construction — so it is simply removed. A crash between the two renames leaves no farm at all and a `.<identity>.previous.*` directory holding everything: it is renamed back, restoring the identity exactly as it was. A crash after the second rename leaves both a farm and a superseded copy whose local state may not have been carried across yet, so carry-over is re-run and the copy discarded once it is empty of anything unique.
+ * The swap has exactly three interruptible points and each leaves a distinguishable trace. A crash while the scratch tree was still being built leaves a `.<identity>.scratch.*` directory, which holds only freshly created symlinks and empty directories (never unique data, by construction), so it is simply removed. A crash between the two renames leaves no farm at all and a `.<identity>.previous.*` directory holding everything: it is renamed back, restoring the identity exactly as it was. When several superseded farms are there, the one renamed back is the first in name order that holds `identity.json`, since a farm retained from an earlier swap for its conflicts has had that file carried out of it; with none holding it, the first in name order is. Scratch and superseded farms are matched whole (`isResyncFarmOf`), so another identity whose id begins with this one's and a farm word is never touched. A crash after the second rename leaves both a farm and a superseded copy whose local state may not have been carried across yet, so carry-over is re-run and the copy discarded once it is empty of anything unique.
  *
  * Every branch preserves data. Nothing here removes a directory that could still be the only copy of something.
  */
 function recoverInterruptedSwap(params: RecoverInterruptedSwapParams): RecoveryResult {
-  const scratchPrefix = `.${params.identity}.scratch.`;
-  const previousPrefix = `.${params.identity}.previous.`;
   const names = [...params.fs.readdir(params.identitiesDir)].sort();
 
   const removedScratch: string[] = [];
-  for (const name of names.filter((candidate) => candidate.startsWith(scratchPrefix))) {
+  for (const name of names.filter((candidate) => isResyncFarmOf(candidate, params.identity, "scratch"))) {
     params.fs.removeRecursive(path.join(params.identitiesDir, name));
     removedScratch.push(name);
   }
 
-  let previous = names.filter((candidate) => candidate.startsWith(previousPrefix));
+  let previous = names.filter((candidate) => isResyncFarmOf(candidate, params.identity, "previous"));
   let restoredFrom: string | undefined;
-  const first = previous[0];
-  if (first !== undefined && params.fs.lstat(params.farmRoot) === undefined) {
-    params.fs.rename(path.join(params.identitiesDir, first), params.farmRoot);
-    restoredFrom = first;
-    previous = previous.slice(1);
+  // The farm the killed swap moved aside holds identity.json, which a completed swap carries into the new farm, so a farm retained from an earlier swap for its conflicts does not; the first in name order that holds it is restored, the same farm the identity records read the identity from (`readIdentityRecords`).
+  const live = previous.find((candidate) => params.fs.lstat(path.join(params.identitiesDir, candidate, IDENTITY_FILE)) !== undefined) ?? previous[0];
+  if (live !== undefined && params.fs.lstat(params.farmRoot) === undefined) {
+    params.fs.rename(path.join(params.identitiesDir, live), params.farmRoot);
+    restoredFrom = live;
+    previous = previous.filter((candidate) => candidate !== live);
   }
 
   const completed: string[] = [];
@@ -601,7 +601,7 @@ export interface ResyncFarmParams {
   /** Distinguishes this resync's scratch and superseded directory names from any other process's. `${pid}.${uuid}` in real use; a fixed string in tests. */
   readonly uniqueSuffix: string;
   /**
-   * Whether the identity still exists, asked once the lock is held and any interrupted swap recovered. A launch that waited for the lock while the identity was renamed or removed must not rebuild its directory, so a caller that can answer passes it and `resyncFarm` throws `IdentityGoneError` on `false`. Absent means the caller has no way to tell.
+   * Whether the identity still exists, asked once the lock is held and any interrupted swap recovered. A launch that waited for the lock while the identity's directory was moved with `identity rename --move` or removed must not rebuild it (a rename of the name alone leaves the directory where it was), so a caller that can answer passes it and `resyncFarm` throws `IdentityGoneError` on `false`. Absent means the caller has no way to tell.
    */
   readonly identityExists?: () => boolean;
   readonly lock: {
@@ -660,10 +660,11 @@ function farmAlreadyMatches(existing: FarmManifest, next: FarmManifest): boolean
   );
 }
 
-/** Raised by `resyncFarm` when its identity no longer exists once the lock is held: it was renamed or removed while the launch waited. The directory is not rebuilt, since that would leave a farm with no `identity.json` under the old name, to be launched into signed out. */
+/** Raised by `resyncFarm` when its identity no longer exists once the lock is held: its directory was moved with `identity rename --move`, or it was removed, while the launch waited. The directory is not rebuilt, since that would leave a farm with no `identity.json` under the old name, to be launched into signed out. */
 export class IdentityGoneError extends CliError {
+  /** `identity` is the id the launch resolved, the directory under `identities/`, never a name. */
   constructor(readonly identity: string) {
-    super(`Identity "${identity}" no longer exists: it was renamed or removed while this launch waited for it. Launch it under its current name.`);
+    super(`The identity stored under identities/${identity} no longer exists: its directory was moved with \`identity rename --move\`, or it was removed, while this launch waited for it. Launch again by the identity's current name, if it has one.`);
     this.name = "IdentityGoneError";
   }
 }
@@ -816,6 +817,13 @@ export function resyncFarm(params: ResyncFarmParams): ResyncFarmResult {
     };
   } finally {
     lock.release();
+  }
+}
+
+/** Runs `recoverFarm` and passes `warn` the line a launch prints for each of the result's `recoveryDiagnostics`: the recovery every launch of an identity runs before it reads the identity's `identity.json`. Throws what `recoverFarm` throws, `IdentityLockBusyError` among it. */
+export function recoverFarmWarning(params: RecoverFarmParams, warn: (line: string) => void): void {
+  for (const diagnostic of recoveryDiagnostics(recoverFarm(params), params.identity)) {
+    warn(`agent-shim: ${diagnostic.code}: ${diagnostic.message}`);
   }
 }
 

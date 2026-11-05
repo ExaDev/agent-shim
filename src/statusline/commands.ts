@@ -7,7 +7,7 @@ import { printJson, withExamples } from "../cli/commandDeps";
 import { cosmiconfigReader } from "../config/load";
 import { resolveStatusline } from "../config/statusline";
 import type { LayoutPaths } from "../paths";
-import { readIdentity } from "../identityStore";
+import { readIdentityById } from "../identityStore";
 import { listProviders } from "../providersStore";
 import { realFarmFs, realFsPort, realHeadroomSocketTrust } from "../realPorts";
 import { readAccountMetadata, readAccountMetadataFile } from "../usage/account";
@@ -60,10 +60,15 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
       let snapshot;
       let account;
       let identityLabel: string | undefined;
+      let identityName: string | undefined;
       if (identity !== undefined) {
+        // The session carries the identity's id; its name and label are read from the identity.json stored under it, so a rename shows on the next refresh.
         try {
-          identityLabel = readIdentity(deps.paths, identity)?.label;
+          const stored = readIdentityById(deps.paths, identity);
+          identityName = stored?.name;
+          identityLabel = stored?.label;
         } catch {
+          identityName = undefined;
           identityLabel = undefined;
         }
         try {
@@ -121,7 +126,7 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
         }
       }
       const clientPayload = parseClientPayload(payload);
-      const enrichParams = { payload, env: process.env, identityLabel, snapshot, account, providerName, nowMs, headroom, routedTarget, ...(modelChoice === undefined ? {} : { modelChoice }) };
+      const enrichParams = { payload, env: process.env, identityName, identityLabel, snapshot, account, providerName, nowMs, headroom, routedTarget, ...(modelChoice === undefined ? {} : { modelChoice }) };
       const renderer = process.env.AGENT_SHIM_STATUSLINE_CMD;
       if (renderer !== undefined && renderer !== "") {
         const child = spawn("/bin/sh", ["-c", renderer], { stdio: ["pipe", "inherit", "inherit"] });

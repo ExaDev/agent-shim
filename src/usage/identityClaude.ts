@@ -3,6 +3,7 @@ import { prepareLaunch } from "../launcher";
 import type { LayoutPaths } from "../paths";
 import { realIsProcessAlive, realRunAsync, type DaemonSpawner } from "../realPorts";
 import { recordRuns, type AsyncRun } from "../replayRun";
+import { nonWaitingIdentityNamesLockPorts } from "../identityNamesLock";
 
 /** The environment variable that makes a launch skip identity resolution, which would point a headless run at the wrong account. */
 const CONFIG_DIR_VARIABLE = "CLAUDE_CONFIG_DIR";
@@ -50,8 +51,9 @@ export async function withIdentityClaude<T>(params: Readonly<IdentityClaudeParam
   const argv = [...identityLaunchArgv(identity, flags)];
   // The launcher's decision asks for commands (a git branch, a Keychain probe) that spawn synchronously, and this runs inside the front door when the door refreshes usage: the read-only resolution of the same launch is started until every command it asks for has been run without blocking, and the launch below is planned over those answers.
   const run = await recordRuns((replay) => resolveClaudeLaunch({ argv, cwd: params.cwd, env: definedEnvironment(env), paths: params.paths }, replay), params.runAsync ?? realRunAsync);
+  const farm = buildFarmRuntime(params.paths, params.cwd, run);
   const plan = prepareLaunch(
-    realPrepareLaunchParams(params.paths, {
+    { ...realPrepareLaunchParams(params.paths, {
       proc: {
         env,
         argv,
@@ -70,8 +72,8 @@ export async function withIdentityClaude<T>(params: Readonly<IdentityClaudeParam
       },
       spawnDaemon: params.spawnDaemon,
       run,
-      farm: buildFarmRuntime(params.paths, params.cwd, run),
-    }),
+      farm: { ...farm, runtime: { ...farm.runtime, lock: { ...farm.runtime.lock, isRunning: realIsProcessAlive, sleep: () => undefined, maxAttempts: 1 } } },
+    }), namesLock: nonWaitingIdentityNamesLockPorts },
   );
   const abort = new AbortController();
   const timer = setTimeout(() => {

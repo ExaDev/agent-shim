@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { CliError, UsageError } from "./cliError";
 import { UnsafeNameError } from "./config/names";
-import { describeIdentityRename, discardRenameJournal, renameIdentity } from "./identityRename";
+import { describeIdentityMove, describeIdentityRename, discardRenameJournal, moveIdentity, renameIdentity } from "./identityRename";
 import { describeUnfinishedRename, readRenameJournal, renameJournalFile, writeRenameJournal, type RenameJournal } from "./identityRenameJournal";
 import { NOW_MS, OWN_PID, createWorld, treeOf, type World } from "./identityRenameTestWorld";
 import { InvalidIdentityNameError, addIdentity, identityExists, removeIdentity } from "./identityStore";
@@ -56,10 +56,10 @@ describe("a rename left unfinished whose identity is under neither name, or unde
     removeByHand(world, "work");
     leaveJournal(world, "work", "client");
     const before = treeOf(world.root);
-    await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow(/no identity under either name/);
-    await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow("agent-shim identity rename work client --discard-journal");
-    await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.toBeInstanceOf(CliError);
-    expect(() => describeIdentityRename(world.paths, "work", "client", world.ports())).toThrow("agent-shim identity rename work client --discard-journal");
+    await expect(moveIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow(/no identity under either name/);
+    await expect(moveIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow("agent-shim identity rename work client --move --discard-journal");
+    await expect(moveIdentity(world.paths, "work", "client", world.ports())).rejects.toBeInstanceOf(CliError);
+    expect(() => describeIdentityMove(world.paths, "work", "client", world.ports())).toThrow("agent-shim identity rename work client --move --discard-journal");
     expect(treeOf(world.root)).toEqual(before);
   });
 
@@ -67,8 +67,8 @@ describe("a rename left unfinished whose identity is under neither name, or unde
     createByHand(world, "client");
     leaveJournal(world, "work", "client");
     const before = treeOf(world.root);
-    await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow(/both names are identities/);
-    await expect(renameIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow("agent-shim identity rename work client --discard-journal");
+    await expect(moveIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow(/both names are identities/);
+    await expect(moveIdentity(world.paths, "work", "client", world.ports())).rejects.toThrow("agent-shim identity rename work client --move --discard-journal");
     expect(treeOf(world.root)).toEqual(before);
   });
 
@@ -228,11 +228,29 @@ describe("identity add and identity remove while a rename is unfinished", () => 
     expect(fs.existsSync(world.directory("client"))).toBe(false);
   });
 
+  it("refuses a rename, of either kind, to a name that reaches the directory a journal holds through a symlink", async () => {
+    leaveJournal(world, "work", "client");
+    fs.symlinkSync(world.directory("work"), world.directory("work-alias"));
+    const before = treeOf(world.root);
+    expect(() => describeIdentityRename(world.paths, "personal", "work-alias", world.ports())).toThrow(/work-alias/);
+    await expect(renameIdentity(world.paths, "personal", "work-alias", world.ports())).rejects.toThrow("agent-shim identity rename work client --move");
+    await expect(moveIdentity(world.paths, "personal", "work-alias", world.ports())).rejects.toThrow("agent-shim identity rename work client --move");
+    expect(treeOf(world.root)).toEqual(before);
+  });
+
+  it.runIf(ignoresCase(os.tmpdir()))("refuses a rename, of either kind, to another spelling of a held name on a filesystem that ignores case", async () => {
+    leaveJournal(world, "work", "client");
+    const before = treeOf(world.root);
+    await expect(renameIdentity(world.paths, "personal", "CLIENT", world.ports())).rejects.toThrow("agent-shim identity rename work client --move");
+    await expect(moveIdentity(world.paths, "personal", "CLIENT", world.ports())).rejects.toThrow("agent-shim identity rename work client --move");
+    expect(treeOf(world.root)).toEqual(before);
+  });
+
   it("names the discard command in the refusal of a rename of another name when nothing can finish the unfinished one", async () => {
     removeByHand(world, "work");
     leaveJournal(world, "work", "client");
-    await expect(renameIdentity(world.paths, "work", "other", world.ports())).rejects.toThrow("agent-shim identity rename work client --discard-journal");
-    await expect(renameIdentity(world.paths, "work", "other", world.ports())).rejects.not.toThrow("Finish it with");
+    await expect(moveIdentity(world.paths, "work", "other", world.ports())).rejects.toThrow("agent-shim identity rename work client --move --discard-journal");
+    await expect(moveIdentity(world.paths, "work", "other", world.ports())).rejects.not.toThrow("Finish it with");
   });
 
   it("names the command that discards the record, not one that finishes the rename, when nothing can finish it", () => {
@@ -247,7 +265,7 @@ describe("identity add and identity remove while a rename is unfinished", () => 
       },
     ];
     for (const attempt of attempts) {
-      expect(attempt).toThrow("agent-shim identity rename work client --discard-journal");
+      expect(attempt).toThrow("agent-shim identity rename work client --move --discard-journal");
       expect(attempt).not.toThrow("Finish it with");
     }
   });
@@ -264,7 +282,7 @@ describe("identity add and identity remove while a rename is unfinished", () => 
 
   it("allows both again once the rename has been finished", async () => {
     leaveJournal(world, "work", "client");
-    await renameIdentity(world.paths, "work", "client", world.ports());
+    await moveIdentity(world.paths, "work", "client", world.ports());
     expect(() => {
       removeIdentity(world.paths, "client");
     }).not.toThrow();

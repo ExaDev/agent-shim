@@ -1,8 +1,10 @@
 import path from "node:path";
 
-import { loadConfigFile, type LoadedFile } from "../config/load";
+import { ConfigFileNotJsonError, loadConfigFile, type LoadedFile } from "../config/load";
 import { FILE_NAME_RULE, isFileName, UnsafeNameError } from "../config/names";
 import { IdentitySchema, IdentitySelectorSchema, POOL_SELECTOR_PREFIX, type Identity } from "../config/schema";
+import { guardedNameRead, identityIdIn, isSymlinkEntry, nameOfParsed, readIdentityRecords, type IdentityRecordsPort } from "../identityRecords";
+import { sameDirectory } from "../sameDirectory";
 import type { FsPort } from "./ports";
 
 /** Which precedence rule produced an identity decision. */
@@ -170,8 +172,44 @@ export function decideConfigProfile(params: DecideConfigProfileParams): ConfigPr
   return { source: "none" };
 }
 
+/** The identity records port over the launcher's configuration port: `readConfigFile` parses each `identity.json`, a file that is not JSON is unreadable, so it claims no name and loading it by its id reports the file, and the entry's faults are read as the store's port reads them (`guardedNameRead`), so the launcher and the store resolve every name alike. */
+function configRecordsPort(fs: Pick<FsPort, "readdir" | "readConfigFile">): IdentityRecordsPort {
+  return {
+    readdir: fs.readdir,
+    sameDirectory,
+    isSymlink: isSymlinkEntry,
+    readName: (file) =>
+      guardedNameRead(() => {
+        let value: unknown;
+        try {
+          value = fs.readConfigFile(file);
+        } catch (error) {
+          if (error instanceof ConfigFileNotJsonError) {
+            return "unreadable";
+          }
+          throw error;
+        }
+        return value === undefined ? "absent" : nameOfParsed(value);
+      }),
+  };
+}
+
+/** The id (the directory under `identitiesDir`) of the identity named `name`, read through the launcher's configuration port, or undefined when no identity is named so. Throws `DuplicateIdentityNameError` when two are. */
+export function resolveIdentityId(identitiesDir: string, name: string, fs: Pick<FsPort, "readdir" | "readConfigFile">): string | undefined {
+  return identityIdIn(readIdentityRecords(configRecordsPort(fs), identitiesDir), name);
+}
+
+/** What resolves many names to ids from one read of the identity records, as `resolveIdentityId` resolves one: the records are read on the first call and every later call answers from them, so ranking a pool reads each `identity.json` once however many members it names. Use one per decision, since it does not see a rename made after its first call. */
+export function identityIdResolver(identitiesDir: string, fs: Pick<FsPort, "readdir" | "readConfigFile">): (name: string) => string | undefined {
+  let records: ReturnType<typeof readIdentityRecords> | undefined;
+  return (name) => {
+    records ??= readIdentityRecords(configRecordsPort(fs), identitiesDir);
+    return identityIdIn(records, name);
+  };
+}
+
 /**
- * Reads and validates one identity's `identity.json` from `<identitiesDir>/<name>/identity.json`, via `IdentitySchema`.
+ * Reads and validates the `identity.json` of the identity named `name`, which is `<identitiesDir>/<id>/identity.json` for the id `resolveIdentityId` finds, via `IdentitySchema`.
  *
  * Returns undefined when the file does not exist (e.g. the identity was resolved by name but never actually created — `agent-shim identity add` is Phase 4's job, not this one's). Throws `ConfigValidationError` when the file exists but fails validation, the same as any other config file in this project.
  */
@@ -179,5 +217,6 @@ export function loadIdentity(identitiesDir: string, name: string, fs: FsPort): L
   if (!isFileName(name)) {
     throw new UnsafeNameError(name, "identity", FILE_NAME_RULE);
   }
-  return loadConfigFile(path.join(identitiesDir, name, "identity.json"), IdentitySchema, fs.readConfigFile);
+  const id = resolveIdentityId(identitiesDir, name, fs);
+  return id === undefined ? undefined : loadConfigFile(path.join(identitiesDir, id, "identity.json"), IdentitySchema, fs.readConfigFile);
 }

@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { CliError } from "./cliError";
-import { describeIdentityRename, renameIdentity } from "./identityRename";
+import { describeIdentityMove, moveIdentity } from "./identityRename";
 import { createWorld, treeOf, writeJson, type World } from "./identityRenameTestWorld";
 import { readIdentity } from "./identityStore";
 import { buildLayoutPaths } from "./paths";
@@ -29,8 +29,8 @@ describe("the spellings of a moved path that a command source or an unreadable f
 
   /** The warnings of a dry run and of the real run, which must agree, with `home` as the home directory. */
   async function warningsWithHome(home: string): Promise<readonly string[]> {
-    const planned = describeIdentityRename(world.paths, "work", "client", world.ports({ home })).warnings;
-    const done = await renameIdentity(world.paths, "work", "client", world.ports({ home }));
+    const planned = describeIdentityMove(world.paths, "work", "client", world.ports({ home })).warnings;
+    const done = await moveIdentity(world.paths, "work", "client", world.ports({ home }));
     expect(done.warnings).toEqual(planned);
     return planned;
   }
@@ -62,7 +62,7 @@ describe("the spellings of a moved path that a command source or an unreadable f
       for (const spelled of ['$HOME/credentials/work.token', '${HOME}/identities/work/secrets/token']) {
         fs.writeFileSync(path.join(world.paths.providersDir, "garbled.json"), `{ "credential": "${spelled}" madeupsecretvalue`);
         const before = treeOf(world.root);
-        const failure: unknown = await renameIdentity(world.paths, "work", "client", world.ports({ home: world.root })).then(
+        const failure: unknown = await moveIdentity(world.paths, "work", "client", world.ports({ home: world.root })).then(
           () => undefined,
           (error: unknown) => error,
         );
@@ -92,13 +92,13 @@ describe("the spellings of a moved path that a command source or an unreadable f
 
     it("warns of a command source that names the moved directory by its real path", async () => {
       commandSource("cat", `${realRoot}/identities/work/secrets/token`);
-      expect(describeIdentityRename(linkedPaths, "work", "client", world.ports()).warnings).toEqual([COMMAND_NOTE]);
-      expect((await renameIdentity(linkedPaths, "work", "client", world.ports())).warnings).toEqual([COMMAND_NOTE]);
+      expect(describeIdentityMove(linkedPaths, "work", "client", world.ports()).warnings).toEqual([COMMAND_NOTE]);
+      expect((await moveIdentity(linkedPaths, "work", "client", world.ports())).warnings).toEqual([COMMAND_NOTE]);
     });
 
     it("warns of a command source that names the moved token file by its real path", () => {
       commandSource("cat", `${realRoot}/credentials/work.token`);
-      expect(describeIdentityRename(linkedPaths, "work", "client", world.ports()).warnings).toEqual([COMMAND_NOTE]);
+      expect(describeIdentityMove(linkedPaths, "work", "client", world.ports()).warnings).toEqual([COMMAND_NOTE]);
     });
 
     it("re-points a file source that names the token file by its real path, to the new name under the same spelling", async () => {
@@ -107,7 +107,7 @@ describe("the spellings of a moved path that a command source or an unreadable f
         allowAmbientCredential: false,
         credential: { sources: [{ file: `${realRoot}/credentials/work.token` }, { file: `${realRoot}/identities/work/secrets/token` }], target: "oauthToken" },
       });
-      await renameIdentity(linkedPaths, "work", "client", world.ports());
+      await moveIdentity(linkedPaths, "work", "client", world.ports());
       expect(readIdentity(world.paths, "personal")?.credential?.sources).toEqual([{ file: `${realRoot}/credentials/client.token` }, { file: `${realRoot}/identities/client/secrets/token` }]);
     });
 
@@ -115,13 +115,13 @@ describe("the spellings of a moved path that a command source or an unreadable f
       fs.mkdirSync(world.paths.providersDir, { recursive: true });
       fs.writeFileSync(path.join(world.paths.providersDir, "garbled.json"), `{ "credential": "${realRoot}/identities/work/secrets/token" `);
       const before = treeOf(world.root);
-      await expect(renameIdentity(linkedPaths, "work", "client", world.ports())).rejects.toThrow("providers/garbled.json");
+      await expect(moveIdentity(linkedPaths, "work", "client", world.ports())).rejects.toThrow("providers/garbled.json");
       expect(treeOf(world.root)).toEqual(before);
     });
 
     it("does not take another identity's real path for it", () => {
       commandSource("cat", `${realRoot}/identities/work-two/secrets/token`);
-      expect(describeIdentityRename(linkedPaths, "work", "client", world.ports()).warnings).toEqual([]);
+      expect(describeIdentityMove(linkedPaths, "work", "client", world.ports()).warnings).toEqual([]);
     });
   });
 });

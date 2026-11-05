@@ -1,16 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import { prepareLaunch } from "./launcher";
-import { discovered, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, paths } from "./test-helpers";
+import { createFakeFarmFs, discovered, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, paths } from "./test-helpers";
 
 describe("prepareLaunch decision", () => {
   const plan = (env: Readonly<Record<string, string>>, argv: readonly string[], files: Readonly<Record<string, unknown>> = {}): ReturnType<typeof prepareLaunch> =>
-    prepareLaunch({ paths, fs: fakeFs(files), proc: fakeProc(env, argv), log: fakeLog(), resolveClaudeBinary: () => discovered, frontdoor: fakeFrontDoorPort() });
+    prepareLaunch({ paths, namesLock: { fs: createFakeFarmFs(), nowMs: () => Date.now(), pid: process.pid, isRunning: () => true, sleep: () => undefined }, fs: fakeFs(files), proc: fakeProc(env, argv), log: fakeLog(), resolveClaudeBinary: () => discovered, frontdoor: fakeFrontDoorPort() });
 
   it("reports the identity a launch runs as, how it was selected and the configuration directory the child gets", () => {
     const { decision } = plan({}, ["@work", "--print"]);
     expect(decision).toEqual({
       identity: "work",
+      identityId: "work",
       identitySource: "argv",
       configDirEscapeHatch: false,
       configDir: `${paths.identitiesDir}/work`,

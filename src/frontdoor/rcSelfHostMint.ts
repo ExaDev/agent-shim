@@ -1,5 +1,6 @@
 import path from "node:path";
 
+import { identityIdOver } from "../identityRecords";
 import { isIdentityName } from "../usage/account";
 import type { FarmFs } from "../launcher/ports";
 import type { RcSelfHostCredentialRecord } from "./rcSelfHost";
@@ -37,8 +38,8 @@ const SELF_HOST_SUBSCRIPTION_TYPE = "max";
 
 /** Everything the minting needs, injected so it runs against an in-memory fake filesystem in unit tests. */
 export interface RcSelfHostMintDeps {
-  readonly fs: Pick<FarmFs, "readFileUtf8" | "writeFilePrivate" | "mkdirPrivate">;
-  /** The agent-shim identities directory (the mint writes inside `<identitiesDir>/<identity>/`). */
+  readonly fs: Pick<FarmFs, "readFileUtf8" | "readdir" | "writeFilePrivate" | "mkdirPrivate">;
+  /** The agent-shim identities directory (the mint writes inside `<identitiesDir>/<id>/`, the directory of the identity's id). */
   readonly identitiesDir: string;
   /** The door's state directory (the record is written under `<frontdoorDir>/rc-selfhost/`). */
   readonly frontdoorDir: string;
@@ -103,7 +104,12 @@ export function mintRcSelfHostCredential(deps: RcSelfHostMintDeps): RcSelfHostMi
   if (!isIdentityName(deps.identity)) {
     throw new Error(`"${deps.identity}" is not a valid identity name.`);
   }
-  const identityDir = path.join(deps.identitiesDir, deps.identity);
+  // The identity is named by its name and its files are in the directory of its id.
+  const id = identityIdOver(deps.fs, deps.identitiesDir, deps.identity);
+  if (id === undefined) {
+    throw new Error(`No identity named "${deps.identity}".`);
+  }
+  const identityDir = path.join(deps.identitiesDir, id);
   const credentialsFile = path.join(identityDir, CREDENTIALS_FILE);
   const claudeJsonFile = path.join(identityDir, CLAUDE_JSON);
   const recordDir = path.join(deps.frontdoorDir, RC_SELF_HOST_RECORD_DIR);

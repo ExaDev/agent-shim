@@ -4,7 +4,7 @@ import type { Command } from "commander";
 
 import { printJson, withExamples, type CommandDeps } from "../cli/commandDeps";
 import { parseDurationOption } from "../cli/parsers";
-import { IdentityNotFoundError, listIdentities, readIdentity } from "../identityStore";
+import { identityLabeller, identityRecords, listIdentities, readIdentityById, requireIdentityId } from "../identityStore";
 import type { FarmFs } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
 import { realFarmFs, realRunPort, spawnDetachedSupervisor } from "../realPorts";
@@ -46,28 +46,24 @@ export interface UsageFilters {
   readonly sinceMs?: number;
 }
 
-/** Fails with the identity command's own error when `name` is not an identity: a mistyped `--identity` must not read as "no usage". */
-function requireIdentity(paths: LayoutPaths, name: string): void {
-  if (!listIdentities(paths).some((entry) => entry.name === name)) {
-    throw new IdentityNotFoundError(name);
-  }
-}
 
 /** Collects `agent-shim usage`, read-only. */
 export function collectUsageReport(fs: ReportFs, paths: LayoutPaths, filters: UsageFilters): UsageReport {
-  const { identity, provider, sinceMs } = filters;
-  if (identity !== undefined) {
-    requireIdentity(paths, identity);
-  }
+  const { provider, sinceMs } = filters;
+  // A mistyped `--identity` fails with the identity command's own error rather than reading as "no usage".
+  const id = filters.identity === undefined ? undefined : requireIdentityId(paths, filters.identity);
+  const label = identityLabeller(paths);
   const log = readUsageLog(fs, paths.usageLogDir, sinceMs === undefined ? {} : { sinceMs });
-  const records = log.records.filter((record) => (identity === undefined || record.identity === identity) && (provider === undefined || record.provider === provider));
-  const snapshots = (identity === undefined ? listUsageSnapshots(fs, paths.usageSnapshotsDir) : [readUsageSnapshot(fs, paths.usageSnapshotsDir, identity)].flatMap((snapshot) => (snapshot === undefined ? [] : [snapshot])))
+  const records = log.records.filter((record) => (id === undefined || record.identity === id) && (provider === undefined || record.provider === provider));
+  const snapshots = (id === undefined ? listUsageSnapshots(fs, paths.usageSnapshotsDir) : [readUsageSnapshot(fs, paths.usageSnapshotsDir, id)].flatMap((snapshot) => (snapshot === undefined ? [] : [snapshot])))
     .map((snapshot) => (provider === undefined ? snapshot : { ...snapshot, providers: Object.fromEntries(Object.entries(snapshot.providers).filter(([name]) => name === provider)) }))
-    .filter((snapshot) => Object.keys(snapshot.providers).length > 0);
+    .filter((snapshot) => Object.keys(snapshot.providers).length > 0)
+    .map((snapshot) => ({ ...snapshot, identity: label(snapshot.identity) }));
+  // Usage is filed by id and reported by name.
   return {
     since: sinceMs === undefined ? undefined : new Date(sinceMs).toISOString(),
     logDir: paths.usageLogDir,
-    summaries: summariseUsage(records),
+    summaries: summariseUsage(records.map((record) => (record.identity === undefined ? record : { ...record, identity: label(record.identity) }))),
     snapshots,
     invalidLines: log.invalidLines,
   };
@@ -208,17 +204,15 @@ export interface AccountView {
 
 /** Collects `agent-shim account show`, read-only: one identity, or every identity when none is named. Throws `IdentityNotFoundError` for a named identity that does not exist. */
 export function collectAccounts(fs: ReportFs & Pick<FarmFs, "lstat">, paths: LayoutPaths, identity: string | undefined, probe: Readonly<SignInProbe>): readonly AccountView[] {
-  if (identity !== undefined) {
-    requireIdentity(paths, identity);
-  }
-  const names = identity === undefined ? listIdentities(paths).map((entry) => entry.name) : [identity];
-  return names.map((name) => {
-    const stored = readIdentity(paths, name);
+  const named = identity === undefined ? listIdentities(paths).map((entry) => ({ name: entry.name, id: entry.id })) : [{ name: identity, id: requireIdentityId(paths, identity) }];
+  return named.map(({ name, id }) => {
+    const stored = readIdentityById(paths, id);
     return {
       identity: name,
-      account: readAccountMetadata(fs, paths.identitiesDir, name),
-      signIn: identitySignIn(fs, probe, { farmRoot: path.join(paths.identitiesDir, name), hasCredentialBlock: stored?.credential !== undefined, provider: stored?.provider }),
-      usage: readUsageSnapshot(fs, paths.usageSnapshotsDir, name),
+      account: readAccountMetadata(fs, paths.identitiesDir, id),
+      signIn: identitySignIn(fs, probe, { farmRoot: path.join(paths.identitiesDir, id), hasCredentialBlock: stored?.credential !== undefined, provider: stored?.provider }),
+      // Named, like the view around it, by the identity's name; the snapshot is filed under its id.
+      usage: ((snapshot) => (snapshot === undefined ? undefined : { ...snapshot, identity: name }))(readUsageSnapshot(fs, paths.usageSnapshotsDir, id)),
     };
   });
 }
@@ -258,9 +252,8 @@ function formatAccounts(views: readonly AccountView[]): string[] {
  * Refreshes the pulled quota of every provider an identity has recorded requests for (narrowed by `--identity` and `--provider`), regardless of how fresh the stored one is: asking is the reason to fetch. Returns the warnings for what could not be refreshed; providers without a usage endpoint are skipped silently.
  */
 async function refreshQuotas(paths: LayoutPaths, filters: Readonly<{ identity?: string; provider?: string }>): Promise<string[]> {
-  if (filters.identity !== undefined) {
-    requireIdentity(paths, filters.identity);
-  }
+  const id = filters.identity === undefined ? undefined : requireIdentityId(paths, filters.identity);
+  const label = identityLabeller(paths);
   const store = createUsageStore({
     fs: realFarmFs,
     paths,
@@ -273,26 +266,30 @@ async function refreshQuotas(paths: LayoutPaths, filters: Readonly<{ identity?: 
   });
   const refresher = createRealQuotaRefresher({ paths, store, log: () => undefined });
   const pairs = listUsageSnapshots(realFarmFs, paths.usageSnapshotsDir)
-    .filter((snapshot) => filters.identity === undefined || snapshot.identity === filters.identity)
+    .filter((snapshot) => id === undefined || snapshot.identity === id)
     .flatMap((snapshot) => Object.keys(snapshot.providers).filter((provider) => provider !== ANTHROPIC_PROVIDER && (filters.provider === undefined || provider === filters.provider)).map((provider) => ({ identity: snapshot.identity, provider })));
   const warnings: string[] = [];
   if (filters.provider === undefined || filters.provider === ANTHROPIC_PROVIDER) {
     const anthropic = createRealAnthropicUsageRefresher({ paths, store, cwd: process.cwd(), spawnDaemon: spawnDetachedSupervisor, log: () => undefined });
-    // A named identity is asked even when it has made no request, which is when it has the most to learn; without a name, every identity with a snapshot is.
-    const subscribed = (filters.identity === undefined ? listUsageSnapshots(realFarmFs, paths.usageSnapshotsDir).map((snapshot) => snapshot.identity) : [filters.identity])
-      .map((identity) => ({ identity, snapshot: readUsageSnapshot(realFarmFs, paths.usageSnapshotsDir, identity), account: readAccountMetadata(realFarmFs, paths.identitiesDir, identity) }))
+    // A named identity is asked even when it has made no request, which is when it has the most to learn; without a name, every identity with a snapshot is. The probe launches the identity by name, and its usage is filed by id; a snapshot left by an identity that no longer exists has nothing to launch.
+    const names = new Map(identityRecords(paths).map((record) => [record.id, record.name]));
+    const subscribed = (id === undefined ? listUsageSnapshots(realFarmFs, paths.usageSnapshotsDir).map((snapshot) => snapshot.identity) : [id])
+      .flatMap((snapshotId) => {
+        const name = names.get(snapshotId);
+        return name === undefined ? [] : [{ name, snapshot: readUsageSnapshot(realFarmFs, paths.usageSnapshotsDir, snapshotId), account: readAccountMetadata(realFarmFs, paths.identitiesDir, snapshotId) }];
+      })
       .filter(({ snapshot, account }) => isAnthropicUsageProbeable({ ...(snapshot === undefined ? {} : { snapshot }), ...(account === undefined ? {} : { account }) }));
-    for (const { identity } of subscribed) {
-      const outcome = await anthropic.refresh(identity);
+    for (const { name } of subscribed) {
+      const outcome = await anthropic.refresh(name);
       if (outcome.status === "failed") {
-        warnings.push(`warning: could not refresh ${identity} via ${ANTHROPIC_PROVIDER}: ${outcome.message}`);
+        warnings.push(`warning: could not refresh ${name} via ${ANTHROPIC_PROVIDER}: ${outcome.message}`);
       }
     }
   }
   for (const { identity, provider } of pairs) {
     const outcome = await refresher.refresh(identity, provider, { force: true });
     if (outcome.status === "failed") {
-      warnings.push(`warning: could not refresh ${identity} via ${provider}: ${outcome.message}`);
+      warnings.push(`warning: could not refresh ${label(identity)} via ${provider}: ${outcome.message}`);
     }
   }
   return warnings;

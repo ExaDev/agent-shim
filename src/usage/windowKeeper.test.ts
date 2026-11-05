@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Anchor } from "../config/schema";
 import { createFakeFarmFs } from "../test-helpers";
+import { readHandled, writeHandled } from "./handledStamps";
 import { reasonNotToOpen, runWindowKeeper, type AnchoredIdentity, type WindowKeeperPorts } from "./windowKeeper";
 import { USAGE_SCHEMA_VERSION, type UsageSnapshot } from "./schema";
 
@@ -38,7 +39,7 @@ function harness(options: { readonly anchored?: readonly AnchoredIdentity[]; rea
     stampsFile: STAMPS_FILE,
     nowMs: () => now,
     timeZone: "UTC",
-    anchored: () => options.anchored ?? [{ identity: "work", anchors: MONDAY_6 }],
+    anchored: () => options.anchored ?? [{ id: "work", identity: "work", anchors: MONDAY_6 }],
     // Unless a test says otherwise the account has been read and reports no open five-hour window, which is the state an anchor exists to act on.
     snapshot: (identity) => (options.snapshots === undefined ? snapshotWith(identity, { fiveHour: { utilization: 0 }, sevenDay: { utilization: U40 } }, AFTER_ANCHOR) : options.snapshots[identity]),
     open:
@@ -127,7 +128,7 @@ describe("runWindowKeeper", () => {
   });
 
   it("drops an identity from the file once it has no anchors, and arms it afresh if they return", async () => {
-    let anchored: readonly AnchoredIdentity[] = [{ identity: "work", anchors: MONDAY_6 }];
+    let anchored: readonly AnchoredIdentity[] = [{ id: "work", identity: "work", anchors: MONDAY_6 }];
     const fs = createFakeFarmFs({});
     const ports: WindowKeeperPorts = { fs, stampsFile: STAMPS_FILE, nowMs: () => BEFORE_ANCHOR, timeZone: "UTC", anchored: () => anchored, snapshot: () => undefined, open: async () => {
         await Promise.resolve();
@@ -166,5 +167,49 @@ describe("reasonNotToOpen", () => {
 
   it("does not open for an account that has a seven-day window and no five-hour one, since there is nothing to anchor", () => {
     expect(reasonNotToOpen("a", snapshotWith("a", { sevenDay: { utilization: U40, resetsAt: at(AFTER_ANCHOR + HOUR_MS) } }, AFTER_ANCHOR), AFTER_ANCHOR)).toContain("no five-hour window");
+  });
+});
+
+describe("runWindowKeeper and identity ids", () => {
+  it("files the stamp and reads the snapshot under the identity's id, and opens the window under its name", async () => {
+    const asked: string[] = [];
+    const keeper = harness({
+      anchored: [{ id: "work", identity: "client", anchors: MONDAY_6 }],
+      // The snapshot is filed under the id alone, so a read under the name finds none and opens nothing.
+      snapshots: { work: snapshotWith("work", { fiveHour: { utilization: 0 }, sevenDay: { utilization: U40 } }, AFTER_ANCHOR) },
+      open: async (identity) => {
+        asked.push(`open ${identity}`);
+        await Promise.resolve();
+      },
+    });
+    await keeper.run(BEFORE_ANCHOR);
+    await keeper.run(AFTER_ANCHOR);
+    expect(asked).toEqual(["open client"]);
+    expect(Object.keys(readHandled(keeper.fs, STAMPS_FILE))).toEqual(["work"]);
+  });
+
+  it("keeps a stamp another writer filed while a window was being opened, and drops the one of an identity no longer anchored", async () => {
+    const fs = createFakeFarmFs({});
+    let now = BEFORE_ANCHOR;
+    let anchored: readonly AnchoredIdentity[] = [{ id: "work", identity: "work", anchors: MONDAY_6 }];
+    const ports: WindowKeeperPorts = {
+      fs,
+      stampsFile: STAMPS_FILE,
+      nowMs: () => now,
+      timeZone: "UTC",
+      anchored: () => anchored,
+      snapshot: (id) => snapshotWith(id, { fiveHour: { utilization: 0 }, sevenDay: { utilization: U40 } }, AFTER_ANCHOR),
+      // While the window opens, a `identity rename --move` moves the identity to the id moved and rekeys its stamp.
+      open: async () => {
+        anchored = [{ id: "moved", identity: "moved", anchors: MONDAY_6 }];
+        writeHandled(fs, STAMPS_FILE, { moved: BEFORE_ANCHOR });
+        await Promise.resolve();
+      },
+      log: () => undefined,
+    };
+    await runWindowKeeper(ports);
+    now = AFTER_ANCHOR;
+    await runWindowKeeper(ports);
+    expect(readHandled(fs, STAMPS_FILE)).toEqual({ moved: BEFORE_ANCHOR });
   });
 });

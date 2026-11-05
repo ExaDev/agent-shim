@@ -2,7 +2,7 @@ import path from "node:path";
 
 import type { FarmFs } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
-import { AccountMetadataError, isIdentityName } from "./account";
+import { AccountMetadataError, isIdentityId } from "./account";
 import { overageFactsOf, parseUnifiedRateLimit } from "./rateLimit";
 import { listLogSegments, readUsageSnapshot, segmentDay, segmentName, snapshotPath, UsageSnapshotError } from "./read";
 import { USAGE_SCHEMA_VERSION, UsageRecordSchema, UsageSnapshotSchema, type AccountMetadata, type ProviderQuota, type ProviderUsageState, type RateLimitState, type UsageRecord, type UsageSnapshot } from "./schema";
@@ -99,7 +99,7 @@ export function foldProviderState(current: ProviderUsageState | undefined, recor
  *
  * The log is append-only JSON Lines under `usage/log/`, one segment per writing process per UTC day (`<YYYY-MM-DD>.<pid>.jsonl`). Every segment has exactly one writer, so concurrent writers (two door generations overlapping during a restart) can never interleave within a line, and readers (`agent-shim usage`, other tools) need no lock: the only partial line they can meet is a segment's unfinished last one, which they skip. Retention is enforced by pruning whole segments on the first write of each day.
  *
- * Each identity's snapshot (`usage/snapshots/<identity>.json`) is rewritten atomically (a temporary sibling renamed into place) after every record, so a reader always sees a whole snapshot. Two writers racing on one snapshot can each overwrite the other's newest observation for a provider, but never corrupt the file; the next record repairs it, and the log, not the snapshot, is the record of truth. A snapshot that cannot be read (a newer schema, a corrupted file) is replaced with a fresh one, and the replacement is logged.
+ * Usage is filed by identity id, the directory the identity is stored in, which is what the identity header of a session carries and a rename keeps: every `identity` this store takes or writes, in a record and a snapshot alike, is an id, never a name. Each identity's snapshot (`usage/snapshots/<id>.json`) is rewritten atomically (a temporary sibling renamed into place) after every record, so a reader always sees a whole snapshot. Two writers racing on one snapshot can each overwrite the other's newest observation for a provider, but never corrupt the file; the next record repairs it, and the log, not the snapshot, is the record of truth. A snapshot that cannot be read (a newer schema, a corrupted file) is replaced with a fresh one, and the replacement is logged.
  *
  * Everything is created owner-only: the directories 0700, the files 0600.
  */
@@ -109,9 +109,9 @@ export function createUsageStore(deps: UsageStoreDeps): UsageStore {
 
   /** Reads the identity's snapshot (replacing an unreadable one), lets `fold` produce its provider states, and writes the result atomically. `fold` returning undefined writes nothing. */
   const rewriteSnapshot = (identity: string, fold: (current: UsageSnapshot | undefined) => Record<string, ProviderUsageState> | undefined): boolean => {
-    if (!isIdentityName(identity)) {
-      // The identity header came from a launch whose name cannot be a file name here: the log keeps the record, and no snapshot is named after it.
-      deps.log(`usage: no snapshot for identity "${identity}", which is not a valid identity name`);
+    if (!isIdentityId(identity)) {
+      // The identity header carries an id that cannot be a directory id here: the log keeps the record, and no snapshot is named after it.
+      deps.log(`usage: no snapshot for identity id ${JSON.stringify(identity)}, which is not a valid identity id`);
       return false;
     }
     let current: UsageSnapshot | undefined;

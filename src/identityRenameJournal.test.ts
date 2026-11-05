@@ -94,12 +94,28 @@ describe("unfinishedRenameFor", () => {
     expect(unfinishedRenameFor(journals, "personal", "home")).toBeUndefined();
     expect(unfinishedRenameFor([], "work", "client")).toBeUndefined();
   });
+
+  it("blocks a name the given comparison takes for one the journal holds, and resumes only the exact pair", () => {
+    const sameLetters = (first: string, second: string): boolean => first.toLowerCase() === second.toLowerCase();
+    expect(unfinishedRenameFor(journals, "personal", "CLIENT", sameLetters)).toEqual({ kind: "blocked", journal: JOURNAL });
+    expect(unfinishedRenameFor(journals, "Work", "other", sameLetters)).toEqual({ kind: "blocked", journal: JOURNAL });
+    expect(unfinishedRenameFor(journals, "Work", "Client", sameLetters)).toEqual({ kind: "blocked", journal: JOURNAL });
+    expect(unfinishedRenameFor(journals, "work", "client", sameLetters)).toEqual({ kind: "resume", journal: JOURNAL });
+    expect(unfinishedRenameFor(journals, "personal", "CLIENT")).toBeUndefined();
+  });
+
+  it("blocks the exact names of the journal even when the comparison takes no two names for one, as on a filesystem that keeps case", () => {
+    const neverSame = (): boolean => false;
+    expect(unfinishedRenameFor(journals, "personal", "client", neverSame)).toEqual({ kind: "blocked", journal: JOURNAL });
+    expect(unfinishedRenameFor(journals, "work", "other", neverSame)).toEqual({ kind: "blocked", journal: JOURNAL });
+    expect(unfinishedRenameFor(journals, "personal", "CLIENT", neverSame)).toBeUndefined();
+  });
 });
 
 describe("describeUnfinishedRename", () => {
   it("names the pair, how far it got and the command that finishes it, and how to put the name back afterwards", () => {
     expect(describeUnfinishedRename(JOURNAL, FINISHABLE)).toBe(
-      'an unfinished rename of identity "work" to "client" (2 of 3 steps recorded as begun or done). Finish it with `agent-shim identity rename work client`; to put the name back afterwards, run `agent-shim identity rename client work`.',
+      'an unfinished rename of identity "work" to "client" (2 of 3 steps recorded as begun or done). Finish it with `agent-shim identity rename work client --move`; to put the name back afterwards, run `agent-shim identity rename client work --move`.',
     );
   });
 });
@@ -120,9 +136,9 @@ describe("finishabilityOf and an unfinishable rename", () => {
   it("offers the discarding command beside the finishing one when it can be discarded, and says exactly what that rests on", () => {
     const nothingApplied: RenameJournal = { ...JOURNAL, steps: JOURNAL.steps.map((step) => ({ ...step, started: false, done: false })) };
     const offered = describeUnfinishedRename(nothingApplied, finishabilityOf(nothingApplied, onlyOldName));
-    expect(offered).toContain("Finish it with `agent-shim identity rename work client`");
+    expect(offered).toContain("Finish it with `agent-shim identity rename work client --move`");
     expect(offered).toContain("No step is recorded as begun or done and the identity is still under \"work\"");
-    expect(offered).toContain("discarded with `agent-shim identity rename work client --discard-journal`; that removes only the record");
+    expect(offered).toContain("discarded with `agent-shim identity rename work client --move --discard-journal`; that removes only the record");
     expect(offered).not.toContain("loses nothing");
     expect(describeUnfinishedRename(JOURNAL, finishabilityOf(JOURNAL, onlyOldName))).not.toContain("--discard-journal");
   });
@@ -184,14 +200,14 @@ describe("finishabilityOf and an unfinishable rename", () => {
   it("is described without the command that finishes it, which would fail, and with the one that discards its record", () => {
     const described = describeUnfinishedRename(JOURNAL, finishabilityOf(JOURNAL, () => false));
     expect(described).toContain("cannot be finished: there is no identity under either name");
-    expect(described).toContain("agent-shim identity rename work client --discard-journal");
+    expect(described).toContain("agent-shim identity rename work client --move --discard-journal");
     expect(described).not.toContain("Finish it with");
     expect(described).not.toContain("put the name back");
   });
 
   it("is described without the discarding command when it can be finished", () => {
     const described = describeUnfinishedRename(JOURNAL, FINISHABLE);
-    expect(described).toContain("Finish it with `agent-shim identity rename work client`");
+    expect(described).toContain("Finish it with `agent-shim identity rename work client --move`");
     expect(described).not.toContain("--discard-journal");
     expect(described).not.toContain("cannot be finished");
   });
@@ -226,7 +242,7 @@ describe("requireNameFreeOfUnfinishedRename", () => {
       }
       return "";
     })();
-    expect(refusal).toContain("agent-shim identity rename work client --discard-journal");
+    expect(refusal).toContain("agent-shim identity rename work client --move --discard-journal");
     expect(refusal).not.toContain("Finish it with");
   });
 

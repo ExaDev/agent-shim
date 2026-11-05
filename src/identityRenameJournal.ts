@@ -34,7 +34,7 @@ export type RenameJournal = z.infer<typeof RenameJournalSchema>;
 /** The filesystem operations the journal needs. */
 export type RenameJournalFs = Pick<FarmFs, "readFileUtf8" | "readdir" | "mkdirPrivate" | "writeFilePrivate" | "removeRecursive">;
 
-/** How many hex digits of the pair's hash name its journal file: enough that two pairs never share a file. */
+/** How many hex digits of the pair's hash name its file: enough that two pairs never share a file. */
 const FILE_NAME_HASH_DIGITS = 16;
 
 const JOURNAL_SUFFIX = ".json";
@@ -49,7 +49,12 @@ class RenameJournalUnreadableError extends CliError {
 
 /** The file in `directory` that holds the journal of renaming `from` to `to`. It is named for a hash of the pair, because names may contain any character a file name can, and so no two pairs can share one however they are spelled. */
 export function renameJournalFile(directory: string, from: string, to: string): string {
-  return path.join(directory, `${createHash("sha256").update(`${from}\u0000${to}`).digest("hex").slice(0, FILE_NAME_HASH_DIGITS)}${JOURNAL_SUFFIX}`);
+  return path.join(directory, renamePairFileName(from, to, JOURNAL_SUFFIX));
+}
+
+/** The file name, ending `suffix`, that state about renaming `from` to `to` is kept under: a hash of the pair, joined by NUL, which no name contains, so two pairs never share one however their names are spelled (`a--b` to `c` and `a` to `b--c` included), and its length is fixed whatever the names' lengths, so two of the longest names still make a file name the filesystem accepts. */
+export function renamePairFileName(from: string, to: string, suffix: string): string {
+  return `${createHash("sha256").update(`${from}\u0000${to}`).digest("hex").slice(0, FILE_NAME_HASH_DIGITS)}${suffix}`;
 }
 
 /** The journal in `file`, or undefined when there is none. Throws `RenameJournalUnreadableError` for a file that is there but is not a journal. */
@@ -133,14 +138,15 @@ export function removeRenameJournal(fs: Pick<RenameJournalFs, "removeRecursive">
 export type UnfinishedRename = { readonly kind: "resume"; readonly journal: RenameJournal } | { readonly kind: "blocked"; readonly journal: RenameJournal };
 
 /**
- * The unfinished rename, if any, that a rename of `from` to `to` has to deal with. A journal of the same rename is resumed. A journal that names either identity in any other way (the reverse direction, or either name paired with another) blocks, because the identities are partly moved and anything else done to them now would be done to a state nobody chose.
+ * The unfinished rename, if any, that a rename of `from` to `to` has to deal with. A journal of the same rename, named exactly, is resumed. A journal that names either identity in any other way (the reverse direction, either name paired with another, or a name `sameName` takes for one of its own, such as another spelling of it that reaches the same directory, besides the exact name, which always counts) blocks, because the identities are partly moved and anything else done to them now would be done to a state nobody chose. `sameName` defaults to never taking another name for one held.
  */
-export function unfinishedRenameFor(journals: readonly RenameJournal[], from: string, to: string): UnfinishedRename | undefined {
+export function unfinishedRenameFor(journals: readonly RenameJournal[], from: string, to: string, sameName: (first: string, second: string) => boolean = () => false): UnfinishedRename | undefined {
   const same = journals.find((journal) => journal.from === from && journal.to === to);
   if (same !== undefined) {
     return { kind: "resume", journal: same };
   }
-  const involved = journals.find((journal) => [journal.from, journal.to].some((name) => name === from || name === to));
+  const holds = (held: string, name: string): boolean => held === name || sameName(held, name);
+  const involved = journals.find((journal) => [journal.from, journal.to].some((name) => holds(name, from) || holds(name, to)));
   return involved === undefined ? undefined : { kind: "blocked", journal: involved };
 }
 
@@ -173,7 +179,7 @@ export function finishabilityOf(journal: Readonly<Pick<RenameJournal, "from" | "
 
 /** The command that removes the record of the unfinished rename in `journal`, and nothing else. */
 export function discardJournalCommand(journal: Readonly<Pick<RenameJournal, "from" | "to">>): string {
-  return `agent-shim identity rename ${journal.from} ${journal.to} --discard-journal`;
+  return `agent-shim identity rename ${journal.from} ${journal.to} --move --discard-journal`;
 }
 
 /** The journal as a sentence for a refusal or for `doctor`: the pair, how far it got, and what to do about it. A rename that can be finished is told the command that finishes it, and the command that discards its record too when that loses nothing; one that cannot is told why and the command that discards its record, never the command that would fail. */
@@ -181,7 +187,7 @@ export function describeUnfinishedRename(journal: Readonly<RenameJournal>, finis
   const applied = journal.steps.filter(stepMayBeApplied).length;
   const progress = `an unfinished rename of identity "${journal.from}" to "${journal.to}" (${String(applied)} of ${String(journal.steps.length)} steps recorded as begun or done)`;
   return finishability.finishable
-    ? `${progress}. Finish it with \`agent-shim identity rename ${journal.from} ${journal.to}\`; to put the name back afterwards, run \`agent-shim identity rename ${journal.to} ${journal.from}\`.${finishability.discardable === true ? ` No step is recorded as begun or done and the identity is still under "${journal.from}", so its record can be discarded with \`${discardJournalCommand(journal)}\`; that removes only the record.` : ""}`
+    ? `${progress}. Finish it with \`agent-shim identity rename ${journal.from} ${journal.to} --move\`; to put the name back afterwards, run \`agent-shim identity rename ${journal.to} ${journal.from} --move\`.${finishability.discardable === true ? ` No step is recorded as begun or done and the identity is still under "${journal.from}", so its record can be discarded with \`${discardJournalCommand(journal)}\`; that removes only the record.` : ""}`
     : `${progress} that cannot be finished: ${finishability.reason}. If nothing is left of it to keep, discard its record with \`${discardJournalCommand(journal)}\`; that removes only the record and changes no identity.`;
 }
 

@@ -536,7 +536,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
   withExamples(
     provider
       .command("remove <name>")
-      .description("Delete a provider definition.")
+      .description("Delete a provider definition and its file-cached credential. A Keychain-cached credential stays in the Keychain.")
       .option("--yes", "Remove without asking for confirmation (required when standard input is not a terminal).")
       .option("--json", "Print the result as JSON.")
       .action(async (name: string, options: Readonly<{ yes?: boolean; json?: boolean }>) => {

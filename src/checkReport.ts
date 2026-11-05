@@ -14,7 +14,8 @@ import { parseEnvBool } from "./cli/envBool";
 import type { CHECK_CREDENTIAL_APPLIES, CheckReportJson } from "./checkReportSchema";
 import { ConfigFileNotJsonError, ConfigValidationError } from "./config/load";
 import { SHIPPED_CATEGORY_DEFAULTS, isRouterProvider, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type Identity, type Provider } from "./config/schema";
-import { formatCredentialSummary, summariseCredential, type CredentialCacheEnv, type CredentialSummary } from "./credential";
+import { identityIdOf } from "./identityStore";
+import { formatCredentialSummary, identityCacheKey, summariseCredential, type CredentialCacheEnv, type CredentialSummary } from "./credential";
 import { resolveClaudeVersion, type PinnedClaudeVersion } from "./launcher/claudeVersion";
 import { describeCachedCredential, formatCachedCredentialState, type CachedCredentialState } from "./credentialCache";
 import { buildEntryFacts } from "./launcher/farm";
@@ -239,9 +240,9 @@ function cachedState(cacheEnv: CredentialCacheEnv | undefined, owner: string, bl
   return describeCachedCredential({ port: cacheEnv.port, platform: cacheEnv.platform, owner, cache: block.cache, nowMs: cacheEnv.now() });
 }
 
-function buildCredentialReport(provider: CheckProviderInput | undefined, identity: Identity | undefined, identityName: string | undefined, cacheEnv: CredentialCacheEnv | undefined): CredentialReport {
+function buildCredentialReport(provider: CheckProviderInput | undefined, identity: Identity | undefined, identityId: string | undefined, cacheEnv: CredentialCacheEnv | undefined): CredentialReport {
   const identityCredential = identity?.credential === undefined ? undefined : summariseCredential(identity.credential);
-  const identityCached = identity?.credential === undefined || identityName === undefined ? undefined : cachedState(cacheEnv, `identity ${identityName}`, identity.credential);
+  const identityCached = identity?.credential === undefined || identityId === undefined ? undefined : cachedState(cacheEnv, identityCacheKey(identityId), identity.credential);
   const providerCredential = provider?.definition !== undefined && !isRouterProvider(provider.definition) ? provider.definition.credential : undefined;
   const providerCached = providerCredential === undefined || provider === undefined ? undefined : cachedState(cacheEnv, `provider ${provider.name}`, providerCredential);
   return {
@@ -273,6 +274,8 @@ export interface RunCheckParams {
   readonly cascade: CascadeInput;
   readonly classification: { readonly defaults: CategoryClassification; readonly overlay?: CategoryClassificationOverlay };
   readonly identityName?: string;
+  /** The id the resolved identity is stored under, which keys its cached credential (see `identityCacheKey`). */
+  readonly identityId?: string;
   readonly identitySource: IdentityDecisionSource;
   /** The pool the launch selected and how it ranks right now, when it named a pool instead of an identity; `identityName` is then the member it would pick. */
   readonly poolPick?: PoolPickReport;
@@ -392,7 +395,7 @@ export function runCheck(params: RunCheckParams): CheckReport {
     ambientCredential,
     ...(keychain === undefined ? {} : { keychain }),
     settingsExposure,
-    credential: buildCredentialReport(params.provider, params.identity, params.identityName, params.credentialCache),
+    credential: buildCredentialReport(params.provider, params.identity, params.identityId, params.credentialCache),
     ...(claudeVersion === undefined ? {} : { claudeVersion }),
   };
 }
@@ -590,7 +593,8 @@ export function collectCheckReport(params: CollectCheckReportParams): CheckRepor
   const providerName = cascadeProviderName(cascade, identityConfig?.provider);
   const provider = providerName === undefined ? undefined : loadCheckProvider(paths, providerName);
 
-  const farmRoot = identityDecision.name === undefined ? undefined : path.join(paths.identitiesDir, identityDecision.name);
+  const identityId = identityDecision.name === undefined ? undefined : identityIdOf(paths, identityDecision.name);
+  const farmRoot = identityId === undefined ? undefined : path.join(paths.identitiesDir, identityId);
   const settingsFiles = {
     "settings.json": realFsPort.readFileUtf8(path.join(claudeHome, "settings.json")),
     "settings.local.json": realFsPort.readFileUtf8(path.join(claudeHome, "settings.local.json")),
@@ -608,6 +612,7 @@ export function collectCheckReport(params: CollectCheckReportParams): CheckRepor
     cascade,
     classification,
     ...(identityDecision.name === undefined ? {} : { identityName: identityDecision.name }),
+    ...(identityId === undefined ? {} : { identityId }),
     identitySource: identityDecision.source,
     ...(poolPick === undefined ? {} : { poolPick }),
     ...(configProfileDecision.name === undefined ? {} : { configProfileName: configProfileDecision.name }),

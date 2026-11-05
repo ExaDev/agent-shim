@@ -21,10 +21,11 @@ export interface LoadedFile<T> {
 /**
  * Builds the cosmiconfig explorer used for every read.
  *
- * Only `load(filepath)` is ever called on it — never `search()`. `search()` stops at the first config file found while walking upward, and this design needs the exact opposite: every ancestor collected, shallowest-first. `src/resolve/walk.ts` does its own directory walk and this module loads each level it visits, so cosmiconfig contributes its format flexibility (JSON, YAML, JS) without its traversal semantics.
+ * It reads without a cache, and only `load(filepath)` is ever called on it, never `search()`. `search()` stops at the first config file found while walking upward, and this design needs the exact opposite: every ancestor collected, shallowest-first. `src/resolve/walk.ts` does its own directory walk and this module loads each level it visits, so cosmiconfig contributes its format flexibility (JSON, YAML, JS) without its traversal semantics.
  */
 export function createExplorer(moduleName = "agent-shim"): PublicExplorerSync {
-  return cosmiconfigSync(moduleName, { searchPlaces: [] });
+  // Uncached: every load reads the file as it is now. A long-lived process (a supervising launcher, the front door) shares one reader, and a cached one would keep serving a file as it was when first read, so an identity renamed or a configuration changed since would not be seen.
+  return cosmiconfigSync(moduleName, { searchPlaces: [], cache: false });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

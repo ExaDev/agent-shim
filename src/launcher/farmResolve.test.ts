@@ -5,7 +5,7 @@ import { resolveFarmConflicts, type FarmConflict, type FarmConflictChoice } from
 
 const IDENTITIES_DIR = `${FAKE_HOME}/.agent-shim/identities`;
 const FARM = `${IDENTITIES_DIR}/work`;
-const PREVIOUS = `${IDENTITIES_DIR}/.work.previous.crashed`;
+const PREVIOUS = `${IDENTITIES_DIR}/.work.previous.4444.44444444-0000-4000-8000-444444444444`;
 
 /** Always answers with the same fixed choice, regardless of which conflict is asked about. */
 function fixedAnswer(choice: FarmConflictChoice): (conflict: FarmConflict) => Promise<FarmConflictChoice> {
@@ -106,8 +106,8 @@ describe("resolveFarmConflicts", () => {
   });
 
   it("resolves every retained previous farm across multiple prior launches, in sorted order", async () => {
-    const previousA = `${IDENTITIES_DIR}/.work.previous.111.a`;
-    const previousB = `${IDENTITIES_DIR}/.work.previous.222.b`;
+    const previousA = `${IDENTITIES_DIR}/.work.previous.111.aaaaaaaa-0000-4000-8000-000000000001`;
+    const previousB = `${IDENTITIES_DIR}/.work.previous.222.bbbbbbbb-0000-4000-8000-000000000002`;
     const fs = createFakeFarmFs({
       [`${FARM}/settings.json`]: "new",
       [`${previousA}/settings.json`]: "old-a",
@@ -131,8 +131,8 @@ describe("resolveFarmConflicts", () => {
   });
 
   it("only retains the previous farms with a skipped conflict, removing the rest", async () => {
-    const previousA = `${IDENTITIES_DIR}/.work.previous.111.a`;
-    const previousB = `${IDENTITIES_DIR}/.work.previous.222.b`;
+    const previousA = `${IDENTITIES_DIR}/.work.previous.111.aaaaaaaa-0000-4000-8000-000000000001`;
+    const previousB = `${IDENTITIES_DIR}/.work.previous.222.bbbbbbbb-0000-4000-8000-000000000002`;
     const fs = createFakeFarmFs({
       [`${FARM}/settings.json`]: "new",
       [`${previousA}/settings.json`]: "old-a",
