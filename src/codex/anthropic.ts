@@ -75,7 +75,7 @@ export const MessagesRequestSchema = z.looseObject({
   /** `user_id` is stable for one Claude Code session and differs between sessions, which is what makes it the right key for both the backend's prompt cache and its session header. */
   metadata: z.looseObject({ user_id: z.string().optional() }).optional(),
   /** Claude Code's effort setting. Any string is accepted; the translator honours only the levels the backend understands. */
-  output_config: z.looseObject({ effort: z.string().optional() }).optional(),
+  output_config: z.looseObject({ effort: z.string().optional(), format: z.object({ type: z.literal("json_schema"), schema: z.record(z.string(), z.unknown()) }).optional() }).optional(),
 });
 export type MessagesRequest = z.infer<typeof MessagesRequestSchema>;
 

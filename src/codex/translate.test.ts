@@ -85,6 +85,12 @@ describe("mapEffort", () => {
 });
 
 describe("translateRequest", () => {
+  it("preserves the goal evaluator's structured output schema", () => {
+    const schema = { type: "object", properties: { ok: { type: "boolean" }, reason: { type: "string" }, impossible: { type: "boolean" } }, required: ["ok", "reason"], additionalProperties: false };
+    const { request: translated } = translateRequest(request({ messages: [], output_config: { format: { type: "json_schema", schema } } }), defaults);
+    expect(translated.text).toEqual({ verbosity: "medium", format: { type: "json_schema", name: "response", schema, strict: false } });
+  });
+
   it("translates a plain text conversation", () => {
     const { request: translated } = translateRequest(
       request({
