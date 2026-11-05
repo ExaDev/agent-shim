@@ -1,3 +1,9 @@
+## [11.86.2](https://github.com/ExaDev/agent-shim/compare/v11.86.1...v11.86.2) (2026-11-05)
+
+### Bug Fixes
+
+* translate Codex native web searches ([13df73e](https://github.com/ExaDev/agent-shim/commit/13df73eac1b01fdfb300a975b71f97e8cca5c665))
+
 ## [11.86.1](https://github.com/ExaDev/agent-shim/compare/v11.86.0...v11.86.1) (2026-11-05)
 
 ### Bug Fixes
