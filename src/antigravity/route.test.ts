@@ -286,6 +286,25 @@ describe("createAntigravityRoute", () => {
     });
   });
 
+  it("retries a required recursive tool schema only after the backend rejects that path", async () => {
+    const sent: unknown[] = [];
+    const schema = { $defs: { __schema0: { type: "object", properties: { operand: { oneOf: [{ $ref: "#/$defs/__schema0" }, { type: "string" }] }, kind: { type: "string" } }, required: ["kind", "operand"] } }, type: "object", properties: { filter: { $ref: "#/$defs/__schema0" } }, required: ["filter"] };
+    const route = createAntigravityRoute({
+      loadProvider: async () => await Promise.resolve({ ok: true, config: DEFAULT_CLOUD_CONFIG, token: "test-key", credentialTarget: "apiKey" }),
+      fetchFn: async (_url, init) => {
+        if (typeof init?.body !== "string") throw new Error("expected JSON request");
+        sent.push(JSON.parse(init.body));
+        if (sent.length === 1) return await Promise.resolve(new Response(JSON.stringify({ error: { code: 400, message: "ref loops are only supported if they include optional or nullable property values, or a potentially-zero-length array items, but a ref loop of required fields was found at $defs.__schema0.properties.operand.oneOf.0", status: "INVALID_ARGUMENT" } }), { status: 400 }));
+        return await Promise.resolve(new Response('data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}\n\n', { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+      },
+    });
+    const res = await route({ method: "POST", path: "/providers/ag/v1/messages", body: JSON.stringify({ model: "claude-3-7-sonnet-20250219", max_tokens: 1024, tools: [{ name: "query", input_schema: schema }], messages: [{ role: "user", content: "Hi" }] }), signal: new AbortController().signal });
+    expect(res.status).toBe(HTTP_STATUS.ok);
+    expect(sent).toHaveLength(2);
+    expect(sent[0]).toMatchObject({ tools: [{ functionDeclarations: [{ parametersJsonSchema: { $defs: { __schema0: { required: ["kind", "operand"] } } } }] }] });
+    expect(sent[1]).toMatchObject({ tools: [{ functionDeclarations: [{ parametersJsonSchema: { $defs: { __schema0: { required: ["kind"], properties: { operand: { description: "This property is required by the original tool schema." } } } }, required: ["filter"] } }] }] });
+  });
+
   it("returns error response with status code when upstream rejects", async () => {
     const mockFetch: typeof fetch = async () => {
       return await Promise.resolve(new Response("Unauthorized", { status: 401 }));
