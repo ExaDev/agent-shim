@@ -21,6 +21,28 @@ describe("rejected recursive schemas", () => {
     expect(relaxRejectedRecursiveProperty(fixed, rejection)).toBeUndefined();
   });
 
+  it("follows the local reference Google expands in the reported path", () => {
+    const original = request();
+    const schema = original.tools?.[0]?.functionDeclarations[0]?.parametersJsonSchema as { $defs: Record<string, { properties?: Record<string, unknown>; oneOf?: unknown[] }> };
+    schema.$defs.__schema1 = { oneOf: [{ $ref: "#/$defs/__schema0" }, { type: "string" }] };
+    const properties = schema.$defs.__schema0?.properties;
+    if (properties === undefined) throw new Error("missing properties");
+    properties.operand = { $ref: "#/$defs/__schema1" };
+    const fixed = relaxRejectedRecursiveProperty(original, rejection);
+    expect(fixed?.tools?.[0]?.functionDeclarations[0]?.parametersJsonSchema).toMatchObject({ $defs: { __schema0: { required: ["kind"], properties: { operand: { $ref: "#/$defs/__schema1" } } } } });
+  });
+
+  it("ignores a cyclic or external reference in the expanded path", () => {
+    const original = request();
+    const schema = original.tools?.[0]?.functionDeclarations[0]?.parametersJsonSchema as { $defs: Record<string, { properties?: Record<string, unknown> }> };
+    const properties = schema.$defs.__schema0?.properties;
+    if (properties === undefined) throw new Error("missing properties");
+    properties.operand = { $ref: "#/$defs/__schema0/properties/operand" };
+    expect(relaxRejectedRecursiveProperty(original, rejection)).toBeUndefined();
+    properties.operand = { $ref: "https://example.test/schema" };
+    expect(relaxRejectedRecursiveProperty(original, rejection)).toBeUndefined();
+  });
+
   it("does not alter unrelated errors, non-reference paths, or absent requirements", () => {
     expect(relaxRejectedRecursiveProperty(request(), "not json")).toBeUndefined();
     expect(relaxRejectedRecursiveProperty(request(), JSON.stringify({ error: { message: "other error" } }))).toBeUndefined();
