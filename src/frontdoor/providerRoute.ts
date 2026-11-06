@@ -1,3 +1,4 @@
+import { createAgyCredentialResolver } from "../antigravity/agyCredential";
 import { ConfigFileNotJsonError, ConfigValidationError } from "../config/load";
 import { InvalidProviderNameError, isFileName } from "../config/names";
 import { isAntigravityProvider, isCodexProvider, isHttpProvider, type AntigravityProvider, type CodexProvider, type HttpProvider, type Credential, isRouterProvider, type ModelsConfig } from "../config/schema";
@@ -186,6 +187,7 @@ export function createProviderRouteResolver(deps: {
 
   /** Resolves a credential block on the request path; requests in flight together for the same block share one run of its sources. */
   const resolveCredential = shareInFlightResolutions(resolveCredentialAsync);
+  const resolveAgyCredential = createAgyCredentialResolver(deps.credentials);
   /**
    * One cached quota source per antigravity provider, for this resolver's lifetime: each refresh resolves the provider's own credential block and polls the backend's quota summary exactly as its CLI does, so the unified headers a session's responses carry describe the account's real windows.
    */
@@ -235,7 +237,7 @@ export function createProviderRouteResolver(deps: {
     const source = createCachedAntigravityQuotaSource({
       now: () => Date.now(),
       fetchSummary: async (nowMs) => {
-        const res = await resolveCredential({ credential: definition.credential, env: deps.env, port: deps.credentials, subject: `provider ${provider}` });
+        const res = await resolveAgyCredential(await resolveCredential({ credential: definition.credential, env: deps.env, port: deps.credentials, subject: `provider ${provider}` }));
         if (!res.ok) {
           return undefined;
         }
@@ -311,12 +313,12 @@ export function createProviderRouteResolver(deps: {
         route: createAntigravityRouteMount(
           {
             loadProvider: async () => {
-              const res = await resolveCredential({
+              const res = await resolveAgyCredential(await resolveCredential({
                 credential: antigravityProvider.credential,
                 env: deps.env,
                 port: deps.credentials,
                 subject: `provider ${provider}`,
-              });
+              }));
               if (!res.ok) {
                 return { ok: false, status: HTTP_STATUS.unauthorized, message: res.message };
               }
