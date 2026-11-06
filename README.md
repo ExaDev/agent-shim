@@ -50,6 +50,18 @@ Want the shorter `claude @personal` instead? Run `agent-shim shim enable` once â
 
 That's it â€” with no further configuration, everything in `~/.claude` that isn't credentials or daemon runtime is classified into categories (see below) and shared according to sensible defaults. Add a second identity, add configuration profiles, and add directory rules only once you actually need more control than that.
 
+## Codex CLI
+
+Create a separate Codex identity and launch the installed Codex CLI:
+
+```sh
+agent-shim identity add codex-work --agent codex
+agent-shim run --agent codex @codex-work login
+agent-shim run --agent codex @codex-work
+```
+
+Each Codex identity gets its own `CODEX_HOME`, credentials and databases, with Codex-specific sharing rules over `~/.codex`. Native flags and subcommands are forwarded to Codex. See [docs/codex-cli.md](docs/codex-cli.md) for selection, sharing, configuration and supported integrations.
+
 ## Concepts
 
 `agent-shim` separates two things most ad hoc multi-account setups conflate:

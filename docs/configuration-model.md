@@ -662,3 +662,7 @@ agent-shim identity set <name> --allow-ambient-credential   # persistently, for 
 
 An identity's own credential block does not trip the guard on the token it injects: a `claude @work` started inside a `claude @work` session finds `CLAUDE_CODE_OAUTH_TOKEN` already holding exactly the token this launch resolves, and that variable holding that value is not ambient. The same variable holding any other value, or any other guarded variable, still trips it.
 
+
+## Codex identities
+
+Identities created with `identity add <name> --agent codex` belong to the native Codex CLI. Their `identity.json` stores `agent: "codex"`; absence means Claude Code. They use the same identity namespace and sharing cascade, with their own home classification. See [Native Codex CLI identities](codex-cli.md) for the complete selection, storage and sharing contract.

@@ -1,3 +1,4 @@
+import { codexIdentityFindings } from "./codex/doctor";
 import { ClaudeShimStateSchema, commandFilename, findPathShadow, resolveOwnBinaryCheck, type ClaudeShimState, type PathShadowStatus } from "./claudeShim";
 import type { LayoutPaths } from "./paths";
 import { readableOr } from "./readableConfig";
@@ -538,7 +539,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   for (const { file, detail } of params.renameJournals?.unreadable ?? []) {
     push("identity", "fail", `${file} is not a rename journal this agent-shim can read (${detail}), so no identity can be renamed until it is fixed or removed, and it may be the trace of a rename that was left unfinished.`, path.basename(file));
   }
-  const validIdentityNames = new Set<string>();
+  const validIdentityAgents = new Map<string, "claude" | "codex">();
   /** Identities that authenticate with their stored login and have account metadata for it, in the order the loop below meets them. */
   const signedInAccounts: { readonly name: string; readonly account: AccountMetadata }[] = [];
   for (const entry of params.identities) {
@@ -547,7 +548,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
       push("identity", "fail", validated.message, entry.name);
       continue;
     }
-    validIdentityNames.add(entry.name);
+    validIdentityAgents.set(entry.name, validated.data.agent ?? "claude");
     const defaultProfile = validated.data.defaultConfigProfile;
     let consistent = true;
     if (defaultProfile !== undefined && !validProfileNames.has(defaultProfile)) {
@@ -565,6 +566,10 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
       push("identity", "fail", `Identity "${entry.name}" names provider "${identityProvider}" as its provider, but no such provider exists.`, entry.name);
     }
     if (!consistent) {
+      continue;
+    }
+    if (validated.data.agent === "codex") {
+      findings.push(...codexIdentityFindings(entry, validated.data));
       continue;
     }
     const credential = validated.data.credential;
@@ -614,9 +619,9 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
 
   const validatedGlobalConfig = params.globalConfig.raw === undefined ? undefined : validateJson(GlobalConfigSchema, params.globalConfig);
   const pools = validatedGlobalConfig?.ok === true ? (validatedGlobalConfig.data.pools ?? {}) : {};
-  const accountByIdentity = new Map(params.identities.flatMap((entry) => (validIdentityNames.has(entry.name) && entry.account !== undefined ? [[entry.name, entry.account] as const] : [])));
+  const accountByIdentity = new Map(params.identities.flatMap((entry) => (validIdentityAgents.has(entry.name) && entry.account !== undefined ? [[entry.name, entry.account] as const] : [])));
   for (const [poolName, pool] of Object.entries(pools)) {
-    const missing = pool.identities.filter((member) => poolNameOf(poolMemberIdentity(member)) === undefined && !validIdentityNames.has(poolMemberIdentity(member)));
+    const missing = pool.identities.filter((member) => poolNameOf(poolMemberIdentity(member)) === undefined && !validIdentityAgents.has(poolMemberIdentity(member)));
     const undefinedPools = pool.identities.flatMap((member) => {
       const nested = poolNameOf(poolMemberIdentity(member));
       return nested === undefined || nested in pools ? [] : [nested];
@@ -664,7 +669,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   /** Whether what a rule or the active-identity file selects (an identity, or `pool:<name>`) exists. */
   const selectionExists = (selector: string): boolean => {
     const poolName = poolNameOf(selector);
-    return poolName === undefined ? validIdentityNames.has(selector) : poolName in pools;
+    return poolName === undefined ? validIdentityAgents.has(selector) : poolName in pools;
   };
 
   for (const entry of params.providers) {
@@ -682,6 +687,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     push("keychain", "pass", "Skipped (not macOS).");
   } else {
     for (const entry of params.identities) {
+      if (validIdentityAgents.get(entry.name) === "codex") continue;
       const result = lookupKeychainService(params.run, entry.farmRoot);
       // Informational: whether the identity is signed in is the sign-in section's finding, which also counts a credentials file that stands in for the Keychain item.
       push("keychain", "pass", result.found ? result.note : `${result.note} The sign-in section reports whether a login is stored elsewhere.`, entry.name);

@@ -832,6 +832,8 @@ export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;
  * An identity's own `identity.json`. `credential`, when present, authenticates the identity from a token instead of (or ahead of) its stored login: the launcher resolves it and exports it as its target (typically `oauthToken`, a `claude setup-token` token) in the child's environment only. Without it the identity uses the login stored in its own directory.
  */
 export const IdentitySchema = z.strictObject({
+  /** The CLI this login belongs to; absent means Claude Code for backwards compatibility. */
+  agent: z.enum(["claude", "codex"]).optional(),
   $schema: z.string().optional(),
   name: FileNameSchema,
   /** What the identity is for, in the person's words, drawn beside its name in `identity list` and `show`, the launch banner and the statusline. Display only: the name stays the key for lookup and for the references to the identity (pools, rules, jobs, model refs), and the id for paths and Keychain service names. */

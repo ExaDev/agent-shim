@@ -41,3 +41,20 @@ describe("registerRunCommand", () => {
     expect(handler).toHaveBeenCalledWith([]);
   });
 });
+
+describe("agent selection", () => {
+  it.each([["--agent", "codex"], ["--agent=codex"]])("routes an explicit Codex prefix without consuming its native flags: %j", async (...prefix) => {
+    const claude = vi.fn<(args: readonly string[]) => Promise<void>>().mockResolvedValue(undefined);
+    const codex = vi.fn<(args: readonly string[]) => Promise<void>>().mockResolvedValue(undefined);
+    const program = buildTestProgram();
+    registerRunCommand(program, claude, codex);
+    await program.parseAsync(["run", ...prefix, "@work", "exec", "--", "--agent", "literal"], { from: "user" });
+    expect(codex).toHaveBeenCalledWith(["@work", "exec", "--", "--agent", "literal"]);
+    expect(claude).not.toHaveBeenCalled();
+  });
+  it("rejects an unknown agent", async () => {
+    const program = buildTestProgram();
+    registerRunCommand(program, vi.fn<(args: readonly string[]) => Promise<void>>().mockResolvedValue(undefined));
+    await expect(program.parseAsync(["run", "--agent", "unknown"], { from: "user" })).rejects.toThrow("--agent requires");
+  });
+});

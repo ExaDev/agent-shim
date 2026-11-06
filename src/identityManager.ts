@@ -4,6 +4,7 @@ import { Option, type Command } from "commander";
 import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDeps } from "./cli/commandDeps";
 import { addCredentialCacheOptions, cacheChange, collectCredentialSource, CREDENTIAL_SOURCE_SYNTAX, type CredentialCacheOptions } from "./cli/credentialOption";
 import { collectAnchor } from "./cli/parsers";
+import { CODEX_CATEGORIES } from "./codex/categories";
 import { loadClassification } from "./config/classify";
 import { CREDENTIAL_TARGETS, IdentitySchema, type Anchor, type CredentialSource, type CredentialTarget } from "./config/schema";
 import { describeCredential, summariseCredential, type CredentialSummary } from "./credential";
@@ -125,6 +126,7 @@ export async function tryRunAtIdentityShortcut(deps: CommandDeps, argv: readonly
 interface IdentityView {
   readonly name: string;
   readonly active: boolean;
+  readonly agent?: "claude" | "codex";
   /** The identity's storage id: the name of its directory under the identities directory, chosen when it was created and kept by a rename, so it names the identity in everything filed on disk or held by a running session (`CLAUDE_CONFIG_DIR`, the usage snapshot and the usage log). */
   readonly id: string;
   /** The identity's directory, `<identities>/<id>`. */
@@ -166,6 +168,7 @@ function toIdentityView(paths: LayoutPaths, { entry, read }: IdentityWithAccount
     directory: path.join(paths.identitiesDir, entry.id),
     ...(entry.problem === undefined
       ? {
+          ...(entry.identity.agent === undefined ? {} : { agent: entry.identity.agent }),
           ...(entry.identity.label === undefined ? {} : { label: entry.identity.label }),
           ...(entry.identity.defaultConfigProfile === undefined ? {} : { defaultConfigProfile: entry.identity.defaultConfigProfile }),
           ...(entry.identity.provider === undefined ? {} : { provider: entry.identity.provider }),
@@ -214,7 +217,7 @@ function formatIdentityLine(entry: IdentityListing, view: IdentityView, shared: 
   const provider = entry.identity.provider === undefined ? "" : ` (provider: ${entry.identity.provider})`;
   const ambient = entry.identity.allowAmbientCredential ? " [allows ambient credential]" : "";
   const credential = entry.identity.credential === undefined ? "" : ` [credential ${describeCredential(entry.identity.credential)}]`;
-  return `${marker}${named}${label}${defaultProfile}${provider}${ambient}${credential}${account}${accountProblem}`;
+  return `${marker}${named}${entry.identity.agent === "codex" ? " [codex]" : ""}${label}${defaultProfile}${provider}${ambient}${credential}${account}${accountProblem}`;
 }
 
 /** Options `identity set` accepts. `label` is `false` for `--no-label`, `defaultProfile` is `false` for `--no-default-profile`, `provider` is `false` for `--no-provider`, `credential` is `false` for `--no-credential` and `anchor` is `false` for `--no-anchor`. */
@@ -247,7 +250,7 @@ const DISCARD_JOURNAL_DESCRIPTION =
 export function registerIdentityCommand(program: Command, deps: CommandDeps, renamePorts: IdentityRenamePorts = realIdentityRenamePorts(deps.paths)): void {
   const { paths } = deps;
   const identity = withExamples(
-    program.command("identity").description("Manage identities: each one is a separate Claude Code login with its own credentials."),
+    program.command("identity").description("Manage identities: each one is a separate Claude Code or Codex login with its own credentials."),
     ["agent-shim identity add work", "agent-shim identity list"],
   );
 
@@ -255,10 +258,13 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
     identity
       .command("add <name>")
       .description("Create a new identity. Fails if one with this name already exists.")
+      .addOption(new Option("--agent <agent>", "CLI this identity belongs to (default: claude).").choices(["claude", "codex"]))
       .option("--keep-keychain-login", KEEP_KEYCHAIN_LOGIN_DESCRIPTION)
       .option("--json", "Print the result as JSON.")
-      .action((name: string, options: Readonly<{ keepKeychainLogin?: boolean; json?: boolean }>) => {
-        const created = addNewIdentity(paths, name, renamePorts, options.keepKeychainLogin === true);
+      .action((name: string, options: Readonly<{ agent?: "claude" | "codex"; keepKeychainLogin?: boolean; json?: boolean }>) => {
+        const created = options.agent === "codex"
+          ? addIdentity(paths, name, { agent: "codex" })
+          : addNewIdentity(paths, name, renamePorts, options.keepKeychainLogin === true);
         reportMutation(options.json, { action: "created", kind: "identity", name, value: created }, () => {
           console.log(`Created identity "${name}".`);
         });
@@ -338,6 +344,7 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
         console.log(`Label: ${view.label ?? "(none)"}`);
         console.log(`Default configuration profile: ${view.defaultConfigProfile ?? "(none)"}`);
         console.log(`Provider: ${view.provider ?? "(none)"}`);
+        console.log(`Agent: ${view.agent ?? "claude"}`);
         console.log(`Allows ambient credential: ${view.allowAmbientCredential === true ? "yes" : "no"}`);
         console.log(`Credential: ${entry.identity?.credential === undefined ? "(none; uses its stored login)" : describeCredential(entry.identity.credential)}`);
         console.log(`Anchors: ${view.anchors === undefined ? "(none)" : view.anchors.map(formatAnchor).join(" ")}`);
@@ -569,7 +576,7 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
           identitiesDir: paths.identitiesDir,
           // The farm and its superseded copies are filed under the identity's id.
           identity: requireIdentityId(paths, name),
-          classification: loadClassification(paths),
+          classification: readIdentity(paths, name)?.agent === "codex" ? { defaults: CODEX_CATEGORIES } : loadClassification(paths),
           decide: async (conflict) => {
             const choice = await deps.prompts.select<FarmConflictChoice>({
               message:

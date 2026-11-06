@@ -19,3 +19,14 @@ describe("a launch of an identity whose directory is not named after it", () => 
     expect(log.errors.join("\n")).toContain('no identity named "work"');
   });
 });
+
+describe("agent identity boundary", () => {
+  it("refuses a Codex identity without spawning Claude", () => {
+    const spawn = fakeSpawn();
+    const log = fakeLog();
+    const fs = fakeFs({ [`${paths.identitiesDir}/work/identity.json`]: { name: "work", agent: "codex", allowAmbientCredential: false } });
+    expect(runAndCaptureExit({ paths, fs, spawn, proc: fakeProc({}, ["@work"]), log, resolveClaudeBinary: () => discovered })).toBe(1);
+    expect(log.errors.join("\n")).toContain("belongs to Codex");
+    expect(spawn.spawnSync).not.toHaveBeenCalled();
+  });
+});

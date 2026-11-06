@@ -1,4 +1,7 @@
 import os from "node:os";
+import { UsageError } from "./cliError";
+import { CODEX_CATEGORIES } from "./codex/categories";
+import { canonicalCodexHome, codexCredentialGuard, type CodexCredentialGuardResult } from "./codex/identity";
 import { loadClassification } from "./config/classify";
 import { cosmiconfigReader } from "./config/load";
 import { selectLaunch } from "./launchSelection";
@@ -262,6 +265,7 @@ function buildCredentialReport(provider: CheckProviderInput | undefined, identit
 
 /** Inputs to `runCheck` — everything already loaded/injected, exactly like the resolver core and the launcher: nothing in this function touches a real filesystem, git repository, clock, or environment itself. */
 export interface RunCheckParams {
+  readonly agent?: "claude" | "codex";
   readonly cwd: string;
   readonly home: string;
   readonly claudeHome: string;
@@ -309,7 +313,7 @@ export interface CheckReport {
   readonly resolved: ResolvedState;
   readonly decisionLines: readonly string[];
   readonly projectEncodingAmbiguities: readonly EncodingAmbiguity[];
-  readonly ambientCredential: AmbientCredentialGuardResult;
+  readonly ambientCredential: AmbientCredentialGuardResult | CodexCredentialGuardResult;
   readonly keychain?: KeychainLookupResult;
   readonly settingsExposure: readonly SettingsExposureReport[];
   readonly credential: CredentialReport;
@@ -344,6 +348,7 @@ function buildClaudeVersionReport(params: Pick<RunCheckParams, "env" | "installe
  * Deliberately reuses the same cascade machinery a real launch uses — `resolveDecisions` and `buildEntryFacts` — rather than reimplementing any part of resolution. The one thing this function never does that a launch does is touch the farm or spawn anything: it only reads the canonical `~/.claude` tree to build the fact manifest resolution needs, and every other input (cascade, classification, settings file contents, the Keychain lookup) is handed in already loaded.
  */
 export function runCheck(params: RunCheckParams): CheckReport {
+  const isCodex = params.agent === "codex" || params.identity?.agent === "codex";
   const facts = buildEntryFacts({
     fs: params.farmFs,
     claudeHome: params.claudeHome,
@@ -365,7 +370,7 @@ export function runCheck(params: RunCheckParams): CheckReport {
 
   const projectEncodingAmbiguities = flagAmbiguousEncodings(resolved.flattened, facts);
 
-  const ambientCredential = evaluateAmbientCredentialGuard({
+  const ambientCredential = isCodex ? codexCredentialGuard(params.env, params.identity?.allowAmbientCredential ?? false) : evaluateAmbientCredentialGuard({
     env: params.env,
     allowAmbientCredential: params.identity?.allowAmbientCredential ?? false,
     allowAmbientCredentialOverride:
@@ -377,11 +382,11 @@ export function runCheck(params: RunCheckParams): CheckReport {
   const settingsExposure = inspectSettingsExposure({ settingsShared, files: params.settingsFiles });
 
   const keychain =
-    params.platform === "darwin" && params.run !== undefined && params.farmRoot !== undefined
+    !isCodex && params.platform === "darwin" && params.run !== undefined && params.farmRoot !== undefined
       ? lookupKeychainService(params.run, params.farmRoot)
       : undefined;
 
-  const claudeVersion = buildClaudeVersionReport(params, resolved.flattened.launch.claudeVersion);
+  const claudeVersion = isCodex ? undefined : buildClaudeVersionReport(params, resolved.flattened.launch.claudeVersion);
 
   return {
     ...(params.identityName === undefined ? {} : { identityName: params.identityName }),
@@ -417,7 +422,7 @@ export function formatCheckReport(report: CheckReport): string[] {
 
   lines.push("", "Resolved entries:");
   if (report.decisionLines.length === 0) {
-    lines.push("  (nothing under ~/.claude to report)");
+    lines.push("  (nothing in the canonical home to report)");
   }
   for (const line of report.decisionLines) {
     lines.push(`  ${line}`);
@@ -557,6 +562,7 @@ function loadCheckProvider(paths: LayoutPaths, name: string): CheckProviderInput
 
 /** What `collectCheckReport` needs from its caller. */
 export interface CollectCheckReportParams {
+  readonly agent?: "claude" | "codex";
   readonly paths: LayoutPaths;
   /** The directory a launch would run in; resolved against the working directory by the caller. */
   readonly cwd: string;
@@ -571,16 +577,17 @@ export interface CollectCheckReportParams {
 export function collectCheckReport(params: CollectCheckReportParams): CheckReport {
   const { paths, cwd } = params;
   const home = os.homedir();
-    const claudeHome = resolveClaudeHome();
   const read = cosmiconfigReader();
-
-  const classification = loadClassification(paths);
 
   const loaded = loadCascadeInput({ paths, home, cwd, read });
   const git = resolveGitBranch(realRunPort, cwd);
 
-  const { selection, identityConfig } = selectLaunch({ paths, cwd, env: params.env, ...(params.identity === undefined ? {} : { identity: params.identity }) }, loaded);
+  const { selection, identityConfig } = selectLaunch({ paths, cwd, env: params.agent === "codex" ? { ...params.env, CLAUDE_CONFIG_DIR: undefined } : params.env, ...(params.identity === undefined ? {} : { identity: params.identity }) }, loaded);
   const { identity: identityDecision, poolPick, configProfile: configProfileDecision } = selection;
+  const isCodex = identityConfig?.agent === "codex" || params.agent === "codex";
+  if (identityConfig !== undefined && params.agent !== undefined && (identityConfig.agent ?? "claude") !== params.agent) throw new UsageError("The selected identity belongs to a different agent.");
+  const claudeHome = isCodex ? canonicalCodexHome(params.env, home) : resolveClaudeHome();
+  const classification = isCodex ? { defaults: CODEX_CATEGORIES } : loadClassification(paths);
 
   const cascade = loadCascadeInput({
     paths,
@@ -595,12 +602,13 @@ export function collectCheckReport(params: CollectCheckReportParams): CheckRepor
 
   const identityId = identityDecision.name === undefined ? undefined : identityIdOf(paths, identityDecision.name);
   const farmRoot = identityId === undefined ? undefined : path.join(paths.identitiesDir, identityId);
-  const settingsFiles = {
+  const settingsFiles = isCodex ? {} : {
     "settings.json": realFsPort.readFileUtf8(path.join(claudeHome, "settings.json")),
     "settings.local.json": realFsPort.readFileUtf8(path.join(claudeHome, "settings.local.json")),
   };
 
   const report = runCheck({
+    ...(isCodex ? { agent: "codex" } : {}),
     cwd,
     home,
     claudeHome,
@@ -621,7 +629,7 @@ export function collectCheckReport(params: CollectCheckReportParams): CheckRepor
     settingsFiles,
     run: realRunPort,
     credentialCache: realCredentialCacheEnv(paths),
-    installedClaudeVersions: realInstalledClaudeVersions(),
+    ...(isCodex ? {} : { installedClaudeVersions: realInstalledClaudeVersions() }),
     ...(farmRoot === undefined ? {} : { farmRoot }),
     platform: process.platform,
     ...(provider === undefined ? {} : { provider }),
