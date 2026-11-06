@@ -22,6 +22,24 @@ function descend(value: unknown, key: string): unknown {
 }
 
 /**
+ * Google reports paths through dereferenced local schemas; resolve refs only when
+ * needed to traverse a segment, and reject external or cyclic references.
+ */
+function descendExpanded(root: unknown, value: unknown, key: string): unknown {
+  const seen = new Set<string>();
+  let current = value;
+  for (;;) {
+    const child = descend(current, key);
+    if (child !== undefined) return child;
+    if (!record(current) || typeof current.$ref !== "string" || !current.$ref.startsWith("#/") || seen.has(current.$ref)) return undefined;
+    const ref = current.$ref;
+    seen.add(ref);
+    current = root;
+    for (const part of ref.slice(2).split("/")) current = descend(current, part.replaceAll("~1", "/").replaceAll("~0", "~"));
+  }
+}
+
+/**
  * On the specific 400 reporting a required reference loop, relax only the named recursive
  * property in a private copy. The original tool still validates calls, and its description
  * tells the model the property remains required. Other errors and schemas pass unchanged.
@@ -39,10 +57,10 @@ export function relaxRejectedRecursiveProperty(request: GeminiGenerateContentReq
       const schema = declaration.parametersJsonSchema;
       if (schema === undefined) continue;
       let leaf: unknown = schema;
-      for (const part of path) leaf = descend(leaf, part);
+      for (const part of path) leaf = descendExpanded(schema, leaf, part);
       if (!record(leaf) || typeof leaf.$ref !== "string") continue;
       let owner: unknown = schema;
-      for (const part of path.slice(0, propertyIndex)) owner = descend(owner, part);
+      for (const part of path.slice(0, propertyIndex)) owner = descendExpanded(schema, owner, part);
       if (!record(owner) || !Array.isArray(owner.required) || !owner.required.includes(name) || !record(owner.properties)) continue;
       const property = owner.properties[name];
       if (!record(property)) continue;
