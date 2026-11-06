@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { Command } from "commander";
+import { Option, type Command } from "commander";
 import { printJson, withExamples, type CommandDeps } from "./cli/commandDeps";
 import { checkReportHasWarnings, checkReportToJson, collectCheckReport, formatCheckReport } from "./checkReport";
 
@@ -13,12 +13,13 @@ export function registerCheckCommand(program: Command, deps: CommandDeps): void 
     .description(
       "Show what a launch in a directory would share or hide and why, plus credential and settings diagnostics. Never touches the farm or spawns claude.",
     )
+    .addOption(new Option("--agent <agent>", "CLI whose sharing decisions to inspect (default: selected identity, or claude).").choices(["claude", "codex"]))
     .option("--identity <name>", "Identity to check (defaults to the identity a launch there would resolve).")
     .option("--json", "Print the report as JSON.")
     .option("--strict", "Exit 1 when the report carries any warning, not only on errors.")
-    .action((pathArg: string | undefined, options: Readonly<{ identity?: string; json?: boolean; strict?: boolean }>) => {
+    .action((pathArg: string | undefined, options: Readonly<{ agent?: "claude" | "codex"; identity?: string; json?: boolean; strict?: boolean }>) => {
       const cwd = pathArg === undefined ? process.cwd() : path.resolve(pathArg);
-      const report = collectCheckReport({ paths, cwd, ...(options.identity === undefined ? {} : { identity: options.identity }), env: process.env });
+      const report = collectCheckReport({ paths, cwd, ...(options.identity === undefined ? {} : { identity: options.identity }), env: process.env, ...(options.agent === undefined ? {} : { agent: options.agent }) });
 
       if (options.json === true) {
         printJson(checkReportToJson(report));

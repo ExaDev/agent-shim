@@ -272,3 +272,7 @@ The resolver closes this by treating every materialised directory as a two-way s
 
 The reverse direction matters just as much: a directory materialised because of a split whose cause later disappears (a profile edit removes the entry override that split it, say) collapses back into a single plain symlink on the next resync, rather than being left behind as permanent local scaffolding. This is the same "compare against prior farm state, update only what changed" logic that makes every resync fast in the common case, applied to the one case where a subtree's resolved shape needs to get simpler, not just different.
 
+
+### Native Codex launch
+
+`runCommand.ts` dispatches a leading `--agent codex` to `codex/launch.ts`. Its injected `prepareCodexLaunch` resolves a typed identity and sharing profile, then resyncs the home through the existing farm builder with `codex/categories.ts`. `codex/identity.ts` supplies canonical-home resolution and the ambient-credential guard, also used by `check`. `runCodexChild` forwards signals over the existing process ports and returns the child status. Existing Claude launch and translation-provider pipelines retain their separate behavior.

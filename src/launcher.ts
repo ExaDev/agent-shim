@@ -368,6 +368,11 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean, onRecorded
       }
     }
 
+    if (loadedIdentity?.config.agent === "codex") {
+      log.error(`Identity "${identityDecision.name ?? ""}" belongs to Codex. Use agent-shim run --agent codex @${identityDecision.name ?? ""}.`);
+      proc.exit(1);
+    }
+
     const configProfileDecision = decideConfigProfile({
       env,
       cliFlagConfigProfile: params.cliFlagConfigProfile ?? parsedArgv.configProfile,

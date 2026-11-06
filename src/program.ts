@@ -23,6 +23,7 @@ import { registerPoolCommand } from "./pools";
 import { registerProviderCommand } from "./providers";
 import { registerModelsCommand } from "./models";
 import { registerRuleCommand } from "./directoryRules";
+import { runCodex } from "./codex/launch";
 import { registerRunCommand } from "./runCommand";
 import { registerUpdateCommand } from "./update/commands";
 import { registerSessionCommands } from "./agents/commands";
@@ -31,6 +32,7 @@ import type { UpdatePorts } from "./update/update";
 
 /** Everything `buildProgram` needs from its caller: the shared command dependencies, and the launcher pipeline `run` forwards to. */
 export interface ProgramDeps extends CommandDeps {
+  readonly runCodex?: (args: readonly string[]) => Promise<void>;
   /** Runs the launcher pipeline with `run`'s forwarded arguments. Injected so building the program never wires real ports, and a test can assert what `run` forwards without launching anything. */
   readonly runClaude: (args: readonly string[]) => Promise<void>;
   /** Replaces the real Keychain, secret stores and `ssh` behind the `credential` commands. Omitted outside tests. */
@@ -49,8 +51,12 @@ Grammar:
   credential is the exception: it acts on the credentials identities use (store).
 
 Launching:
+  agent-shim run --agent codex [@<identity>] [sharing flags] [codex arguments]
   agent-shim run [@<identity>] [launch flags] [claude arguments]
-  Everything after run is forwarded to Claude Code, so \`agent-shim run --help\` shows
+  Create a Codex identity with identity add <name> --agent codex. For Codex, only
+  leading --identity, --config-profile, --category, --share and --hide are consumed.
+  Codex -p/--profile and all arguments after its first native argument are forwarded.
+  By default, run forwards to Claude Code, so \`agent-shim run --help\` shows
   claude's own help. agent-shim consumes these launch flags first, and only before a
   \`--\` terminator (everything from \`--\` on is forwarded untouched):
     --identity <name>            the identity (same as a leading @<name>)
@@ -70,6 +76,7 @@ Environment:
   AGENT_SHIM_IDENTITY, AGENT_SHIM_CONFIG_PROFILE, AGENT_SHIM_SKIP_PERMISSIONS,
   AGENT_SHIM_REMOTE_CONTROL, AGENT_SHIM_HEADROOM, AGENT_SHIM_TRACK_USAGE, AGENT_SHIM_DELAY, AGENT_SHIM_PAUSE, AGENT_SHIM_EXPLAIN, AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL,
   AGENT_SHIM_CATEGORY_OVERRIDE, AGENT_SHIM_ENTRY_OVERRIDE, AGENT_SHIM_HOME,
+  AGENT_SHIM_CODEX_BIN, AGENT_SHIM_CODEX_HOME (native Codex launches),
   AGENT_SHIM_DEBUG (print stack traces), NO_COLOR. Booleans are true, false, 1 or 0.
 
 Exit status:
@@ -92,7 +99,7 @@ export function buildProgram(deps: ProgramDeps): Command {
   const program = new Command();
   program
     .name("agent-shim")
-    .description("Run Claude Code under several logins from one machine, controlling what each one shares with ~/.claude.")
+    .description("Run Claude Code or Codex under separate logins, controlling which configuration and history each identity shares.")
     .version(packageJson.version)
     .exitOverride()
     // Required so `-V`/`--version`/`-h`/`--help` are only recognised before the first subcommand token, not scanned for anywhere in argv; otherwise `agent-shim run @name --version` would be silently intercepted by agent-shim's own version handling before ever reaching `run`'s forwarded args.
@@ -120,7 +127,7 @@ export function buildProgram(deps: ProgramDeps): Command {
   registerUsageCommands(program, deps);
   registerSessionCommands(program, deps);
   registerSuperviseMarkCommand(program, deps);
-  registerRunCommand(program, deps.runClaude);
+  registerRunCommand(program, deps.runClaude, deps.runCodex ?? (async (args) => runCodex(deps.paths, args)));
   registerUpdateCommand(program, deps, deps.updatePorts);
   registerCompletionCommand(program);
 

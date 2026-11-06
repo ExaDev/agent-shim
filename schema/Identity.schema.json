@@ -3,6 +3,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
+    "agent": {
+      "type": "string",
+      "enum": [
+        "claude",
+        "codex"
+      ]
+    },
     "$schema": {
       "type": "string"
     },

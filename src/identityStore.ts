@@ -360,6 +360,7 @@ class CheckedIdTakenError extends CliError {
 
 /** How `addIdentity` reaches what it needs beyond the files: the identity names lock, and, for an add whose id was checked before the lock was taken (`requireIdentityAddable`), that id. */
 export interface AddIdentityOptions {
+  readonly agent?: "claude" | "codex";
   readonly namesLock?: IdentityNamesLockPorts;
   readonly checkedId?: string;
 }
@@ -386,7 +387,7 @@ export function addIdentity(paths: LayoutPaths, name: string, options: AddIdenti
     if (checkedId !== undefined && idTaken(paths, checkedId, allocation)) {
       throw new CheckedIdTakenError(name, checkedId);
     }
-    const identity = IdentitySchema.parse({ name, allowAmbientCredential: false });
+    const identity = IdentitySchema.parse({ name, allowAmbientCredential: false, ...(options.agent === undefined ? {} : { agent: options.agent }) });
     writeJsonAtomic(identityJsonPath(paths, id()), identity);
     return identity;
   });

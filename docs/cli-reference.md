@@ -57,7 +57,7 @@ Every failure prints as `agent-shim: <message>` on standard error. An unexpected
 ```
 agent-shim <noun> <verb> [name] [options]      # nouns: identity, profile, pool, provider, rule (credential acts on the credentials they use)
 
-agent-shim identity add <name> [--keep-keychain-login] [--json]
+agent-shim identity add <name> [--agent <claude|codex>] [--keep-keychain-login] [--json]
 agent-shim identity list [--json]
 agent-shim identity show <name> [--json]
 agent-shim identity set <name> [--label <text> | --no-label] [--default-profile <profile> | --no-default-profile] [--provider <provider> | --no-provider] [--[no-]allow-ambient-credential]
@@ -254,3 +254,9 @@ The Antigravity CLI (`agy`) takes the same command in `~/.gemini/antigravity-cli
 Its payload differs, and the statusline reads each difference: the quota bars come from the payload's `quota` map, one per model family the account holds (Gemini 5h and weekly, third-party 5h and weekly, Gemini 4 Argon weekly), whichever model is in use, so a spent window of one family is visible while another family is drawn on; a session on an Antigravity provider through the front door draws the same family windows from the usage snapshot. The account and plan from its `email` and `plan_tier` (the Claude profile file is not consulted beside them), and the width from its live `terminal_width`. When the CLI's `statusLine.stack_with_default` is `true` its own line, which already names the model, is drawn above this one, so the model is left out here; the payload does not carry that setting, so it is read from `~/.gemini/antigravity-cli/settings.json`.
 
 The line is laid out for the terminal's width, taken from the payload's `terminal_width` when the client states one and from `COLUMNS` otherwise (Claude Code sets it), and wraps rather than truncating. `AGENT_SHIM_STATUSLINE_CMD` names a renderer of your own: it receives the same payload with an `agent_shim` key added, and its output replaces the built-in line. With `AGENT_SHIM_STATUSLINE` unset, the built-in line reads `launch.statusline` from the config on every render, so an edit shows on the next message (see the statusline section of [configuration-model.md](configuration-model.md)).
+
+## Native Codex CLI launches
+
+`agent-shim identity add <name> --agent codex` creates a Codex identity. `agent-shim run --agent codex @<name> [shim sharing flags] [Codex arguments...]` launches it; the agent prefix must immediately follow `run`. `--agent=codex` is equivalent. `agent-shim check --agent codex --identity <name>` inspects its sharing decisions without launching.
+
+`AGENT_SHIM_CODEX_BIN` selects the installed executable and `AGENT_SHIM_CODEX_HOME` selects the canonical sharing source (default `~/.codex`). The identity's stable directory becomes `CODEX_HOME`; native credential storage and SQLite state stay local. Full semantics and examples are in [codex-cli.md](codex-cli.md).
