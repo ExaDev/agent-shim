@@ -45,7 +45,7 @@ const MS_PER_SECOND = 1000;
 /** How many sessions' last routing choices the route remembers; the oldest is dropped first, so a forgotten session is merely routed afresh by preference on its next request. */
 const ROUTING_MEMORY_SESSIONS = 256;
 /** Bound retries when an upstream reports a sequence of distinct recursive properties. */
-const MAX_SCHEMA_RETRIES = 16;
+const MAX_SCHEMA_RETRIES = 32;
 
 /** What a spent window says to the person: which limit was reached and when it lifts, in place of the backend's own error text, which names neither. */
 function exhaustedMessage(exhaustion: AntigravityExhaustion): string {
