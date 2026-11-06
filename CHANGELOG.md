@@ -1,3 +1,9 @@
+## [11.87.1](https://github.com/ExaDev/agent-shim/compare/v11.87.0...v11.87.1) (2026-11-06)
+
+### Bug Fixes
+
+* refresh expired agy credentials ([e74c88f](https://github.com/ExaDev/agent-shim/commit/e74c88fac75eeb14ff176d14a46cd1dd53f6c616))
+
 ## [11.87.0](https://github.com/ExaDev/agent-shim/compare/v11.86.5...v11.87.0) (2026-11-06)
 
 ### Features
