@@ -40,16 +40,16 @@ function descendExpanded(root: unknown, value: unknown, key: string): unknown {
 }
 
 /**
- * On the specific 400 reporting a required reference loop, relax only the named recursive
- * property in a private copy. The original tool still validates calls, and its description
- * tells the model the property remains required. Other errors and schemas pass unchanged.
+ * On a required-reference-loop 400, relax the nearest required property on the
+ * reported path in a private copy. If no required property remains, truncate only
+ * the reported back-reference. The original tool still validates calls; descriptions
+ * retain the constraints for the model. Other errors and schemas pass unchanged.
  */
 export function relaxRejectedRecursiveProperty(request: GeminiGenerateContentRequest, body: string): GeminiGenerateContentRequest | undefined {
   const path = rejectedPath(body);
   if (path === undefined) return undefined;
-  const propertyIndex = path.lastIndexOf("properties");
-  const name = path[propertyIndex + 1];
-  if (propertyIndex < 0 || name === undefined) return undefined;
+  const propertyIndices = path.flatMap((part, index) => part === "properties" && path[index + 1] !== undefined ? [index] : []).reverse();
+  if (propertyIndices.length === 0) return undefined;
   const copy = structuredClone(request);
   let changed = false;
   for (const tool of copy.tools ?? []) {
@@ -59,15 +59,35 @@ export function relaxRejectedRecursiveProperty(request: GeminiGenerateContentReq
       let leaf: unknown = schema;
       for (const part of path) leaf = descendExpanded(schema, leaf, part);
       if (!record(leaf) || typeof leaf.$ref !== "string") continue;
-      let owner: unknown = schema;
-      for (const part of path.slice(0, propertyIndex)) owner = descendExpanded(schema, owner, part);
-      if (!record(owner) || !Array.isArray(owner.required) || !owner.required.includes(name) || !record(owner.properties)) continue;
-      const property = owner.properties[name];
-      if (!record(property)) continue;
-      owner.required = owner.required.filter((item: unknown) => item !== name);
-      const description = typeof property.description === "string" ? `${property.description}\n` : "";
-      property.description = `${description}This property is required by the original tool schema.`;
-      changed = true;
+      let repairedProperty = false;
+      for (const propertyIndex of propertyIndices) {
+        const name = path[propertyIndex + 1];
+        if (name === undefined) continue;
+        let owner: unknown = schema;
+        for (const part of path.slice(0, propertyIndex)) owner = descendExpanded(schema, owner, part);
+        if (!record(owner) || !Array.isArray(owner.required) || !owner.required.includes(name) || !record(owner.properties)) continue;
+        const property = owner.properties[name];
+        if (!record(property)) continue;
+        owner.required = owner.required.filter((item: unknown) => item !== name);
+        const description = typeof property.description === "string" ? `${property.description}\n` : "";
+        property.description = `${description}This property is required by the original tool schema.`;
+        changed = true;
+        repairedProperty = true;
+        break;
+      }
+      if (!repairedProperty) {
+        let parent: unknown = schema;
+        for (const part of path.slice(0, -1)) parent = descendExpanded(schema, parent, part);
+        const key = path.at(-1);
+        const truncated = { description: "Recursive value: the original tool schema validates this value." };
+        if (record(parent) && key !== undefined && Object.hasOwn(parent, key)) {
+          parent[key] = truncated;
+          changed = true;
+        } else if (Array.isArray(parent) && key !== undefined && /^\d+$/u.test(key) && Number(key) < parent.length) {
+          parent[Number(key)] = truncated;
+          changed = true;
+        }
+      }
     }
   }
   return changed ? copy : undefined;
