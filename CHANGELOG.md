@@ -1,3 +1,10 @@
+## [11.87.2](https://github.com/ExaDev/agent-shim/compare/v11.87.1...v11.87.2) (2026-11-06)
+
+### Bug Fixes
+
+* follow references in rejected schema paths ([8eaf25f](https://github.com/ExaDev/agent-shim/commit/8eaf25f129504982215b18b162e18a9a2be188e4))
+* handle repeated recursive schema paths ([56bdacc](https://github.com/ExaDev/agent-shim/commit/56bdaccbf5c826d8fc6f6b546765c452c9b21be9))
+
 ## [11.87.1](https://github.com/ExaDev/agent-shim/compare/v11.87.0...v11.87.1) (2026-11-06)
 
 ### Bug Fixes
