@@ -1,3 +1,9 @@
+## [11.86.5](https://github.com/ExaDev/agent-shim/compare/v11.86.4...v11.86.5) (2026-11-06)
+
+### Bug Fixes
+
+* **antigravity:** retry rejected recursive tool schemas ([dd7a43f](https://github.com/ExaDev/agent-shim/commit/dd7a43ff8f24c2772bac163317ed68dd5a03611b)), closes [#713](https://github.com/ExaDev/agent-shim/issues/713)
+
 ## [11.86.4](https://github.com/ExaDev/agent-shim/compare/v11.86.3...v11.86.4) (2026-11-05)
 
 ### Bug Fixes
