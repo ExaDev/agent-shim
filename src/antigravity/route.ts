@@ -3,6 +3,7 @@ import { parseProviderPath } from "../frontdoor/route";
 import { HTTP_STATUS } from "../codex/http";
 import { MessagesRequestSchema } from "../codex/anthropic";
 import { createAntigravityRelay, renderSseFrame, type SseFrame } from "./relay";
+import { relaxRejectedRecursiveProperty } from "./recursiveSchema";
 import { translateRequest, type ResolvedAntigravityConfig } from "./translate";
 import { callCloudAntigravity, AntigravityUpstreamError } from "./cloudUpstream";
 import { callLocalAntigravity } from "./localUpstream";
@@ -43,6 +44,8 @@ const MS_PER_SECOND = 1000;
 
 /** How many sessions' last routing choices the route remembers; the oldest is dropped first, so a forgotten session is merely routed afresh by preference on its next request. */
 const ROUTING_MEMORY_SESSIONS = 256;
+/** Bound retries when an upstream reports a sequence of distinct recursive properties. */
+const MAX_SCHEMA_RETRIES = 16;
 
 /** What a spent window says to the person: which limit was reached and when it lifts, in place of the backend's own error text, which names neither. */
 function exhaustedMessage(exhaustion: AntigravityExhaustion): string {
@@ -142,6 +145,7 @@ export function createAntigravityRoute(ports: AntigravityRoutePorts): (request: 
     const tried = new Set<string>();
     let iterator: AsyncIterator<GeminiGenerateContentResponseChunk>;
     let firstResult: IteratorResult<GeminiGenerateContentResponseChunk>;
+    let schemaRetries = 0;
     for (;;) {
       tried.add(translated.model);
       const upstreamChunks =
@@ -170,6 +174,14 @@ export function createAntigravityRoute(ports: AntigravityRoutePorts): (request: 
         break;
       } catch (error) {
         if (error instanceof AntigravityUpstreamError) {
+          if (error.status === HTTP_STATUS.badRequest && schemaRetries < MAX_SCHEMA_RETRIES) {
+            const repaired = relaxRejectedRecursiveProperty(translated.request, error.body);
+            if (repaired !== undefined) {
+              schemaRetries += 1;
+              translated = { ...translated, request: repaired };
+              continue;
+            }
+          }
           const is429 = error.status === HTTP_STATUS.tooManyRequests;
           const learned = is429 ? parseQuotaExhaustion(error.body, nowMs) : undefined;
           if (learned !== undefined) {
