@@ -1,3 +1,9 @@
+## [11.87.0](https://github.com/ExaDev/agent-shim/compare/v11.86.5...v11.87.0) (2026-11-06)
+
+### Features
+
+* **codex:** launch native CLI with isolated identities ([0b4617d](https://github.com/ExaDev/agent-shim/commit/0b4617de7a4c27f5e8a156d36146e4576cf87c00)), closes [#149](https://github.com/ExaDev/agent-shim/issues/149)
+
 ## [11.86.5](https://github.com/ExaDev/agent-shim/compare/v11.86.4...v11.86.5) (2026-11-06)
 
 ### Bug Fixes
