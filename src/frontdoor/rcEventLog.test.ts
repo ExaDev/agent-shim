@@ -295,6 +295,21 @@ describe("the tracker's transitions into the log", () => {
     ]);
   });
 
+  it("never re-births a request the door answered between the worker's write and the stream's copy of it, until its deadline has passed", () => {
+    const { tracker, advance, kinds } = trackedLog();
+    exchange(tracker, "POST", `/v1/code/sessions/${SESSION_A}/worker/events`, workerEvents(canUseTool));
+    // A supervisor answers at once, before the client read stream has delivered its own copy of the request.
+    tracker.completePending(SESSION_A, "req_1");
+    tracker.fileStreamEvent(SESSION_A, { event_type: "control_request", sequence_num: 1, source: "worker", payload: canUseTool });
+    expect(tracker.pendingOf(SESSION_A)).toEqual([]);
+    expect(kinds().filter((event) => typeof event === "object" && event !== null && "kind" in event && event.kind === "pending-born")).toHaveLength(1);
+    // Past one answer deadline the retirement is forgotten, so the record of it stays bounded.
+    advance(RC_PENDING_DEADLINE_MS);
+    tracker.pendingOf();
+    tracker.fileStreamEvent(SESSION_A, { event_type: "control_request", sequence_num: 2, source: "worker", payload: canUseTool });
+    expect(tracker.pendingOf(SESSION_A).map((request) => request.requestId)).toEqual(["req_1"]);
+  });
+
   it("records a pending request retiring at its deadline", () => {
     const { tracker, advance, kinds } = trackedLog();
     exchange(tracker, "POST", `/v1/code/sessions/${SESSION_A}/worker/events`, workerEvents(canUseTool));

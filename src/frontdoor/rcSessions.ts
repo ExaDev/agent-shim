@@ -89,6 +89,8 @@ interface RcSessionRecord {
   anthropicClientPlatform: string | undefined;
   /** The session's control requests awaiting an answer, keyed by the id a `control_response` must echo. An entry lives exactly until it is answered or its deadline passes. */
   readonly pending: Map<string, RcPendingRequestRecord>;
+  /** The control requests that stopped awaiting an answer, keyed by id, with when they retired. The same request crosses the door on the worker's event write and again on the client read stream, so an answer can land between the two; remembering the retirement until the answer deadline has passed is what stops the later copy from birthing a request already answered. */
+  readonly retired: Map<string, number>;
   /** The worker state the latest worker registration named, with when that exchange was observed. */
   workerState: RcWorkerFact<string> | undefined;
   /** The idle the latest heartbeat carried, with when that exchange was observed. */
@@ -381,11 +383,15 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
   /** Retires one pending request, telling the sink only when it was still pending, so a request answered twice (on the stream and on the worker's own write) retires once. */
   const retirePending = (entry: RcSessionRecord, requestId: string, reason: RcPendingRetireReason): void => {
     if (entry.pending.delete(requestId)) {
+      entry.retired.set(requestId, deps.now());
       deps.onTransition?.({ kind: "pending-retired", session: entry.id, requestId, reason, at: deps.now() });
     }
   };
-  /** Files one pending request, telling the sink only of a request not already pending, since the same request is observed both on the worker's event write and on the client read stream. */
+  /** Files one pending request, telling the sink only of a request not already pending, since the same request is observed both on the worker's event write and on the client read stream. A request that already retired is not filed again: its second copy arriving after the answer is the same request, not a new one. */
   const addPending = (entry: RcSessionRecord, pending: RcPendingRequestRecord): void => {
+    if (entry.retired.has(pending.requestId)) {
+      return;
+    }
     const born = !entry.pending.has(pending.requestId);
     entry.pending.set(pending.requestId, pending);
     if (born) {
@@ -410,6 +416,12 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
         retirePending(entry, requestId, "expired");
       }
     }
+    // A retirement is remembered for one answer deadline: no copy of a request can still be in flight once a request observed at the retirement instant would itself have expired.
+    for (const [requestId, retiredAt] of entry.retired) {
+      if (now - retiredAt >= RC_PENDING_DEADLINE_MS) {
+        entry.retired.delete(requestId);
+      }
+    }
   };
   const sweep = (): void => {
     for (const [id, entry] of entries) {
@@ -425,7 +437,7 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
   timer.unref();
 
   const birth = (id: string, facts: Readonly<{ oauthAuthorization: string | undefined; anthropicVersion: string | undefined; anthropicClientPlatform: string | undefined }>): RcSessionRecord => {
-    const record: RcSessionRecord = { id, createdAt: deps.now(), lastSeenAt: deps.now(), ...facts, pending: new Map(), workerState: undefined, workerIdleSeconds: undefined, sequenceNum: undefined, liveTasks: new Map() };
+    const record: RcSessionRecord = { id, createdAt: deps.now(), lastSeenAt: deps.now(), ...facts, pending: new Map(), retired: new Map(), workerState: undefined, workerIdleSeconds: undefined, sequenceNum: undefined, liveTasks: new Map() };
     entries.set(id, record);
     deps.onTransition?.({ kind: "session-appeared", session: id, at: record.createdAt });
     return record;
