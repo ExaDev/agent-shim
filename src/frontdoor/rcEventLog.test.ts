@@ -1,3 +1,5 @@
+import { getEventListeners } from "node:events";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
@@ -371,6 +373,19 @@ describe("following the session event log", () => {
     leave.abort(reason);
     await expect(next).rejects.toBe(reason);
     expect(attached()).toBe(0);
+  });
+
+  it("removes its abort listener from the signal when it ends", async () => {
+    const log = createRcSessionEventLog({ generation: GENERATION, capacity: ROOMY_CAPACITY });
+    const shared = new AbortController();
+    const follower = followRcSessionEvents(log, {}, shared.signal);
+    const next = follower.next();
+    await settle();
+    expect(getEventListeners(shared.signal, "abort")).toHaveLength(1);
+    log.append(appeared(SESSION_A, 1));
+    await eventOf(next);
+    await follower.return();
+    expect(getEventListeners(shared.signal, "abort")).toHaveLength(0);
   });
 
   it("detaches from the log when its consumer returns", async () => {
