@@ -314,7 +314,7 @@ function claudeCodeLoginFound(run: RunPort, configDir: string, login: ClaudeCode
 }
 
 /**
- * Refuses a self-hosted mint into `configDir` whenever `CLAUDE_SECURESTORAGE_CONFIG_DIR` is set (on any platform), and on macOS while the Keychain holds the Claude Code login filed for the directory. Claude Code reads that item ahead of the `.credentials.json` the mint writes, so the session would sign in as that account instead of with the minted login. Nothing can tell a real login from a copy the CLI made of an earlier mint without reading the secret, which this never does, so every item is refused, the mint's own directory included, and nothing is ever deleted: the message names the exact command that deletes the item, for the person to run if they do not need it. `--force` does not override this. Off macOS the file is Claude Code's only store and nothing is asked. Throws `KeychainLookupError` when the Keychain could not be asked.
+ * Refuses a self-hosted mint into `configDir` whenever `CLAUDE_SECURESTORAGE_CONFIG_DIR` is set (on any platform), and on macOS while the Keychain holds the Claude Code login filed for the directory. Claude Code reads that item ahead of the `.credentials.json` the mint writes, so the session would sign in as that account instead of with the minted login. Nothing can tell a real login from a copy the CLI made of an earlier mint without reading the secret, which this never does, so every item is refused, the mint's own directory included, and nothing is ever deleted: the message names the exact command that deletes the item, for the person to run if they do not need it. `--force` does not override this. Off macOS the file is Claude Code's only store and nothing is asked. Throws `KeychainLookupError`, saying nothing was minted, when the Keychain could not be asked.
  */
 export function requireNoClaudeCodeLoginForMint(keychain: KeychainProbe, configDir: string, identity: string, login: ClaudeCodeLoginEnv): void {
   // The variable moves Claude Code's whole credential store, the Keychain item's name and the plaintext fallback alike, to the directory it names (or to the default `~/.claude` when empty), on every platform (2.1.319's secure storage). A session that inherits it never reads the minted file, and which of its items a session would read is the session's environment's to decide, not this process's: so the mint refuses outright rather than guess, and names no item to delete.
@@ -326,7 +326,15 @@ export function requireNoClaudeCodeLoginForMint(keychain: KeychainProbe, configD
   if (keychain.platform !== "darwin") {
     return;
   }
-  const found = claudeCodeLoginFound(keychain.run, configDir, login);
+  let found: ReturnType<typeof claudeCodeLoginFound>;
+  try {
+    found = claudeCodeLoginFound(keychain.run, configDir, login);
+  } catch (error) {
+    if (error instanceof KeychainLookupError) {
+      throw new KeychainLookupError(`${error.message} Nothing was minted into identity "${identity}".`);
+    }
+    throw error;
+  }
   if (found === undefined) {
     return;
   }
