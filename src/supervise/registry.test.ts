@@ -100,9 +100,37 @@ describe("finding the supervised session a Remote Control session belongs to", (
     writeSessionState(fs, paths, "other", "s2", { mark: "idle", transcriptPath: "/t/two.jsonl", at: T1 });
     writeSessionControl(fs, paths, "other", "s2", { pid: 100, directory: "/plugin" });
     const found = await supervisedSessionOfBridge(fs, paths, "cse_abc", everyoneRunning);
-    expect(found?.session.sessionId).toBe("s2");
-    expect(found?.control).toEqual({ pid: 100, directory: "/plugin" });
-    await expect(supervisedSessionOfBridge(fs, paths, "cse_other", everyoneRunning)).resolves.toBeUndefined();
+    expect(found.kind === "found" ? found.session.session.sessionId : found.kind).toBe("s2");
+    expect(found.kind === "found" ? found.session.control : undefined).toEqual({ pid: 100, directory: "/plugin" });
+    await expect(supervisedSessionOfBridge(fs, paths, "cse_other", everyoneRunning)).resolves.toEqual({ kind: "none" });
+  });
+
+  it("joins only by a bridge-session row, never by the same text inside another row a model could have written", async () => {
+    // A tool call's input, or a structured tool result, can hold the exact key and value the join looks for.
+    const injected = JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", input: { note: { bridgeSessionId: "cse_abc" } } }] }, toolUseResult: { bridgeSessionId: "cse_abc" } });
+    const fs = createFakeFarmFs({ "/t/steered.jsonl": `${injected}\n` });
+    registerSupervised(fs, paths, session({ sessionId: "s1" }));
+    writeSessionState(fs, paths, "subs", "s1", { mark: "idle", transcriptPath: "/t/steered.jsonl", at: T1 });
+    await expect(supervisedSessionOfBridge(fs, paths, "cse_abc", everyoneRunning)).resolves.toEqual({ kind: "none" });
+  });
+
+  it("takes each transcript's latest bridge row, so a session that reconnected under a new id no longer answers to its old one", async () => {
+    const OLD = JSON.stringify({ type: "bridge-session", sessionId: "local-1", bridgeSessionId: "cse_old", lastSequenceNum: 9 });
+    const fs = createFakeFarmFs({ "/t/two.jsonl": `${OLD}\n${BRIDGE_ROW}\n` });
+    registerSupervised(fs, paths, session({ sessionId: "s2" }));
+    writeSessionState(fs, paths, "subs", "s2", { mark: "idle", transcriptPath: "/t/two.jsonl", at: T1 });
+    expect((await supervisedSessionOfBridge(fs, paths, "cse_abc", everyoneRunning)).kind).toBe("found");
+    await expect(supervisedSessionOfBridge(fs, paths, "cse_old", everyoneRunning)).resolves.toEqual({ kind: "none" });
+  });
+
+  it("refuses to choose when two live launches both claim the id", async () => {
+    const fs = createFakeFarmFs({ "/t/a.jsonl": `${BRIDGE_ROW}\n`, "/t/b.jsonl": `${BRIDGE_ROW}\n` });
+    registerSupervised(fs, paths, session({ sessionId: "s1" }));
+    registerSupervised(fs, paths, session({ sessionId: "s2", pool: "other" }));
+    writeSessionState(fs, paths, "subs", "s1", { mark: "idle", transcriptPath: "/t/a.jsonl", at: T1 });
+    writeSessionState(fs, paths, "other", "s2", { mark: "idle", transcriptPath: "/t/b.jsonl", at: T1 });
+    const found = await supervisedSessionOfBridge(fs, paths, "cse_abc", everyoneRunning);
+    expect(found.kind === "ambiguous" ? found.sessionIds : found.kind).toEqual(["s1", "s2"]);
   });
 
   it("ignores a control record a previous launcher left, and the record goes with the session's entry", async () => {
@@ -110,7 +138,8 @@ describe("finding the supervised session a Remote Control session belongs to", (
     registerSupervised(fs, paths, session({ sessionId: "s2" }));
     writeSessionState(fs, paths, "subs", "s2", { mark: "idle", transcriptPath: "/t/two.jsonl", at: T1 });
     writeSessionControl(fs, paths, "subs", "s2", { pid: 7, directory: "/stale" });
-    expect((await supervisedSessionOfBridge(fs, paths, "cse_abc", everyoneRunning))?.control).toBeUndefined();
+    const found = await supervisedSessionOfBridge(fs, paths, "cse_abc", everyoneRunning);
+    expect(found.kind === "found" ? found.session.control : "not found").toBeUndefined();
     unregisterSupervised(fs, paths, "subs", "s2");
     expect(readSessionControl(fs, paths, "subs", "s2")).toBeUndefined();
   });

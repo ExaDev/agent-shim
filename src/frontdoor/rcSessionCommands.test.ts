@@ -15,7 +15,7 @@ const SHORT_WAIT_MS = 5;
 const NO_SUPERVISORS = new Map<string, RcSupervisedTarget>();
 
 /** Finds no supervisor. */
-async function noSupervisor(sessionId: string): Promise<RcSupervisedTarget | undefined> {
+async function noSupervisor(sessionId: string): Promise<RcSupervisedTarget | { readonly refused: string } | undefined> {
   return await Promise.resolve(NO_SUPERVISORS.get(sessionId));
 }
 
@@ -152,7 +152,7 @@ describe("goal and compaction control over Remote Control, by route", () => {
       ...world.deps,
       supervisedOf: async () => {
         const target = await world.deps.supervisedOf(SESSION);
-        if (target === undefined) throw new Error("no target");
+        if (target === undefined || "refused" in target) throw new Error("no target");
         return {
           ...target,
           compact: async () => {
@@ -216,7 +216,7 @@ describe("goal and compaction control over Remote Control, by route", () => {
       ...world.deps,
       supervisedOf: async () => {
         const target = await world.deps.supervisedOf(SESSION);
-        if (target === undefined) throw new Error("no target");
+        if (target === undefined || "refused" in target) throw new Error("no target");
         return {
           ...target,
           // A plugin that never answers, as one queued behind a turn waiting on a permission prompt does: only the signal ends its wait.
@@ -236,6 +236,11 @@ describe("goal and compaction control over Remote Control, by route", () => {
     const result = await commands.compact(SESSION, { waitMs: SHORT_WAIT_MS });
     expect(seen?.aborted).toBe(true);
     expect(result.ok ? "" : result.message).toContain(`within ${String(SHORT_WAIT_MS)} ms`);
+  });
+
+  it("refuses with the reason when the door cannot tell which supervised launch the session is", async () => {
+    const deps: RcSessionCommandDeps = { supervisedOf: async () => await Promise.resolve({ refused: "two launches claim it" }), readFile: noFile, selfHost: undefined, isObserved: () => true };
+    expect(await createRcSessionCommands(deps).goalGet(SESSION)).toEqual({ ok: false, message: "two launches claim it" });
   });
 
   it("does not start a verb whose request was already aborted", async () => {
