@@ -1,3 +1,4 @@
+import { COMPACT_TIMEOUT_MS } from "../supervise/compactTimeout";
 import type { CompactionResult } from "../supervise/realCompact";
 import { activeGoalOfTranscript, type TranscriptGoal } from "../supervise/sessionGoal";
 import { runSelfHostedSlashCommand, type RcSelfHostCommandDeps } from "./rcSelfHostCommands";
@@ -152,9 +153,16 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
         if (target.version === undefined || !RC_SESSION_COMMAND_VERIFIED_VERSIONS.includes(target.version)) {
           return { ok: false, message: unverifiedVersionMessage(sessionId, target.version, "its supervisor's control plugin has not loaded") };
         }
+        // The plugin answers only once the session is idle (a request queued behind a turn waiting on a permission prompt waits as long as the prompt does), so the wait is bounded here: the request's own signal or the wait, whichever ends first.
+        const waitMs = options.waitMs ?? COMPACT_TIMEOUT_MS;
+        const timeout = AbortSignal.timeout(waitMs);
+        const bounded = AbortSignal.any([signal, timeout]);
         try {
-          return await actions.supervised(target, signal);
+          return await actions.supervised(target, bounded);
         } catch (error) {
+          if (timeout.aborted) {
+            return { ok: false, message: `session ${sessionId}'s control plugin did not answer within ${String(waitMs)} ms. A request the plugin had not started is withdrawn; one it had started runs once the session is idle (a turn waiting on a permission prompt holds it), so read the session's goal or transcript before asking again` };
+          }
           return { ok: false, message: `session ${sessionId}'s control plugin did not complete the request: ${error instanceof Error ? error.message : String(error)}` };
         }
       }

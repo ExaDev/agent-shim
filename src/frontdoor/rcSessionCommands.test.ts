@@ -8,6 +8,9 @@ import { createRcEventFanout } from "./rcStream";
 const SESSION = "cse_00000000-0000-4000-8000-000000000000";
 const TRANSCRIPT = "/transcripts/conversation.jsonl";
 
+/** A wait short enough that the bounded case ends at once, named so its refusal can be checked to name it. */
+const SHORT_WAIT_MS = 5;
+
 /** The supervised sessions a world whose session no supervisor owns holds: none. */
 const NO_SUPERVISORS = new Map<string, RcSupervisedTarget>();
 
@@ -192,6 +195,35 @@ describe("goal and compaction control over Remote Control, by route", () => {
     expect(unsupported.ok ? "" : unsupported.message).toContain("treats any other writer as a peer");
     const missing = await commands.goalGet("cse_missing");
     expect(missing.ok ? "" : missing.message).toBe("the front door has not observed Remote Control session cse_missing");
+  });
+
+  it("bounds a supervised request by the wait, aborting the plugin's wait when it passes", async () => {
+    const world = supervisedWorld();
+    let seen: AbortSignal | undefined;
+    const commands = createRcSessionCommands({
+      ...world.deps,
+      supervisedOf: async () => {
+        const target = await world.deps.supervisedOf(SESSION);
+        if (target === undefined) throw new Error("no target");
+        return {
+          ...target,
+          // A plugin that never answers, as one queued behind a turn waiting on a permission prompt does: only the signal ends its wait.
+          compact: async (signal) => {
+            seen = signal;
+            await new Promise<void>((resolve) => {
+              signal.addEventListener("abort", () => {
+                resolve();
+              }, { once: true });
+            });
+            signal.throwIfAborted();
+            return { kind: "compacted" as const };
+          },
+        };
+      },
+    });
+    const result = await commands.compact(SESSION, { waitMs: SHORT_WAIT_MS });
+    expect(seen?.aborted).toBe(true);
+    expect(result.ok ? "" : result.message).toContain(`within ${String(SHORT_WAIT_MS)} ms`);
   });
 
   it("does not start a verb whose request was already aborted", async () => {
