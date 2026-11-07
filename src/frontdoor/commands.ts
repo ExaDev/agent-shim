@@ -79,7 +79,8 @@ import { createRcClientPage } from "./rcClientPage";
 import { createRcSelfHostSurface, rcSelfHostFromEnv } from "./rcSelfHost";
 import { readRcSelfHostRecord } from "./rcSelfHostMint";
 import { realRcWebFetch, rcWebFetchAllowsPrivateFromEnv } from "./rcWebFetch";
-import { createRcSessionRegistryReader, rcStatusWithRegistry } from "./rcSessionRegistry";
+import { realRcSessionRegistryFs } from "./rcSessionRegistryFs";
+import { createRcSessionRegistryReader, rcRegistryIdentitiesOf, rcStatusWithRegistry } from "./rcSessionRegistry";
 import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, isRcSessionExchange, observingRoutedRoute } from "./rcSessions";
 import { targetRefs } from "../models/targets";
 import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
@@ -258,7 +259,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
   // The status read every Remote Control surface serves: the tracker's observations (the identity as its id, turned into the identity's name here) plus what the Claude Code session registry says (name, process id, working directory), searched across every identity's registry on each read so an identity added after the door started is covered.
   const rcStatusOf = rcStatusWithRegistry(
     rcTracker.statusOf,
-    createRcSessionRegistryReader({ fs: realSessionFs, identities: () => listIdentities(paths).map((entry) => ({ name: entry.name, configDir: identityDirectoryOfName(paths, entry.name) })), isRunning: realIsProcessAlive }),
+    createRcSessionRegistryReader({ fs: realRcSessionRegistryFs, identities: () => rcRegistryIdentitiesOf(paths), isRunning: realIsProcessAlive }),
     usageEventNames.nameOf,
   );
   // The door health publisher, fed by the supervisor's own transitions.

@@ -3,6 +3,8 @@ import path from "node:path";
 import { z } from "zod";
 
 import type { SessionCommandFs } from "../agents/realFs";
+import { identityDirectory, listIdentities } from "../identityStore";
+import type { LayoutPaths } from "../paths";
 import type { RcSessionStatus } from "./rcSessions";
 
 /**
@@ -23,8 +25,18 @@ const REGISTRY_DIR = "sessions";
 /** The suffix of an entry's file; the atomic-write temporaries and the `.key` files beside the entries do not end with it. */
 const ENTRY_SUFFIX = ".json";
 
-/** The reads the registry reader makes: directory listing and file reads, plus resolving the registry directory to the real location it points at, which is how identities that share one registry are told from identities with their own. */
-export type RcSessionRegistryFs = Pick<SessionCommandFs, "readdir" | "readFileUtf8" | "realpath">;
+/**
+ * The most bytes one registry entry may hold and still be read. Entries measured on a development machine are under a kilobyte (one flat object of about twenty short fields), and 8 KiB is the budget this surface already applies to a small diagnostic-sized JSON object; a larger file is not an entry, and reading it whole on the door's event loop is what the cap prevents.
+ */
+export const RC_REGISTRY_ENTRY_MAX_BYTES = 8192;
+
+/**
+ * The reads the registry reader makes: directory listing, file reads, a stat that does not follow links (so only a regular file small enough to be an entry is ever read, and a FIFO or a link to an endless device named like an entry cannot block the read), and resolving the registry directory to the real location it points at, which is how identities that share one registry are told from identities with their own.
+ */
+export interface RcSessionRegistryFs extends Pick<SessionCommandFs, "readdir" | "readFileUtf8" | "realpath"> {
+  /** What a path is, by a stat that does not follow links: whether it is a plain file (a FIFO, a socket, a device or a link is not) and its size in bytes; undefined when nothing is there. */
+  readonly statEntry: (entryPath: string) => { readonly regular: boolean; readonly sizeBytes: number } | undefined;
+}
 
 /** One identity whose registry is searched: its name and the configuration directory it launches sessions with. */
 export interface RcRegistryIdentity {
@@ -73,12 +85,23 @@ interface RegistryStore {
   readonly identities: readonly string[];
 }
 
+/**
+ * Runs one read of a registry the door does not own, answering undefined when the filesystem refuses it. The registry belongs to Claude Code and is shared with every other process of the user, so a directory the door cannot list or a file it cannot open (permissions, a directory named like an entry, a file removed mid-read) means no entry from there, never a failed status for every session.
+ */
+function readable<T>(read: () => T | undefined): T | undefined {
+  try {
+    return read();
+  } catch {
+    return undefined;
+  }
+}
+
 /** Groups the identities by the real location of their registry directory, in the order given; an identity with no registry directory belongs to no store. */
 function registryStores(fs: RcSessionRegistryFs, identities: readonly RcRegistryIdentity[]): readonly RegistryStore[] {
   const byRealPath = new Map<string, { directory: string; identities: string[] }>();
   for (const identity of identities) {
     const directory = path.join(identity.configDir, REGISTRY_DIR);
-    const real = fs.realpath(directory);
+    const real = readable(() => fs.realpath(directory));
     if (real === undefined) {
       continue;
     }
@@ -110,11 +133,16 @@ export function createRcSessionRegistryReader(deps: RcSessionRegistryDeps): () =
     for (const store of registryStores(deps.fs, deps.identities())) {
       // Only an identity with a registry of its own can say who launched a session in it.
       const [owner, ...others] = store.identities;
-      for (const file of deps.fs.readdir(store.directory)) {
+      for (const file of readable(() => deps.fs.readdir(store.directory)) ?? []) {
         if (!file.endsWith(ENTRY_SUFFIX)) {
           continue;
         }
-        const raw = deps.fs.readFileUtf8(path.join(store.directory, file));
+        const entryPath = path.join(store.directory, file);
+        const stat = readable(() => deps.fs.statEntry(entryPath));
+        if (stat?.regular !== true || stat.sizeBytes > RC_REGISTRY_ENTRY_MAX_BYTES) {
+          continue;
+        }
+        const raw = readable(() => deps.fs.readFileUtf8(entryPath));
         if (raw === undefined) {
           continue;
         }
@@ -193,4 +221,11 @@ export function rcStatusWithRegistry(
     const statuses = statusOf(sessionId);
     return statuses.length === 0 ? statuses : withRegisteredSessionFacts(withIdentityNames(statuses, identityNameOf), readRegistry());
   };
+}
+
+/**
+ * The identities the registry reader searches, read from the identity store on every call so one added after the door started is covered: each listed identity's configuration directory is its id's directory, taken from the listing itself, so a name two identities claim or a listing entry whose record cannot be read never stops the search.
+ */
+export function rcRegistryIdentitiesOf(paths: LayoutPaths): readonly RcRegistryIdentity[] {
+  return listIdentities(paths).map((entry) => ({ name: entry.name, configDir: identityDirectory(paths, entry.id) }));
 }
