@@ -85,7 +85,7 @@ import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, isRcSessionExchange, observi
 import { targetRefs } from "../models/targets";
 import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
 import { createDoorRcSessionCommands } from "./doorSessionCommands";
-import { createRcClaudeCodeVersions, rcSelfHostEventDial } from "./rcSelfHostCommands";
+import { createRcClaudeCodeVersions, rcSelfHostEventDial, selfHostSurfaceUnboundReason } from "./rcSelfHostCommands";
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
 import type { RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
@@ -556,7 +556,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         selfHost: rcSelfHost
           ? {
               personWrite: { credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, newUuid: randomUUID, dial: rcSelfHostEventDial(rcSelfHostDialTarget) },
-              unavailable: () => (rcSelfHostDialTarget() === undefined ? "AGENT_SHIM_TRANSPARENT_SURFACE is not set, so the door has no surface of its own to write to, and a command written as a person's app would otherwise go to the real API host" : undefined),
+              unavailable: () => (rcSelfHostDialTarget() === undefined ? selfHostSurfaceUnboundReason(process.env.AGENT_SHIM_TRANSPARENT_SURFACE) : undefined),
               fanout: rcFanout,
               versions: rcClaudeCodeVersions,
             }

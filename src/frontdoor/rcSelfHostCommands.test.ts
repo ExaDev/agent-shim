@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { RcStreamEvent } from "./rcSchemas";
 import type { RcDialTarget } from "./connectEffects";
-import { createRcClaudeCodeVersions, parseRcGoalOutput, rcSelfHostEventDial, runSelfHostedSlashCommand, type RcSelfHostCommandDeps } from "./rcSelfHostCommands";
+import { createRcClaudeCodeVersions, selfHostSurfaceUnboundReason, parseRcGoalOutput, rcSelfHostEventDial, runSelfHostedSlashCommand, type RcSelfHostCommandDeps } from "./rcSelfHostCommands";
 import { createRcEventFanout } from "./rcStream";
 import type { RcEventDial, RcEventWriteResult } from "./rcWrites";
 
@@ -153,5 +153,11 @@ describe("slash commands on the door's own self-hosted surface", () => {
     expect(versions.versionOf(SESSION)).toBe("2.1.319");
     versions.sweep(() => false);
     expect(versions.versionOf(SESSION)).toBeUndefined();
+  });
+
+  it("names why the door's own surface is unbound: unset, not a port, or set but not bound", () => {
+    expect(selfHostSurfaceUnboundReason(undefined)).toContain("is not set");
+    expect(selfHostSurfaceUnboundReason("abc")).toContain('is "abc", which is not a port');
+    expect(selfHostSurfaceUnboundReason("47592")).toContain("on port 47592 is not bound");
   });
 });
