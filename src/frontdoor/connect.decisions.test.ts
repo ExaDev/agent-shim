@@ -61,7 +61,8 @@ describe("CONNECT routing decisions", () => {
     }
     expect(canonicalRequestTarget("/v1/messages?beta=true")).toBe("/v1/messages?beta=true");
     expect(canonicalRequestTarget(undefined)).toBe("/");
-    for (const unreadable of ["http://x:99999/v1/", "http://%zz/v1/x", "http://[::1/v1/x"]) {
+    // A leading `//` is a path no reader that resolves a target against a base would read back as itself (it parses as an authority), so such a target is refused, as is a backslash that spells one.
+    for (const unreadable of ["http://x:99999/v1/", "http://%zz/v1/x", "http://[::1/v1/x", "//v1/x", "//api.anthropic.com/v1/messages", "/\\v1/x"]) {
       expect(canonicalRequestTarget(unreadable), unreadable).toBeUndefined();
     }
   });
