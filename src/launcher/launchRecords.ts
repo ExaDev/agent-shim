@@ -84,7 +84,7 @@ export function liveLaunchesOn(fs: Pick<LaunchRecordFs, "readFileUtf8" | "readdi
 }
 
 /**
- * The identities launcher `pid` has a record for: what tells the front door which identity the launch holding a given capability runs as (the door's session registry is keyed by the same launcher pid). Empty when the launcher has no record, which is every pid that is not a launcher's.
+ * The ids of the identities launcher `pid` has a record for (a record names the identity by the id the launcher resolved, the directory a rename leaves alone): what tells the front door which identity the launch holding a given capability runs as (the door's session registry is keyed by the same launcher pid). Empty when the launcher has no record, which is every pid that is not a launcher's.
  */
 export function launchIdentitiesOf(fs: Pick<LaunchRecordFs, "readFileUtf8" | "readdir">, directory: string, pid: number): readonly string[] {
   return fs.readdir(directory).flatMap((name) => {
