@@ -194,7 +194,7 @@ describe("the MCP server over a real door handler", () => {
   });
 
   it("serves every session's transitions as a cursor-paged read tool, and leaves the stream that cannot be a tool out", async () => {
-    const client = await connect({ writes: false, remoteControl: false, history: false });
+    const client = await connect({ writes: false, remoteControl: false, history: false, directives: false });
     const names = (await client.listTools()).tools.map((tool) => tool.name);
     expect(names).toContain("rcSessions_eventsPage");
     expect(names).not.toContain("rcSessions_events");
