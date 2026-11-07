@@ -142,15 +142,21 @@ export function isInterceptedHost(host: string, interceptHosts: readonly string[
   return interceptHosts.includes(host);
 }
 
+/** The origin every request target is resolved against: only its path and query are ever read back, so any fixed origin serves. */
+const TARGET_BASE = "http://127.0.0.1";
+
 /**
- * One request target in the single form every decision on a terminated session reads: the path the WHATWG URL parser resolves (dot segments, percent-encoded dots, backslashes and an absolute-form target all collapse to the path a real host would serve) with the query kept. The surface rewrites each request's target to this before anything decides on it, so the routing choice, the local surface and the upstream all see one path and no two parsers can disagree about a request. Undefined for a target the parser cannot read at all (an out-of-range port, a malformed host in an absolute-form target), which the surface refuses rather than decides on.
+ * One request target in the single form every decision on a terminated session reads: the path the WHATWG URL parser resolves (dot segments, percent-encoded dots, backslashes and an absolute-form target all collapse to the path a real host would serve) with the query kept. An origin-form target is parsed as the path it is, so a leading `//` stays part of the path rather than becoming an authority. The surface rewrites each request's target to this before anything decides on it, so the routing choice, the local surface and the upstream all see one path and no two parsers can disagree about a request. Undefined for a target the parser cannot read, which Node's own HTTP parser accepts (an absolute-form target with an out-of-range port, for one), and for a path the deciders' own readers (which resolve a target against a base) would read as a different one, such as a leading `//`: such a request is refused rather than decided on a path someone else would read differently.
  */
 export function canonicalRequestTarget(target: string | undefined): string | undefined {
-  if (!URL.canParse(target ?? "/", "http://127.0.0.1")) {
+  const raw = target ?? "/";
+  const absolute = raw.startsWith("/") ? `${TARGET_BASE}${raw}` : undefined;
+  if (absolute === undefined ? !URL.canParse(raw, TARGET_BASE) : !URL.canParse(absolute)) {
     return undefined;
   }
-  const parsed = new URL(target ?? "/", "http://127.0.0.1");
-  return `${parsed.pathname}${parsed.search}`;
+  const parsed = absolute === undefined ? new URL(raw, TARGET_BASE) : new URL(absolute);
+  const canonical = `${parsed.pathname}${parsed.search}`;
+  return new URL(canonical, TARGET_BASE).pathname === parsed.pathname ? canonical : undefined;
 }
 
 /** Answers one request on a terminated session with an empty body and the given status, closing the session: what the surface sends for a request it will neither decide on nor forward. */
