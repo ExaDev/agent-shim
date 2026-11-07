@@ -211,18 +211,6 @@ export function withIdentityNames(statuses: readonly RcTrackedSessionStatus[], n
   });
 }
 
-/** Wraps the tracker's status read so every answer carries the registry's facts; the registry is read only when there is a status to describe. */
-export function rcStatusWithRegistry(
-  statusOf: (sessionId?: string) => readonly RcTrackedSessionStatus[],
-  readRegistry: () => ReadonlyMap<string, RcRegisteredSession>,
-  identityNameOf: (id: string) => string | undefined,
-): (sessionId?: string) => readonly RcTrackedSessionStatus[] {
-  return (sessionId) => {
-    const statuses = statusOf(sessionId);
-    return statuses.length === 0 ? statuses : withRegisteredSessionFacts(withIdentityNames(statuses, identityNameOf), readRegistry());
-  };
-}
-
 /**
  * The identities the registry reader searches, read from the identity store on every call so one added after the door started is covered: each listed identity's configuration directory is its id's directory, taken from the listing itself, so a name two identities claim or a listing entry whose record cannot be read never stops the search.
  */

@@ -396,7 +396,6 @@ describe("library surface", () => {
       "rcObserverAsPassthrough",
       "rcRateLimitInfoOf",
       "rcSelfHostFromEnv",
-      "rcStatusWithRegistry",
       "rcWebFetchAllowsPrivateFromEnv",
       "readActiveIdentity",
       "readCodexAccount",

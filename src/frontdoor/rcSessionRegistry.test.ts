@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildLayoutPaths } from "../paths";
 import { realRcSessionRegistryFs } from "./rcSessionRegistryFs";
 
-import { RC_REGISTRY_ENTRY_MAX_BYTES, createRcSessionRegistryReader, rcRegistryIdentitiesOf, rcStatusWithRegistry, withIdentityNames, withRegisteredSessionFacts, type RcRegisteredSession, type RcSessionRegistryFs } from "./rcSessionRegistry";
+import { RC_REGISTRY_ENTRY_MAX_BYTES, createRcSessionRegistryReader, rcRegistryIdentitiesOf, withIdentityNames, withRegisteredSessionFacts, type RcSessionRegistryFs } from "./rcSessionRegistry";
 import type { RcTrackedSessionStatus } from "./rcSessions";
 
 const CSE_ID = "cse_00000000-0000-4000-8000-000000000001";
@@ -174,22 +174,6 @@ describe("withRegisteredSessionFacts", () => {
     const [enriched] = withRegisteredSessionFacts([status(CSE_ID)], new Map([[CSE_ID, { pid: LIVE_PID, localSessionId: LOCAL_ID }]]));
     const json: unknown = JSON.parse(JSON.stringify(enriched));
     expect(json).toEqual({ id: CSE_ID, createdAt: 1, lastSeenAt: 2, pending: [], pid: LIVE_PID });
-  });
-});
-
-describe("rcStatusWithRegistry", () => {
-  it("passes the tracker's filter through and reads the registry only when there is a status to describe", () => {
-    let reads = 0;
-    const read = (): ReadonlyMap<string, RcRegisteredSession> => {
-      reads += 1;
-      return new Map([[CSE_ID, { pid: LIVE_PID, localSessionId: LOCAL_ID }]]);
-    };
-    const statuses = [status(CSE_ID)];
-    const statusOf = rcStatusWithRegistry((sessionId) => statuses.filter((candidate) => sessionId === undefined || candidate.id === sessionId), read, () => undefined);
-    expect(statusOf(OTHER_CSE_ID)).toEqual([]);
-    expect(reads).toBe(0);
-    expect(statusOf(CSE_ID)[0]?.pid).toBe(LIVE_PID);
-    expect(reads).toBe(1);
   });
 });
 

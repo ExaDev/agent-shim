@@ -90,7 +90,6 @@ export type { RcPendingQuestion, RcQuestionOption, RcQuestionSelection } from ".
 export { createRcStatusResolver, type RcStatusDeps, type RcStatusReport, type RcStatusResolver, type RcUnobservedSession } from "./frontdoor/rcStatus";
 export {
   createRcSessionRegistryReader,
-  rcStatusWithRegistry,
   withRegisteredSessionFacts,
   type RcRegisteredSession,
   type RcRegistryIdentity,
