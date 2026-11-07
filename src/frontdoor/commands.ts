@@ -721,6 +721,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
           ...(wantedTransparentPort === undefined || Number.isNaN(wantedTransparentPort) ? {} : { transparentPort: wantedTransparentPort, ...(transparentCapability === undefined ? {} : { transparentCapability }) }),
           limits: CONNECT_LIMITS,
           ...(capture === undefined ? {} : { capture }),
+          log,
         },
         realConnectEffects(),
         source,
