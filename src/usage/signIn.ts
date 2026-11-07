@@ -29,7 +29,7 @@ const KEYCHAIN_SERVICE_PREFIX = "Claude Code-credentials";
 const KEYCHAIN_SERVICE_HASH_DIGITS = 8;
 
 /**
- * The Keychain service name Claude Code keeps the login of one configuration directory under: the prefix, then the first eight hex digits of the SHA-256 of the directory path as `CLAUDE_CONFIG_DIR` names it, normalised to Unicode NFC first (a macOS path is often spelled decomposed, and the hash of the raw bytes would name an item Claude Code never reads). The account on the item is the operating system user, so the directory is only recoverable through this name. Read from Claude Code's secure-storage module (2.1.319 normalises an overriding directory to NFC in the derivation itself; the configuration directory's own NFC normalisation was read in 2.1.309); not a documented contract. The name Claude Code builds also carries an OAuth-variant suffix (`OAUTH_FILE_SUFFIX`) between the prefix and `-credentials`; this derivation assumes it is empty, as for the production OAuth configuration, so a session pointed at another OAuth variant files its login under a name this does not find.
+ * The Keychain service name Claude Code keeps the login of one configuration directory under: the prefix, then the first eight hex digits of the SHA-256 of the directory path as `CLAUDE_CONFIG_DIR` names it, normalised to Unicode NFC first (a macOS path is often spelled decomposed, and the hash of the raw bytes would name an item Claude Code never reads). The account on the item is the operating system user, so the directory is only recoverable through this name. Read from Claude Code 2.1.319's secure-storage module, which hashes the NFC-normalised configuration directory (and an overriding directory, normalised in the derivation itself); not a documented contract. The name Claude Code builds also carries an OAuth-variant suffix (`OAUTH_FILE_SUFFIX`) between the prefix and `-credentials`. This derivation is for the empty suffix, the one every launch without `CLAUDE_CODE_CUSTOM_OAUTH_URL` has (`CUSTOM_OAUTH_URL_ENV` sets `-custom-oauth`); a caller that must not miss a renamed item refuses while that variable is set.
  */
 export function claudeCodeKeychainService(configDir: string): string {
   return `${KEYCHAIN_SERVICE_PREFIX}-${createHash("sha256").update(configDir.normalize("NFC")).digest("hex").slice(0, KEYCHAIN_SERVICE_HASH_DIGITS)}`;
@@ -39,6 +39,11 @@ export function claudeCodeKeychainService(configDir: string): string {
  * The variable that moves Claude Code's whole credential store: when set, its Keychain item is named after the directory it names (the bare prefix when it is empty) and its plaintext fallback is that directory's `.credentials.json` (`~/.claude` when it is empty), whatever `CLAUDE_CONFIG_DIR` says (2.1.319's secure storage).
  */
 export const SECURE_STORAGE_CONFIG_DIR_ENV = "CLAUDE_SECURESTORAGE_CONFIG_DIR";
+
+/**
+ * The variable that points Claude Code at a custom OAuth deployment. While it is non-empty the Keychain item's name carries the suffix `-custom-oauth` after the prefix (`Claude Code-custom-oauth-credentials-<hash>`), which `claudeCodeKeychainService` does not derive (2.1.319's OAuth configuration); the plaintext `.credentials.json` keeps its name.
+ */
+export const CUSTOM_OAUTH_URL_ENV = "CLAUDE_CODE_CUSTOM_OAUTH_URL";
 
 /** Whether the Keychain holds Claude Code's login item for the configuration directory `configDir`. Without `-g` or `-w`, `security` prints the item's attributes only, so the secret is never requested and the item's access list never prompts. */
 export function keychainHasItem(run: RunPort, configDir: string): boolean {
