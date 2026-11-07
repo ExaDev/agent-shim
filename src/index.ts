@@ -66,6 +66,7 @@ export {
   type LeafCert,
 } from "./frontdoor/connect";
 export { realConnectEffects, realRcEventDial, realRcStreamDial, type RcDialTarget } from "./frontdoor/connectEffects";
+export { rcSelfHostEventDial, rcSelfHostStreamDial, rcSelfHostedDials, selfHostSurfaceUnboundReason, type RcSelfHostDialSource, type RcSelfHostEventDial, type RcSelfHostStreamDial, type RcSelfHostedDials } from "./frontdoor/rcSelfHostDial";
 export {
   RC_SESSIONS_PATH_PREFIX,
   RC_IDLE_EXPIRY_MS,
@@ -127,6 +128,7 @@ export {
   isRcReadFileEncoding,
   rcEventWriteResultFromAnswer,
   readRcSessionFile,
+  perSessionRcEventDial,
   reconnectRcSessionMcpServer,
   sendRcKeepAlive,
   setRcSessionModel,
@@ -146,6 +148,7 @@ export {
   type RcPermissionMode,
   type RcReadFileEncoding,
   type RcReadFileOptions,
+  type RcSelfHostedChoice,
   type RcWriteHeaders,
 } from "./frontdoor/rcWrites";
 export { createRcCredentialStore, type RcCredentialStore } from "./frontdoor/rcCredentialStore";
@@ -352,6 +355,7 @@ export {
   createRcStreamHub,
   createSseParser,
   parseRcStreamEnvelope,
+  perSessionRcStreamDial,
   type RcEventFanout,
   type RcPresenceAnswer,
   type RcStreamAnswer,
@@ -367,6 +371,7 @@ export {
   RC_SELF_HOST_WORKER_JWT_TTL_SECONDS,
   createRcSelfHostSurface,
   rcSelfHostFromEnv,
+  rcSelfHostedChoiceOf,
   type RcSelfHostCredentialRecord,
   type RcSelfHostDeps,
   type RcSelfHostSurface,
