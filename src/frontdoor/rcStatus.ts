@@ -115,6 +115,14 @@ export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
   };
   /** Whether a held read still stands in for a fresh one: in flight, or settled within the bound. */
   const stands = (read: HeldRead, now: number): boolean => read.settledAt === undefined || now - read.settledAt < RC_IDLE_EXPIRY_MS;
+  // A backend answers with a failure result, but one that rejects instead is a failed read like any other: it settles the hold and is reported on its session, so a rejection is never cached as in flight and never left unhandled.
+  const serviceRead = async (sessionId: string, credentialOf: (id: string) => RcObservedCredential | undefined): Promise<RcWorkerStateReadResult> => {
+    try {
+      return await deps.backends.service(sessionId, credentialOf);
+    } catch (error) {
+      return { ok: false, message: `reading the worker state of session ${sessionId} failed: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  };
   // The entry is filed before the read is awaited, so a caller arriving while it is in flight shares it rather than making its own. This also bounds the fan-out: each session has at most one read outstanding however many callers ask, and the sessions asked about are the Remote Control sessions on one machine, each a running Claude Code process, so no further concurrency cap is needed.
   const heldRead = (sessionId: string, credentialOf: (id: string) => RcObservedCredential | undefined): HeldRead => {
     const authorization = credentialOf(sessionId)?.authorization;
@@ -122,7 +130,7 @@ export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
     if (previous !== undefined && previous.authorization === authorization && stands(previous, deps.now())) {
       return previous;
     }
-    const read: HeldRead = { authorization, requestedAt: deps.now(), result: deps.backends.service(sessionId, credentialOf), settledAt: undefined };
+    const read: HeldRead = { authorization, requestedAt: deps.now(), result: serviceRead(sessionId, credentialOf), settledAt: undefined };
     held.set(sessionId, read);
     void read.result.then(() => {
       read.settledAt = deps.now();

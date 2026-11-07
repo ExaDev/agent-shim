@@ -255,6 +255,40 @@ describe("the Remote Control status against a host that hangs", () => {
   });
 });
 
+describe("the Remote Control status when a backend read rejects", () => {
+  it("reports the rejection on its own session, holds it for the reuse bound like any failed read, and asks again once the bound lapses", async () => {
+    let now = CLOCK_START_MS;
+    let asked = 0;
+    const tracker = trackerWith(QUIET_SESSION_ID, OBSERVED_SESSION_ID);
+    exchange(tracker, { method: "PUT", url: `/v1/code/sessions/${OBSERVED_SESSION_ID}/worker`, authorization: OAUTH_BEARER, requestBody: JSON.stringify({ worker_status: "running" }) }, { status: HTTP_STATUS.ok });
+    const resolve = createRcStatusResolver({
+      statusOf: tracker.statusOf,
+      noteReadWorkerState: tracker.noteReadWorkerState,
+      credentialOf: tracker.credentialOf,
+      registry: () => new Map(),
+      identityNameOf: () => undefined,
+      persistedCredentialOf: () => undefined,
+      backends: {
+        service: async () => {
+          asked += 1;
+          return await Promise.reject(new Error("socket hang up"));
+        },
+      },
+      now: () => now,
+    });
+    const first = await statusesOf(resolve);
+    expect(first.map((status) => [status.id, status.workerState?.value, status.workerStateUnavailable])).toEqual([
+      [QUIET_SESSION_ID, undefined, expect.stringContaining("socket hang up") as unknown],
+      [OBSERVED_SESSION_ID, "running", undefined],
+    ]);
+    await resolve();
+    expect(asked).toBe(1);
+    now += RC_IDLE_EXPIRY_MS;
+    await resolve();
+    expect(asked).toBe(2);
+  });
+});
+
 describe("the Remote Control status under concurrent callers", () => {
   /** A dial whose every worker read waits until the test releases it, recording each request it was asked to make. */
   const gatedDial = (): { readonly dial: RcEventDial; readonly reads: string[]; readonly release: () => void } => {
