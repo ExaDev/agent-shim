@@ -478,7 +478,7 @@ export function fakeFrontDoorPort(
   };
 }
 
-/** The proxy, trust and session-header variables a launch through `fakeFrontDoorPort()` adds to the child's environment, with the one random value (the session id) matched by shape. `identity` names the header the launcher sends when it resolved one, and `extra` is merged over the result for the variables the test's own subject sets. */
+/** The proxy, trust, request-class and session-header variables a launch through `fakeFrontDoorPort()` adds to the child's environment, with the one random value (the session id) matched by shape. `identity` names the header the launcher sends when it resolved one, and `extra` is merged over the result for the variables the test's own subject sets. */
 export function fakeFrontDoorEnv(identity?: string, extra: Readonly<Record<string, string>> = {}): Record<string, unknown> {
   const identityHeader = identity === undefined ? "" : `x-agent-shim-identity: ${identity}\n`;
   return {
@@ -486,6 +486,7 @@ export function fakeFrontDoorEnv(identity?: string, extra: Readonly<Record<strin
     NO_PROXY: "127.0.0.1,localhost,::1",
     no_proxy: "127.0.0.1,localhost,::1",
     NODE_EXTRA_CA_CERTS: FAKE_TRUST_BUNDLE,
+    CLAUDE_CODE_GATEWAY_HINT_HEADERS: "1",
     ANTHROPIC_CUSTOM_HEADERS: expect.stringMatching(new RegExp(`^${identityHeader}x-agent-shim-session: [0-9a-f-]{36}\\nx-agent-shim-auth: launch-token-for-tests$`)),
     AGENT_SHIM_INJECTED: expect.stringMatching(/^\{.*\}$/),
     ...extra,

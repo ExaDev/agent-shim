@@ -406,6 +406,21 @@ describe("buildEnv", () => {
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-agent-shim-identity: work\nx-agent-shim-session: session-test\nx-agent-shim-auth: launch-token-for-tests\nx-agent-shim-provider: z\nx-agent-shim-headroom: 1\nx-headroom-project-id: /home/testuser/work/repo");
   });
 
+  it("asks every door-routed child for Claude Code's request-class header, whatever the parent set, and a child the door does not route for nothing", () => {
+    const routed = buildEnv({
+      sessionId: "session-test",
+      remoteControl: false,
+      baseEnv: { ...baseEnv, CLAUDE_CODE_GATEWAY_HINT_HEADERS: "0" },
+      configDirEscapeHatch: false,
+      identityId: "work",
+      identitiesDir: "/home/testuser/.agent-shim/identities",
+      frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/home/testuser/.agent-shim/frontdoor/ca/ca.pem", sessionToken: "launch-token-for-tests" },
+    });
+    expect(routed.CLAUDE_CODE_GATEWAY_HINT_HEADERS).toBe("1");
+    const direct = buildEnv({ sessionId: "session-test", remoteControl: false, baseEnv, configDirEscapeHatch: false, identityId: "work", identitiesDir: "/home/testuser/.agent-shim/identities" });
+    expect(direct.CLAUDE_CODE_GATEWAY_HINT_HEADERS).toBeUndefined();
+  });
+
   it("replaces a proxy inherited from the parent with the door's own for a provider session, since the child no longer dials any address directly, while the door's loopback entries are appended to the parent's own exclusions in both spellings rather than replacing them", () => {
     const env = buildEnv({
       sessionId: "session-test",
