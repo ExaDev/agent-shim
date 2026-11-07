@@ -384,7 +384,8 @@ export { collectResets } from "./usage/resets";
 export { ResetRowSchema, ResetScheduleSchema, type ResetRow, type ResetSchedule } from "./usage/resetsSchema";
 export { PROMPT_CACHE_TTL_MS, rankPool, type Candidate, type NestedContribution, type PoolMember, type PoolRanking, type RankPoolInput, type StickyPick } from "./usage/pick";
 export { planOf, PlanClassSchema, type PlanClass } from "./usage/plan";
-export { PoolGraphError, poolIdentities } from "./usage/poolPick";
+export { PoolGraphError, poolIdentities, type ProviderOf } from "./usage/poolPick";
+export { realMemberProviderResolver, type RealMemberProviderParams } from "./poolProviderWiring";
 export { collectPoolPick } from "./poolPickReport";
 export { PoolPickReportSchema, type PoolPickReport } from "./usage/pickReportSchema";
 export {
