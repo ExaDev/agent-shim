@@ -88,7 +88,7 @@ export {
   type RcWorkerStateSource,
 } from "./frontdoor/rcSessions";
 export { createRcStatusResolver, type RcStatusDeps, type RcStatusReport, type RcStatusResolver, type RcUnobservedSession } from "./frontdoor/rcStatus";
-export { CLAUDE_SESSION_REGISTRY_DIR, rcRegistryDirsOf, rcSessionIdOfBridgeId, readRcRegisteredSessions, type RcRegisteredSession, type RcRegistryDeps } from "./frontdoor/rcRegistry";
+export { CLAUDE_SESSION_REGISTRY_DIR, createRcRegistryReader, rcRegistryDirsOf, rcSessionIdOfBridgeId, readRcRegisteredSessions, type RcRegisteredSession, type RcRegistryDeps } from "./frontdoor/rcRegistry";
 export {
   RC_CONTEXT_USAGE_DETAILS,
   RC_PERMISSION_MODES,

@@ -2,7 +2,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { CLAUDE_SESSION_REGISTRY_DIR, rcRegistryDirsOf, rcSessionIdOfBridgeId, readRcRegisteredSessions } from "./rcRegistry";
+import { CLAUDE_SESSION_REGISTRY_DIR, createRcRegistryReader, rcRegistryDirsOf, rcSessionIdOfBridgeId, readRcRegisteredSessions } from "./rcRegistry";
+import { RC_IDLE_EXPIRY_MS } from "./rcSessions";
 
 /** Made-up ids of the protocol's shapes: one bridge suffix in its compatibility and infrastructure forms, and local session ids. */
 const BRIDGE_SUFFIX = "01AAAAAAAAAAAAAAAAAAAAAA";
@@ -61,5 +62,31 @@ describe("the Claude Code session registry read", () => {
       { id: CSE_ID, localSessionId: LOCAL_ID, pid: LIVE_PID },
       { id: OTHER_CSE_ID, localSessionId: OTHER_LOCAL_ID, pid: OTHER_LIVE_PID },
     ]);
+  });
+
+  it("reuses one registry read for the idle bound, so a polled status does not list and read every record each time", () => {
+    const listings: string[] = [];
+    const tree = { [SHARED_DIR]: { [`${String(LIVE_PID)}.json`]: record({ sessionId: LOCAL_ID, pid: LIVE_PID, bridgeSessionId: COMPAT_ID }) } };
+    const fs = fakeFs(tree);
+    let now = 0;
+    const read = createRcRegistryReader({
+      fs: {
+        ...fs,
+        readdir: (dir) => {
+          listings.push(dir);
+          return fs.readdir(dir);
+        },
+      },
+      registryDirs: () => [SHARED_DIR],
+      isProcessAlive: () => true,
+      now: () => now,
+    });
+    expect(read()).toEqual([{ id: CSE_ID, localSessionId: LOCAL_ID, pid: LIVE_PID }]);
+    now += RC_IDLE_EXPIRY_MS - 1;
+    read();
+    expect(listings).toEqual([SHARED_DIR]);
+    now += 1;
+    read();
+    expect(listings).toEqual([SHARED_DIR, SHARED_DIR]);
   });
 });

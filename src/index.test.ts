@@ -298,6 +298,7 @@ describe("library surface", () => {
       "createRcCredentialStore",
       "createRcEventFanout",
       "createRcLiveUsage",
+      "createRcRegistryReader",
       "createRcSelfHostSurface",
       "createRcSessionTracker",
       "createRcStatusResolver",

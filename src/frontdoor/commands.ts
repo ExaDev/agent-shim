@@ -80,7 +80,7 @@ import { realRcWebFetch, rcWebFetchAllowsPrivateFromEnv } from "./rcWebFetch";
 import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, isRcSessionExchange, observingRoutedRoute } from "./rcSessions";
 import { targetRefs } from "../models/targets";
 import { createRcStatusResolver } from "./rcStatus";
-import { rcRegistryDirsOf, readRcRegisteredSessions } from "./rcRegistry";
+import { createRcRegistryReader, rcRegistryDirsOf } from "./rcRegistry";
 import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, readRcWorkerState, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
 import type { RoutedRequest } from "./route";
@@ -522,12 +522,12 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         statusOf: rcTracker.statusOf,
         noteReadWorkerState: rcTracker.noteReadWorkerState,
         credentialOf: rcTracker.credentialOf,
-        registered: () =>
-          readRcRegisteredSessions({
-            fs: realFarmFs,
-            registryDirs: () => rcRegistryDirsOf([resolveClaudeHome(), ...listIdentityDirectories(paths).names.map((id) => identityDirectory(paths, id))]),
-            isProcessAlive: realIsProcessAlive,
-          }),
+        registered: createRcRegistryReader({
+          fs: realFarmFs,
+          registryDirs: () => rcRegistryDirsOf([resolveClaudeHome(), ...listIdentityDirectories(paths).names.map((id) => identityDirectory(paths, id))]),
+          isProcessAlive: realIsProcessAlive,
+          now: () => Date.now(),
+        }),
         persistedCredentialOf: rcCredentialStore.read,
         // Self-hosted, the door is the service, so its surface answers in process; otherwise the read dials the API host like the writes.
         readWorkerState:

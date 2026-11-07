@@ -3,6 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 
 import type { FarmFs } from "../launcher/ports";
+import { RC_IDLE_EXPIRY_MS } from "./rcSessions";
 
 /**
  * The fields of one Claude Code session registry record (`<config dir>/sessions/<pid>.json`) this module reads: the local session id, the process that registered it, and the Remote Control session id the process is bridged to. The record carries more (name, cwd, status and the like); those are left to their own readers, and the schema is not strict so a record growing fields still parses.
@@ -19,7 +20,9 @@ export interface RcRegisteredSession {
   readonly id: string;
   /** The local Claude Code session id, the record's `sessionId`. */
   readonly localSessionId: string;
-  /** The process that wrote the record. */
+  /**
+   * The process that wrote the record. Its liveness is judged by `isProcessAlive` alone, so once a crashed session's pid has been reused by another process its leftover record reads as live and is listed until the file is removed; telling the two apart would need the process's start time against the record's `procStart`, which this read does not take.
+   */
   readonly pid: number;
 }
 
@@ -67,6 +70,20 @@ function recordOf(text: string): z.infer<typeof RcRegistryRecordSchema> | undefi
   }
   const result = RcRegistryRecordSchema.safeParse(parsed);
   return result.success ? result.data : undefined;
+}
+
+/**
+ * The registry read the door's status serves from: `readRcRegisteredSessions`, made at most once per `RC_IDLE_EXPIRY_MS` and its answer reused in between. The read is synchronous (a listing and a file read per record across every identity's directory, and a process check per record), and the status is polled (the web client asks every few seconds, on the door's own event loop), so an unbounded read would repeat that work on every poll. A session that registers or exits is reflected within one bound, the same span after which the door already treats its own observations of a session as stale.
+ */
+export function createRcRegistryReader(deps: RcRegistryDeps & { readonly now: () => number }): () => readonly RcRegisteredSession[] {
+  let held: { readonly at: number; readonly sessions: readonly RcRegisteredSession[] } | undefined;
+  return () => {
+    const now = deps.now();
+    if (held === undefined || now - held.at >= RC_IDLE_EXPIRY_MS) {
+      held = { at: now, sessions: readRcRegisteredSessions(deps) };
+    }
+    return held.sessions;
+  };
 }
 
 /**
