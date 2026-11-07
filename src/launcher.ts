@@ -53,6 +53,7 @@ import { runLaunchUpdateCheck, type UpdateLaunchPort } from "./update/launchHook
 import { targetRefs } from "./models/targets";
 import { profileFilePath } from "./config/names";
 import { sameDirectory } from "./sameDirectory";
+import { INJECTED_ENV, withoutInjected } from "./launcher/injected";
 
 /**
  * Everything the farm resync needs that the launcher itself has no way to produce: a real filesystem, a real clock, the working directory, and a way to load the cascade for it.
@@ -271,6 +272,8 @@ interface DecidedLaunch {
   /** What the launch report's account and quota rows read; absent when the launch has no identity farm to read them for. */
   readonly billing: BillingFacts | undefined;
   readonly configDirEscapeHatch: boolean;
+  /** The environment the launch inherits once what its parent launcher injected is dropped (`withoutInjected`), unless the escape hatch applied and it is the caller's as it stands. Everything below that reads the inherited environment reads this. */
+  readonly env: Readonly<Record<string, string | undefined>>;
   /** The identity whose farm this launch manages: absent when the caller named a configuration directory or no identity resolved. */
   readonly farmIdentity: string | undefined;
   readonly farmContext: { readonly farm: FarmRuntime; readonly identity: string; readonly cascade: CascadeInput } | undefined;
@@ -316,18 +319,12 @@ function warnOfSupersededConfigDir(warn: (message: string) => void, superseded: 
  */
 function decideLaunch(params: PrepareLaunchParams, readOnly: boolean, onRecorded?: (remove: () => void) => void): DecidedLaunch {
   const { paths, fs, proc, log } = params;
-  const { env, argv } = proc;
+  const { argv } = proc;
 
   const parsedArgv = parseLauncherArgv(argv);
-  const cliOverride = buildCliOverride({
-    env,
-    categoryFlags: parsedArgv.categoryFlags,
-    shareFlags: parsedArgv.shareFlags,
-    hideFlags: parsedArgv.hideFlags,
-  });
 
   const decidedIdentity = decideIdentity({
-    env,
+    env: proc.env,
     argv0Identity: params.pickedIdentity ?? parsedArgv.identity,
     directoryPinnedIdentity: params.directoryPinnedIdentity,
     readActiveIdentityFile: () => {
@@ -342,6 +339,15 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean, onRecorded
 
   // The hatch applies only when the decision says so: an identity named on the command line outranks an inherited `CLAUDE_CONFIG_DIR`, so the variable alone does not make it apply.
   const configDirEscapeHatchApplies = decidedIdentity.configDirEscapeHatch;
+
+  // A launch that resolves its own identity does not inherit what its parent launcher injected into the environment (the parent's credential, routing headers, provider variables): they describe the parent's session, not this one. Under the escape hatch the child is the parent's session, so its environment stays as it is.
+  const env = configDirEscapeHatchApplies ? proc.env : withoutInjected(proc.env);
+  const cliOverride = buildCliOverride({
+    env,
+    categoryFlags: parsedArgv.categoryFlags,
+    shareFlags: parsedArgv.shareFlags,
+    hideFlags: parsedArgv.hideFlags,
+  });
 
   // A pool selector is resolved to one member here, ahead of everything that reads the identity: farm recovery, loading, the credential and the resync all work on the chosen name exactly as if it had been typed.
   const { identityDecision, poolPick, poolRanking, lastRanAs } = pickFromPool(decidedIdentity, params, parsedArgv, readOnly);
@@ -565,7 +571,7 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean, onRecorded
     const doorPid = supervisorPid ?? (recordedPid !== undefined && proc.isProcessAlive(recordedPid) ? recordedPid : undefined);
     const doorRecord = doorPid === undefined ? undefined : readFrontDoorCodexRecord(params.fs, paths.frontdoorDir, doorPid);
     const doorHome = doorRecord?.codexHome;
-    const catalogueEnv = doorHome === undefined ? proc.env : { ...proc.env, CODEX_HOME: doorHome };
+    const catalogueEnv = doorHome === undefined ? env : { ...env, CODEX_HOME: doorHome };
     // The provider list is read through the launch's own filesystem port (a broken file lists no rows rather than failing the launch; `doctor` is where a broken file is reported), never the process's real one, so a test's fake filesystem is what decides.
     const listedProviders = listProviderNames(fs.readdir, paths.providersDir).flatMap((name): readonly [string, Provider, readonly CatalogueModel[]][] => {
       try {
@@ -634,6 +640,7 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean, onRecorded
       billing,
       notes,
       configDirEscapeHatch: configDirEscapeHatchApplies,
+      env,
       farmIdentity,
       farmContext,
       configProfileDecision,
@@ -685,9 +692,9 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
  */
 function prepareRegisteredLaunch(params: PrepareLaunchParams, onRecorded: (remove: () => void) => void): LaunchPlan {
   const { paths, proc, log } = params;
-  const { env } = proc;
   let unregisterLaunch: (() => void) | undefined;
   const decided = decideLaunch(params, false, (remove) => { unregisterLaunch = remove; onRecorded(remove); });
+  const { env } = decided;
   const { identityDecision, configProfileDecision, resolvedProvider, identityCredential, poolPick, poolRanking, lastRanAs, billing, notes, flags: resolvedFlags, configDirEscapeHatch: configDirEscapeHatchApplies, decision } = decided;
 
   // Everything the launch has to say about itself is collected as it is decided and printed as one block once the launch is ready to start, so what a person reads is a single table of facts and not lines scattered between the steps. Warnings follow it.
@@ -870,7 +877,7 @@ export interface LaunchResolution {
  */
 export function resolveLaunch(params: PrepareLaunchParams): LaunchResolution {
   const decided = decideLaunch(params, true);
-  const { env } = params.proc;
+  const { env } = decided;
   const frontDoor = decided.provider !== undefined || decided.flags.headroom || decided.flags.trackUsage;
   // The environment the launch would build, with placeholders for what a daemon would supply: only which names it sets is reported, and the placeholders never leave this function.
   const built = buildEnv({
@@ -887,7 +894,7 @@ export function resolveLaunch(params: PrepareLaunchParams): LaunchResolution {
     ...(decided.flags.statusline === undefined ? {} : { statusline: decided.flags.statusline }),
   });
   const credentialNames = decided.identityCredentialBlock === undefined ? [] : Object.keys(credentialVariables(decided.identityCredentialBlock.target ?? "bearer", ""));
-  const environment = [...new Set([...Object.keys(built).filter((name) => built[name] !== env[name]), ...credentialNames])].sort();
+  const environment = [...new Set([...Object.keys(built).filter((name) => name !== INJECTED_ENV && built[name] !== env[name]), ...credentialNames])].sort();
   const credential =
     decided.provider !== undefined
       ? isRouterProvider(decided.provider.definition)
