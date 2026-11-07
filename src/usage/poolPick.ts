@@ -9,10 +9,11 @@ import type { LayoutPaths } from "../paths";
 import { poolMemberIdentity } from "../config/schema";
 import { groupSharedLogins, loginKeyOf } from "../identityAccounts";
 import { AccountMetadataError, readAccountMetadata } from "./account";
-import { FIVE_HOUR_WINDOW_MS, rankPool, type PoolMember, type PoolRanking, type StickyPick } from "./pick";
+import { rankPool, type PoolMember, type PoolRanking, type StickyPick } from "./pick";
 import { readUsageLog, readUsageSnapshot, UsageSnapshotError, type UsageReadFs } from "./read";
 import { ANTHROPIC_PROVIDER } from "./middleware";
 import { USAGE_RETENTION_MS } from "./store";
+import { FIVE_HOUR_WINDOW_MS } from "./windowLengths";
 
 /**
  * The store-backed side of pool picking: loads each member's recorded state and ranks it with `rankPool`, and keeps the per-directory record of the last pick. The launcher and `agent-shim pool pick` both go through `rankPoolGraph`, so the command shows exactly what a launch would choose.

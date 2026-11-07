@@ -4,7 +4,8 @@ import type { Pool } from "../config/schema";
 import { poolMemberIdentity } from "../config/schema";
 import { poolNameOf } from "../launcher/identity";
 import { ANTHROPIC_PROVIDER } from "./middleware";
-import { FIVE_HOUR_WINDOW_MS, SEVEN_DAY_WINDOW_MS, type PoolMember } from "./pick";
+import type { PoolMember } from "./pick";
+import { FIVE_HOUR_WINDOW_MS, SEVEN_DAY_WINDOW_MS } from "./windowLengths";
 import { planOf } from "./plan";
 import type { QuotaWindow, RateLimitState, UnifiedRateLimit } from "./schema";
 

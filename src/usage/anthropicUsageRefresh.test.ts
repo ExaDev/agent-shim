@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { Pool } from "../config/schema";
 import { ANTHROPIC_USAGE_FRESHNESS_MS, createAnthropicUsageRefresher, isAnthropicUsageProbeable, isAnthropicUsageStale, poolIdentityNames, unifiedFromReportedLimits, type AnthropicUsageRefresherDeps, type ReportedRateLimits } from "./anthropicUsageRefresh";
-import { SEVEN_DAY_WINDOW_MS, type PoolMember } from "./pick";
+import type { PoolMember } from "./pick";
+import { SEVEN_DAY_WINDOW_MS } from "./windowLengths";
 import type { AccountMetadata, UnifiedRateLimit, UsageSnapshot } from "./schema";
 import { USAGE_SCHEMA_VERSION } from "./schema";
 

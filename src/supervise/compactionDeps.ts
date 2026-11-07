@@ -2,7 +2,7 @@ import type { Pool } from "../config/schema";
 import { IdentityLockBusyError, acquireIdentityLock } from "../launcher/lock";
 import type { FarmFs } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
-import { FIVE_HOUR_WINDOW_MS } from "../usage/pick";
+import { FIVE_HOUR_WINDOW_MS } from "../usage/windowLengths";
 import { readUsageLog, readUsageSnapshot } from "../usage/read";
 import { decideCompaction } from "./compaction";
 import { COMPACT_TIMEOUT_MS } from "./compactTimeout";

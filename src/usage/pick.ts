@@ -1,12 +1,14 @@
 import type { WhenCondition } from "../config/schema";
 import { evaluateWhen, type ConditionContext, type PoolWindowFacts } from "../resolve/conditions";
 import { describeWindow, percent } from "./candidateText";
-import { planOf, type PlanClass } from "./plan";
+import { planOf, planOfProviderQuota, type PlanClass } from "./plan";
 import { ANTHROPIC_PROVIDER } from "./middleware";
 import { effectiveWindow, formatAge, type EffectiveWindow } from "./preflight";
+import { rankingWindowsOf } from "./providerWindows";
 import { quotaFactsOf } from "./quotaFacts";
+import { FIVE_HOUR_WINDOW_MS, SEVEN_DAY_WINDOW_MS } from "./windowLengths";
 import { parseUnifiedRateLimit, soleOverageWindow } from "./rateLimit";
-import type { AccountMetadata, ProviderUsageState, UnifiedRateLimit, UsageRecord, UsageSnapshot } from "./schema";
+import type { AccountMetadata, ProviderUsageState, UsageRecord, UsageSnapshot } from "./schema";
 
 /**
  * Ranks the members of a pool for a launch, from what the usage store recorded. Pure: snapshots, account metadata, log records and the clock all come in as values, so the launcher, `agent-shim pool pick` and the tests share one ranking.
@@ -16,14 +18,7 @@ import type { AccountMetadata, ProviderUsageState, UnifiedRateLimit, UsageRecord
 
 const MS_PER_SECOND = 1000;
 const MS_PER_HOUR = 3_600_000;
-const HOURS_PER_DAY = 24;
-const FIVE_HOURS = 5;
 const PROMPT_CACHE_TTL_HOURS = 1;
-const SEVEN_DAYS = 7;
-
-/** The lengths of Anthropic's two subscription windows, used when a window reported no reset time of its own. */
-export const FIVE_HOUR_WINDOW_MS = FIVE_HOURS * MS_PER_HOUR;
-export const SEVEN_DAY_WINDOW_MS = SEVEN_DAYS * HOURS_PER_DAY * MS_PER_HOUR;
 
 /** Anthropic's longest prompt-cache lifetime (the one-hour tier): a conversation resumed within it still has a warm cache on the account that served it, and the cache is per organisation, so it is lost by switching. */
 export const PROMPT_CACHE_TTL_MS = PROMPT_CACHE_TTL_HOURS * MS_PER_HOUR;
@@ -49,6 +44,8 @@ export interface PoolMember {
   readonly nested?: NestedContribution;
   /** The member that represents this member's login in the ranking, when both hold the same login and so draw on one quota window. This member is then ineligible as a candidate of its own, since ranking it beside its representative would count one window twice and could fail over to a login that is limited too. */
   readonly sameLoginAs?: string;
+  /** The provider this member's launch routes through, when it does not spend the member's own Claude account: the member is then assessed against that provider's slice of its snapshot and the records the front door logged for it, and sized by the provider's own quota level. Absent for a launch on the Claude account, which is read from the `anthropic` slice exactly as ever. */
+  readonly provider?: string;
   /** The member entry's policy condition, from the object form of a pool member: definite false skips the member as ineligible by policy, indeterminate demotes it to last within its class, naming the missing fact either way. */
   readonly policy?: WhenCondition;
 }
@@ -98,6 +95,8 @@ export interface Candidate {
   /** When the exhausted plan window of a `pay-per-use` candidate that is only on extra usage because its plan ran out resets, so a launch can hold for it rather than spend. Absent for a candidate that bills by use with no plan allowance. */
   readonly planReturnsAtMs?: number;
   readonly plan: PlanClass;
+  /** The provider the member was assessed against, when the launch spends one in place of the member's Claude account; absent when it was assessed on the Claude account. */
+  readonly provider?: string;
   /** True when the member's policy condition could not be decided and it is ranked last within its class, naming the missing fact in its reasons. */
   readonly policyDemoted?: boolean;
   /** Human-readable facts behind the class and score, in the order they matter. */
@@ -117,10 +116,6 @@ export interface PoolRanking {
   readonly holdForReturn?: { readonly identity: string; readonly atMs: number };
   /** The member a resumed or continued conversation started on but moved off, and why, when a launch that resumes could not keep it. One sentence for the launch decision line and `check`. */
   readonly movedOff?: { readonly identity: string; readonly reason: string };
-}
-
-function unifiedOf(state: ProviderUsageState | undefined): UnifiedRateLimit | undefined {
-  return state?.rateLimit?.unified;
 }
 
 /** When a refusal the member last hit still binds, or undefined when it has lapsed or a later request succeeded. */
@@ -266,6 +261,11 @@ function assessRefusedNested(member: PoolMember, nested: Extract<NestedContribut
 
 /** Assesses one member, unfolding what a nested `pool:<name>` entry contributes: its pool's pick is re-ranked from the picked identity's own snapshot (so it competes in a scored outer pool like any member). The nested pool's own reasons stand in for the member's window and plan lines rather than sitting beside a second copy re-derived from the same snapshot, with the composition named first. */
 function assess(member: PoolMember, nowMs: number): Assessment {
+  const assessment = assessMember(member, nowMs);
+  return member.provider === undefined ? assessment : { ...assessment, candidate: { ...assessment.candidate, provider: member.provider } };
+}
+
+function assessMember(member: PoolMember, nowMs: number): Assessment {
   if (member.sameLoginAs !== undefined) {
     return { candidate: { identity: member.identity, class: "ineligible", plan: planOf(member.account), reasons: [`same login as ${member.sameLoginAs}`] } };
   }
@@ -280,24 +280,43 @@ function assess(member: PoolMember, nowMs: number): Assessment {
   return { ...assessment, candidate: { ...assessment.candidate, reasons: [`picked by pool "${nested.pool}"`, ...nested.reasons] } };
 }
 
+/** The slice of the member's snapshot its launch spends: the provider's when the launch routes through one, the Claude account's (`anthropic`) otherwise. */
+function sliceOf(member: PoolMember): ProviderUsageState | undefined {
+  return member.snapshot?.providers[member.provider ?? ANTHROPIC_PROVIDER];
+}
+
+/** A member whose launch routes through a provider and whose slice for it reports no plan window to rank on: refused while the refusal its provider last answered with still binds, and otherwise unknown, since another provider's windows (the Claude account's included) say nothing about it. */
+function assessProviderWithoutWindows(member: PoolMember, provider: string, state: ProviderUsageState | undefined, base: Pick<Candidate, "identity" | "plan">, planReasons: readonly string[], nowMs: number): Assessment {
+  const blockedUntil = limitBlockedUntil(state, nowMs);
+  if (blockedUntil !== undefined) {
+    return { candidate: { ...base, class: "ineligible", blockedUntilMs: blockedUntil, reasons: [`refused until ${new Date(blockedUntil).toISOString()} (in ${formatAge(blockedUntil - nowMs)})`, ...planReasons] } };
+  }
+  const why = state === undefined ? `no usage recorded for provider ${provider} yet, so its quota is unknown` : `provider ${provider} reports no plan windows, so its quota is unknown`;
+  return { candidate: { ...base, class: "unknown", reasons: [why, ...planReasons] } };
+}
+
 function assessIdentity(member: PoolMember, nowMs: number): Assessment {
-  const plan = planOf(member.account);
+  const state = sliceOf(member);
+  const plan = member.provider === undefined ? planOf(member.account) : planOfProviderQuota(state?.quota);
   const planReasons = plan.kind === "pay-per-use" ? ["billed by use (no plan allowance)"] : plan.recognised ? [`${String(plan.capacity)}x plan`] : [`plan tier ${plan.tier === undefined ? "not known" : `"${plan.tier}" not recognised`}, counted as 1x`];
   const base = { identity: member.identity, plan };
 
   if (member.readError !== undefined) {
     return { candidate: { ...base, class: "unknown", reasons: [`usage state unreadable: ${member.readError}`, ...planReasons] } };
   }
-  const state = member.snapshot?.providers[ANTHROPIC_PROVIDER];
-  const unified = unifiedOf(state);
-  if (member.snapshot === undefined || state === undefined || unified === undefined) {
+  const windows = rankingWindowsOf(member.provider, state);
+  if (member.snapshot === undefined || state === undefined || windows === undefined) {
+    if (member.provider !== undefined) {
+      return assessProviderWithoutWindows(member, member.provider, state, base, planReasons, nowMs);
+    }
     // A plan known from account metadata to bill by use is a class of its own whether or not usage is on record: ranking it `unknown` would put it ahead of every `pay-per-use` member and spend a billed account silently.
     if (plan.kind === "pay-per-use") {
       return { candidate: { ...base, class: "pay-per-use", usageUnrecorded: true, reasons: [...planReasons, "no usage recorded yet, so its spend is not tracked (turn on trackUsage for it)"] } };
     }
     return { candidate: { ...base, class: "unknown", reasons: ["no usage recorded yet, so its quota is unknown (turn on trackUsage for it)", ...planReasons] } };
   }
-  const observedAgo = state.rateLimit === undefined ? "" : ` (last seen ${formatAge(nowMs - Date.parse(state.rateLimit.observedAt))} ago)`;
+  const { unified } = windows;
+  const observedAgo = ` (last seen ${formatAge(nowMs - Date.parse(windows.observedAt))} ago)`;
 
   const fiveHourWindow = unified.fiveHour;
   const sevenDayWindow = unified.sevenDay;
@@ -374,7 +393,7 @@ function assessIdentity(member: PoolMember, nowMs: number): Assessment {
 
 /** One member's pool-selection facts, the reference namespace's `quota.*` and `session.*` half; the window facts the member's own assessment read, and the session facts the whole ranking was given. */
 function poolFactsOf(member: PoolMember, nowMs: number, resuming: boolean, sticky?: StickyPick): { readonly fiveHour?: PoolWindowFacts; readonly sevenDay?: PoolWindowFacts; readonly extraUsage?: PoolWindowFacts; readonly burnPerHour?: number; readonly resuming: boolean; readonly lastPickHoursAgo?: number } {
-  const { fiveHour, sevenDay, extraUsage } = quotaFactsOf(member.snapshot?.providers[ANTHROPIC_PROVIDER]?.rateLimit?.unified, nowMs);
+  const { fiveHour, sevenDay, extraUsage } = quotaFactsOf(rankingWindowsOf(member.provider, sliceOf(member))?.unified, nowMs);
   const burn = windowBurn(member.records, "fiveHour");
   return {
     ...(fiveHour === undefined ? {} : { fiveHour }),

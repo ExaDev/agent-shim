@@ -3,7 +3,7 @@ import type { Job, JobWindow } from "../config/schema";
 import { parseDuration } from "../resolve/conditions";
 import { readHandled, writeHandled, type StampsFs } from "./handledStamps";
 import { ANTHROPIC_PROVIDER } from "./middleware";
-import { FIVE_HOUR_WINDOW_MS, SEVEN_DAY_WINDOW_MS } from "./pick";
+import { FIVE_HOUR_WINDOW_MS, SEVEN_DAY_WINDOW_MS } from "./windowLengths";
 import { effectiveWindow, formatAge } from "./preflight";
 import type { UsageSnapshot } from "./schema";
 import { refusalReason } from "./windowKeeper";
