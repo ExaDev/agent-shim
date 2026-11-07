@@ -558,10 +558,13 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
     if (id?.startsWith(RC_SESSION_ID_PREFIX) !== true) {
       return undefined;
     }
+    // A client event write is a write into the session, by the door itself or another client, not a call of the session's own: the platform it names is the writer's, so it never becomes the platform every later client-half write replays (the self-hosted goal and compaction verbs write as a person's app, and their write comes back through this observer). The session's facts from such a call keep everything else.
+    const isClientWrite = method === "POST" && (rest === `${id}/events` || rest === `${id}/teleport-events`);
+    const sessionFacts = isClientWrite ? { ...facts, anthropicClientPlatform: undefined } : facts;
     // Every recurring call for a tracked session refreshes its entry at the request. A session the tracker does not hold yet is born only once the service accepts one of its calls (in `onResponse` below): a refused call (a mistyped or forged id answered 401 or 404, a worker still calling after its session was archived) says nothing is live there, and birthing on it would describe a session that does not exist.
     const tracked = entries.get(id);
     if (tracked !== undefined) {
-      refresh(tracked, facts);
+      refresh(tracked, sessionFacts);
     }
 
     // The one request-body shape each of these exchanges reads; every other recurring call's request body carries nothing the tracker retains.
@@ -650,7 +653,7 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
         }
         accepted = isSuccessful(status);
         if (accepted && !entries.has(id)) {
-          persistCredential(birth(id, facts));
+          persistCredential(birth(id, sessionFacts));
         }
         file();
       },
