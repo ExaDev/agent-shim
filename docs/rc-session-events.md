@@ -56,4 +56,6 @@ What covers each event, per backend. "Connect surface" is `src/frontdoor/connect
 
 A door that starts while a session is already running sees it appear at its first accepted call through that door, and reports no `worker-state` until the worker's next registration, exactly as `rc status` shows no worker state for it until then.
 
-A retired request is remembered for as long as its session is tracked, so a copy of it that arrives later on the other channel is not born again; a request the tracker never saw pending is born as a new request.
+A retired request is remembered (up to `RC_RETIRED_TOMBSTONES_MAX` per session, the oldest forgotten first), so a copy of it that arrives later on the other channel is not born again while it is remembered; a request the tracker never saw pending, or one forgotten past that bound, is born as a new request.
+
+A `pending-born` event carries the request's id, type and one-line summary, not a question's questions or options: a follower that answers questions reads them from `rc pending` (or the typed `rc/pending`) for that request id.
