@@ -21,6 +21,7 @@ describe("runDoctor: ambient-credential inside a session another launch started"
     expect(finding?.severity).toBe("warn");
     expect(finding?.message).toContain("CLAUDE_CODE_OAUTH_TOKEN was set in this session by the launcher that started it");
     expect(finding?.message).toContain("naming none");
+    expect(finding?.message).toContain("claude @<name>");
   });
 
   it("still warns for a credential the person set in its place", () => {

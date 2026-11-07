@@ -127,7 +127,7 @@ export function ambientCredentialFinding(env: Readonly<Record<string, string | u
   }
   const bare = env.CLAUDE_CONFIG_DIR === undefined || env.CLAUDE_CONFIG_DIR === "" ? undefined : detectAmbientCredential(env);
   if (bare !== undefined) {
-    return { severity: "warn", message: `${bare.variable} was set in this session by the launcher that started it. A launch that names an identity drops it, but a launch naming none keeps the session's CLAUDE_CONFIG_DIR and environment and is refused.` };
+    return { severity: "warn", message: `${bare.variable} was set in this session by the launcher that started it. A launch that names an identity drops it, but a launch naming none keeps the session's CLAUDE_CONFIG_DIR and environment and is refused. Name an identity, as in \`claude @<name>\`.` };
   }
   return { severity: "pass", message: "No ambient-credential environment variable is set." };
 }

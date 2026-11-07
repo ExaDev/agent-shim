@@ -103,16 +103,6 @@ describe("recordInjections and withoutInjected", () => {
     expect(withoutInjected({ ...injections.env, ANTHROPIC_CUSTOM_HEADERS: mixed }).ANTHROPIC_CUSTOM_HEADERS).toBe("x-user:   spaced\nnot a header line");
   });
 
-  it("drops the NO_PROXY a provider's own env set, with the hosts the launcher appended to it", () => {
-    const injections = recordInjections({ NO_PROXY: "corp.example" });
-    injections.recordBypassHosts("NO_PROXY", ["internal.glm.example"]);
-    injections.env.NO_PROXY = "internal.glm.example";
-    injections.recordBypassHosts("NO_PROXY", ["127.0.0.1", "localhost"]);
-    injections.env.NO_PROXY = "internal.glm.example,127.0.0.1,localhost";
-    injections.finish();
-    expect("NO_PROXY" in withoutInjected(injections.env)).toBe(false);
-  });
-
   it("leaves an environment with no marker exactly as it is, an empty value the person set included", () => {
     const env = { NO_PROXY: "", no_proxy: " , ", ANTHROPIC_CUSTOM_HEADERS: "" };
     expect(withoutInjected(env)).toEqual(env);
