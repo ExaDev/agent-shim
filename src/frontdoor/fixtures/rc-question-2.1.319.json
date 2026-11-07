@@ -1,0 +1,215 @@
+{
+  "cliVersion": "2.1.319",
+  "source": "frontdoor rc watch --json on a self-hosted rig session driven by scripts/rc-mock-provider.mts with RC_MOCK_QUESTION=1; ids replaced by placeholders",
+  "question": {
+    "event_id": "00000000-0000-4000-8000-000000000001",
+    "event_type": "control_request",
+    "sequence_num": 36,
+    "source": "worker",
+    "payload": {
+      "type": "control_request",
+      "request_id": "00000000-0000-4000-8000-000000000002",
+      "request": {
+        "subtype": "can_use_tool",
+        "tool_name": "AskUserQuestion",
+        "display_name": "AskUserQuestion",
+        "input": {
+          "questions": [
+            {
+              "question": "Which database should the rig proof use?",
+              "header": "Database",
+              "options": [
+                {
+                  "label": "Postgres",
+                  "description": "the relational choice"
+                },
+                {
+                  "label": "SQLite",
+                  "description": "the embedded choice"
+                }
+              ],
+              "multiSelect": false
+            },
+            {
+              "question": "Which rig checks should run?",
+              "header": "Checks",
+              "options": [
+                {
+                  "label": "lint",
+                  "description": "the style check"
+                },
+                {
+                  "label": "typecheck",
+                  "description": "the type check"
+                },
+                {
+                  "label": "test",
+                  "description": "the unit suite"
+                }
+              ],
+              "multiSelect": true
+            }
+          ]
+        },
+        "tool_use_id": "toolu_mock_0",
+        "description": "",
+        "requires_user_interaction": true
+      },
+      "session_id": "cse_00000000-0000-4000-8000-000000000000",
+      "uuid": "00000000-0000-4000-8000-000000000001"
+    },
+    "created_at": "2026-11-07T09:55:42.812Z"
+  },
+  "answer": {
+    "event_id": "00000000-0000-4000-8000-000000000003",
+    "event_type": "control_response",
+    "sequence_num": 41,
+    "source": "client",
+    "payload": {
+      "type": "control_response",
+      "response": {
+        "subtype": "success",
+        "request_id": "00000000-0000-4000-8000-000000000002",
+        "response": {
+          "behavior": "allow",
+          "updatedInput": {
+            "questions": [
+              {
+                "question": "Which database should the rig proof use?",
+                "header": "Database",
+                "options": [
+                  {
+                    "label": "Postgres",
+                    "description": "the relational choice"
+                  },
+                  {
+                    "label": "SQLite",
+                    "description": "the embedded choice"
+                  }
+                ],
+                "multiSelect": false
+              },
+              {
+                "question": "Which rig checks should run?",
+                "header": "Checks",
+                "options": [
+                  {
+                    "label": "lint",
+                    "description": "the style check"
+                  },
+                  {
+                    "label": "typecheck",
+                    "description": "the type check"
+                  },
+                  {
+                    "label": "test",
+                    "description": "the unit suite"
+                  }
+                ],
+                "multiSelect": true
+              }
+            ],
+            "answers": {
+              "Which database should the rig proof use?": "SQLite",
+              "Which rig checks should run?": "lint, test"
+            }
+          }
+        }
+      },
+      "server_received_wall_ms": 1794045389093
+    },
+    "created_at": "2026-11-07T09:56:29.093Z"
+  },
+  "dismissedQuestion": {
+    "event_id": "00000000-0000-4000-8000-000000000004",
+    "event_type": "control_request",
+    "sequence_num": 80,
+    "source": "worker",
+    "payload": {
+      "type": "control_request",
+      "request_id": "00000000-0000-4000-8000-000000000005",
+      "request": {
+        "subtype": "can_use_tool",
+        "tool_name": "AskUserQuestion",
+        "display_name": "AskUserQuestion",
+        "input": {
+          "questions": [
+            {
+              "question": "Which database should the rig proof use?",
+              "header": "Database",
+              "options": [
+                {
+                  "label": "Postgres",
+                  "description": "the relational choice"
+                },
+                {
+                  "label": "SQLite",
+                  "description": "the embedded choice"
+                }
+              ],
+              "multiSelect": false
+            },
+            {
+              "question": "Which rig checks should run?",
+              "header": "Checks",
+              "options": [
+                {
+                  "label": "lint",
+                  "description": "the style check"
+                },
+                {
+                  "label": "typecheck",
+                  "description": "the type check"
+                },
+                {
+                  "label": "test",
+                  "description": "the unit suite"
+                }
+              ],
+              "multiSelect": true
+            }
+          ]
+        },
+        "tool_use_id": "toolu_mock_0",
+        "description": "",
+        "requires_user_interaction": true
+      },
+      "session_id": "cse_00000000-0000-4000-8000-000000000000",
+      "uuid": "00000000-0000-4000-8000-000000000004"
+    },
+    "created_at": "2026-11-07T09:58:26.094Z"
+  },
+  "dismissalResponse": {
+    "event_id": "00000000-0000-4000-8000-000000000006",
+    "event_type": "control_response",
+    "sequence_num": 85,
+    "source": "worker",
+    "payload": {
+      "type": "control_response",
+      "response": {
+        "subtype": "success",
+        "request_id": "00000000-0000-4000-8000-000000000005",
+        "response": {
+          "behavior": "deny",
+          "message": "User denied permission"
+        }
+      },
+      "session_id": "cse_00000000-0000-4000-8000-000000000000",
+      "uuid": "00000000-0000-4000-8000-000000000006"
+    },
+    "created_at": "2026-11-07T09:58:30.122Z"
+  },
+  "dismissalCancel": {
+    "event_id": "00000000-0000-4000-8000-000000000007",
+    "event_type": "control_cancel_request",
+    "sequence_num": 86,
+    "source": "worker",
+    "payload": {
+      "type": "control_cancel_request",
+      "request_id": "00000000-0000-4000-8000-000000000005",
+      "session_id": "cse_00000000-0000-4000-8000-000000000000",
+      "uuid": "00000000-0000-4000-8000-000000000007"
+    },
+    "created_at": "2026-11-07T09:58:30.129Z"
+  }
+}
