@@ -13,6 +13,9 @@ import type { RcSelfHostCredentialRecord } from "./rcSelfHost";
 /** The control-plane host whose OAuth refresh this surface answers locally; when the mode is on, its terminated session is parsed as HTTP (it is normally byte-tapped) so the refresh can be served. */
 const RC_SELF_HOST_OAUTH_HOST = "platform.claude.com";
 
+/** The email address the minted account block and the local profile name: a `.invalid` domain, so nothing about it can be mistaken for a reachable identity. Lives here beside the profile that answers it, and the minting imports it, so the two never disagree. */
+export const RC_SELF_HOST_EMAIL = "selfhost@agent-shim.invalid";
+
 /**
  * The full scope list the minting writes and the local refresh echoes: the CLI's own claude.ai login scope set (`CLAUDE_AI_OAUTH_SCOPES` in its source), whose `user:inference` and `user:profile` members are exactly the two the Remote Control gate demands. Lives here, beside the refresh that echoes it, and is re-exported by the surface so the library surface it already published is unchanged.
  */
@@ -121,7 +124,8 @@ export function createRcSelfHostLocal(deps: RcSelfHostLocalDeps): RcSelfHostLoca
           return true;
         }
         answerServerJson(response, HTTP_STATUS.ok, {
-          account: { uuid: record.accountUuid, display_name: "agent-shim self-hosted", created_at: new Date(0).toISOString() },
+          // The email is required: the 2.1.319 client's profile schema rejects an answer without `account.email` (observed in the lab's debug log as a shape-validation failure on every start).
+          account: { uuid: record.accountUuid, email: RC_SELF_HOST_EMAIL, display_name: "agent-shim self-hosted", created_at: new Date(0).toISOString() },
           organization: { uuid: record.organizationUuid, organization_type: "claude_max" },
         });
         return true;

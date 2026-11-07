@@ -829,7 +829,7 @@ describe("the self-hosted local answers", () => {
     expect(isRecord(validation) && Array.isArray(validation.scopes) && validation.scopes.includes("user:inference") && validation.scopes.includes("user:profile")).toBe(true);
     expect(isRecord(validation) && validation.expiresAt).toBeNull();
     expect((await get("/api/oauth/profile")).status).toBe(HTTP_STATUS.ok);
-    expect(JSON.parse((await get("/api/oauth/profile")).body)).toMatchObject({ organization: { uuid: RECORD.organizationUuid } });
+    expect(JSON.parse((await get("/api/oauth/profile")).body)).toMatchObject({ account: { email: "selfhost@agent-shim.invalid" }, organization: { uuid: RECORD.organizationUuid } });
     expect((await get("/api/claude_code/policy_limits")).status).toBe(HTTP_STATUS.ok);
     expect((await get("/api/hello")).status).toBe(HTTP_STATUS.ok);
     expect((await call(barePort, "POST", "/api/event_logging/v2/batch", [{ event_name: "x" }])).status).toBe(HTTP_STATUS.ok);
