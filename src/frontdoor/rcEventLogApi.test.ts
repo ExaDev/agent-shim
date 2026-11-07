@@ -1,10 +1,10 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
 
 import { mountRouterClient } from "./apiTestMount";
 import { DOOR_EVENT_BUFFER_EVENTS } from "./eventHub";
-import { RcSessionEventSchema, RcSessionEventsReadOutputSchema, createRcSessionEventLog, type RcSessionEvent } from "./rcEventLog";
+import { RcSessionEventSchema, RcSessionEventsReadOutputSchema, createRcSessionEventLog, type RcSessionEvent, type RcSessionEventLog } from "./rcEventLog";
 import { createRcSessionEventsApiRouter, type RcSessionEventsApiRouter } from "./rcEventLogApi";
 import { createSseParser, type SseParsedEvent } from "./rcStream";
 import type { RouterClient } from "@orpc/server";
@@ -49,37 +49,33 @@ function eventOfFrame(frame: SseParsedEvent): RcSessionEvent {
   return RcSessionEventSchema.parse(parsed);
 }
 
+/** One case's own mount: a fresh log behind the router, so no case depends on what another appended. */
+async function mountedLog(capacity: number = CAPACITY): Promise<{ readonly log: RcSessionEventLog; readonly client: RouterClient<RcSessionEventsApiRouter>; readonly url: string; readonly close: () => Promise<void> }> {
+  const log = createRcSessionEventLog({ generation: GENERATION, capacity });
+  const mounted = await mountRouterClient(createRcSessionEventsApiRouter({ expectedToken: CONTROL_TOKEN, sessionEvents: log }), CONTROL_TOKEN, CONTROL_TOKEN);
+  return { log, ...mounted };
+}
+
 describe("the session events surface of the typed API", () => {
-  const log = createRcSessionEventLog({ generation: GENERATION, capacity: CAPACITY });
-  let client: RouterClient<RcSessionEventsApiRouter>;
-  let url: string;
-  let close: () => Promise<void>;
-
-  beforeAll(async () => {
-    const mounted = await mountRouterClient(createRcSessionEventsApiRouter({ expectedToken: CONTROL_TOKEN, sessionEvents: log }), CONTROL_TOKEN, CONTROL_TOKEN);
-    client = mounted.client;
-    url = mounted.url;
-    close = mounted.close;
-  });
-
-  afterAll(async () => {
-    await close();
-  });
-
   it("pages the log through the typed client and over REST, and answers an expired cursor as an explicit expiry", async () => {
-    const start = log.head();
-    log.append({ kind: "session-appeared", session: SESSION_A, at: 1 });
-    log.append({ kind: "session-appeared", session: SESSION_B, at: 2 });
-    const page = await client.rcSessions.eventsPage({ since: start, limit: 1 });
-    expect(page).toMatchObject({ status: "ok", events: [{ session: SESSION_A }], more: true });
+    const { log, client, url, close } = await mountedLog();
+    try {
+      const start = log.head();
+      log.append({ kind: "session-appeared", session: SESSION_A, at: 1 });
+      log.append({ kind: "session-appeared", session: SESSION_B, at: 2 });
+      const page = await client.rcSessions.eventsPage({ since: start, limit: 1 });
+      expect(page).toMatchObject({ status: "ok", events: [{ session: SESSION_A }], more: true });
 
-    const answered = await fetch(`${url}/rest/rc/session-events/page`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${CONTROL_TOKEN}` }, body: JSON.stringify({ since: page.status === "ok" ? page.cursor : start }) });
-    expect(answered.status).toBe(HTTP_STATUS.ok);
-    const rest = RcSessionEventsReadOutputSchema.parse(await answered.json());
-    expect(rest).toMatchObject({ status: "ok", events: [{ session: SESSION_B }], more: false });
+      const answered = await fetch(`${url}/rest/rc/session-events/page`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${CONTROL_TOKEN}` }, body: JSON.stringify({ since: page.status === "ok" ? page.cursor : start }) });
+      expect(answered.status).toBe(HTTP_STATUS.ok);
+      const rest = RcSessionEventsReadOutputSchema.parse(await answered.json());
+      expect(rest).toMatchObject({ status: "ok", events: [{ session: SESSION_B }], more: false });
 
-    const expired = await client.rcSessions.eventsPage({ since: "00000000-0000-4000-8000-0000000000dd.1" });
-    expect(expired).toMatchObject({ status: "expired", head: log.head() });
+      const expired = await client.rcSessions.eventsPage({ since: "00000000-0000-4000-8000-0000000000dd.1" });
+      expect(expired).toMatchObject({ status: "expired", head: log.head() });
+    } finally {
+      await close();
+    }
   });
 
   it("pages a caller that names no limit at the default, and refuses a limit past one consumer buffer", async () => {
@@ -101,30 +97,35 @@ describe("the session events surface of the typed API", () => {
   });
 
   it("streams over REST with each cursor as the SSE id, and resumes from Last-Event-ID ahead of the since query", async () => {
-    const before = log.head();
-    log.append({ kind: "worker-state", session: SESSION_A, state: "running", at: 3 });
-    log.append({ kind: "worker-state", session: SESSION_A, state: "idle", previous: "running", at: 4 });
-    const cursors = log.read({ since: before });
-    if (cursors.status !== "ok") {
-      throw new Error("expected the two appends to be readable");
+    const { log, url, close } = await mountedLog();
+    try {
+      const before = log.head();
+      log.append({ kind: "worker-state", session: SESSION_A, state: "running", at: 3 });
+      log.append({ kind: "worker-state", session: SESSION_A, state: "idle", previous: "running", at: 4 });
+      const cursors = log.read({ since: before });
+      if (cursors.status !== "ok") {
+        throw new Error("expected the two appends to be readable");
+      }
+      const [first, second] = cursors.events;
+      if (first === undefined || second === undefined) {
+        throw new Error("expected two events");
+      }
+      // The header names the first event as seen, the stale query names an older point: the header wins, so only the second replays.
+      const answered = await fetch(`${url}/rest/rc/session-events?since=${encodeURIComponent(before)}`, { headers: { authorization: `Bearer ${CONTROL_TOKEN}`, "last-event-id": first.cursor } });
+      expect(answered.status).toBe(HTTP_STATUS.ok);
+      expect(answered.headers.get("content-type")).toContain("text/event-stream");
+      if (answered.body === null) {
+        throw new Error("expected a streaming body");
+      }
+      const [frame] = await sseFrames(answered.body, 1);
+      if (frame === undefined) {
+        throw new Error("expected one frame");
+      }
+      expect(frame.id).toBe(second.cursor);
+      expect(eventOfFrame(frame)).toEqual(second);
+    } finally {
+      await close();
     }
-    const [first, second] = cursors.events;
-    if (first === undefined || second === undefined) {
-      throw new Error("expected two events");
-    }
-    // The header names the first event as seen, the stale query names an older point: the header wins, so only the second replays.
-    const answered = await fetch(`${url}/rest/rc/session-events?since=${encodeURIComponent(before)}`, { headers: { authorization: `Bearer ${CONTROL_TOKEN}`, "last-event-id": first.cursor } });
-    expect(answered.status).toBe(HTTP_STATUS.ok);
-    expect(answered.headers.get("content-type")).toContain("text/event-stream");
-    if (answered.body === null) {
-      throw new Error("expected a streaming body");
-    }
-    const [frame] = await sseFrames(answered.body, 1);
-    if (frame === undefined) {
-      throw new Error("expected one frame");
-    }
-    expect(frame.id).toBe(second.cursor);
-    expect(eventOfFrame(frame)).toEqual(second);
   });
 
   it("ends an open SSE response when the log closes, so a retiring door's drain is not held open by a subscriber", async () => {
@@ -154,25 +155,33 @@ describe("the session events surface of the typed API", () => {
   });
 
   it("follows live through the typed client and refuses an evicted cursor with GONE, naming the head", async () => {
-    const leave = new AbortController();
-    const stream = await client.rcSessions.events({}, { signal: leave.signal });
-    // The follower's start was fixed when the request was handled, so an append before the first pull is still delivered.
-    log.append({ kind: "session-ended", session: SESSION_B, reason: "archived", at: 5 });
-    const delivered = await stream.next();
-    expect(delivered.done).toBe(false);
-    expect(delivered.value).toMatchObject({ kind: "session-ended", session: SESSION_B, reason: "archived" });
-    leave.abort();
+    const { log, client, close } = await mountedLog();
+    try {
+      const leave = new AbortController();
+      const stream = await client.rcSessions.events({}, { signal: leave.signal });
+      // The follower's start was fixed when the request was handled, so an append before the first pull is still delivered.
+      log.append({ kind: "session-ended", session: SESSION_B, reason: "archived", at: 5 });
+      const delivered = await stream.next();
+      expect(delivered.done).toBe(false);
+      expect(delivered.value).toMatchObject({ kind: "session-ended", session: SESSION_B, reason: "archived" });
+      leave.abort();
 
-    // Five events are recorded and the newest four retained, so the oldest a resume can continue after is the first; the origin is past it.
-    const evictedFrom = `${GENERATION}.0`;
-    const refused = await (async () => {
-      const iterator = await client.rcSessions.events({ since: evictedFrom });
-      await iterator.next();
-    })().then(
-      () => undefined,
-      (error: unknown) => error,
-    );
-    expect(refused).toMatchObject({ code: "GONE", data: { head: log.head() } });
-    expect(refused instanceof Error ? refused.message : "").toContain("cursor expired, resync from status");
+      // This case's own log is filled past its window, so the event after the origin is evicted and a resume from the origin cannot be honoured.
+      for (let at = 0; at < CAPACITY; at += 1) {
+        log.append({ kind: "session-appeared", session: SESSION_A, at });
+      }
+      const evictedFrom = `${GENERATION}.0`;
+      const refused = await (async () => {
+        const iterator = await client.rcSessions.events({ since: evictedFrom });
+        await iterator.next();
+      })().then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(refused).toMatchObject({ code: "GONE", data: { head: log.head() } });
+      expect(refused instanceof Error ? refused.message : "").toContain("cursor expired, resync from status");
+    } finally {
+      await close();
+    }
   });
 });
