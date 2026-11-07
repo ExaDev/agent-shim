@@ -2,7 +2,7 @@ import type { Pool } from "./config/schema";
 import { identityIdResolver } from "./launcher/identity";
 import type { FarmFs, FsPort } from "./launcher/ports";
 import type { LayoutPaths } from "./paths";
-import { rankPoolGraph, readStickyPick } from "./usage/poolPick";
+import { rankPoolGraph, readStickyPick, type ProviderOf } from "./usage/poolPick";
 import type { Candidate, PoolRanking } from "./usage/pick";
 import type { PoolPickReport } from "./usage/pickReportSchema";
 
@@ -17,14 +17,15 @@ function candidateView(candidate: Candidate): PoolPickCandidateView {
     feasible: candidate.feasible,
     ...(candidate.blockedUntilMs === undefined ? {} : { blockedUntil: new Date(candidate.blockedUntilMs).toISOString() }),
     plan: candidate.plan,
+    ...(candidate.provider === undefined ? {} : { provider: candidate.provider }),
     reasons: [...candidate.reasons],
   };
 }
 
 /**
- * Ranks a pool exactly as a launch from `directory` would right now, without recording a pick. Shares `rankPoolGraph` with the launcher, so what this prints is what a launch does.
+ * Ranks a pool exactly as a launch from `directory` would right now, without recording a pick. Shares `rankPoolGraph` with the launcher, so what this prints is what a launch does. `providerOf` names the provider a launch of each member routes through, so the report ranks each member on that provider's quota; without it every member is ranked on its Claude account.
  */
-export function collectPoolPick(params: Readonly<{ paths: LayoutPaths; fs: FsPort; usageFs: FarmFs; poolName: string; pools: Readonly<Record<string, Pool>>; directory: string; nowMs: number }>): PoolPickReport {
+export function collectPoolPick(params: Readonly<{ paths: LayoutPaths; fs: FsPort; usageFs: FarmFs; poolName: string; pools: Readonly<Record<string, Pool>>; directory: string; nowMs: number; providerOf?: ProviderOf }>): PoolPickReport {
   const sticky = readStickyPick(params.usageFs, params.paths.usagePicksFile, params.directory);
   const { ranking, missing }: { ranking: PoolRanking; missing: readonly { pool: string; identity: string }[] } = rankPoolGraph({
     fs: params.usageFs,
@@ -34,6 +35,7 @@ export function collectPoolPick(params: Readonly<{ paths: LayoutPaths; fs: FsPor
     nowMs: params.nowMs,
     resuming: false,
     identityIdOf: identityIdResolver(params.paths.identitiesDir, params.fs),
+    ...(params.providerOf === undefined ? {} : { providerOf: params.providerOf }),
     ...(sticky.sticky === undefined ? {} : { sticky: sticky.sticky }),
   });
   return {
