@@ -120,6 +120,15 @@ describe("marking a session compacted", () => {
     expect(deps.shouldCompact("work", "s").compact).toBe(true);
   });
 
+  it("does not mark a different conversation after a concurrent clear", () => {
+    const { fs, deps } = setup();
+    writeSessionState(fs, paths, POOL, "s", { mark: "busy", conversationId: "11111111-1111-4111-8111-111111111111", at: iso(0) });
+    expect(deps.markCompacted("s", true, "22222222-2222-4222-8222-222222222222")).toBe(false);
+    expect(readSessionState(fs, paths, POOL, "s")).toEqual({ mark: "busy", conversationId: "11111111-1111-4111-8111-111111111111", at: iso(0) });
+    expect(deps.markCompacted("s", true, "11111111-1111-4111-8111-111111111111")).toBe(true);
+    expect(readSessionState(fs, paths, POOL, "s")).toMatchObject({ mark: "busy", conversationId: "11111111-1111-4111-8111-111111111111", compacted: true });
+  });
+
   it("records a session no hook has marked yet as idle", () => {
     const { fs, deps } = setup();
     deps.markCompacted("s", true);

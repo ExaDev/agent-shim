@@ -6,7 +6,7 @@ import { FIVE_HOUR_WINDOW_MS } from "../usage/pick";
 import { readUsageLog, readUsageSnapshot } from "../usage/read";
 import { decideCompaction } from "./compaction";
 import { COMPACT_TIMEOUT_MS, type CompactionResult, type CompactRequest } from "./realCompact";
-import { liveSupervised, readSessionState, superviseDirOf, writeSessionState, type SessionState, type SupervisedSession } from "./registry";
+import { liveSupervised, readSessionState, stateDirOf, superviseDirOf, writeSessionState, type SessionState, type SupervisedSession } from "./registry";
 import type { CompactionDeps } from "./supervise";
 
 /** A compaction slot older than this is abandoned whoever claims to hold it, since a pid can be reused. Twice the longest a compaction may run, which also covers stopping the child before it and the preparation of the launch it needs. */
@@ -70,18 +70,27 @@ export function createCompactionDeps(wiring: Readonly<CompactionWiring>): Compac
       }
     },
     compact: wiring.compact,
-    markCompacted: (sessionId, compacted) => {
-      const previous = readSessionState(fs, paths, pool, sessionId);
-      writeSessionState(fs, paths, pool, sessionId, {
-        mark: previous?.mark ?? "idle",
-        ...(previous?.conversationId === undefined ? {} : { conversationId: previous.conversationId }),
-        ...(previous?.transcriptPath === undefined ? {} : { transcriptPath: previous.transcriptPath }),
-        ...(previous?.promptId === undefined ? {} : { promptId: previous.promptId }),
-        ...(previous?.unavailable === true ? { unavailable: true } : {}),
-        ...(previous?.contextTokens === undefined ? {} : { contextTokens: previous.contextTokens }),
-        ...(compacted ? { compacted: true } : {}),
-        at: new Date(wiring.now()).toISOString(),
-      });
+    markCompacted: (sessionId, compacted, conversationId) => {
+      const dir = stateDirOf(paths, pool);
+      fs.mkdirPrivate(dir);
+      const lock = acquireIdentityLock({ identity: `mark-${sessionId}`, dir, fs, nowMs: wiring.now, pid: wiring.pid, isRunning: wiring.isRunning, sleep: wiring.sleep });
+      try {
+        const previous = readSessionState(fs, paths, pool, sessionId);
+        if (conversationId !== undefined && (previous?.unavailable === true || (previous?.conversationId ?? sessionId) !== conversationId)) return false;
+        writeSessionState(fs, paths, pool, sessionId, {
+          mark: previous?.mark ?? "idle",
+          ...(previous?.conversationId === undefined ? {} : { conversationId: previous.conversationId }),
+          ...(previous?.transcriptPath === undefined ? {} : { transcriptPath: previous.transcriptPath }),
+          ...(previous?.promptId === undefined ? {} : { promptId: previous.promptId }),
+          ...(previous?.unavailable === true ? { unavailable: true } : {}),
+          ...(previous?.contextTokens === undefined ? {} : { contextTokens: previous.contextTokens }),
+          ...(compacted ? { compacted: true } : {}),
+          at: new Date(wiring.now()).toISOString(),
+        });
+        return true;
+      } finally {
+        lock.release();
+      }
     },
   };
 }

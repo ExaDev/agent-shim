@@ -583,6 +583,7 @@ interface CompactionWorld {
   readonly acquire: MockedFunction<CompactionDeps["acquire"]>;
   readonly compact: MockedFunction<CompactionDeps["compact"]>;
   readonly markCompacted: MockedFunction<CompactionDeps["markCompacted"]>;
+  readonly liveCompact: MockedFunction<NonNullable<CompactionDeps["live"]>["compact"]>;
   readonly slotsReleased: string[];
 }
 
@@ -596,47 +597,108 @@ function compactionWorld(decision: CompactionDecision = GO): CompactionWorld {
     },
   }));
   const compact = vi.fn<CompactionDeps["compact"]>().mockResolvedValue({ kind: "compacted", beforeTokens: 900_000, afterTokens: 20_000 } satisfies CompactionResult);
-  const markCompacted = vi.fn<CompactionDeps["markCompacted"]>();
-  return { deps: { shouldCompact, acquire, compact, markCompacted }, shouldCompact, acquire, compact, markCompacted, slotsReleased };
+  const markCompacted = vi.fn<CompactionDeps["markCompacted"]>().mockReturnValue(true);
+  const liveCompact = vi.fn<NonNullable<CompactionDeps["live"]>["compact"]>().mockResolvedValue({ kind: "compacted", beforeTokens: 900_000, afterTokens: 20_000 });
+  return { deps: { shouldCompact, acquire, compact, markCompacted, live: { ready: () => true, compact: liveCompact } }, shouldCompact, acquire, compact, liveCompact, markCompacted, slotsReleased };
 }
 
 describe("supervise with compaction", () => {
-  it("compacts and resumes the current conversation after it changes, retaining the launch's registry id", async () => {
+  it("compacts the current conversation without stopping or relaunching the child", async () => {
     const w = world();
     const c = compactionWorld({ ...GO, conversationId: "cleared-conversation" });
-    const done = supervise({ ...w.deps, compaction: c.deps }, FIRST);
+    const done = supervise({ ...w.deps, currentConversationId: () => "cleared-conversation", compaction: c.deps }, FIRST);
     await settle();
     w.watchers.get("work")?.();
     await settle();
-    expect(c.compact).toHaveBeenCalledWith({ identity: "work", sessionId: "cleared-conversation", cwd: "/repo" }, expect.any(AbortSignal));
-    expect(c.markCompacted).toHaveBeenCalledWith(SESSION, true);
-    expect(w.launches[1]).toEqual({ sessionId: SESSION, conversation: "resume", conversationId: "cleared-conversation", member: "work" });
-    w.children[1]?.exitWith(0);
+    expect(c.liveCompact).toHaveBeenCalledWith("cleared-conversation", expect.any(AbortSignal));
+    expect(c.markCompacted).toHaveBeenCalledWith(SESSION, true, "cleared-conversation");
+    expect(c.slotsReleased).toEqual(["work"]);
+    expect(w.children[0]?.signals).toEqual([]);
+    expect(w.launches).toHaveLength(1);
+    w.watchers.get("work")?.();
+    await settle();
+    expect(c.liveCompact).toHaveBeenCalledTimes(1);
+    w.children[0]?.exitWith(0);
     await expect(done).resolves.toBe(0);
   });
-  it("stops an idle session whose quota has reached the trigger, compacts it as the same identity and resumes it there", async () => {
+
+  it("can compact a new conversation after a completed compaction and /clear", async () => {
     const w = world();
     const c = compactionWorld();
     const done = supervise({ ...w.deps, compaction: c.deps }, FIRST);
     await settle();
     w.watchers.get("work")?.();
     await settle();
-    expect(w.children[0]?.signals).toEqual(["SIGTERM"]);
-    expect(c.compact).toHaveBeenCalledWith({ identity: "work", sessionId: SESSION, cwd: "/repo" }, expect.any(AbortSignal));
-    expect(c.markCompacted).toHaveBeenCalledWith(SESSION, true);
-    expect(c.slotsReleased).toEqual(["work"]);
-    expect(w.launches[1]).toEqual({ sessionId: SESSION, conversation: "resume", member: "work" });
-    expect(w.log.infos.join("\n")).toContain(`agent-shim: the 5h window is at 90%, past 85%; compacting the 900000-token context of session ${SESSION} on work`);
-    expect(w.log.infos.join("\n")).toContain(`agent-shim: compacted session ${SESSION} on work, 900000 tokens down to 20000`);
-    // The same session on the same member: no second registry entry, and no move was decided.
-    expect(w.registered).toHaveLength(1);
-    expect(w.decideMove).not.toHaveBeenCalled();
-    w.children[1]?.exitWith(0);
-    await expect(done).resolves.toBe(0);
-    expect(w.unregistered).toEqual([SESSION]);
+    expect(c.liveCompact).toHaveBeenCalledTimes(1);
+    c.shouldCompact.mockReturnValue({ ...GO, conversationId: "after-clear" });
+    w.watchers.get("work")?.();
+    await settle();
+    expect(c.liveCompact).toHaveBeenCalledTimes(2);
+    expect(c.liveCompact).toHaveBeenLastCalledWith("after-clear", expect.any(AbortSignal));
+    expect(w.children[0]?.signals).toEqual([]);
+    w.children[0]?.exitWith(0);
+    await done;
   });
 
-  it("does nothing while the decision says to wait, and when another session holds the identity's slot", async () => {
+  it("does not mark a new conversation compacted when /clear races the result", async () => {
+    const w = world();
+    const c = compactionWorld();
+    let current = SESSION;
+    let finish: (value: CompactionResult) => void = () => undefined;
+    c.liveCompact.mockImplementation(async () => await new Promise((resolve) => { finish = resolve; }));
+    const done = supervise({ ...w.deps, currentConversationId: () => current, compaction: c.deps }, FIRST);
+    await settle();
+    w.watchers.get("work")?.();
+    await settle();
+    current = "after-clear";
+    c.markCompacted.mockReturnValue(false);
+    finish({ kind: "compacted" });
+    await settle();
+    expect(c.markCompacted).toHaveBeenCalledWith(SESSION, true, SESSION);
+    expect(w.children[0]?.signals).toEqual([]);
+    w.children[0]?.exitWith(0);
+    await done;
+  });
+
+  it("waits for live compaction to finish before moving a refused session", async () => {
+    const w = world();
+    const c = compactionWorld();
+    let finish: (value: CompactionResult) => void = () => undefined;
+    c.liveCompact.mockImplementation(async () => await new Promise((resolve) => { finish = resolve; }));
+    const done = supervise({ ...w.deps, compaction: c.deps }, FIRST);
+    await settle();
+    w.watchers.get("work")?.();
+    await settle();
+    w.quotaHit = () => HIT;
+    w.watchers.get("work")?.();
+    await settle();
+    expect(w.children[0]?.signals).toEqual([]);
+    expect(c.slotsReleased).toEqual([]);
+    finish({ kind: "compacted" });
+    await settle();
+    expect(w.children[0]?.signals).toEqual(["SIGTERM"]);
+    expect(c.compact).not.toHaveBeenCalled();
+    expect(w.launches[1]).toEqual({ sessionId: SESSION, conversation: "resume", member: "spare", from: "work" });
+    w.children[1]?.exitWith(0);
+    await done;
+  });
+
+  it("compacts between children on the new member after a quota refusal", async () => {
+    const w = world();
+    const c = compactionWorld();
+    const done = supervise({ ...w.deps, compaction: c.deps }, { ...FIRST, settingsFile: "/private/settings.json" });
+    await settle();
+    w.quotaHit = () => HIT;
+    w.watchers.get("work")?.();
+    await settle();
+    expect(c.liveCompact).not.toHaveBeenCalled();
+    expect(c.compact).toHaveBeenCalledWith({ identity: "spare", sessionId: SESSION, cwd: "/repo" }, expect.any(AbortSignal));
+    expect(w.launches[1]).toEqual({ sessionId: SESSION, conversation: "resume", member: "spare", from: "work", settingsFile: "/private/settings.json" });
+    w.children[1]?.exitWith(0);
+    await done;
+  });
+
+  it("does not compact without the plugin, a qualifying decision, or a free slot", async () => {
     const w = world();
     const c = compactionWorld(STAY);
     const done = supervise({ ...w.deps, compaction: c.deps }, FIRST);
@@ -648,191 +710,64 @@ describe("supervise with compaction", () => {
     c.acquire.mockReturnValue(undefined);
     w.watchers.get("work")?.();
     await settle();
-    expect(c.compact).not.toHaveBeenCalled();
+    expect(c.liveCompact).not.toHaveBeenCalled();
     expect(w.children[0]?.signals).toEqual([]);
     w.children[0]?.exitWith(0);
     await done;
   });
 
-  it("gives the slot back and leaves the child alone when the turn began while the slot was being taken", async () => {
+  it("warns when the plugin is unavailable without stopping the session", async () => {
     const w = world();
     const c = compactionWorld();
-    c.shouldCompact.mockReturnValueOnce(GO).mockReturnValueOnce(STAY);
-    const done = supervise({ ...w.deps, compaction: c.deps }, FIRST);
+    const deps: CompactionDeps = { ...c.deps, live: { ready: () => false, compact: c.liveCompact } };
+    const done = supervise({ ...w.deps, compaction: deps }, FIRST);
     await settle();
     w.watchers.get("work")?.();
+    w.watchers.get("work")?.();
     await settle();
-    expect(c.slotsReleased).toEqual(["work"]);
+    expect(w.log.warns).toEqual([`agent-shim: cannot compact session ${SESSION}: the in-process plugin is not ready`]);
+    expect(c.acquire).not.toHaveBeenCalled();
     expect(w.children[0]?.signals).toEqual([]);
-    expect(c.compact).not.toHaveBeenCalled();
     w.children[0]?.exitWith(0);
     await done;
   });
 
-  it("compacts a session once per stay on a member, however long the quota stays at the trigger", async () => {
+  it("reports a refused compaction and releases its slot without signalling the child", async () => {
     const w = world();
     const c = compactionWorld();
+    c.liveCompact.mockRejectedValue(new Error("a turn is running"));
     const done = supervise({ ...w.deps, compaction: c.deps }, FIRST);
     await settle();
     w.watchers.get("work")?.();
     await settle();
-    expect(c.compact).toHaveBeenCalledTimes(1);
-    w.watchers.get("work")?.();
-    await settle();
-    expect(c.compact).toHaveBeenCalledTimes(1);
-    expect(w.children).toHaveLength(2);
-    w.children[1]?.exitWith(0);
-    await done;
-  });
-
-  it("moves a refused session first, and compacts it under its new member before it resumes there", async () => {
-    const w = world();
-    const c = compactionWorld();
-    const done = supervise({ ...w.deps, compaction: c.deps }, FIRST);
-    await settle();
-    w.quotaHit = () => HIT;
-    w.watchers.get("work")?.();
-    await settle();
-    expect(c.shouldCompact).not.toHaveBeenCalled();
-    expect(c.markCompacted.mock.calls).toEqual([[SESSION, false], [SESSION, true]]);
-    expect(c.acquire).toHaveBeenCalledWith("spare");
-    expect(c.compact).toHaveBeenCalledWith({ identity: "spare", sessionId: SESSION, cwd: "/repo" }, expect.any(AbortSignal));
-    expect(c.slotsReleased).toEqual(["spare"]);
-    expect(w.launches[1]).toEqual({ sessionId: SESSION, conversation: "resume", member: "spare", from: "work" });
-    w.children[1]?.exitWith(0);
-    await done;
-  });
-
-  it("does not compact again under the new member when the session was compacted during its stay on the one it leaves", async () => {
-    const w = world();
-    const c = compactionWorld();
-    const done = supervise({ ...w.deps, compaction: c.deps }, FIRST);
-    await settle();
-    w.watchers.get("work")?.();
-    await settle();
-    expect(c.compact).toHaveBeenCalledTimes(1);
-    w.quotaHit = () => HIT;
-    w.watchers.get("work")?.();
-    await settle();
-    expect(c.compact).toHaveBeenCalledTimes(1);
-    expect(c.acquire).not.toHaveBeenCalledWith("spare");
-    expect(c.markCompacted.mock.calls).toEqual([[SESSION, true], [SESSION, false]]);
-    expect(w.launches[2]).toEqual({ sessionId: SESSION, conversation: "resume", member: "spare", from: "work" });
-    w.children[2]?.exitWith(0);
-    await done;
-  });
-
-  it("resumes uncompacted under the new member when its slot is taken", async () => {
-    const w = world();
-    const c = compactionWorld();
-    c.acquire.mockReturnValue(undefined);
-    const done = supervise({ ...w.deps, compaction: c.deps }, FIRST);
-    await settle();
-    w.quotaHit = () => HIT;
-    w.watchers.get("work")?.();
-    await settle();
-    expect(c.compact).not.toHaveBeenCalled();
-    expect(w.launches[1]).toEqual({ sessionId: SESSION, conversation: "resume", member: "spare", from: "work" });
-    w.children[1]?.exitWith(0);
-    await done;
-  });
-
-  it("carries the hooks' settings into every relaunch", async () => {
-    const w = world();
-    const c = compactionWorld();
-    const done = supervise({ ...w.deps, compaction: c.deps }, { ...FIRST, settings: '{"hooks":{}}' });
-    await settle();
-    w.watchers.get("work")?.();
-    await settle();
-    expect(w.launches[1]).toEqual({ sessionId: SESSION, conversation: "resume", member: "work", settings: '{"hooks":{}}' });
-    w.children[1]?.exitWith(0);
-    await done;
-  });
-
-  it("keeps the private caller-settings file on relaunch", async () => {
-    const w = world();
-    const c = compactionWorld();
-    const done = supervise({ ...w.deps, compaction: c.deps }, { ...FIRST, settingsFile: "/private/settings.json" });
-    await settle();
-    w.watchers.get("work")?.();
-    await settle();
-    expect(w.launches[1]).toEqual({ sessionId: SESSION, conversation: "resume", member: "work", settingsFile: "/private/settings.json" });
-    w.children[1]?.exitWith(0);
-    await done;
-  });
-
-  it("says a failed compaction did not stop the session, releases the slot and resumes it as it was", async () => {
-    const w = world();
-    const c = compactionWorld();
-    c.compact.mockRejectedValue(new Error("the run ended on an error: overloaded"));
-    const done = supervise({ ...w.deps, compaction: c.deps }, FIRST);
-    await settle();
-    w.watchers.get("work")?.();
-    await settle();
-    expect(w.log.warns).toEqual([`agent-shim: could not compact session ${SESSION} on work, which resumes as it was: the run ended on an error: overloaded`]);
+    expect(w.log.warns).toContain(`agent-shim: could not compact session ${SESSION}: a turn is running`);
     expect(c.slotsReleased).toEqual(["work"]);
-    expect(c.markCompacted).toHaveBeenCalledWith(SESSION, true);
-    expect(w.launches).toHaveLength(2);
-    w.children[1]?.exitWith(0);
+    expect(c.markCompacted).not.toHaveBeenCalled();
+    expect(w.children[0]?.signals).toEqual([]);
+    w.children[0]?.exitWith(0);
     await done;
   });
 
-  it("says when there was nothing to compact", async () => {
+  it("aborts the live request and releases its slot when the child exits", async () => {
     const w = world();
     const c = compactionWorld();
-    c.compact.mockResolvedValue({ kind: "unchanged", reason: "Not enough messages to compact." });
+    c.liveCompact.mockImplementation(async (_id, signal) => await new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => { reject(new Error("aborted")); });
+    }));
     const done = supervise({ ...w.deps, compaction: c.deps }, FIRST);
     await settle();
     w.watchers.get("work")?.();
     await settle();
-    expect(w.log.infos.join("\n")).toContain(`agent-shim: session ${SESSION} was left as it was: Not enough messages to compact.`);
-    w.children[1]?.exitWith(0);
-    await done;
-  });
-
-  it("abandons a compaction when the launcher is told to stop, ends with the signal's code and releases the slot", async () => {
-    const w = world();
-    const c = compactionWorld();
-    c.compact.mockImplementation(
-      async (_request, signal) =>
-        await new Promise<CompactionResult>((_resolve, reject) => {
-          signal.addEventListener("abort", () => {
-            reject(new Error("aborted"));
-          });
-        }),
-    );
-    const done = supervise({ ...w.deps, compaction: c.deps }, FIRST);
-    await settle();
-    w.watchers.get("work")?.();
-    await settle();
-    w.handlers.get("SIGTERM")?.();
-    await expect(done).resolves.toBe(SIGNAL_EXIT_OFFSET + SIGTERM_NUMBER);
+    w.children[0]?.exitWith(0);
+    await expect(done).resolves.toBe(0);
     expect(c.slotsReleased).toEqual(["work"]);
-    expect(w.launches).toHaveLength(1);
     expect(w.log.warns).toEqual([]);
   });
 
-  it("releases the slot when the launcher is told to stop while the child is being stopped for a compaction", async () => {
-    const w = world();
-    w.obeys = [];
-    const c = compactionWorld();
-    const done = supervise({ ...w.deps, compaction: c.deps }, FIRST);
-    await settle();
-    w.watchers.get("work")?.();
-    await settle();
-    w.handlers.get("SIGHUP")?.();
-    w.children[0]?.exitWith(1);
-    await expect(done).resolves.toBe(1);
-    expect(c.slotsReleased).toEqual(["work"]);
-    expect(c.compact).not.toHaveBeenCalled();
-  });
-
-  it("says once when the compaction decision cannot be made, however often the snapshot changes", async () => {
+  it("reports a decision failure once without stopping the child", async () => {
     const w = world();
     const c = compactionWorld();
-    c.shouldCompact.mockImplementation(() => {
-      throw new Error("the usage snapshot is unreadable");
-    });
+    c.shouldCompact.mockImplementation(() => { throw new Error("the usage snapshot is unreadable"); });
     const done = supervise({ ...w.deps, compaction: c.deps }, FIRST);
     await settle();
     w.watchers.get("work")?.();

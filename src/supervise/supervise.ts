@@ -35,8 +35,10 @@ export interface CompactionDeps {
   readonly acquire: (identity: string) => CompactionSlot | undefined;
   /** Compacts the conversation as the identity. Rejects when the compaction failed; resolves `unchanged` when there was nothing to compact. */
   readonly compact: (request: CompactRequest, signal: AbortSignal) => Promise<CompactionResult>;
+  /** Requests compaction inside the running child, if its plugin has loaded. */
+  readonly live?: { readonly ready: () => boolean; readonly compact: (conversationId: string, signal: AbortSignal) => Promise<CompactionResult> };
   /** Records on the session that it was compacted on its current member, or clears that when it moves. */
-  readonly markCompacted: (sessionId: string, compacted: boolean) => void;
+  readonly markCompacted: (sessionId: string, compacted: boolean, conversationId?: string) => boolean;
 }
 
 /** Everything the supervisor does that touches the outside world, injected so it runs against fakes. Every identity the supervisor passes to or takes from them is an id (the directory the identity is stored in, which a rename of its name keeps): what it watches, checks, registers, compacts on and moves between, and the `to` of a move. Only a launch it prepares names the member by name, read through `nameOf` as it is prepared. */
@@ -103,7 +105,6 @@ function labelOf(deps: Readonly<SupervisorDeps>, id: string): string {
 /** Why a child was stopped before it exited by itself. */
 type Departure =
   | { readonly kind: "move"; readonly to: string; readonly explanation: string; readonly conversationId: string }
-  | { readonly kind: "compact"; readonly slot: CompactionSlot; readonly contextTokens: number; readonly reason: string; readonly conversationId: string }
   | { readonly kind: "remodel"; readonly to: string; readonly model: string; readonly conversationId: string };
 
 /** What one child's run came to: it exited by itself, or it was stopped for a departure. */
@@ -131,19 +132,24 @@ async function stopChild(deps: Readonly<SupervisorDeps>, child: ReturnType<Super
 }
 
 /**
- * Runs one child of a supervised session until it exits by itself or has to be stopped: its identity ran out of quota and the session is moved, or its quota is near enough to being spent that the session should be compacted first.
+ * Runs one child of a supervised session until it exits by itself or its identity runs out of quota and the session is moved.
  *
- * While the child runs, every change to its identity's usage snapshot, and to the session's own state, is a cue. If this session met a quota refusal, the move coordinator decides where it goes. If it did not, and `canCompact`, the compaction decision asks whether the session should compact now, and when it should and the identity's compaction slot is free, the child is stopped for it. A stopped child gets SIGTERM, then SIGKILL after the grace period. When the coordinator keeps a session where it is, one line says why and the child carries on; the question is not asked again until the identity has been served once more.
+ * While the child runs, every change to its identity's usage snapshot, and to the session's own state, is a cue. If this session met a quota refusal, the move coordinator decides where it goes. If it did not, the compaction decision can ask the child to compact in process while holding the identity's compaction slot. A move waits for that request to finish. A child stopped for a move gets SIGTERM, then SIGKILL after the grace period. When the coordinator keeps a session where it is, one line says why and the child carries on; the question is not asked again until the identity has been served once more.
  *
  * SIGHUP and SIGTERM to the launcher are passed to the child and end the run with its exit; SIGINT is ignored in the launcher, since the terminal already delivers it to the child's own process group.
  */
-async function runChild(deps: Readonly<SupervisorDeps>, plan: LaunchPlan, identity: string, canCompact: boolean): Promise<RunOutcome> {
+async function runChild(deps: Readonly<SupervisorDeps>, plan: LaunchPlan, identity: string, compactedConversation: string | undefined, onCompacted: (conversationId: string) => void): Promise<RunOutcome> {
   const startedMs = deps.now();
   const child = deps.spawn.spawn(plan.bin, plan.args, { stdio: "inherit", env: plan.env });
   plan.markChildStarted();
 
   // One object rather than separate variables: the handlers and callbacks below set these, and a variable assigned only in a closure is narrowed to its initial value where it is read. `leaving` is set once a departure has been decided: a later change to the snapshot must not decide it again.
-  const state = { terminating: false, leaving: false, checking: false, wakes: 0, declined: false, lastWarning: "" };
+  const state = { terminating: false, leaving: false, checking: false, compacting: false, wakes: 0, declined: false, lastWarning: "" };
+  const liveAbort = new AbortController();
+  let attemptedWake = -1;
+  let liveTask: Promise<void> | undefined;
+  let compacted = compactedConversation;
+  let recheck: () => void = () => undefined;
   const stopHandlers = [
     ...(["SIGHUP", "SIGTERM"] as const).map((signal) =>
       deps.signals.on(signal, () => {
@@ -180,24 +186,43 @@ async function runChild(deps: Readonly<SupervisorDeps>, plan: LaunchPlan, identi
     }
   };
 
-  /** No refusal: ask whether this session should compact now, and take the identity's slot for it if so. */
+  /** Ask the running session to compact itself, holding the quota slot until it answers or exits. */
   const considerCompacting = (compaction: CompactionDeps): void => {
+    const live = compaction.live;
+    if (live === undefined || state.compacting || attemptedWake === state.wakes) return;
     const decision = compaction.shouldCompact(identity, plan.sessionId);
-    if (!decision.compact) {
+    if (!decision.compact || (decision.conversationId ?? plan.sessionId) === compacted) return;
+    if (!live.ready()) {
+      const warning = `agent-shim: cannot compact session ${plan.sessionId}: the in-process plugin is not ready`;
+      if (warning !== state.lastWarning) {
+        state.lastWarning = warning;
+        deps.log.warn(warning);
+      }
       return;
     }
     const slot = compaction.acquire(identity);
-    if (slot === undefined) {
-      return;
-    }
-    // The turn could have begun while the slot was being taken: look once more before anything is stopped.
-    const confirmed = compaction.shouldCompact(identity, plan.sessionId);
-    if (confirmed.compact) {
-      state.leaving = true;
-      depart({ kind: "compact", slot, contextTokens: confirmed.contextTokens, reason: confirmed.reason, conversationId: confirmed.conversationId ?? plan.sessionId });
-    } else {
+    if (slot === undefined) return;
+    state.compacting = true;
+    attemptedWake = state.wakes;
+    const conversationId = decision.conversationId ?? plan.sessionId;
+    deps.log.info(`agent-shim: ${decision.reason}; compacting session ${plan.sessionId} in process`);
+    liveTask = live.compact(conversationId, liveAbort.signal).then((result) => {
+      if (result.kind === "compacted") {
+        if (compaction.markCompacted(plan.sessionId, true, conversationId)) {
+          compacted = conversationId;
+          onCompacted(conversationId);
+        }
+        deps.log.info(`agent-shim: compacted session ${plan.sessionId} on ${labelOf(deps, identity)}`);
+      } else {
+        deps.log.info(`agent-shim: session ${plan.sessionId} was left as it was: ${result.reason}`);
+      }
+    }).catch((error: unknown) => {
+      if (!liveAbort.signal.aborted) deps.log.warn(`agent-shim: could not compact session ${plan.sessionId}: ${messageOf(error)}`);
+    }).finally(() => {
       slot.release();
-    }
+      state.compacting = false;
+      if (!liveAbort.signal.aborted && state.wakes > attemptedWake) recheck();
+    });
   };
 
   // Read through a function so that a departure decided while a check awaits is seen: a property read directly would keep the value it had when the check began.
@@ -217,6 +242,7 @@ async function runChild(deps: Readonly<SupervisorDeps>, plan: LaunchPlan, identi
         if (isLeaving()) {
           break;
         }
+        if (state.compacting) continue;
         const currentConversation = deps.currentConversationId(plan.sessionId);
         const move = currentConversation === undefined ? undefined : deps.claimModelMove(plan.sessionId);
         if (move !== undefined && currentConversation !== undefined) {
@@ -237,7 +263,7 @@ async function runChild(deps: Readonly<SupervisorDeps>, plan: LaunchPlan, identi
           continue;
         }
         state.declined = false;
-        if (canCompact && deps.compaction !== undefined) {
+        if (deps.compaction !== undefined) {
           considerCompacting(deps.compaction);
         }
       } while (handled !== state.wakes);
@@ -252,6 +278,7 @@ async function runChild(deps: Readonly<SupervisorDeps>, plan: LaunchPlan, identi
       state.checking = false;
     }
   };
+  recheck = () => { void check(); };
   const stopWatching = deps.watchChanges(identity, () => {
     void check();
   });
@@ -270,19 +297,16 @@ async function runChild(deps: Readonly<SupervisorDeps>, plan: LaunchPlan, identi
     deps.log.info(
       first.kind === "move"
         ? `agent-shim: ${labelOf(deps, identity)} is out of quota; resuming session ${plan.sessionId} under ${labelOf(deps, first.to)} (${first.explanation})`
-        : first.kind === "remodel"
-          ? `agent-shim: resuming session ${plan.sessionId} under ${labelOf(deps, first.to)} with ${first.model}, which only runs there`
-          : `agent-shim: ${first.reason}; compacting the ${String(first.contextTokens)}-token context of session ${plan.sessionId} on ${labelOf(deps, identity)}`,
+        : `agent-shim: resuming session ${plan.sessionId} under ${labelOf(deps, first.to)} with ${first.model}, which only runs there`,
     );
     const result = await stopChild(deps, child);
     if (state.terminating) {
-      if (first.kind === "compact") {
-        first.slot.release();
-      }
       return { kind: "exited", result };
     }
     return first;
   } finally {
+    liveAbort.abort();
+    await liveTask;
     stopWatching();
     stopWatchingMoves?.();
     for (const stop of stopHandlers) {
@@ -334,7 +358,7 @@ async function compactSession(deps: Readonly<SupervisorDeps>, compaction: Compac
 /**
  * Runs a supervised pool launch to its end and returns the exit code the launcher should exit with: the child's own when it exits by itself. A session whose identity runs out of quota is moved to another member of its pool and resumed there, on the same terminal, until a child exits by itself.
  *
- * A pool with `compaction` also compacts a session while its member can still afford it: the child is stopped at an idle prompt, the conversation is compacted as the same identity, and the child resumes. Once per stay on a member. A session that was refused before it was compacted is compacted under its new member before it resumes, since the context has to be written there whether it is large or small.
+ * A pool with `compaction` also compacts a session while its member can still afford it: the running child compacts its own conversation between turns without losing the prompt. Once per conversation on a member. A session that was refused before it was compacted is compacted under its new member before it resumes, since the context has to be written there whether it is large or small.
  *
  * Each child is a fresh launch (`prepare`) under the same session id, so the front door attributes it to one session and `claude --resume` finds the conversation. A launch's plan is released as soon as its child has ended, and the session's registry entry is removed when the supervisor does.
  */
@@ -343,7 +367,7 @@ export async function supervise(deps: Readonly<SupervisorDeps>, first: Supervise
   // What every launch of the session carries: its id, and the hooks that mark its turns.
   const base = { sessionId: first.sessionId, ...(first.settings === undefined ? {} : { settings: first.settings }), ...(first.settingsFile === undefined ? {} : { settingsFile: first.settingsFile }) };
   let launch = first;
-  let compactedHere = false;
+  let compactedHere: string | undefined;
   try {
     for (let moved = false; ; moved = true) {
       const plan = deps.prepare(launch);
@@ -363,7 +387,7 @@ export async function supervise(deps: Readonly<SupervisorDeps>, first: Supervise
       }
       let outcome: RunOutcome;
       try {
-        outcome = await runChild(deps, plan, identity, compaction !== undefined && !compactedHere);
+        outcome = await runChild(deps, plan, identity, compactedHere, (conversationId) => { compactedHere = conversationId; });
       } finally {
         plan.release();
       }
@@ -373,26 +397,16 @@ export async function supervise(deps: Readonly<SupervisorDeps>, first: Supervise
         }
         return childExitCode(outcome.result);
       }
-      if (outcome.kind === "compact") {
-        // Only a pool with compaction asks for one, so the dependency is there.
-        const interrupted = compaction === undefined ? undefined : await compactSession(deps, compaction, outcome.slot, identity, plan.sessionId, outcome.conversationId);
-        compactedHere = true;
-        if (interrupted !== undefined) {
-          return signalExit(interrupted);
-        }
-        launch = { ...base, conversation: "resume", ...(outcome.conversationId === plan.sessionId ? {} : { conversationId: outcome.conversationId }), member: memberName(deps, identity) };
-        continue;
-      }
       launch = { ...base, conversation: "resume", ...(outcome.conversationId === plan.sessionId ? {} : { conversationId: outcome.conversationId }), member: memberName(deps, outcome.to), from: labelOf(deps, identity), ...(outcome.kind === "remodel" ? { model: outcome.model } : {}) };
-      const compactedOnOld = compactedHere;
-      compactedHere = false;
+      const compactedOnOld = compactedHere === outcome.conversationId;
+      compactedHere = undefined;
       if (compaction !== undefined) {
         compaction.markCompacted(plan.sessionId, false);
         // A session compacted during its stay on the member it leaves has already had its context made small; one refused before that is compacted here, since its context is written on the new member whatever it costs.
         const slot = compactedOnOld ? undefined : compaction.acquire(outcome.to);
         if (slot !== undefined) {
           const interrupted = await compactSession(deps, compaction, slot, outcome.to, plan.sessionId, outcome.conversationId);
-          compactedHere = true;
+          compactedHere = outcome.conversationId;
           if (interrupted !== undefined) {
             return signalExit(interrupted);
           }
