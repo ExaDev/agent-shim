@@ -110,6 +110,7 @@ describe("the session event log", () => {
       ],
       cursor: `${GENERATION}.3`,
       more: false,
+      head: `${GENERATION}.3`,
     });
     expect(log.head()).toBe(`${GENERATION}.3`);
     // Every recorded event satisfies the schema the typed API validates its output through.
@@ -125,7 +126,7 @@ describe("the session event log", () => {
     log.append(appeared(SESSION_A, 1));
     log.append(appeared(SESSION_B, 2));
     expect(log.read({ since: `${GENERATION}.1` })).toMatchObject({ status: "ok", events: [{ sequence: 2 }], cursor: `${GENERATION}.2` });
-    expect(log.read({ since: log.head() })).toEqual({ status: "ok", events: [], cursor: `${GENERATION}.2`, more: false });
+    expect(log.read({ since: log.head() })).toEqual({ status: "ok", events: [], cursor: `${GENERATION}.2`, more: false, head: `${GENERATION}.2` });
   });
 
   it("pages with a limit, naming the last returned event as the cursor and saying more remain", () => {
@@ -134,7 +135,8 @@ describe("the session event log", () => {
     log.append(appeared(SESSION_B, 2));
     log.append({ kind: "worker-state", session: SESSION_B, state: "idle", at: 3 });
     const first = log.read({ limit: 2 });
-    expect(first).toMatchObject({ status: "ok", cursor: `${GENERATION}.2`, more: true });
+    // A limited page names the head beyond its own cursor, so a reader knows how far the log runs without paging to the end.
+    expect(first).toMatchObject({ status: "ok", cursor: `${GENERATION}.2`, more: true, head: `${GENERATION}.3` });
     const second = first.status === "ok" ? log.read({ since: first.cursor, limit: 2 }) : first;
     expect(second).toMatchObject({ status: "ok", events: [{ sequence: 3 }], cursor: `${GENERATION}.3`, more: false });
   });
@@ -143,7 +145,7 @@ describe("the session event log", () => {
     const log = createRcSessionEventLog({ generation: GENERATION, capacity: ROOMY_CAPACITY });
     log.append(appeared(SESSION_A, 1));
     log.append(appeared(SESSION_B, 2));
-    expect(log.read({ session: SESSION_A })).toMatchObject({ status: "ok", events: [{ session: SESSION_A }], cursor: `${GENERATION}.2` });
+    expect(log.read({ session: SESSION_A })).toMatchObject({ status: "ok", events: [{ session: SESSION_A }], cursor: `${GENERATION}.2`, head: `${GENERATION}.2` });
   });
 
   it("answers a cursor whose following events were evicted with an explicit expiry naming the head, and honours the oldest cursor still covered", () => {

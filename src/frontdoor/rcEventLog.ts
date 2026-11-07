@@ -123,10 +123,10 @@ export type RcSessionEventsReadInput = z.output<typeof RcSessionEventsReadInputS
 export const RcSessionEventsStreamInputSchema = RcSessionEventsReadInputSchema.omit({ limit: true });
 
 /**
- * One read's answer. `ok` carries the events in order and the cursor the next read resumes after (the last event returned, or the head when the read reached it, so a filtered read never rescans what it already passed), with `more` saying whether the limit cut the answer short. `expired` says the cursor can no longer be honoured and names the head to resume after once the status read has restated the present.
+ * One read's answer. `ok` carries the events in order and the cursor the next read resumes after (the last event returned, or the head when the read reached it, so a filtered read never rescans what it already passed), with `more` saying whether the limit cut the answer short and `head` naming the newest event whatever the filter and limit, the cursor a follower that has just read the status starts after. `expired` says the cursor can no longer be honoured and names the head to resume after once the status read has restated the present.
  */
 export const RcSessionEventsReadOutputSchema = z.discriminatedUnion("status", [
-  z.strictObject({ status: z.literal("ok"), events: z.readonly(z.array(RcSessionEventSchema)), cursor: z.string(), more: z.boolean() }),
+  z.strictObject({ status: z.literal("ok"), events: z.readonly(z.array(RcSessionEventSchema)), cursor: z.string(), more: z.boolean(), head: z.string() }),
   z.strictObject({ status: z.literal("expired"), message: z.string(), head: z.string() }),
 ]);
 
@@ -258,7 +258,7 @@ export function createRcSessionEventLog(deps: RcSessionEventLogDeps): RcSessionE
         }
         selected.push(event);
       }
-      return { status: "ok", events: selected, cursor, more };
+      return { status: "ok", events: selected, cursor, more, head: cursorOf(deps.generation, lastSequence) };
     },
     onAppend: (listener) => {
       listeners.add(listener);
