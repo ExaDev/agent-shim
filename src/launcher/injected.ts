@@ -80,6 +80,13 @@ export function recordInjections(base: Readonly<Environment>): InjectionRecorder
 }
 
 /**
+ * The environment a launch inherits: `env` as it is when the `CLAUDE_CONFIG_DIR` escape hatch applies (the child is the parent's session), and `env` without what a parent launcher injected (`withoutInjected`) otherwise. The launcher, `check` and `doctor` all judge the ambient-credential guard over this, so they cannot disagree.
+ */
+export function launchEnvironment(env: Readonly<Environment>, configDirEscapeHatch: boolean): Readonly<Environment> {
+  return configDirEscapeHatch ? env : withoutInjected(env);
+}
+
+/**
  * `env` without what a parent launcher injected: every variable and custom header the marker names that still holds the value the parent wrote, and the marker itself. A variable the person set to something else, or set where the parent left none, stays, so the ambient-credential guard still refuses it.
  */
 export function withoutInjected(env: Readonly<Environment>): Environment {

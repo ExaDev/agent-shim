@@ -29,6 +29,7 @@ import type { LayoutPaths } from "./paths";
 import type { PoolPickReport } from "./usage/pickReportSchema";
 import { LegacyProviderFileError, readProvider } from "./providersStore";
 import { detectEncodingAmbiguity, type EncodingAmbiguity } from "./resolve/projects";
+import { launchEnvironment } from "./launcher/injected";
 import { descendPolicyFor, resolveDecisions, type ResolvedState } from "./resolve/pipeline";
 import type { CascadeInput } from "./resolve/walk";
 import type { Decision, EntryFacts, FlattenedCascade } from "./resolve/types";
@@ -270,6 +271,8 @@ export interface RunCheckParams {
   readonly home: string;
   readonly claudeHome: string;
   readonly env: Readonly<Record<string, string | undefined>>;
+  /** Whether a launch here would take the `CLAUDE_CONFIG_DIR` escape hatch (the selection says so); absent means it would not. It decides whether the ambient-credential guard is judged over `env` as it is or without what a parent launcher injected, as the launch itself does. */
+  readonly configDirEscapeHatch?: boolean;
   readonly branch?: string;
   readonly branchDetached?: boolean;
   readonly nowMs: number;
@@ -370,11 +373,11 @@ export function runCheck(params: RunCheckParams): CheckReport {
 
   const projectEncodingAmbiguities = flagAmbiguousEncodings(resolved.flattened, facts);
 
+  const guardEnv = launchEnvironment(params.env, params.configDirEscapeHatch === true);
   const ambientCredential = isCodex ? codexCredentialGuard(params.env, params.identity?.allowAmbientCredential ?? false) : evaluateAmbientCredentialGuard({
-    env: params.env,
+    env: guardEnv,
     allowAmbientCredential: params.identity?.allowAmbientCredential ?? false,
-    allowAmbientCredentialOverride:
-      parseEnvBool("AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL", params.env.AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL) === true,
+    allowAmbientCredentialOverride: parseEnvBool("AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL", guardEnv.AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL) === true,
     ...(params.identityName === undefined ? {} : { identityName: params.identityName }),
   });
 
@@ -613,6 +616,7 @@ export function collectCheckReport(params: CollectCheckReportParams): CheckRepor
     home,
     claudeHome,
     env: params.env,
+    configDirEscapeHatch: identityDecision.configDirEscapeHatch,
     ...(git.branch === undefined ? {} : { branch: git.branch }),
     ...(git.branchDetached === undefined ? {} : { branchDetached: git.branchDetached }),
     nowMs: Date.now(),
