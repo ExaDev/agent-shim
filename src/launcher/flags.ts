@@ -238,6 +238,10 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
       if (key === CUSTOM_HEADERS_ENV) {
         env[key] = value;
         injectedHeaderNames.push(...parseAnthropicCustomHeaders(value).map(({ name }) => name));
+      } else if (key === "NO_PROXY" || key === "no_proxy") {
+        // The provider's list replaces the parent's, and the door's own hosts are appended to it below: every host in it is the launcher's, recorded as one.
+        env[key] = value;
+        injections.recordBypassHosts(key, value.split(","));
       } else {
         inject(key, value);
       }

@@ -5,7 +5,7 @@ import { z } from "zod";
 import { parseAnthropicCustomHeaders, withoutAnthropicCustomHeaders } from "../headroom/headers";
 
 /**
- * The environment variable a launcher leaves in its child's environment, naming what it wrote there itself: a JSON object from each variable to the SHA-256 of the value written, with two kinds of entry for variables whose value the person's own settings share (`ANTHROPIC_CUSTOM_HEADERS:<lowercased header name>` for one custom header, `<NO_PROXY or no_proxy>,<lowercased host>` for one host the launcher appended to a bypass list). A launch started from inside that child reads it to tell what its parent launcher injected, which it must not inherit, from what the person set, which it must treat as theirs. The only things written to the environment and not recorded are `CLAUDE_CONFIG_DIR` (the child's own directory, replaced by every launch that resolves an identity) and the variables a launch unsets.
+ * The environment variable a launcher leaves in its child's environment, naming what it wrote there itself: a JSON object from each variable to the SHA-256 of the value written, with two kinds of entry for variables whose value the person's own settings share: `ANTHROPIC_CUSTOM_HEADERS:<lowercased header name>` holds the digest of one custom header's value, and `<NO_PROXY or no_proxy>,appended` lists, in the clear, the lowercased hosts the launcher put in that bypass list (they are not secret, and a digest per host would make the marker grow several times faster than the list). A launch started from inside that child reads it to tell what its parent launcher injected, which it must not inherit, from what the person set, which it must treat as theirs. The only things written to the environment and not recorded are `CLAUDE_CONFIG_DIR` (the child's own directory, replaced by every launch that resolves an identity) and the variables a launch unsets.
  */
 export const INJECTED_ENV = "AGENT_SHIM_INJECTED";
 
@@ -18,9 +18,9 @@ const HEADER_KEY_PREFIX = `${CUSTOM_HEADERS_ENV}:`;
 /** The comma-separated host lists a launcher appends to, under both spellings clients read. */
 const BYPASS_LISTS = ["NO_PROXY", "no_proxy"] as const;
 
-/** The marker key of one host appended to `list`. A host can contain a colon (`::1`), so the list name ends at the first comma, which a variable name never contains. */
-function listKey(list: string, host: string): string {
-  return `${list},${host.toLowerCase()}`;
+/** The marker key of the hosts the launcher put in `list`. A variable name never contains a comma. */
+function listKey(list: string): string {
+  return `${list},appended`;
 }
 
 const InjectedSchema = z.record(z.string(), z.string());
@@ -88,8 +88,9 @@ export function recordInjections(base: Readonly<Environment>): InjectionRecorder
       }
     },
     recordBypassHosts: (list, hosts) => {
-      for (const host of hosts) {
-        digests.set(listKey(list, host), digest(host.toLowerCase()));
+      const recordedHosts = [...new Set([...(digests.get(listKey(list))?.split(",") ?? []), ...hosts.map((host) => host.trim().toLowerCase()).filter((host) => host !== "")])];
+      if (recordedHosts.length > 0) {
+        digests.set(listKey(list), recordedHosts.join(","));
       }
     },
     finish: () => {
@@ -100,10 +101,11 @@ export function recordInjections(base: Readonly<Environment>): InjectionRecorder
   };
 }
 
-/** `value` (a comma-separated host list) without the hosts the marker records as appended to `list`; `value` itself when none is. */
+/** `value` (a comma-separated host list) without the hosts the marker records for `list`; `value` itself when none is. */
 function withoutRecordedHosts(list: string, value: string, digests: Readonly<Record<string, string>>): string {
+  const recordedHosts = new Set(digests[listKey(list)]?.split(","));
   const entries = value.split(",");
-  const kept = entries.filter((entry) => digests[listKey(list, entry.trim())] === undefined);
+  const kept = entries.filter((entry) => !recordedHosts.has(entry.trim().toLowerCase()));
   return kept.length === entries.length ? value : kept.join(",");
 }
 
@@ -128,11 +130,12 @@ export function withoutInjected(env: Readonly<Environment>): Environment {
     }
     if (name === CUSTOM_HEADERS_ENV) {
       const remaining = withoutAnthropicCustomHeaders(value, (entry) => digests[`${HEADER_KEY_PREFIX}${entry.name.toLowerCase()}`] === digest(entry.value));
-      return remaining.trim() === "" ? [] : [[name, remaining]];
+      // A block emptied by the removal goes with it; one that was empty to begin with is the person's and stays.
+      return remaining !== value && remaining.trim() === "" ? [] : [[name, remaining]];
     }
     if (name === "NO_PROXY" || name === "no_proxy") {
       const remaining = withoutRecordedHosts(name, value, digests);
-      return remaining.split(",").every((entry) => entry.trim() === "") ? [] : [[name, remaining]];
+      return remaining !== value && remaining.split(",").every((entry) => entry.trim() === "") ? [] : [[name, remaining]];
     }
     return digests[name] === digest(value) ? [] : [[name, value]];
   });

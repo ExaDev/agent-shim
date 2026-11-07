@@ -33,12 +33,14 @@ describe("buildEnv records what it injects", () => {
     }
   });
 
-  /** Whether the marker names `name`: as a variable, one of its custom headers or one of its appended hosts. */
-  const named = (marker: Readonly<Record<string, string>>, name: string): boolean => Object.keys(marker).some((key) => key === name || key.startsWith(`${name}:`) || key.startsWith(`${name},`));
+  /** Whether the marker names `name`: as a variable, or by a custom header or appended-host entry. */
+  const named = (marker: Readonly<Record<string, string>>, name: string): boolean =>
+    Object.keys(marker).some((key) => key === name || key.startsWith(`${name}:`) || key === `${name},appended`);
 
   it.each([
     ["an identity with a credential", { identityCredential: { target: "oauthToken", token: "oauth-work-token", source: { env: "X" }, warnings: [] } }],
     ["a provider session", { provider: provider({ ANTHROPIC_MODEL: "glm-4.6", ANTHROPIC_CUSTOM_HEADERS: "x-provider-entry: 1" }) }],
+    ["a provider session whose env sets its own bypass lists", { provider: provider({ NO_PROXY: "internal.glm.example", no_proxy: "internal.glm.example" }) }],
     ["a provider session with Remote Control on", { provider: provider({ ANTHROPIC_MODEL: "glm-4.6" }), remoteControl: true }],
     ["headroom, tier models and the statusline", { headroom: { socketPath: "/s", projectId: "p" }, tierModels: { opus: "family:glm-5-1" }, statusline: {} }],
   ] as const)("records every key it changes for %s, bar the named exceptions", (_label, extra) => {
@@ -55,6 +57,12 @@ describe("buildEnv records what it injects", () => {
 
   it("records the bypass hosts it appended and not the parent's own", () => {
     const marker = recorded(buildEnv({ remoteControl: false, ...params }));
-    expect(Object.keys(marker).filter((key) => key.startsWith("NO_PROXY,")).sort()).toEqual(["NO_PROXY,127.0.0.1", "NO_PROXY,::1", "NO_PROXY,localhost", "NO_PROXY,mcp.example.com"]);
+    expect(marker["NO_PROXY,appended"]?.split(",").sort()).toEqual(["127.0.0.1", "::1", "localhost", "mcp.example.com"]);
+  });
+
+  it("records the hosts a provider's own env put in a bypass list, which replaced the parent's", () => {
+    const marker = recorded(buildEnv({ remoteControl: false, ...params, provider: provider({ NO_PROXY: "internal.glm.example" }) }));
+    expect(marker["NO_PROXY,appended"]?.split(",")).toContain("internal.glm.example");
+    expect(marker["NO_PROXY,appended"]?.split(",")).not.toContain("corp.example");
   });
 });
