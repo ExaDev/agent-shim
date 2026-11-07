@@ -501,6 +501,20 @@ describe("the Remote Control status enriched from the session registry", () => {
     expect(world.reads).toBe(2);
   });
 
+  it("carries the registry's name, working directory and identity onto a registered session the tracker holds no record of, and leaves out what the registry lacks", async () => {
+    const { world, resolve } = registryWorld();
+    world.registry = new Map([
+      [OBSERVED_SESSION_ID, { localSessionId: LOCAL_SESSION_ID, pid: REGISTERED_PID, name: "fix the thing", cwd: "/repo", identity: "work" }],
+      [QUIET_SESSION_ID, { localSessionId: LOCAL_SESSION_ID, pid: REGISTERED_PID }],
+    ]);
+    const { unobserved } = await resolve();
+    expect(unobserved.map((session) => [session.id, session.name, session.cwd, session.identity])).toEqual([
+      [QUIET_SESSION_ID, undefined, undefined, undefined],
+      [OBSERVED_SESSION_ID, "fix the thing", "/repo", "work"],
+    ]);
+    expect(unobserved[0]).not.toHaveProperty("name");
+  });
+
   it("reports the identity a session's requests carried under its current name, and none once that identity is gone", async () => {
     const tracker = trackerWith(QUIET_SESSION_ID);
     exchange(tracker, { method: "PUT", url: `/v1/code/sessions/${QUIET_SESSION_ID}/worker`, authorization: OAUTH_BEARER, requestBody: JSON.stringify({ worker_status: "running" }), identity: "identity-id" }, { status: HTTP_STATUS.ok });

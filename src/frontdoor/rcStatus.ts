@@ -13,6 +13,12 @@ export interface RcUnobservedSession {
   readonly localSessionId: string;
   /** The process that registered the session. */
   readonly pid: number;
+  /** The session's name as the Claude Code session registry holds it, when it holds one. */
+  readonly name?: string;
+  /** The directory the session was started in, when the registry holds one. */
+  readonly cwd?: string;
+  /** The identity whose own registry holds the session's entry, when exactly one does (see `RcRegisteredSession.identity`). */
+  readonly identity?: string;
   /** Why the door holds no record of the session. */
   readonly reason: string;
   /** The worker state the service answered a read with, always `source: "read"`; undefined when no read succeeded. */
@@ -156,7 +162,14 @@ export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
     const trackedIds = new Set(trackedBefore.map((status) => status.id));
     const registered = [...registry]
       .filter(([id]) => (sessionId === undefined || id === sessionId) && !trackedIds.has(id))
-      .map(([id, session]) => ({ id, localSessionId: session.localSessionId, pid: session.pid }))
+      .map(([id, session]) => ({
+        id,
+        localSessionId: session.localSessionId,
+        pid: session.pid,
+        ...(session.name === undefined ? {} : { name: session.name }),
+        ...(session.cwd === undefined ? {} : { cwd: session.cwd }),
+        ...(session.identity === undefined ? {} : { identity: session.identity }),
+      }))
       .sort((a, b) => a.id.localeCompare(b.id));
     const [, readUnobserved] = await Promise.all([
       Promise.all(
@@ -187,22 +200,21 @@ export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
       ),
       Promise.all(
         registered.map(async (session): Promise<RcUnobservedSession> => {
-          const base = { id: session.id, localSessionId: session.localSessionId, pid: session.pid };
           if (deps.backends.selfHosted?.owns(session.id, deps.persistedCredentialOf(session.id)?.authorization) === true) {
             const read = deps.backends.selfHosted.read(session.id);
             return read.ok
-              ? { ...base, reason: SELF_HOSTED_QUIET_REASON, workerState: { value: read.workerStatus, observedAt: deps.now(), source: "read" }, workerStateUnavailable: undefined }
-              : { ...base, reason: SELF_HOSTED_QUIET_REASON, workerState: undefined, workerStateUnavailable: read.message };
+              ? { ...session, reason: SELF_HOSTED_QUIET_REASON, workerState: { value: read.workerStatus, observedAt: deps.now(), source: "read" }, workerStateUnavailable: undefined }
+              : { ...session, reason: SELF_HOSTED_QUIET_REASON, workerState: undefined, workerStateUnavailable: read.message };
           }
           if (deps.persistedCredentialOf(session.id)?.authorization === undefined) {
-            return { ...base, reason: NEVER_OBSERVED_REASON, workerState: undefined, workerStateUnavailable: noCredentialMessage(session.id) };
+            return { ...session, reason: NEVER_OBSERVED_REASON, workerState: undefined, workerStateUnavailable: noCredentialMessage(session.id) };
           }
           const holding = heldRead(session.id, deps.persistedCredentialOf);
           const read = await holding.result;
           const at = holding.requestedAt;
           return read.ok
-            ? { ...base, reason: QUIET_REASON, workerState: { value: read.workerStatus, observedAt: at, source: "read" }, workerStateUnavailable: undefined }
-            : { ...base, reason: QUIET_REASON, workerState: undefined, workerStateUnavailable: read.message };
+            ? { ...session, reason: QUIET_REASON, workerState: { value: read.workerStatus, observedAt: at, source: "read" }, workerStateUnavailable: undefined }
+            : { ...session, reason: QUIET_REASON, workerState: undefined, workerStateUnavailable: read.message };
         }),
       ),
     ]);

@@ -222,7 +222,7 @@ describe("frontdoor rc", () => {
         statuses: [],
         unobserved: [
           { ...unobserved, workerState: undefined, workerStateUnavailable: "the front door holds no credential for session cse_2" },
-          { ...unobserved, id: "cse_3", workerState: { value: "idle", observedAt: 1_000, source: "read" }, workerStateUnavailable: undefined },
+          { ...unobserved, id: "cse_3", workerState: { value: "idle", observedAt: 1_000, source: "read" }, workerStateUnavailable: undefined, name: "fix the thing", identity: "work", cwd: "/repo" },
         ],
       }),
     ).toEqual([
@@ -230,6 +230,7 @@ describe("frontdoor rc", () => {
       "  reason: the front door has never observed this session",
       "  worker: state unknown: the front door holds no credential for session cse_2",
       "cse_3  unobserved  local session local-2  pid 42",
+      '  session: name "fix the thing"  identity work  cwd "/repo"',
       "  reason: the front door has never observed this session",
       "  worker: state idle as read from the service at 1970-01-01T00:00:01.000Z",
     ]);

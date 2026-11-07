@@ -273,6 +273,12 @@ const RcUnobservedSessionSchema = z.strictObject({
   id: z.string(),
   localSessionId: z.string(),
   pid: z.number(),
+  /** The session's name from the Claude Code session registry, when it holds one. */
+  name: z.string().optional(),
+  /** The directory the session was started in, from the registry. */
+  cwd: z.string().optional(),
+  /** The identity whose own registry holds the session's entry, when exactly one does. */
+  identity: z.string().optional(),
   reason: z.string(),
   workerState: RcWorkerStateFactSchema.optional(),
   workerStateUnavailable: z.string().optional(),

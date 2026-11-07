@@ -547,7 +547,7 @@ function isRcSessionStatus(value: unknown): value is RcSessionStatus {
   return value.pending.every((candidate) => isRcPendingRequestSummary(candidate));
 }
 
-/** Whether one value is an unobserved registered session as this surface defines it: its ids, process and reason, with the worker state fact or the reason it has none, either of which may be absent. */
+/** Whether one value is an unobserved registered session as this surface defines it: its ids, process and reason, with the registry's name, working directory and identity where it holds them, and the worker state fact or the reason it has none, any of which may be absent. */
 function isRcUnobservedSession(value: unknown): value is RcUnobservedSession {
   if (typeof value !== "object" || value === null) {
     return false;
@@ -559,6 +559,9 @@ function isRcUnobservedSession(value: unknown): value is RcUnobservedSession {
     return false;
   }
   if ("workerState" in value && value.workerState !== undefined && !isRcWorkerStateFact(value.workerState)) {
+    return false;
+  }
+  if (!isOptionalOfType(value, "name", "string") || !isOptionalOfType(value, "cwd", "string") || !isOptionalOfType(value, "identity", "string")) {
     return false;
   }
   return !("workerStateUnavailable" in value) || value.workerStateUnavailable === undefined || typeof value.workerStateUnavailable === "string";

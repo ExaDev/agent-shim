@@ -207,7 +207,7 @@ function renderSessions(report) {
   for (var j = 0; j < report.unobserved.length; j++) {
     var session = report.unobserved[j];
     var unobservedRow = el('div', 'session unobserved');
-    unobservedRow.appendChild(el('div', null, shortId(session.id)));
+    unobservedRow.appendChild(el('div', null, session.name === undefined ? shortId(session.id) : session.name + ' (' + shortId(session.id) + ')'));
     unobservedRow.appendChild(el('div', 'dim', 'unobserved, ' + workerLabel(session)));
     unobservedRow.title = session.reason + (session.workerStateUnavailable === undefined ? '' : ' ' + session.workerStateUnavailable);
     list.appendChild(unobservedRow);

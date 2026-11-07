@@ -57,6 +57,18 @@ function formatRcWorkerState(fact: RcWorkerStateFact | undefined, unavailable: s
   return `state ${fact.value} ${fact.source === "read" ? "as read from the service at" : "since"} ${new Date(fact.observedAt).toISOString()}`;
 }
 
+/** The facts that say which session a status entry is, on one line, each only when known: the name and identity, the model a tracked session stated, the process of a tracked session (an unobserved entry names its own on its first line) and the working directory; undefined when none is known. */
+function formatRcIdentification(entry: { readonly name?: string | undefined; readonly identity?: string | undefined; readonly model?: string | undefined; readonly pid?: number | undefined; readonly cwd?: string | undefined }): string | undefined {
+  const parts = [
+    entry.name === undefined ? undefined : `name ${JSON.stringify(entry.name)}`,
+    entry.identity === undefined ? undefined : `identity ${entry.identity}`,
+    entry.model === undefined ? undefined : `model ${entry.model}`,
+    entry.pid === undefined ? undefined : `pid ${String(entry.pid)}`,
+    entry.cwd === undefined ? undefined : `cwd ${JSON.stringify(entry.cwd)}`,
+  ].filter((part) => part !== undefined);
+  return parts.length === 0 ? undefined : parts.join("  ");
+}
+
 /** Formats `agent-shim frontdoor rc status`: one line per tracked session, its worker facts, and its pending control requests indented beneath, then one line per registered session the door holds no record of, with why and its worker state. */
 export function formatRcSessionStatus(report: RcStatusReport): string[] {
   if (report.statuses.length === 0 && report.unobserved.length === 0) {
@@ -65,15 +77,9 @@ export function formatRcSessionStatus(report: RcStatusReport): string[] {
   const lines: string[] = [];
   for (const status of report.statuses) {
     lines.push(`${status.id}  created ${new Date(status.createdAt).toISOString()}  last seen ${new Date(status.lastSeenAt).toISOString()}`);
-    const identification = [
-      status.name === undefined ? undefined : `name ${JSON.stringify(status.name)}`,
-      status.identity === undefined ? undefined : `identity ${status.identity}`,
-      status.model === undefined ? undefined : `model ${status.model}`,
-      status.pid === undefined ? undefined : `pid ${String(status.pid)}`,
-      status.cwd === undefined ? undefined : `cwd ${JSON.stringify(status.cwd)}`,
-    ].filter((part) => part !== undefined);
-    if (identification.length > 0) {
-      lines.push(`  session: ${identification.join("  ")}`);
+    const identification = formatRcIdentification(status);
+    if (identification !== undefined) {
+      lines.push(`  session: ${identification}`);
     }
     if (status.workerState === undefined && status.workerStateUnavailable === undefined && status.workerIdleSeconds === undefined) {
       lines.push("  worker: not observed");
@@ -95,6 +101,10 @@ export function formatRcSessionStatus(report: RcStatusReport): string[] {
   }
   for (const session of report.unobserved) {
     lines.push(`${session.id}  unobserved  local session ${session.localSessionId}  pid ${String(session.pid)}`);
+    const identification = formatRcIdentification({ name: session.name, identity: session.identity, cwd: session.cwd });
+    if (identification !== undefined) {
+      lines.push(`  session: ${identification}`);
+    }
     lines.push(`  reason: ${session.reason}`);
     lines.push(`  worker: ${formatRcWorkerState(session.workerState, session.workerStateUnavailable)}`);
   }
