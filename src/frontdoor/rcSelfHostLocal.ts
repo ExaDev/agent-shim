@@ -81,6 +81,8 @@ export interface RcSelfHostLocal {
   readonly ownsLaunch: (capability: string) => boolean;
   /** Whether the redirected connection whose client end is on local port `port` is a self-hosted session's, attributed by its peer process. */
   readonly ownsPeer: (port: number) => Promise<boolean>;
+  /** The identity the credential is minted into, which every ownership decision rests on: `none` while nothing is minted, `every` for a mint that names none. */
+  readonly mintGeneration: () => string;
   /**
    * Serves one request of a self-hosted session (the connect surface calls it for no other): everything except what the routed pipeline must serve, which resolves false so routing continues unchanged. That is the Remote Control session family on the API host, and every `/v1/` path of a provider session (it carries its provider's internal header), whose inference the resolver sends to that provider; every other path on either host is answered here, so nothing of a self-hosted session reaches a real host.
    */
@@ -106,6 +108,10 @@ export function createRcSelfHostLocal(deps: RcSelfHostLocalDeps): RcSelfHostLoca
   return {
     ownsLaunch: deps.ownsLaunch,
     ownsPeer: deps.ownsPeer,
+    mintGeneration: () => {
+      const minted = deps.credentialRecord();
+      return minted === undefined ? "none" : (minted.identityId === undefined ? "every" : `identity:${minted.identityId}`);
+    },
     serve: async (host: string, request: IncomingMessage, response: ServerResponse): Promise<boolean> => {
       const method = (request.method ?? "").toUpperCase();
       const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;

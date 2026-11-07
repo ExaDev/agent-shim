@@ -522,7 +522,7 @@ describe("MITM proxy over real sockets", () => {
           throw new Error("no piped exchange reaches a blind tunnel");
         },
       };
-      const world = makeTlsWorld(ca, upstreamCa, { capture, isLiveCapability: (token) => token === TEST_CAPABILITY || token === otherCapability, localSurface: { serve: async () => await Promise.resolve(false), ownsLaunch: (capability) => capability === TEST_CAPABILITY, ownsPeer: async () => await Promise.resolve(true) } });
+      const world = makeTlsWorld(ca, upstreamCa, { capture, isLiveCapability: (token) => token === TEST_CAPABILITY || token === otherCapability, localSurface: { serve: async () => await Promise.resolve(false), ownsLaunch: (capability) => capability === TEST_CAPABILITY, ownsPeer: async () => await Promise.resolve(true), mintGeneration: () => "fixed" } });
       const { connectPort, close } = await world.start();
       try {
         const selfHosted = rawAttempt(connectPort, connectHead("downloads.claude.ai", [proxyAuthorizationFor(TEST_CAPABILITY)]));
