@@ -58,4 +58,4 @@ A door that starts while a session is already running sees it appear at its firs
 
 A retired request is remembered (up to `RC_RETIRED_TOMBSTONES_MAX` per session, the oldest forgotten first), so a copy of it that arrives later on the other channel is not born again while it is remembered; a request the tracker never saw pending, or one forgotten past that bound, is born as a new request.
 
-A `pending-born` event carries the request's id, type and one-line summary, not a question's questions or options: a follower that answers questions reads them from `rc pending` (or the typed `rc/pending`) for that request id.
+A request the tracker refuses at its per-session cap emits no event (see `dropped` in [rc-questions.md](rc-questions.md)). A `pending-born` event carries the request's id, type and one-line summary, not a question's questions or options: a follower that answers questions reads them from `rc pending` (or the typed `rc/pending`) for that request id.
