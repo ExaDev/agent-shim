@@ -481,8 +481,8 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
         // A cache delete that fails is held until the leftover check has run, so the one failure names both; the check runs after the lock is released, so a slow Keychain never holds the names lock.
         let cacheFailure: KeychainCacheDeleteError | undefined;
         const selfHostedDir = withIdentityNamesLock(paths, realIdentityNamesLockPorts, () => {
-          // Read before the directory goes: the removal leaves every Claude Code login item, and for an identity the self-hosted mint wrote into, a leftover one is named afterwards.
-          const configDir = identityDirectory(paths, id);
+          // Read before the directory goes, under the lock: the id read before the confirmation can be another identity's by now (the name may have been renamed away and taken), and the removal resolves the name again here. The removal leaves every Claude Code login item, and for an identity the self-hosted mint wrote into, a leftover one is named afterwards.
+          const configDir = identityDirectory(paths, requireIdentityId(paths, name));
           const selfHosted = isSelfHostMinted(renamePorts.fs, configDir);
           const removed = removeIdentityWithLockHeld(paths, name, realIdentityNamesLockPorts);
           // The Keychain store holds a cached credential the store function cannot reach; forgetting it keeps a later identity given the same id from reading it.

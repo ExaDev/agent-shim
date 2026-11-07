@@ -20,6 +20,7 @@ import { realFarmFs } from "./realPorts";
 import { realpathOrSelf } from "./realIdentityRename";
 import { sameDirectory } from "./sameDirectory";
 import { fakeCommandDeps } from "./test-helpers";
+import type { CommandDeps } from "./cli/commandDeps";
 import { claudeCodeKeychainService } from "./usage/signIn";
 
 const NOW_MS = 1_000;
@@ -109,8 +110,8 @@ describe("identity rename", () => {
     };
   }
 
-  async function run(argv: readonly string[]): Promise<number> {
-    const program = buildProgram({ ...fakeCommandDeps(paths), runClaude: vi.fn(), identityRenamePorts: ports() });
+  async function run(argv: readonly string[], commandDeps: CommandDeps = fakeCommandDeps(paths)): Promise<number> {
+    const program = buildProgram({ ...commandDeps, runClaude: vi.fn(), identityRenamePorts: ports() });
     try {
       await program.parseAsync([...argv], { from: "user" });
       return typeof process.exitCode === "number" ? process.exitCode : 0;
@@ -306,6 +307,32 @@ describe("identity rename", () => {
     expect(printed).toContain('Removed identity "lab", but could not delete its cached credential');
     expect(printed).toContain(`security delete-generic-password -s '${claudeCodeKeychainService(labDir)}' -a 'alex'`);
     expect(identityIdOf(paths, "lab")).toBeUndefined();
+  });
+
+  it("names the leftover login of the identity the removal really removed, when the name moves to another identity while the removal waits for its confirmation", async () => {
+    addIdentity(paths, "lab");
+    const labDir = path.join(paths.identitiesDir, "lab");
+    fs.writeFileSync(path.join(labDir, RC_SELF_HOST_MINT_MARKER), `${JSON.stringify({ mintedAt: new Date(NOW_MS).toISOString() })}\n`);
+    keychain.seed(claudeCodeKeychainService(labDir), "alex", "a-made-up-login");
+    const base = fakeCommandDeps(paths, { interactive: true });
+    const moveTheName: CommandDeps = {
+      ...base,
+      prompts: {
+        ...base.prompts,
+        select: async <Value extends string>(): Promise<Value | symbol> => {
+          // Another process, during the confirmation: the marked identity is renamed away and an unmarked one takes the name.
+          fs.writeFileSync(path.join(labDir, "identity.json"), JSON.stringify({ name: "elsewhere" }));
+          fs.mkdirSync(path.join(paths.identitiesDir, "taker"), { recursive: true });
+          fs.writeFileSync(path.join(paths.identitiesDir, "taker", "identity.json"), JSON.stringify({ name: "lab" }));
+          return await Promise.resolve("remove" as Value);
+        },
+      },
+    };
+    expect(await run(["identity", "remove", "lab"], moveTheName)).toBe(0);
+    expect(fs.existsSync(path.join(paths.identitiesDir, "taker"))).toBe(false);
+    expect(fs.existsSync(labDir)).toBe(true);
+    expect(keychain.items.has(claudeCodeKeychainService(labDir))).toBe(true);
+    expect(warnings).toEqual([]);
   });
 
   it("keeps the removed id reserved until the CLI deletes its Keychain cache", async () => {
