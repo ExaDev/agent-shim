@@ -275,6 +275,18 @@ The status has two parts, and `--json` prints both as `{statuses, unobserved}` (
 
 A named session is refused as not observed only when it is in neither part.
 
+#### Where each kind of session's worker state comes from
+
+One door serves Remote Control sessions of three kinds at once, and the worker state of each is read from the backend that holds it, chosen per session:
+
+| Kind of session | Created against | Remote Control traffic | Worker state read from | Credential the read uses | When the door cannot read it |
+|---|---|---|---|---|---|
+| Native Anthropic login | the real claude.ai service | through the door's CONNECT surface to the real service | the real service, `GET /v1/code/sessions/{id}/worker` over a dial to the real API host | the session's observed OAuth bearer, or the one a door generation persisted | no bearer was ever observed or persisted (`unobserved`, never observed), or the read failed (the reason, with the service's answer) |
+| Provider launch that keeps an Anthropic login | the real claude.ai service | the same; inference goes to the provider | the same | the same | the same |
+| No Anthropic login (self-hosted mode, `AGENT_SHIM_FRONTDOOR_RC_SELF_HOST=1`, typically with a third-party provider) | the door's own self-hosted service | answered by the door itself | the self-hosted service, in process: no request crosses the door, so the read is never observed as the session's traffic | none | the self-hosted service no longer holds the session (archived, or retired after its retention) and no OAuth credential exists |
+
+The door's writes (`send`, `answer`, `interrupt`, `set-model`, `set-permission-mode` and the rest of the verb family) and its client read stream choose their backend the same way, per session (`perSessionRcEventDial`, `perSessionRcStreamDial`): a session the self-hosted service holds is reached through the door's own surface, and any other through the real service with its OAuth credential, so a door in self-hosted mode still reaches a claude.ai session (one whose create a door generation outside that mode observed) exactly as a door outside the mode does. A self-hosted read is answered live and never reused; a service read is reused as described above. An unobserved session has no tracker record to write through, so its entry is status only. In self-hosted mode the CLI's other startup calls on the intercepted hosts are still forwarded upstream (issue #731).
+
 ### The statusline
 
 `agent-shim statusline` is a statusline entrypoint for Claude Code: point the `statusLine` setting's `command` at it and it renders from the JSON Claude Code writes to its stdin. It needs only the `agent-shim` binary (or `npx agent-shim statusline`), not identities, a profile, a provider or the front door. The only files it writes are its own state, under `~/.agent-shim/statusline`: what it keeps between refreshes about each session's transcript (the transcript reader's cache, the last output speed sample and the last good context frame), each session's spend for the day, and short-lived files holding the output of the programs it runs.
