@@ -1,4 +1,5 @@
 import { realRcEventDial, type RcDialTarget } from "./connectEffects";
+import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
 import type { RcStreamEvent } from "./rcSchemas";
 import type { RcEventFanout } from "./rcStream";
 import { buildRcEventWriteBody, buildRcUserMessagePayload, noOAuthCredentialResult, rcEventWriteResultFromAnswer, rcSessionNotObservedMessage, rcWriteHeaders, type RcDialAnswer, type RcEventDial, type RcEventWriteResult, type RcInjectDeps } from "./rcWrites";
@@ -76,6 +77,11 @@ async function writeRcPersonMessage(deps: RcPersonWriteDeps, sessionId: string, 
     return noOAuthCredentialResult(sessionId);
   }
   const body = JSON.stringify(buildRcEventWriteBody(buildRcUserMessagePayload(deps.newUuid(), sessionId, text)));
+  // The door's own surface reads at most this much of a write, so a larger one would be cut off there rather than refused here.
+  const bytes = Buffer.byteLength(body, "utf8");
+  if (bytes > CONTROL_BODY_CAP_BYTES) {
+    return { ok: false, message: `the command for session ${sessionId} makes an event write of ${String(bytes)} bytes, over the ${String(CONTROL_BODY_CAP_BYTES)} bytes the door's self-hosted surface reads; shorten its arguments` };
+  }
   let answer: RcDialAnswer;
   try {
     answer = await deps.dial.writeEvents(sessionId, rcWriteHeaders({ ...credential, anthropicClientPlatform: RC_PERSON_CLIENT_PLATFORM }), body);

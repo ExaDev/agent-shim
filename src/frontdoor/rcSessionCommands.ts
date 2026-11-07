@@ -1,6 +1,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { COMPACT_TIMEOUT_MS } from "../supervise/compactTimeout";
+import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
 import type { CompactionResult } from "../supervise/realCompact";
 import { RESULT_POLL_MS } from "../supervise/sessionControl";
 import type { TranscriptGoal } from "../supervise/sessionGoal";
@@ -25,6 +26,14 @@ export const RC_GOAL_CLEAR_WORDS: readonly string[] = ["clear", "stop", "off", "
 
 /** The longest goal condition the 2.1.319 `/goal` command accepts, in characters; it refuses a longer one with its own message, so the set verb refuses it first, unsent. */
 export const RC_GOAL_CONDITION_MAX_CHARS = 4000;
+
+/** The most bytes one UTF-16 code unit can take in a JSON body: a control character JSON escapes as `\uXXXX`, six bytes, and no code unit encodes to more. */
+const MAX_JSON_BYTES_PER_CODE_UNIT = 6;
+
+/**
+ * The longest compaction instructions the verbs accept, in UTF-16 code units: as many as fit in one request body under the door's control body cap however they encode, so the bound is one a request can actually reach. The self-hosted route also checks the event write it makes against the same cap, since its envelope adds to the instructions.
+ */
+export const RC_COMPACT_INSTRUCTIONS_MAX_CHARS = Math.floor(CONTROL_BODY_CAP_BYTES / MAX_JSON_BYTES_PER_CODE_UNIT);
 
 /**
  * The longest any verb waits for the session's answer: the largest delay Node's timers accept (a signed 32-bit millisecond count), since a larger one fires after one millisecond instead. Every wait the verbs take is bounded by it, in the schema, the CLI's parser and the timer itself.

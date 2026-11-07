@@ -1,7 +1,6 @@
 import { z } from "zod";
 
-import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
-import { RC_GOAL_CONDITION_MAX_CHARS, RC_SESSION_COMMAND_MAX_WAIT_MS } from "./rcSessionCommands";
+import { RC_COMPACT_INSTRUCTIONS_MAX_CHARS, RC_GOAL_CONDITION_MAX_CHARS, RC_SESSION_COMMAND_MAX_WAIT_MS } from "./rcSessionCommands";
 
 /**
  * The Zod schemas of the goal and compaction verbs' typed API (`rcSessionCommands.ts` holds the operations): the inputs each procedure accepts and the reports it answers with. Kept apart from `rcSchemas.ts` so the verbs' contract lives beside nothing else.
@@ -29,10 +28,10 @@ export const RcCompactInputSchema = z.strictObject({
   waitMs: WaitMsSchema,
 });
 
-/** The instructed compaction's input: the compaction's, plus the non-empty summarisation instructions that make it a directive, no longer than the control body cap every write the door makes into a session is held to. */
+/** The instructed compaction's input: the compaction's, plus the non-empty summarisation instructions that make it a directive, no longer than fits in one request body under the door's control body cap however it encodes. */
 export const RcCompactWithInstructionsInputSchema = z.strictObject({
   session: z.string().min(1),
-  instructions: z.string().trim().min(1).max(CONTROL_BODY_CAP_BYTES),
+  instructions: z.string().trim().min(1).max(RC_COMPACT_INSTRUCTIONS_MAX_CHARS),
   waitMs: WaitMsSchema,
 });
 
