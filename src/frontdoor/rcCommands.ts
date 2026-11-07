@@ -9,6 +9,7 @@ import { realFarmFs } from "../realPorts";
 import { readFrontDoorControlMaterial } from "./doorClient";
 import { frontDoorRcApiClient, type RcApiClient } from "./rcApi";
 import { frontDoorRcControl, realRcControlTransport, type FrontDoorRcControl } from "./rcControl";
+import { registerRcEventsCommand } from "./rcEventsCommand";
 import { rcRateLimitInfoOf } from "./rcLiveUsage";
 import type { RcRateLimitInfo } from "./rcSchemas";
 import { mintRcSelfHostCredential, type RcSelfHostMintResult } from "./rcSelfHostMint";
@@ -522,6 +523,8 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
       }),
     ["agent-shim frontdoor rc watch", "agent-shim frontdoor rc watch cse_00000000-0000-4000-8000-000000000000 --json"],
   );
+
+  registerRcEventsCommand(rc, paths);
 
   const selfhost = withExamples(
     rc
