@@ -4,10 +4,11 @@ import path from "node:path";
 import type { Command } from "commander";
 import * as clack from "@clack/prompts";
 
-import { loadClassification } from "./config/classify";
+import { classifyEntries, literalClassificationPattern, loadClassification } from "./config/classify";
 import { cosmiconfigReader } from "./config/load";
 import {
   OVERRIDABLE_CATEGORIES,
+  CategoryClassificationOverlaySchema,
   PortableConfigSchema,
   SHIPPED_CATEGORY_DEFAULTS,
   type CategoryMap,
@@ -336,6 +337,41 @@ export interface RunConfigureParams {
   readonly cwd: string;
   readonly home: string;
   readonly claudeHome: string;
+}
+
+/** Asks about unclassified top-level entries and writes their categories together after every answer has been received. */
+export async function configureClassifications(deps: Readonly<RunConfigureDeps>, claudeHome: string): Promise<boolean> {
+  const names = classifyEntries([...realFarmFs.readdir(claudeHome)].sort(), loadClassification(deps.paths)).unclassified;
+  const categories = ["secret", ...OVERRIDABLE_CATEGORIES] as const;
+  const additions: Record<CategoryName, string[]> = { secret: [], runtime: [], history: [], knowledge: [], settings: [] };
+  for (const name of names) {
+    const chosen = await deps.prompts.select({
+      message: `Classify "${name}"`,
+      options: [
+        { value: "skip" as const, label: "Leave unclassified", hint: "excluded until classified" },
+        ...categories.map((category) => ({ value: category, label: category, ...(category === "secret" ? { hint: "never shared" } : {}) })),
+      ],
+      initialValue: "skip",
+    });
+    if (deps.prompts.isCancel(chosen)) {
+      deps.prompts.cancel("Cancelled.");
+      return false;
+    }
+    if (chosen !== "skip") {
+      additions[chosen].push(literalClassificationPattern(name));
+    }
+  }
+  if (categories.some((category) => additions[category].length > 0)) {
+    const overlay = readJson(deps.paths.categoriesLocalFile, CategoryClassificationOverlaySchema) ?? {};
+    for (const category of categories) {
+      if (additions[category].length > 0) {
+        overlay[category] = [...(overlay[category] ?? []), ...additions[category]];
+      }
+    }
+    applyPatch(deps.paths.categoriesLocalFile, CategoryClassificationOverlaySchema, overlay, { defaults: {} });
+    deps.log.info("Updated the local category map.");
+  }
+  return true;
 }
 
 function parentOf(relPath: string): string {
@@ -764,7 +800,7 @@ export function registerConfigureCommand(program: Command, deps: CommandDeps): v
   const command = program
     .command("configure [path]")
     .description(
-      "Interactively toggle an identity's shared categories, or the entries under one ~/.claude-relative path, writing to whichever file the 3-tier precedence selects.",
+      "Classify unknown top-level entries, then interactively configure an identity's shared categories or entries.",
     )
     .option("--identity <name>", "Identity to configure (defaults to the identity a launch here would resolve).")
     .action(async (pathArg: string | undefined, options: Readonly<{ identity?: string }>) => {
@@ -772,18 +808,23 @@ export function registerConfigureCommand(program: Command, deps: CommandDeps): v
       if (!deps.isInteractive()) {
         throw new ConfigureNeedsTerminalError();
       }
+      const configureDeps = { paths, prompts: deps.prompts, log: { info: (message: string) => { console.log(message); } } };
+      const claudeHome = resolveClaudeHome();
+      if (!(await configureClassifications(configureDeps, claudeHome))) {
+        return;
+      }
       const identityName = options.identity ?? resolveLaunchIdentity(paths, cwd);
       if (identityName === undefined) {
         throw new NoIdentityResolvedError(cwd);
       }
       await runConfigure(
-        { paths, prompts: deps.prompts, log: { info: (message: string) => { console.log(message); } } },
+        configureDeps,
         {
           identityName,
           ...(pathArg === undefined ? {} : { path: pathArg }),
           cwd,
           home: os.homedir(),
-          claudeHome: resolveClaudeHome(),
+          claudeHome,
         },
       );
     });

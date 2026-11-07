@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import categoriesDefaultJson from "./categories.default.json";
-import { classifyEntries, compileClassificationPatterns, isExactPattern, loadClassification } from "./classify";
+import { classifyEntries, compileClassificationPatterns, isExactPattern, literalClassificationPattern, loadClassification } from "./classify";
 import { CategoryClassificationSchema } from "./schema";
 import { buildLayoutPaths, type LayoutPaths } from "../paths";
 
@@ -56,6 +56,14 @@ describe("classifyEntries against the shipped map", () => {
 });
 
 describe("classification precedence", () => {
+  it.each(["notes[1].txt", "question?.txt", "star*.txt", "back\\slash.txt", "back\\\\slash.txt", "back\\*.txt"])("classifies the literal filename %s without matching a different name", (name) => {
+    const pattern = literalClassificationPattern(name);
+    const result = classifyEntries([name, "notes1.txt", "question1.txt", "star-other.txt", "backslash.txt"], { defaults, overlay: { runtime: [pattern] } });
+    expect(result.classification.get(name)).toBe("runtime");
+    expect(result.decidedBy.get(name)?.isExact).toBe(true);
+    expect(result.unclassified).toContain(name === "notes[1].txt" ? "notes1.txt" : name === "question?.txt" ? "question1.txt" : name === "star*.txt" ? "star-other.txt" : "backslash.txt");
+  });
+
   it("lets an exact literal beat a glob", () => {
     const result = classifyEntries(["daemon-notes"], {
       defaults: { ...defaults, knowledge: [...defaults.knowledge, "daemon-notes"] },

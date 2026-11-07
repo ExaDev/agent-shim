@@ -1,14 +1,18 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { Command } from "commander";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { addDirectoryRule, readDirectoryRules } from "./directoryRulesStore";
+import { classifyEntries, loadClassification } from "./config/classify";
 import { readGlobalConfig, createProfile, readProfile } from "./configProfilesStore";
 import { addIdentity, setDefaultConfigProfile } from "./identityStore";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import {
   chooseWriteTarget,
+  configureClassifications,
+  registerConfigureCommand,
   describeWriteTarget,
   runConfigure,
   runProfileWizard,
@@ -199,12 +203,53 @@ describe("runConfigure", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     fs.rmSync(agentShimRoot, { recursive: true, force: true });
     fs.rmSync(homeRoot, { recursive: true, force: true });
     fs.rmSync(claudeHome, { recursive: true, force: true });
   });
 
   describe("categories mode (no path)", () => {
+    it("classifies unknown top-level entries in the local category map", async () => {
+      fs.writeFileSync(path.join(claudeHome, "new-scratch.txt"), "fixture");
+      fs.writeFileSync(paths.categoriesLocalFile, JSON.stringify({ runtime: ["other-scratch"] }));
+      const { port, messages } = scriptedPrompts(["runtime"]);
+      const { log } = makeLog();
+      expect(await configureClassifications({ paths, prompts: port, log }, claudeHome)).toBe(true);
+      expect(messages).toEqual(['Classify "new-scratch.txt"']);
+      expect(JSON.parse(fs.readFileSync(paths.categoriesLocalFile, "utf8"))).toEqual({ runtime: ["other-scratch", "new-scratch.txt"] });
+    });
+
+    it("does not write partial classifications when a prompt is cancelled", async () => {
+      fs.writeFileSync(path.join(claudeHome, "first-unknown"), "fixture");
+      fs.writeFileSync(path.join(claudeHome, "second-unknown"), "fixture");
+      const { port } = scriptedPrompts(["runtime", CANCEL]);
+      const { log } = makeLog();
+      expect(await configureClassifications({ paths, prompts: port, log }, claudeHome)).toBe(false);
+      expect(fs.existsSync(paths.categoriesLocalFile)).toBe(false);
+    });
+
+    it("keeps skipped entries unclassified and treats a chosen filename literally", async () => {
+      fs.writeFileSync(path.join(claudeHome, "new[1].txt"), "fixture");
+      fs.writeFileSync(path.join(claudeHome, "skip-this"), "fixture");
+      const { port } = scriptedPrompts(["runtime", "skip"]);
+      const { log } = makeLog();
+      expect(await configureClassifications({ paths, prompts: port, log }, claudeHome)).toBe(true);
+      const result = classifyEntries(["new[1].txt", "new1.txt", "skip-this"], loadClassification(paths));
+      expect(result.classification.get("new[1].txt")).toBe("runtime");
+      expect(result.unclassified).toEqual(["new1.txt", "skip-this"]);
+    });
+
+    it("offers classification through the configure command before resolving an identity", async () => {
+      fs.writeFileSync(path.join(claudeHome, "new-scratch.txt"), "fixture");
+      vi.stubEnv("AGENT_SHIM_CLAUDE_HOME", claudeHome);
+      const { port } = scriptedPrompts(["runtime"]);
+      const program = new Command();
+      registerConfigureCommand(program, { paths, prompts: port, isInteractive: () => true, exit: () => { throw new Error("unexpected exit"); } });
+      await expect(program.parseAsync(["configure", "--identity", "missing"], { from: "user" })).rejects.toThrow();
+      expect(JSON.parse(fs.readFileSync(paths.categoriesLocalFile, "utf8"))).toEqual({ runtime: ["new-scratch.txt"] });
+    });
+
     it("toggles a category and writes it into the identity's active configuration profile (tier 3)", async () => {
       const { port, messages } = scriptedPrompts(["toggle", ["knowledge", "settings", "history", "runtime"]]);
       const { log, lines } = makeLog();

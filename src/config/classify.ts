@@ -20,7 +20,7 @@ export interface ClassificationPattern {
   readonly pattern: string;
   readonly category: CategoryName;
   readonly source: ClassificationSource;
-  /** True when the pattern contains no glob metacharacter, so it can only ever match one literal name. */
+  /** True when the pattern contains no unescaped glob metacharacter, so it can only ever match one literal name. */
   readonly isExact: boolean;
   /** Position of the pattern within its own category list, used only as the final deterministic tie-break. */
   readonly ordinal: number;
@@ -39,13 +39,38 @@ export interface ClassifyResult {
 
 const GLOB_METACHARACTERS = /[*?[\]{}!()]/;
 
-/** True when `pattern` contains no glob metacharacter, so it matches exactly one literal name. */
+/** Encodes a filename as an exact classification pattern, including literal glob metacharacters and backslashes. */
+export function literalClassificationPattern(name: string): string {
+  return GLOB_METACHARACTERS.test(name) ? name.replace(/[\\*?[\]{}!()]/g, "\\$&") : name;
+}
+
+function literalOf(pattern: string): string | undefined {
+  if (!GLOB_METACHARACTERS.test(pattern)) return pattern;
+  let literal = "";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index];
+    if (character === undefined) continue;
+    const next = pattern[index + 1];
+    if (character === "\\" && next !== undefined && (next === "\\" || GLOB_METACHARACTERS.test(next))) {
+      literal += next;
+      index += 1;
+    } else if (GLOB_METACHARACTERS.test(character)) {
+      return undefined;
+    } else {
+      literal += character;
+    }
+  }
+  return literal;
+}
+
+/** True when `pattern` contains no unescaped glob metacharacter, so it matches exactly one literal name. */
 export function isExactPattern(pattern: string): boolean {
-  return !GLOB_METACHARACTERS.test(pattern);
+  return literalOf(pattern) !== undefined;
 }
 
 function compile(pattern: string, category: CategoryName, source: ClassificationSource, ordinal: number): ClassificationPattern {
-  const isExact = isExactPattern(pattern);
+  const literal = literalOf(pattern);
+  const isExact = literal !== undefined;
   // Deliberately case-sensitive (`nocase: false`) regardless of the host filesystem's own case behaviour, so a config resolves identically on a case-insensitive APFS volume and a case-sensitive one. `dot: true` so a leading-dot entry like `.credentials.json` is matchable by a glob such as `.git*`.
   const matcher = picomatch(pattern, { dot: true, nocase: false });
   return {
@@ -54,7 +79,7 @@ function compile(pattern: string, category: CategoryName, source: Classification
     source,
     isExact,
     ordinal,
-    matches: isExact ? (name: string) => name === pattern : (name: string) => matcher(name),
+    matches: isExact ? (name: string) => name === literal : (name: string) => matcher(name),
   };
 }
 
