@@ -176,6 +176,8 @@ export interface RcSelfHostCredentialRecord {
   readonly refreshToken: string;
   readonly organizationUuid: string;
   readonly accountUuid: string;
+  /** The id of the identity the credential was minted into: what attributes a launch to the mode (see `rcSelfHostLaunches.ts`). Absent from a record minted before the id was recorded, which attributes no launch until the identity is minted again. */
+  readonly identityId?: string;
 }
 
 /**

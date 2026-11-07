@@ -3,7 +3,7 @@ import * as tls from "node:tls";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import type { ConnectCapture, PassthroughObserver } from "./capture";
-import { CONNECT_INTERCEPT_HOST, CONNECT_TAP_HOSTS, generateCa, HTTPS_PORT, type CaMaterial } from "./connect";
+import { CONNECT_INTERCEPT_HOST, CONNECT_TAP_HOSTS, generateCa, HTTPS_PORT, SELF_HOSTED_TUNNEL_REFUSAL, type CaMaterial } from "./connect";
 import {
   connectHead,
   connectRedirected,
@@ -116,6 +116,9 @@ describe("MITM proxy over real sockets", () => {
       const capture: ConnectCapture = {
         connect: (target, intercepted) => {
           events.push({ kind: "connect", host: target.host, port: target.port, intercepted });
+        },
+        refusedTunnel: (target) => {
+          events.push({ kind: "connect-refused", host: target.host, port: target.port });
         },
         upgrade: (request) => {
           events.push({ kind: "upgrade", url: request.url });
@@ -305,6 +308,7 @@ describe("MITM proxy over real sockets", () => {
       const streamChunks: { dir: string; text: string }[] = [];
       const capture: ConnectCapture = {
         connect: () => undefined,
+        refusedTunnel: () => undefined,
         upgrade: (request) => {
           streams.push(`upgrade ${request.url ?? "?"}`);
         },
@@ -387,6 +391,7 @@ describe("MITM proxy over real sockets", () => {
       const chunks: { dir: string; text: string }[] = [];
       const capture: ConnectCapture = {
         connect: () => undefined,
+        refusedTunnel: () => undefined,
         upgrade: () => {
           throw new Error("no upgrade reaches a tap host");
         },
@@ -447,6 +452,9 @@ describe("MITM proxy over real sockets", () => {
         connect: (target, intercepted) => {
           connects.push({ host: target.host, intercepted });
         },
+        refusedTunnel: () => {
+          throw new Error("this surface refuses no tunnel");
+        },
         upgrade: () => undefined,
         observePassthrough: (request) => {
           requests.push(request.url ?? "?");
@@ -483,6 +491,9 @@ describe("MITM proxy over real sockets", () => {
         connect: (target, intercepted) => {
           connects.push({ host: target.host, port: target.port, intercepted });
         },
+        refusedTunnel: () => {
+          throw new Error("this surface refuses no tunnel");
+        },
         upgrade: () => {
           throw new Error("no upgrade reaches a blind tunnel");
         },
@@ -497,6 +508,47 @@ describe("MITM proxy over real sockets", () => {
         expect((await attempt.answer).split("\r\n")[0]).toContain(String(HTTP_OK));
         expect(connects).toEqual([{ host: "mcp-proxy.anthropic.com", port: HTTPS_PORT, intercepted: false }]);
         attempt.socket.destroy();
+      } finally {
+        await close();
+        await world.stop();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a self-hosted launch's blind tunnel without dialling it, and still tunnels another launch's to the same host",
+    async () => {
+      const otherCapability = "connect-test-native-capability";
+      const refused: string[] = [];
+      const connects: string[] = [];
+      const capture: ConnectCapture = {
+        connect: (target, intercepted) => {
+          connects.push(`${target.host} ${String(intercepted)}`);
+        },
+        refusedTunnel: (target) => {
+          refused.push(target.host);
+        },
+        upgrade: () => undefined,
+        observePassthrough: () => {
+          throw new Error("no piped exchange reaches a blind tunnel");
+        },
+      };
+      const world = makeTlsWorld(ca, upstreamCa, { capture, isLiveCapability: (token) => token === TEST_CAPABILITY || token === otherCapability, refusesBlindTunnel: (capability) => capability === TEST_CAPABILITY });
+      const { connectPort, close } = await world.start();
+      try {
+        const selfHosted = rawAttempt(connectPort, connectHead("downloads.claude.ai", [proxyAuthorizationFor(TEST_CAPABILITY)]));
+        const answer = await selfHosted.answer;
+        expect(answer.split("\r\n")[0]).toContain("403");
+        expect(answer).toContain(`x-agent-shim-refusal: ${SELF_HOSTED_TUNNEL_REFUSAL}`);
+        expect(world.dials).toEqual([]);
+        expect(refused).toEqual(["downloads.claude.ai"]);
+        selfHosted.socket.destroy();
+
+        const native = rawAttempt(connectPort, connectHead("downloads.claude.ai", [proxyAuthorizationFor(otherCapability)]));
+        expect((await native.answer).split("\r\n")[0]).toContain(String(HTTP_OK));
+        expect(connects).toEqual(["downloads.claude.ai false"]);
+        native.socket.destroy();
       } finally {
         await close();
         await world.stop();

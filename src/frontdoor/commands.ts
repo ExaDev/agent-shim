@@ -80,6 +80,7 @@ import { createRcLiveUsage } from "./rcLiveUsage";
 import { createRcClientPage } from "./rcClientPage";
 import { createRcSelfHostSurface, rcSelfHostFromEnv } from "./rcSelfHost";
 import { readRcSelfHostRecord } from "./rcSelfHostMint";
+import { createRcSelfHostLaunchCheck } from "./rcSelfHostLaunches";
 import { realRcWebFetch, rcWebFetchAllowsPrivateFromEnv } from "./rcWebFetch";
 import { realRcSessionRegistryFs } from "./rcSessionRegistryFs";
 import { createRcSessionRegistryReader, rcRegistryIdentitiesOf, rcStatusWithRegistry } from "./rcSessionRegistry";
@@ -244,6 +245,10 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         webFetch: realRcWebFetch({ allowPrivate: rcWebFetchAllowsPrivateFromEnv(process.env) }),
         log,
       })
+    : undefined;
+  // The mode's tunnel rule: a blind CONNECT from a launch running the minted identity is refused, every other launch's is dialled as before.
+  const refusesBlindTunnel = rcSelfHost
+    ? createRcSelfHostLaunchCheck({ fs: realFarmFs, sessionsDir: paths.frontdoorSessionsDir, launchesDir: paths.launchesDir, identitiesDir: paths.identitiesDir, mintedIdentityId: () => readRcSelfHostRecord(realFarmFs, paths.frontdoorDir)?.identityId })
     : undefined;
 
   // The Remote Control session record: one per door process, in memory only, fed by every resolved route's served exchanges. Wrapping the resolver (rather than any one listener) is what lets whichever pipeline serves a `/v1/code/sessions` exchange observe it, and the wrapper is inert for every path outside the Remote Control prefix. The client credential and the stream's sequence cursor are the two parts that must outlive the process (a session outlives any one door generation, only client-half calls state the OAuth bearer, and a generation that lost the cursor would re-read the stream from its head), so both are persisted per session in one owner-only file and read back by whichever generation needs them.
@@ -680,6 +685,10 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         if (wantedTransparentPort === undefined || Number.isNaN(wantedTransparentPort)) {
           log("self-hosted Remote Control surface: AGENT_SHIM_TRANSPARENT_SURFACE is not set, so nothing redirects the CLI's Remote Control traffic to this door and the door's own client half has no surface to dial; set it to the interception port the mode is deployed with");
         }
+        const minted = readRcSelfHostRecord(realFarmFs, paths.frontdoorDir);
+        if (minted !== undefined && minted.identityId === undefined) {
+          log("self-hosted Remote Control surface: the minted credential predates recording its identity, so no launch can be attributed to the mode and its sessions' blind tunnels are dialled; mint the identity again (agent-shim frontdoor rc selfhost mint <identity>) to refuse them");
+        }
       }
       const server = await startConnectServer(
         {
@@ -713,6 +722,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
           ...(wantedTransparentPort === undefined || Number.isNaN(wantedTransparentPort) ? {} : { transparentPort: wantedTransparentPort, ...(transparentCapability === undefined ? {} : { transparentCapability }) }),
           limits: CONNECT_LIMITS,
           ...(capture === undefined ? {} : { capture }),
+          ...(refusesBlindTunnel === undefined ? {} : { refusesBlindTunnel }),
         },
         realConnectEffects(),
         source,
