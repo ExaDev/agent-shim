@@ -30,6 +30,12 @@ const SESSION_C = "cse_00000000-0000-4000-8000-00000000000c";
 const SMALL_CAPACITY = 3;
 /** How many events the retention case appends, each from a distinct parse-cap-sized source: enough that a log pinning its sources would retain far more than the case's bound, yet few enough that the case allocates a bounded amount. */
 const RETENTION_EVENTS = 64;
+/** The fraction of the pinned cost the retention cases allow: far above what the stored fields occupy and far below the failure, so neither collector noise nor a pinned source can pass for the other. */
+const RETENTION_BOUND_DIVISOR = 4;
+/** The most the retention cases' heap may grow by: that fraction of what keeping one parse-cap-sized source alive per event would cost. */
+const RETENTION_BOUND_BYTES = (RETENTION_EVENTS * RC_REQUEST_PARSE_CAP_BYTES) / RETENTION_BOUND_DIVISOR;
+/** How much of the parse cap the worker event batch around a request's input takes: generous room for the JSON envelope, so the batch stays parsed. */
+const BATCH_ENVELOPE_MARGIN_BYTES = 1_024;
 /** A retention bound the tests never reach. */
 const ROOMY_CAPACITY = 100;
 
@@ -132,9 +138,43 @@ describe("the session event log", () => {
     }
     collect();
     const grown = process.memoryUsage().heapUsed - before;
-    // A log that kept any one source alive per event would grow by at least a parse cap's worth per event; the stored fields are a small fraction of that.
-    expect(grown).toBeLessThan(RETENTION_EVENTS * RC_REQUEST_PARSE_CAP_BYTES);
+    expect(grown).toBeLessThan(RETENTION_BOUND_BYTES);
     expect(log.read({}).status).toBe("ok");
+  });
+
+  it("keeps no uncut field's source alive either, on the tracker's own production path", () => {
+    const collect = globalThis.gc;
+    if (collect === undefined) {
+      throw new Error("this case needs the test workers started with --expose-gc (vitest.config.ts)");
+    }
+    // Room for every event the case makes (the appearance, then a birth and a retirement per request), so no birth the measurement depends on is evicted.
+    const log = createRcSessionEventLog({ generation: GENERATION, capacity: 1 + 2 * RETENTION_EVENTS });
+    const tracker = createRcSessionTracker({ now: () => 0, idleMs: RC_IDLE_EXPIRY_MS, onTransition: log.append });
+    try {
+      // An input just inside the parse cap once the batch around it is serialised: the tracker's summary is the tool name and an excerpt of this input's whole JSON, short enough to need no cut, built over a slice of the parsed body.
+      const inputChars = RC_REQUEST_PARSE_CAP_BYTES - BATCH_ENVELOPE_MARGIN_BYTES;
+      collect();
+      const before = process.memoryUsage().heapUsed;
+      for (let at = 0; at < RETENTION_EVENTS; at += 1) {
+        const body = JSON.stringify({ worker_epoch: 1, events: [{ payload: { type: "control_request", request_id: `req_${String(at)}`, request: { subtype: "can_use_tool", tool_name: "Bash", input: { command: `${String(at)}:`.padEnd(inputChars, "x") } } } }] });
+        const observed = tracker.observeExchange({ method: "POST", url: `/v1/code/sessions/${SESSION_A}/worker/events`, headers: { authorization: "Bearer sk-ant-REDACTED" } });
+        observed?.onRequestChunk?.(Buffer.from(body, "utf8"));
+        observed?.onRequestEnd?.();
+        observed?.onResponse(HTTP_STATUS.ok, {});
+        observed?.onEnd();
+      }
+      // The tracker's own pending list holds the same summaries; retiring them leaves the log as the only holder, which is what this case measures.
+      for (let at = 0; at < RETENTION_EVENTS; at += 1) {
+        tracker.completePending(SESSION_A, `req_${String(at)}`);
+      }
+      collect();
+      const grown = process.memoryUsage().heapUsed - before;
+      const read = log.read({});
+      expect(read.status === "ok" ? read.events.filter((event) => event.kind === "pending-born").length : 0).toBe(RETENTION_EVENTS);
+      expect(grown).toBeLessThan(RETENTION_BOUND_BYTES);
+    } finally {
+      tracker.close();
+    }
   });
 
   it("refuses a generation id longer than a UUID", () => {
