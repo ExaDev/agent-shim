@@ -22,7 +22,7 @@ They arrive as ordinary worker events on the client read stream, so `agent-shim 
 - `tool_use_id` equals the meta file's `toolUseId`, and the spawning `tool_use` block in the parent transcript.
 - `spawn_depth` equals the meta file's `spawnDepth`; `parent_task_id` carries the nesting the meta file expresses only through depth.
 - `output_file` is `<tmpdir>/<project-slug>/<local session id>/tasks/<task_id>.output`, which embeds the local session id.
-- The session join is in the transcript: its `bridge-session` entries carry `sessionId` (local), `bridgeSessionId` (the `cse_` id) and `lastSequenceNum`. The stream's own `session_id` is always the `cse_` id and never the local one.
+- The session join is in the transcript: its `bridge-session` entries carry `sessionId` (local), `bridgeSessionId` (the `cse_` id) and `lastSequenceNum`. The stream's own `session_id` is always the `cse_` id and never the local one. The session registry record (`<config dir>/sessions/<pid>.json`) also carries `bridgeSessionId`, but in the compatibility form `session_<suffix>`; the `cse_` id has the same suffix, and Claude Code converts between the two by swapping the prefix (`createRcSessionRegistryReader` in `src/frontdoor/rcSessionRegistry.ts`).
 
 ## Merging with the disk tree
 

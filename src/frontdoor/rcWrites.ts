@@ -50,6 +50,8 @@ export interface RcEventDial {
    * Posts one write to the session's teleport-events path instead of its events path: the write half of the channel the CLI only ever reads (`GET /teleport-events`, the teleport-to-local hydration's page source, verified in the 2.1.289 bundle, which contains no POST sender for it at all). The door's own client half is the one sender this surface has, so this method exists for `teleportRcSession` alone.
    */
   readonly writeTeleportEvents: (sessionId: string, headers: Readonly<Record<string, string>>, body: string) => Promise<RcDialAnswer>;
+  /** Reads the session's worker record: `GET /v1/code/sessions/{id}/worker`, the one read this dial makes, over the same interception-proof agent as the writes (see `readRcWorkerState`). */
+  readonly readWorker: (sessionId: string, headers: Readonly<Record<string, string>>) => Promise<RcDialAnswer>;
 }
 
 /**
@@ -88,11 +90,16 @@ function sequenceNumsOf(body: string): readonly number[] | undefined {
   return sequenceNums.length === 0 ? undefined : sequenceNums;
 }
 
+/** The message every client-half call answers a 401 with: the observed bearer is the cause, and the session's own client renews it. */
+function staleBearerMessage(body: string): string {
+  return `the API refused the observed Authorization bearer for this session (HTTP 401): the bearer went stale after the door last saw the session's traffic. The session's own client refreshes it on its next call, which the door will observe, so retry once Remote Control has been active again. API answer: ${body}`;
+}
+
 /** Maps one dial answer to the write result: an accepted write yields its sequence numbers; anything else yields a verbose message, with the 401 case naming the stale observed bearer as the cause. */
 export function rcEventWriteResultFromAnswer(answer: RcDialAnswer): RcEventWriteResult {
   if (!isSuccessful(answer.status)) {
     if (answer.status === HTTP_STATUS.unauthorized) {
-      return { ok: false, message: `the API refused the observed Authorization bearer for this session (HTTP 401): the bearer went stale after the door last saw the session's traffic. The session's own client refreshes it on its next call, which the door will observe, so retry once Remote Control has been active again. API answer: ${answer.body}` };
+      return { ok: false, message: staleBearerMessage(answer.body) };
     }
     return { ok: false, message: `the API answered HTTP ${String(answer.status)} to the injected event: ${answer.body}` };
   }
@@ -119,7 +126,7 @@ export interface RcInjectDeps {
 }
 
 /** The failure every client-half write returns when the tracker holds no OAuth-kind bearer for the session: only worker calls were observed, and the worker JWT they carry does not authorise the client half. */
-export function noOAuthCredentialResult(sessionId: string): RcEventWriteResult {
+export function noOAuthCredentialResult(sessionId: string): { readonly ok: false; readonly message: string } {
   return { ok: false, message: `no claude.ai OAuth bearer has been observed for session ${sessionId}: only worker calls crossed this door, and the worker JWT they carry is answered 401 on the client half. Reconnect Remote Control through this door and the create's own bearer will be observed` };
 }
 
@@ -128,9 +135,9 @@ export function rcSessionNotObservedMessage(sessionId: string): string {
   return `the front door has not observed Remote Control session ${sessionId}: it may never have passed through this door, or it ended or expired (an entry lives only a bounded idle period past its last observed traffic)`;
 }
 
-/** The headers every client-half write sends, from the observed credential: the observed values replayed verbatim. The authorization is present by construction, since every caller guards on it (the write refuses to go out unauthenticated rather than surface as a confusing 401). */
-export function rcWriteHeaders(credential: RcObservedCredential): Record<string, string> {
-  const headers: Record<string, string> = { "content-type": "application/json" };
+/** The headers every client-half call sends, from the observed credential: the observed values replayed verbatim. The authorization is present by construction, since every caller guards on it (a call refuses to go out unauthenticated rather than surface as a confusing 401). */
+function rcClientHeaders(credential: RcObservedCredential): Record<string, string> {
+  const headers: Record<string, string> = {};
   if (credential.authorization !== undefined) {
     headers.authorization = credential.authorization;
   }
@@ -141,6 +148,11 @@ export function rcWriteHeaders(credential: RcObservedCredential): Record<string,
     headers["anthropic-client-platform"] = credential.anthropicClientPlatform;
   }
   return headers;
+}
+
+/** The headers a client-half write sends: the client-half headers plus the JSON content type its body carries. */
+export function rcWriteHeaders(credential: RcObservedCredential): Record<string, string> {
+  return { "content-type": "application/json", ...rcClientHeaders(credential) };
 }
 
 /**
@@ -603,4 +615,64 @@ export async function teleportRcSession(deps: RcControlRequestDeps, sessionId: s
  */
 export function buildRcMarkReadBody(eventId: string | undefined): Record<string, unknown> {
   return eventId === undefined ? {} : { event_id: eventId };
+}
+
+/** What one worker-state read produced: the state string the service named, or a verbose failure message ready to show a user. */
+export type RcWorkerStateReadResult = { readonly ok: true; readonly workerStatus: string } | { readonly ok: false; readonly message: string };
+
+/** Reads `worker.worker_status` out of an accepted worker-record answer (`{worker{session_id, worker_epoch, worker_status, external_metadata}}`, `docs/claude-code-service-contracts.md`), or undefined when the answer does not name one. */
+function workerStatusOf(body: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null || !("worker" in parsed)) {
+    return undefined;
+  }
+  const worker: unknown = parsed.worker;
+  if (typeof worker !== "object" || worker === null || !("worker_status" in worker)) {
+    return undefined;
+  }
+  const workerStatus: unknown = worker.worker_status;
+  return typeof workerStatus === "string" && workerStatus !== "" ? workerStatus : undefined;
+}
+
+/** Everything one worker-state read needs, injected so the decision logic runs against fakes in unit tests. */
+export interface RcWorkerReadDeps {
+  /** Reads the observed credential for a session: the tracker's accessor, in production. */
+  readonly credentialOf: (sessionId: string) => RcObservedCredential | undefined;
+  /** The dial to the real API host. */
+  readonly dial: RcEventDial;
+}
+
+/**
+ * Reads one observed session's worker state from the service: `GET /v1/code/sessions/{id}/worker`, authenticated by the observed bearer and carrying the observed protocol headers over the door's interception-proof dial, like every client-half write. This is how a session whose last state change predates the door (or whose record expired and was recreated by a heartbeat) still gets a state: the request body that would have named it never crossed the door. A dial that cannot reach the API host, a refused or failed answer, and an answer naming no `worker.worker_status` are reported as a verbose failure, never as an empty state.
+ */
+export async function readRcWorkerState(deps: RcWorkerReadDeps, sessionId: string): Promise<RcWorkerStateReadResult> {
+  const credential = deps.credentialOf(sessionId);
+  if (credential === undefined) {
+    return { ok: false, message: rcSessionNotObservedMessage(sessionId) };
+  }
+  if (credential.authorization === undefined) {
+    return noOAuthCredentialResult(sessionId);
+  }
+  let answer: RcDialAnswer;
+  try {
+    answer = await deps.dial.readWorker(sessionId, rcClientHeaders(credential));
+  } catch (error) {
+    return { ok: false, message: `the door could not reach the API host to read the worker state of session ${sessionId}: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  if (answer.status === HTTP_STATUS.unauthorized) {
+    return { ok: false, message: staleBearerMessage(answer.body) };
+  }
+  if (!isSuccessful(answer.status)) {
+    return { ok: false, message: `the API answered HTTP ${String(answer.status)} to the worker state read of session ${sessionId}: ${answer.body}` };
+  }
+  const workerStatus = workerStatusOf(answer.body);
+  if (workerStatus === undefined) {
+    return { ok: false, message: `the API answered the worker state read of session ${sessionId} without a worker.worker_status: ${answer.body}` };
+  }
+  return { ok: true, workerStatus };
 }

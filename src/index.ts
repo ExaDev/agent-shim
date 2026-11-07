@@ -76,13 +76,18 @@ export {
   type RcExchangeObserver,
   type RcObservedRequest,
   type RcPendingRequestSummary,
+  RC_WORKER_STATE_SOURCES,
   type RcSessionStatus,
   type RcSessionSummary,
   type RcSessionTracker,
   type RcSessionTrackerDeps,
+  type RcTrackedSessionStatus,
   type RcWorkerFact,
+  type RcWorkerStateFact,
+  type RcWorkerStateSource,
 } from "./frontdoor/rcSessions";
 export type { RcPendingQuestion, RcQuestionOption, RcQuestionSelection } from "./frontdoor/rcQuestions";
+export { createRcStatusResolver, type RcStatusDeps, type RcStatusReport, type RcStatusResolver, type RcUnobservedSession } from "./frontdoor/rcStatus";
 export {
   createRcSessionRegistryReader,
   rcStatusWithRegistry,
@@ -127,6 +132,7 @@ export {
   isRcReadFileEncoding,
   rcEventWriteResultFromAnswer,
   readRcSessionFile,
+  readRcWorkerState,
   reconnectRcSessionMcpServer,
   sendRcKeepAlive,
   setRcSessionModel,
@@ -146,6 +152,8 @@ export {
   type RcPermissionMode,
   type RcReadFileEncoding,
   type RcReadFileOptions,
+  type RcWorkerReadDeps,
+  type RcWorkerStateReadResult,
   type RcWriteHeaders,
 } from "./frontdoor/rcWrites";
 export { createRcCredentialStore, type RcCredentialStore } from "./frontdoor/rcCredentialStore";

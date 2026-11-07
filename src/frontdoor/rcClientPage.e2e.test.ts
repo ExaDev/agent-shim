@@ -207,7 +207,7 @@ describe("the door's web client page and its API calls over the door's own TLS",
       expectedToken: CONTROL_TOKEN,
       paths: buildLayoutPaths("/nonexistent/agent-shim-config-api-unexercised"),
       list: sessionTracker.list,
-      statusOf: (sessionId?: string) => sessionTracker.statusOf(sessionId),
+      statusOf: async (sessionId?: string) => Promise.resolve({ statuses: sessionTracker.statusOf(sessionId).map((status) => ({ ...status, workerStateUnavailable: undefined })), unobserved: [] }),
       pendingOf: (sessionId?: string) => sessionTracker.pendingOf(sessionId),
       inject: async (session, text) => {
         writes.push({ kind: "inject", detail: `${session}:${text}` });
@@ -325,7 +325,7 @@ describe("the door's web client page and its API calls over the door's own TLS",
     const page = pageScript();
 
     expect(await page.rpc("rc/list", {})).toEqual({ sessions: [] });
-    expect(await page.rpc("rc/status", {})).toEqual({ statuses: [] });
+    expect(await page.rpc("rc/status", {})).toEqual({ statuses: [], unobserved: [] });
     expect(await page.rpc("rc/pending", {})).toEqual({ pending: [] });
 
     expect(await page.rpc("rc/send", { session: "cse_page", text: "run the tests" })).toEqual({ session: "cse_page", sequenceNums: [SEND_SEQUENCE_NUM] });

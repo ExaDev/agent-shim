@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { SessionCommandFs } from "../agents/realFs";
 import { identityDirectory, listIdentities } from "../identityStore";
 import type { LayoutPaths } from "../paths";
-import type { RcSessionStatus } from "./rcSessions";
+import type { RcTrackedSessionStatus } from "./rcSessions";
 
 /**
  * The Claude Code session registry as the door reads it to say which Remote Control session is which: one JSON file per live session process under `<configuration directory>/sessions`, written by the CLI itself. Only the fields the status surface reports are read (`pid`, `cwd`, `name`, `updatedAt` and the `bridgeSessionId` that joins the entry to the door's session); everything else in the file is ignored, and a file that is not an entry (the `.key` files and the `.tmp-` files of an atomic write that sit beside them) is skipped rather than failed.
@@ -181,7 +181,7 @@ export function createRcSessionRegistryReader(deps: RcSessionRegistryDeps): () =
 /**
  * Adds what the registry says to the statuses the door built from its own observations: the name and process id always, and the working directory and identity only where the door observed none (what the session itself stated, and the launching identity the door saw on its own requests, outrank a registry that is only a file on disk). A status whose session the registry does not hold is returned as it is.
  */
-export function withRegisteredSessionFacts(statuses: readonly RcSessionStatus[], registry: ReadonlyMap<string, RcRegisteredSession>): readonly RcSessionStatus[] {
+export function withRegisteredSessionFacts(statuses: readonly RcTrackedSessionStatus[], registry: ReadonlyMap<string, RcRegisteredSession>): readonly RcTrackedSessionStatus[] {
   return statuses.map((status) => {
     const registered = registry.get(status.id);
     if (registered === undefined) {
@@ -200,7 +200,7 @@ export function withRegisteredSessionFacts(statuses: readonly RcSessionStatus[],
 /**
  * Replaces the identity id the door observed on a session's requests (the id of the identity's directory, which a rename of its name keeps) with the identity's current name, the form the registry and every other surface report. An id that names no identity any longer is dropped: the status then reports no identity, which is what is known.
  */
-export function withIdentityNames(statuses: readonly RcSessionStatus[], nameOf: (id: string) => string | undefined): readonly RcSessionStatus[] {
+export function withIdentityNames(statuses: readonly RcTrackedSessionStatus[], nameOf: (id: string) => string | undefined): readonly RcTrackedSessionStatus[] {
   return statuses.map((status) => {
     if (status.identity === undefined) {
       return status;
@@ -213,10 +213,10 @@ export function withIdentityNames(statuses: readonly RcSessionStatus[], nameOf: 
 
 /** Wraps the tracker's status read so every answer carries the registry's facts; the registry is read only when there is a status to describe. */
 export function rcStatusWithRegistry(
-  statusOf: (sessionId?: string) => readonly RcSessionStatus[],
+  statusOf: (sessionId?: string) => readonly RcTrackedSessionStatus[],
   readRegistry: () => ReadonlyMap<string, RcRegisteredSession>,
   identityNameOf: (id: string) => string | undefined,
-): (sessionId?: string) => readonly RcSessionStatus[] {
+): (sessionId?: string) => readonly RcTrackedSessionStatus[] {
   return (sessionId) => {
     const statuses = statusOf(sessionId);
     return statuses.length === 0 ? statuses : withRegisteredSessionFacts(withIdentityNames(statuses, identityNameOf), readRegistry());

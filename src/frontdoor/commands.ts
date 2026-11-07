@@ -80,9 +80,10 @@ import { createRcSelfHostSurface, rcSelfHostFromEnv } from "./rcSelfHost";
 import { readRcSelfHostRecord } from "./rcSelfHostMint";
 import { realRcWebFetch, rcWebFetchAllowsPrivateFromEnv } from "./rcWebFetch";
 import { realRcSessionRegistryFs } from "./rcSessionRegistryFs";
-import { createRcSessionRegistryReader, rcRegistryIdentitiesOf, rcStatusWithRegistry } from "./rcSessionRegistry";
+import { createRcSessionRegistryReader, rcRegistryIdentitiesOf } from "./rcSessionRegistry";
 import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, isRcSessionExchange, observingRoutedRoute } from "./rcSessions";
 import { targetRefs } from "../models/targets";
+import { createRcStatusResolver } from "./rcStatus";
 import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
 import { createDoorRcSessionCommands } from "./doorSessionCommands";
 import { createRcClaudeCodeVersions, rcSelfHostEventDial, selfHostSurfaceUnboundReason } from "./rcSelfHostCommands";
@@ -258,12 +259,6 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     usagePublisher.publish(event);
   }, usageEventNames.nameOf);
   const quotaExpiring = createQuotaExpiringPublisher(doorEvents, { seed: listUsageSnapshots(realFarmFs, paths.usageSnapshotsDir), now: () => Date.now(), nameOf: usageEventNames.nameOf });
-  // The status read every Remote Control surface serves: the tracker's observations (the identity as its id, turned into the identity's name here) plus what the Claude Code session registry says (name, process id, working directory), searched across every identity's registry on each read so an identity added after the door started is covered.
-  const rcStatusOf = rcStatusWithRegistry(
-    rcTracker.statusOf,
-    createRcSessionRegistryReader({ fs: realRcSessionRegistryFs, identities: () => rcRegistryIdentitiesOf(paths), isRunning: realIsProcessAlive }),
-    usageEventNames.nameOf,
-  );
   // The door health publisher, fed by the supervisor's own transitions.
   const doorHealth = createDoorHealthPublisher(doorEvents, () => Date.now(), process.pid);
   // The live quota state, the backbone's first door-native consumer: subscribed to the rc source before any stream can publish, so every rate_limit_event the held client stream files becomes the door's latest per-session rate-limit observation, the state the control plane's `usage.live` read serves beside its snapshot readers.
@@ -532,6 +527,18 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       const rcDial = rcSelfHost ? lateRcEventDial(rcSelfHostDialTarget) : realRcEventDial();
       const rcInject = async (sessionId: string, text: string) =>
         await injectRcUserMessage({ credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial, newUuid: randomUUID }, sessionId, text);
+      // The status the control routes and the typed API serve: the tracker's, with the worker state of any session that has none read from the service on the same dial and credential as the writes, and every session registered on this machine (in the shared Claude home's registry or any identity's) that the tracker holds no record of.
+      const rcStatusOf = createRcStatusResolver({
+        statusOf: rcTracker.statusOf,
+        noteReadWorkerState: rcTracker.noteReadWorkerState,
+        credentialOf: rcTracker.credentialOf,
+        // What the Claude Code session registry says about each live Remote Control session (name, process id, working directory), searched across every identity's registry on each read so an identity added after the door started is covered: it enriches every tracked status and names the registered sessions the tracker holds no record of from the same read.
+        registry: createRcSessionRegistryReader({ fs: realRcSessionRegistryFs, identities: () => rcRegistryIdentitiesOf(paths), isRunning: realIsProcessAlive }),
+        identityNameOf: usageEventNames.nameOf,
+        persistedCredentialOf: rcCredentialStore.read,
+        dial: rcDial,
+        now: () => Date.now(),
+      });
       const rcAnswer = async (sessionId: string, requestId: string, decision: RcAnswerDecision) =>
         await answerRcControlRequest({ credentialOf: rcTracker.credentialOf, pendingOf: (id) => rcTracker.pendingOf(id), completePending: rcTracker.completePending, pendingToolInputOf: rcTracker.pendingToolInputOf, claimPending: rcTracker.claimPending, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial }, sessionId, requestId, decision);
       const rcControlRequestDeps = { credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial, newUuid: randomUUID };

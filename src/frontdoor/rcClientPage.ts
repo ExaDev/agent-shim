@@ -181,22 +181,36 @@ function renderEvent(event, gap) {
   list.scrollTop = list.scrollHeight;
 }
 
-function renderSessions(statuses) {
+function workerLabel(entry) {
+  if (entry.workerState === undefined) { return 'worker unknown'; }
+  return 'worker ' + entry.workerState.value + (entry.workerState.source === 'read' ? ' (read)' : '');
+}
+
+function renderSessions(report) {
   if (ui === null) { return; }
   var list = ui.sessionList;
   list.textContent = '';
-  if (statuses.length === 0) {
-    list.appendChild(el('div', 'event dim', 'no Remote Control sessions observed'));
+  if (report.statuses.length === 0 && report.unobserved.length === 0) {
+    list.appendChild(el('div', 'event dim', 'no Remote Control sessions observed or registered'));
     return;
   }
-  for (var i = 0; i < statuses.length; i++) {
-    var status = statuses[i];
-    var worker = status.workerState === undefined ? 'worker unknown' : 'worker ' + status.workerState.value;
+  for (var i = 0; i < report.statuses.length; i++) {
+    var status = report.statuses[i];
     var row = el('div', 'session' + (status.id === ui.selected ? ' selected' : ''));
     row.appendChild(el('div', null, status.name === undefined ? shortId(status.id) : status.name + ' (' + shortId(status.id) + ')'));
-    row.appendChild(el('div', 'dim', worker + (status.pending.length === 0 ? '' : ', ' + String(status.pending.length) + ' pending') + ', seen ' + new Date(status.lastSeenAt).toLocaleTimeString()));
+    row.appendChild(el('div', 'dim', workerLabel(status) + (status.pending.length === 0 ? '' : ', ' + String(status.pending.length) + ' pending') + ', seen ' + new Date(status.lastSeenAt).toLocaleTimeString()));
+    if (status.workerStateUnavailable !== undefined) { row.title = status.workerStateUnavailable; }
     row.addEventListener('click', selectSession(status.id));
     list.appendChild(row);
+  }
+  // A registered session the door holds no record of cannot be driven from here (the door has no record to write through), so its row is listed for what it is and carries the reason, but is not selectable.
+  for (var j = 0; j < report.unobserved.length; j++) {
+    var session = report.unobserved[j];
+    var unobservedRow = el('div', 'session unobserved');
+    unobservedRow.appendChild(el('div', null, shortId(session.id)));
+    unobservedRow.appendChild(el('div', 'dim', 'unobserved, ' + workerLabel(session)));
+    unobservedRow.title = session.reason + (session.workerStateUnavailable === undefined ? '' : ' ' + session.workerStateUnavailable);
+    list.appendChild(unobservedRow);
   }
 }
 
@@ -335,7 +349,7 @@ function sendPrompt() {
 }
 
 function refreshSessions() {
-  rpc('rc/status', {}).then(function (result) { renderSessions(result.statuses); }, authOrReport('rc/status'));
+  rpc('rc/status', {}).then(function (result) { renderSessions(result); }, authOrReport('rc/status'));
 }
 
 function refreshPending() {
@@ -509,6 +523,7 @@ export const RC_CLIENT_PAGE_HTML = `<!doctype html>
   h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #8b98a5; margin: 8px 0 8px; font-weight: 600; }
   .session { padding: 6px 8px; border: 1px solid transparent; border-radius: 4px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .session:hover { background: #171d24; }
+  .session.unobserved { cursor: default; opacity: 0.7; }
   .session.selected { border-color: #3d6ea5; background: #17222e; }
   .session .dim { color: #8b98a5; }
   .event { padding: 2px 0; white-space: pre-wrap; word-break: break-word; }

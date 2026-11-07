@@ -229,19 +229,19 @@ export interface RcDialTarget {
 }
 
 /**
- * The real `RcEventDial`: one keep-alive TLS agent of the door's own exempt kind, so every injected event rides the same interception-proof dials the door's forwarded traffic does. The dial only ever reads small JSON answers (an event write's result, or an error), never a stream.
+ * The real `RcEventDial`: one keep-alive TLS agent of the door's own exempt kind, so every injected event and every worker-state read rides the same interception-proof dials the door's forwarded traffic does. The dial only ever reads small JSON answers (an event write's result, a worker record, or an error), never a stream.
  */
 export function realRcEventDial(target: RcDialTarget = { host: CONNECT_INTERCEPT_HOST, port: HTTPS_PORT }): RcEventDial {
   const agent = new ExemptTlsAgent();
-  const post = async (path: string, headers: Readonly<Record<string, string>>, body: string): Promise<RcDialAnswer> =>
+  const send = async (method: "GET" | "POST", path: string, headers: Readonly<Record<string, string>>, body: string | undefined): Promise<RcDialAnswer> =>
     await new Promise<RcDialAnswer>((resolve, reject) => {
       const options: https.RequestOptions = {
         host: target.host,
         port: target.port,
-        method: "POST",
+        method,
         path,
         // The Host header names the host whose API this is, not the address dialled: a redirected test dials a loopback stand-in while still speaking to the API host by name, exactly as the forwarded paths present their SNI.
-        headers: { ...headers, host: target.servername ?? target.host, "content-length": String(Buffer.byteLength(body, "utf8")) },
+        headers: { ...headers, host: target.servername ?? target.host, ...(body === undefined ? {} : { "content-length": String(Buffer.byteLength(body, "utf8")) }) },
         agent,
       };
       // The request's own TLS facts ride in the options (a stand-in's servername, its trust anchors, its verification stance), exactly as the forwarding target's do.
@@ -264,9 +264,11 @@ export function realRcEventDial(target: RcDialTarget = { host: CONNECT_INTERCEPT
       request.once("error", reject);
       request.end(body);
     });
+  const post = async (path: string, headers: Readonly<Record<string, string>>, body: string): Promise<RcDialAnswer> => await send("POST", path, headers, body);
   return {
     writeEvents: async (sessionId, headers, body) => await post(`/v1/code/sessions/${encodeURIComponent(sessionId)}/events`, headers, body),
     writeTeleportEvents: async (sessionId, headers, body) => await post(`/v1/code/sessions/${encodeURIComponent(sessionId)}/teleport-events`, headers, body),
+    readWorker: async (sessionId, headers) => await send("GET", `/v1/code/sessions/${encodeURIComponent(sessionId)}/worker`, headers, undefined),
   };
 }
 
@@ -295,6 +297,7 @@ export function lateRcEventDial(resolve: () => RcDialTarget | undefined): RcEven
   return {
     writeEvents: async (sessionId, headers, body) => await dialFor().writeEvents(sessionId, headers, body),
     writeTeleportEvents: async (sessionId, headers, body) => await dialFor().writeTeleportEvents(sessionId, headers, body),
+    readWorker: async (sessionId, headers) => await dialFor().readWorker(sessionId, headers),
   };
 }
 

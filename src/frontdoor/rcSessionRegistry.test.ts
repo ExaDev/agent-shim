@@ -9,7 +9,7 @@ import { buildLayoutPaths } from "../paths";
 import { realRcSessionRegistryFs } from "./rcSessionRegistryFs";
 
 import { RC_REGISTRY_ENTRY_MAX_BYTES, createRcSessionRegistryReader, rcRegistryIdentitiesOf, rcStatusWithRegistry, withIdentityNames, withRegisteredSessionFacts, type RcRegisteredSession, type RcSessionRegistryFs } from "./rcSessionRegistry";
-import type { RcSessionStatus } from "./rcSessions";
+import type { RcTrackedSessionStatus } from "./rcSessions";
 
 const CSE_ID = "cse_00000000-0000-4000-8000-000000000001";
 const OTHER_CSE_ID = "cse_00000000-0000-4000-8000-000000000002";
@@ -142,7 +142,7 @@ describe("the Claude Code session registry reader", () => {
   });
 });
 
-function status(id: string, fields: Partial<RcSessionStatus> = {}): RcSessionStatus {
+function status(id: string, fields: Partial<RcTrackedSessionStatus> = {}): RcTrackedSessionStatus {
   return { id, createdAt: 1, lastSeenAt: 2, workerState: undefined, workerIdleSeconds: undefined, pending: [], ...fields };
 }
 

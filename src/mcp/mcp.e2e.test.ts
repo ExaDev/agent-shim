@@ -18,6 +18,7 @@ import { createRcSessionTracker, RC_IDLE_EXPIRY_MS } from "../frontdoor/rcSessio
 import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog } from "../frontdoor/rcEventLog";
 import { createRcEventFanout } from "../frontdoor/rcStream";
 import type { RcAnswerDecision } from "../frontdoor/rcWrites";
+import { TEST_READ_WORKER_STATUS, UNOBSERVED_TEST_SESSION_ID, testStatusResolver } from "../frontdoor/rcStatusTestWorld";
 import type { FrontDoorStatus } from "../frontdoor/status";
 import { createMcpServer, serveMcp, type McpServerPorts } from "./server";
 import { toolsFromOpenApiDocument, type McpPermissions } from "./tools";
@@ -68,7 +69,7 @@ describe("the MCP server over a real door handler", () => {
     const surface = createDoorApiNodeHandler({
       expectedToken: CONTROL_TOKEN,
       list: tracker.list,
-      statusOf: (sessionId?: string) => tracker.statusOf(sessionId),
+      statusOf: testStatusResolver(tracker),
       pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
       inject: async (_session: string, text: string) => {
         injected.push(text);
@@ -209,6 +210,13 @@ describe("the MCP server over a real door handler", () => {
     sessionEvents.append({ kind: "session-appeared", session: SESSION_ID, at: 1 });
     const page = await client.callTool({ name: "rcSessions_eventsPage", arguments: { limit: 1 } });
     expect(JSON.parse(textOf(page))).toMatchObject({ status: "ok", events: [{ kind: "session-appeared", session: SESSION_ID, sequence: 1 }] });
+    await client.close();
+  });
+
+  it("answers the Remote Control status tool with the unobserved registered sessions and their read worker state", async () => {
+    const client = await connect({ writes: false, remoteControl: false, history: false, directives: false });
+    const status = await client.callTool({ name: "rc_status", arguments: {} });
+    expect(JSON.parse(textOf(status))).toMatchObject({ unobserved: [{ id: UNOBSERVED_TEST_SESSION_ID, reason: expect.stringContaining("none of its traffic has crossed the door") as unknown, workerState: { value: TEST_READ_WORKER_STATUS, source: "read" } }] });
     await client.close();
   });
 

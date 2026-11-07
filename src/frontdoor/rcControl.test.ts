@@ -24,12 +24,15 @@ const REQUEST_ID = "req_00000000-0000-4000-8000-00000000000a";
 /** The minted request id the scripted control writes answer with, so a route's answer naming it proves the id travels from the operation to the caller. */
 const MINTED_REQUEST_ID = "minted-00000000-0000-4000-8000-00000000000b";
 const PENDING: readonly RcPendingRequestSummary[] = [{ sessionId: SESSION_ID, requestId: REQUEST_ID, type: "can_use_tool", summary: 'Bash {"command":"pnpm test"}', observedAt: 1_500 }];
+/** A registered session the scripted door holds no record of. */
+const UNOBSERVED_SESSION_ID = "cse_00000000-0000-4000-8000-0000000000dd";
 const STATUSES: readonly RcSessionStatus[] = [
   {
     id: SESSION_ID,
     createdAt: 1_000,
     lastSeenAt: 2_000,
-    workerState: { value: "WORKER_STATUS_RUNNING", observedAt: 1_200 },
+    workerState: { value: "WORKER_STATUS_RUNNING", observedAt: 1_200, source: "observed" },
+    workerStateUnavailable: undefined,
     workerIdleSeconds: { value: 7, observedAt: 2_000 },
     pending: [...PENDING],
     identity: "work",
@@ -38,7 +41,7 @@ const STATUSES: readonly RcSessionStatus[] = [
     pid: 4_001,
     cwd: "/repo",
   },
-  { id: QUIET_SESSION_ID, createdAt: 1_100, lastSeenAt: 2_100, workerState: undefined, workerIdleSeconds: undefined, pending: [] },
+  { id: QUIET_SESSION_ID, createdAt: 1_100, lastSeenAt: 2_100, workerState: undefined, workerStateUnavailable: "the API answered HTTP 403 to the worker state read", workerIdleSeconds: undefined, pending: [] },
 ];
 
 /** The plain-HTTP transport the handler tests use: the handler is transport-agnostic, so a loopback HTTP server exercises it without any TLS setup. */
@@ -98,7 +101,7 @@ function handlerDeps(overrides: Readonly<Partial<Parameters<typeof createRcContr
   return {
     expectedToken: TOKEN,
     list: () => SESSIONS,
-    statusOf: (sessionId?: string) => STATUSES.filter((status) => sessionId === undefined || status.id === sessionId),
+    statusOf: async (sessionId?: string) => Promise.resolve({ statuses: STATUSES.filter((status) => sessionId === undefined || status.id === sessionId), unobserved: [] }),
     pendingOf: (sessionId?: string) => PENDING.filter((pending) => sessionId === undefined || pending.sessionId === sessionId),
     inject: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM] }),
     answer: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM] }),
@@ -134,6 +137,18 @@ describe("the Remote Control control handler", () => {
     running = undefined;
   });
 
+  it("answers a named session the door holds no record of but finds registered with its unobserved entry, and the client reads it back", async () => {
+    const unobserved = { id: UNOBSERVED_SESSION_ID, localSessionId: "00000000-0000-4000-8000-0000000000aa", pid: 4242, reason: "the front door has never observed this session", workerState: { value: "idle", observedAt: 1_300, source: "read" as const }, workerStateUnavailable: undefined };
+    const started = await serve(createRcControlHandler(handlerDeps({ statusOf: async (sessionId?: string) => Promise.resolve({ statuses: STATUSES.filter((status) => status.id === sessionId), unobserved: [unobserved].filter((session) => sessionId === undefined || session.id === sessionId) }) })));
+    running = started;
+    const answer = await plainTransport(started.port).request({ method: "GET", path: `${CONTROL_PATH_PREFIX}/status?session=${UNOBSERVED_SESSION_ID}`, headers: { authorization: `Bearer ${TOKEN}` } });
+    expect(answer.status).toBe(HTTP_STATUS.ok);
+    // The JSON form drops the undefined field, exactly as the client then reads it.
+    const serialised: unknown = JSON.parse(JSON.stringify(unobserved));
+    expect(JSON.parse(answer.body)).toEqual({ statuses: [], unobserved: [serialised] });
+    expect(await frontDoorRcControl(plainTransport(started.port), TOKEN).statusOf(UNOBSERVED_SESSION_ID)).toEqual({ statuses: [], unobserved: [serialised] });
+  });
+
   it("lists the observed sessions for the generation's token, and refuses any other credential", async () => {
     const started = await serve(createRcControlHandler(handlerDeps()));
     running = started;
@@ -154,9 +169,9 @@ describe("the Remote Control control handler", () => {
     const headers = { authorization: `Bearer ${TOKEN}` };
     const statuses = await transport.request({ method: "GET", path: `${CONTROL_PATH_PREFIX}/status`, headers });
     expect(statuses.status).toBe(HTTP_STATUS.ok);
-    expect(JSON.parse(statuses.body)).toEqual({ statuses: STATUSES });
+    expect(JSON.parse(statuses.body)).toEqual({ statuses: STATUSES, unobserved: [] });
     const oneSession = await transport.request({ method: "GET", path: `${CONTROL_PATH_PREFIX}/status?session=${SESSION_ID}`, headers });
-    expect(JSON.parse(oneSession.body)).toEqual({ statuses: [STATUSES[0]] });
+    expect(JSON.parse(oneSession.body)).toEqual({ statuses: [STATUSES[0]], unobserved: [] });
     const unknownSession = await transport.request({ method: "GET", path: `${CONTROL_PATH_PREFIX}/status?session=cse_00000000-0000-4000-8000-0000000000ff`, headers });
     expect(unknownSession.status).toBe(HTTP_STATUS.notFound);
     expect(errorTextOf(unknownSession.body)).toContain("has not observed Remote Control session");
@@ -413,7 +428,7 @@ describe("the control client", () => {
       response.end(JSON.stringify({ statuses: [{ id: SESSION_ID, createdAt: 1, lastSeenAt: 2, pending: [], pid: "4001" }] }));
     });
     running = started;
-    await expect(frontDoorRcControl(plainTransport(started.port), TOKEN).statusOf()).rejects.toThrow("named no status list");
+    await expect(frontDoorRcControl(plainTransport(started.port), TOKEN).statusOf()).rejects.toThrow("named no status report");
   });
 
   it("lists sessions, reads status and pending, and delivers writes through the transport, surfacing the door's verbose failure message", async () => {
@@ -421,8 +436,8 @@ describe("the control client", () => {
     running = started;
     const control = frontDoorRcControl(plainTransport(started.port), TOKEN);
     expect(await control.listSessions()).toEqual(SESSIONS);
-    expect(await control.statusOf()).toEqual(STATUSES);
-    expect(await control.statusOf(SESSION_ID)).toEqual([STATUSES[0]]);
+    expect(await control.statusOf()).toEqual({ statuses: STATUSES, unobserved: [] });
+    expect(await control.statusOf(SESSION_ID)).toEqual({ statuses: [STATUSES[0]], unobserved: [] });
     expect(await control.pendingOf()).toEqual(PENDING);
     expect(await control.pendingOf(QUIET_SESSION_ID)).toEqual([]);
     expect(await control.sendPrompt(SESSION_ID, "run the tests")).toEqual({ ok: true, sequenceNums: [SEQUENCE_NUM] });
