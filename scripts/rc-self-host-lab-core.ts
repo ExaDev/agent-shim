@@ -20,7 +20,14 @@ export interface LabEnvInputs {
   readonly claudeHome: string;
   /** The lab's own `HOME`, inside the lab directory: the CLI reads user-level files (`~/.claude/CLAUDE.md`, `~/.ssh`, `~/.gitconfig`) from `HOME` whatever its configuration directory, so the operator's are out of reach only under a home of the lab's own. */
   readonly userHome: string;
+  /** The directory, inside the lab directory, holding the `ssh` stand-in (see `SSH_STAND_IN`) that comes first on every lab process's `PATH`. */
+  readonly stubBin: string;
 }
+
+/**
+ * The script the lab's `ssh` stand-in runs: it fails the way a refused connection does (exit 255) without opening one. The CLI probes `ssh -T git@github.com` itself before it clones a plugin marketplace, outside git and so outside `GIT_SSH_COMMAND`, and OpenSSH reads `~/.ssh` from the passwd entry rather than `HOME`, so only a stand-in found first on `PATH` keeps that probe from reaching GitHub with the operator's keys.
+ */
+export const SSH_STAND_IN = "#!/bin/sh\nexit 255\n";
 
 /**
  * Why the lab refuses to run in this environment, or undefined when it may: `CLAUDE_CONFIG_DIR` set (a launched CLI would run as the operator's real login, ExaDev/agent-shim#725, so the operator runs the lab under `env -u CLAUDE_CONFIG_DIR` and the refusal proves they did); `AGENT_SHIM_HOME` set to anything but the lab's own home (the lab makes its own throwaway one and never writes into another); or a lab directory inside a real state root (`~/.agent-shim`, `~/.claude-use`, `~/.claude`) or under `/tmp`, where the lab's minted credential and transcripts would outlive it or mix with real state.
@@ -46,7 +53,7 @@ export function labRefusal(operator: Readonly<Record<string, string | undefined>
 }
 
 /**
- * The environment every lab process starts with: the inherited minimum, the lab's own `HOME`, `AGENT_SHIM_HOME` and `AGENT_SHIM_CLAUDE_HOME`, git's SSH transport disabled, and a terminal type the CLI renders against. `CLAUDE_CONFIG_DIR` is never in it, whatever the operator's environment holds.
+ * The environment every lab process starts with: the inherited minimum, the lab's own `HOME`, `AGENT_SHIM_HOME` and `AGENT_SHIM_CLAUDE_HOME`, git's SSH transport disabled, an `ssh` stand-in first on `PATH`, and a terminal type the CLI renders against. `CLAUDE_CONFIG_DIR` is never in it, whatever the operator's environment holds.
  */
 export function labBaseEnv(operator: Readonly<Record<string, string | undefined>>, inputs: LabEnvInputs): Record<string, string> {
   const env: Record<string, string> = {};
@@ -57,6 +64,7 @@ export function labBaseEnv(operator: Readonly<Record<string, string | undefined>
     }
   }
   env.TERM = "xterm-256color";
+  env.PATH = env.PATH === undefined ? inputs.stubBin : `${inputs.stubBin}:${env.PATH}`;
   env.HOME = inputs.userHome;
   env.AGENT_SHIM_HOME = inputs.home;
   env.AGENT_SHIM_CLAUDE_HOME = inputs.claudeHome;

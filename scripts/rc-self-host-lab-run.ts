@@ -18,7 +18,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { buildLayoutPaths } from "../src/paths";
-import { gitEgressIn, labBaseEnv, labLaunchVariables, labPaneCommand, labPaneState, labRefusal, labSessionId, nonLoopbackSockets, parseLabDoorState, PINNED_CLAUDE_VERSION, readLabCapture, shellQuote } from "./rc-self-host-lab-core";
+import { SSH_STAND_IN, gitEgressIn, labBaseEnv, labLaunchVariables, labPaneCommand, labPaneState, labRefusal, labSessionId, nonLoopbackSockets, parseLabDoorState, PINNED_CLAUDE_VERSION, readLabCapture, shellQuote } from "./rc-self-host-lab-core";
 
 const USAGE = "usage: node scripts/rc-self-host-lab.mts up|check|down --dir <lab-dir> [--claude-version <v>] [--keep]";
 
@@ -36,6 +36,10 @@ const PANE_COLUMNS = 200;
 const PANE_ROWS = 50;
 /** The mock credential's length in random bytes: 128 bits, the size of every other random credential the door mints. */
 const MOCK_TOKEN_BYTES = 16;
+/** The directory of the lab's `ssh` stand-in, inside the lab directory. */
+const STUB_BIN_DIR = "bin";
+/** Owner-only mode for an executable the lab writes. */
+const EXECUTABLE_FILE_MODE = 0o700;
 /** Owner-only file mode for the lab's token and provider file. */
 const PRIVATE_FILE_MODE = 0o600;
 
@@ -269,15 +273,17 @@ async function up(options: Options): Promise<boolean> {
   const claudeHome = path.join(options.dir, "claude-home");
   const userHome = path.join(options.dir, "user-home");
   const work = path.join(options.dir, "work");
-  for (const directory of [home, claudeHome, work]) {
+  const stubBin = path.join(options.dir, STUB_BIN_DIR);
+  for (const directory of [home, claudeHome, work, stubBin]) {
     fs.mkdirSync(directory, { recursive: true });
   }
+  fs.writeFileSync(path.join(stubBin, "ssh"), SSH_STAND_IN, { mode: EXECUTABLE_FILE_MODE });
   // The launcher finds Claude Code versions under HOME, and the lab's HOME is its own, so the operator's installed versions are linked in read-only terms: the one thing of the operator's the lab's home holds.
   const versionsLink = path.join(userHome, LAUNCHER_VERSIONS_PATH);
   fs.mkdirSync(path.dirname(versionsLink), { recursive: true });
   fs.symlinkSync(path.join(os.homedir(), LAUNCHER_VERSIONS_PATH), versionsLink);
   const paths = buildLayoutPaths(home);
-  const env = labBaseEnv(process.env, { home, claudeHome, userHome });
+  const env = labBaseEnv(process.env, { home, claudeHome, userHome, stubBin });
   const socket = `rc-lab-${path.basename(options.dir)}`;
   const agentShim = (args: readonly string[]): string => run(process.execPath, [CLI_BUNDLE, ...args], env);
 
@@ -364,7 +370,7 @@ async function stopTree(root: number, what: string): Promise<void> {
 
 async function down(options: Options): Promise<boolean> {
   const state = readState(options.dir);
-  const env = labBaseEnv(process.env, { home: state.home, claudeHome: path.join(options.dir, "claude-home"), userHome: path.join(options.dir, "user-home") });
+  const env = labBaseEnv(process.env, { home: state.home, claudeHome: path.join(options.dir, "claude-home"), userHome: path.join(options.dir, "user-home"), stubBin: path.join(options.dir, STUB_BIN_DIR) });
   const clean = check(state);
   await stopTree(state.cliPid, "the CLI");
   await stopTree(state.mockPid, "the mock provider");

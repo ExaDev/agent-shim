@@ -1,10 +1,13 @@
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
-import { gitEgressIn, labBaseEnv, labLaunchVariables, labPaneCommand, labPaneState, labRefusal, labSessionId, nonLoopbackSockets, parseLabDoorState, readLabCapture, shellQuote } from "./rc-self-host-lab-core";
+import { SSH_STAND_IN, gitEgressIn, labBaseEnv, labLaunchVariables, labPaneCommand, labPaneState, labRefusal, labSessionId, nonLoopbackSockets, parseLabDoorState, readLabCapture, shellQuote } from "./rc-self-host-lab-core";
 
 /** Ports and a pid with no meaning beyond being told apart in the assertions. */
 const TRANSPARENT_PORT = 4321;
 const TLS_PORT = 443;
+/** The exit status OpenSSH ends with when it cannot connect, which the stand-in reproduces. */
+const SSH_REFUSED_EXIT_STATUS = 255;
 const DOOR_PORT = 5000;
 const SUPERVISOR_PID = 7;
 
@@ -12,8 +15,13 @@ const line = (record: Record<string, unknown>): string => JSON.stringify({ ts: "
 
 describe("the lab's environment", () => {
   it("keeps only the inherited minimum and the lab's own home, never the operator's configuration directory, proxy or credentials", () => {
-    const env = labBaseEnv({ HOME: "/h", PATH: "/bin", CLAUDE_CONFIG_DIR: "/real", HTTPS_PROXY: "http://x", ANTHROPIC_API_KEY: "k", AGENT_SHIM_HOME: "/real-home" }, { home: "/lab/home", claudeHome: "/lab/claude-home", userHome: "/lab/user-home" });
-    expect(env).toEqual({ HOME: "/lab/user-home", PATH: "/bin", TERM: "xterm-256color", AGENT_SHIM_HOME: "/lab/home", AGENT_SHIM_CLAUDE_HOME: "/lab/claude-home", GIT_SSH_COMMAND: "false", GIT_TERMINAL_PROMPT: "0" });
+    const env = labBaseEnv({ HOME: "/h", PATH: "/bin", CLAUDE_CONFIG_DIR: "/real", HTTPS_PROXY: "http://x", ANTHROPIC_API_KEY: "k", AGENT_SHIM_HOME: "/real-home" }, { home: "/lab/home", claudeHome: "/lab/claude-home", userHome: "/lab/user-home", stubBin: "/lab/bin" });
+    expect(env).toEqual({ HOME: "/lab/user-home", PATH: "/lab/bin:/bin", TERM: "xterm-256color", AGENT_SHIM_HOME: "/lab/home", AGENT_SHIM_CLAUDE_HOME: "/lab/claude-home", GIT_SSH_COMMAND: "false", GIT_TERMINAL_PROMPT: "0" });
+  });
+
+  it("puts an ssh stand-in first on PATH that fails like a refused connection without opening one", () => {
+    const run = spawnSync("sh", ["-c", SSH_STAND_IN]);
+    expect(run.status).toBe(SSH_REFUSED_EXIT_STATUS);
   });
 
   it("starts the door in self-hosted mode with its capture on, its transparent surface on the given port, and nothing of ~/.claude shared", () => {
