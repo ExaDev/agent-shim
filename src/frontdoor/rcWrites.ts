@@ -342,7 +342,7 @@ export interface RcAnswerDeps {
 }
 
 /**
- * Answers one pending control request on an observed session: the same documented client-half write the inject path performs, carrying a `control_response` that echoes the request's id, authenticated by the observed bearer and protocol headers. The request must still be pending (an answered or deadline-expired request is refused verbosely, since writing a response nothing waits for would mislead the caller), and a successful write retires it. A dial that cannot reach the API host is reported rather than thrown.
+ * Answers one pending control request on an observed session: the same documented client-half write the inject path performs, carrying a `control_response` that echoes the request's id, authenticated by the observed bearer and protocol headers. The request must still be pending (an answered or withdrawn request is refused verbosely, since writing a response nothing waits for would mislead the caller), and a successful write retires it. A dial that cannot reach the API host is reported rather than thrown.
  */
 export async function answerRcControlRequest(deps: RcAnswerDeps, sessionId: string, requestId: string, decision: RcAnswerDecision): Promise<RcEventWriteResult> {
   const credential = deps.credentialOf(sessionId);
@@ -353,7 +353,7 @@ export async function answerRcControlRequest(deps: RcAnswerDeps, sessionId: stri
     return noOAuthCredentialResult(sessionId);
   }
   if (!deps.pendingOf(sessionId).some((pending) => pending.requestId === requestId)) {
-    return { ok: false, message: `the front door has not observed control request ${requestId} pending on session ${sessionId}: it was answered already (by this door or by an attached client), it passed its answer deadline (the protocol's permission round-trip bound), or it never passed through this door` };
+    return { ok: false, message: `the front door has not observed control request ${requestId} pending on session ${sessionId}: it was answered already (by this door, by an attached client or in the session's own terminal), the worker withdrew it, or it never passed through this door` };
   }
   const body = JSON.stringify(buildRcEventWriteBody(buildRcControlResponsePayload(requestId, decision)));
   let answer: RcDialAnswer;

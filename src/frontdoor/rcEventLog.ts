@@ -49,8 +49,8 @@ const BYTES_PER_CODE_UNIT = Uint16Array.BYTES_PER_ELEMENT;
 /** Why the tracker stopped describing a session: its liveness bound passed with no traffic, an accepted archive ended it by design, or the service closed it with a conflict header. */
 export const RC_SESSION_END_REASONS = ["expired", "archived", "conflict"] as const;
 
-/** Why a control request stopped awaiting an answer: a `control_response` answered it (whoever sent it), its answer deadline passed, or its session ended with it still outstanding. */
-export const RC_PENDING_RETIRE_REASONS = ["answered", "expired", "session-ended"] as const;
+/** Why a control request stopped awaiting an answer: a `control_response` answered it (whoever sent it), the worker withdrew it with a `control_cancel_request` (it was resolved in the session's own terminal), a worker registration reported the worker no longer waiting on it, or its session ended with it still outstanding. The worker sets no answer deadline, so none of these is a timeout. */
+export const RC_PENDING_RETIRE_REASONS = ["answered", "withdrawn", "worker-stopped", "session-ended"] as const;
 
 /** One reason a session ended. */
 export type RcSessionEndReason = (typeof RC_SESSION_END_REASONS)[number];

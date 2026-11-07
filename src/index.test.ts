@@ -195,7 +195,6 @@ describe("library surface", () => {
       "RC_GOAL_CONDITION_MAX_CHARS",
       "RC_IDLE_EXPIRY_MS",
       "RC_ORPC_PATH_PREFIX",
-      "RC_PENDING_DEADLINE_MS",
       "RC_PENDING_RETIRE_REASONS",
       "RC_PERMISSION_MODES",
       "RC_READ_FILE_ENCODINGS",
