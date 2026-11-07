@@ -12,7 +12,7 @@ import { AUTH_HEADER, HEADROOM_FLAG_HEADER, IDENTITY_HEADER, PROJECT_ID_HEADER, 
 import type { FrontDoorUp, HeadroomUp } from "./ports";
 import { STATUSLINE_ENV, type StatuslineSettings } from "../config/statusline";
 import { checkedStatusline, statuslineSettingsFromEnv } from "../statusline/settings";
-import { checkedProxyBypass, withBypassHosts } from "./proxyBypass";
+import { appendedBypassHosts, checkedProxyBypass, withBypassHosts } from "./proxyBypass";
 
 /** The fully resolved launch flags for one launch. */
 export interface ResolvedLaunchFlags {
@@ -209,7 +209,7 @@ export interface BuildEnvParams {
  *
  * A resolved front door is the whole of the child's routing, on top of the provider: `ANTHROPIC_CUSTOM_HEADERS` gains the launcher-injected session headers (identity, session id, the launch's capability token, the selected provider's name, and, when headroom resolved on, the headroom flag and the project identity headroom scopes memory to), merged with any headers the provider's own `env` or the parent environment already set. The door strips every one of them before anything leaves the machine; the token is what authorises the session's requests at the door in the first place, and the provider name is what tells it where the session's inference goes. `NODE_EXTRA_CA_CERTS` points at the door's trust bundle, because the child reaches the door over TLS signed by agent-shim's CA. The base URL is left exactly as the parent environment had it for an OAuth launch, and removed for a provider one, because Claude Code enables Remote Control and connectors only against the real `api.anthropic.com`; routing happens one layer down instead, with `HTTPS_PROXY` pointing the child at the door's CONNECT surface and carrying the launch's capability as its proxy credential (the surface refuses any CONNECT without a live one), so the child still believes it is talking to the real `api.anthropic.com` while the surface's terminated TLS feeds the routed paths to the same pipeline, whatever the door then does with them. `NO_PROXY` and its lowercase spelling gain every loopback name, appended to whatever the parent environment already carried there, because loopback can never be an upstream host the door fronts and a plain-http request sent there in absolute form is answered with an empty 400 without the target server (an HTTP-transport MCP server on loopback) ever being reached. Nothing names the headroom daemon in the child's environment: it serves only on a unix socket the door's hop dials, and the child never talks to it directly.
  *
- * Every variable and custom header this function writes is also recorded, by value digest, in `AGENT_SHIM_INJECTED` (`recordInjections`), so a launch started from inside the child can drop exactly what this launcher injected and nothing the person set (`withoutInjected`); `baseEnv` is expected to be that already-cleaned environment, except under the escape hatch, where the child keeps its parent's environment as it is.
+ * What this function writes is also recorded, by value digest, in `AGENT_SHIM_INJECTED` (`recordInjections`), so a launch started from inside the child can drop exactly what this launcher injected and nothing the person set (`withoutInjected`): each variable it sets, each custom header it adds and each bypass host it appends to `NO_PROXY` and `no_proxy`. `CLAUDE_CONFIG_DIR` is the one variable set and not recorded (every launch that resolves an identity replaces it), and a variable the launch unsets is not recorded either. `baseEnv` is expected to be that already-cleaned environment, except under the escape hatch, where the child keeps its parent's environment as it is.
  *
  * `$CLAUDE_EXTRA_FLAGS` is never stripped from the child's environment: some wrappers set it two process-levels up and rely on inheritance through a `claude` invoked from inside a running session.
  */
@@ -232,7 +232,7 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
     const providerEnv = params.provider.definition.kind !== undefined && params.provider.definition.kind !== "http" ? {} : (params.provider.definition.env ?? {});
     providerCustomHeaders = providerEnv.ANTHROPIC_CUSTOM_HEADERS;
     // The child keeps believing it talks to Claude Code's own API (the base URL stays unset, exactly as an OAuth launch leaves it), because that belief is load-bearing: Claude Code's Remote Control activation gate admits only api.anthropic.com and honours no override, so a provider-scoped base URL is what kept provider inference and Remote Control from coexisting in one session. The door, which terminates that host's TLS, routes the session's traffic to the provider named in the provider header injected below. An ambient base URL inherited from the parent is removed too, or the child would dial somewhere the door never sees.
-    env.ANTHROPIC_BASE_URL = undefined;
+    injections.unset("ANTHROPIC_BASE_URL");
     inject("AGENT_SHIM_PROVIDER", params.provider.definition.displayName);
     for (const [key, value] of Object.entries(providerEnv)) {
       if (key === CUSTOM_HEADERS_ENV) {
@@ -255,17 +255,17 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
   if (params.provider !== undefined) {
     // A provider session always rides the front door, and the door attaches the provider's own credential at its route, so what the child presents is never used. Claude Code still needs some credential to start a turn: left to its own OAuth login, a session on an identity that has none, or whose login has expired, stops with "Not logged in" before it sends a request. A placeholder in the auth token variable puts it in env-token mode, which needs no login, and is all a provider session needs. Remote Control is the exception: its activation gate refuses env-token mode, so a launch with Remote Control on carries no credential variable and relies on the identity's OAuth login, as it always has. Every other credential variable is removed, so an ambient one inherited from the parent can neither take the presented slot the door would ignore nor change the auth mode; the launcher still resolves the provider's credential before this point, so a provider none of whose sources yields a token still fails the launch outright.
     if (params.remoteControl) {
-      env.ANTHROPIC_AUTH_TOKEN = undefined;
+      injections.unset("ANTHROPIC_AUTH_TOKEN");
     } else {
       inject("ANTHROPIC_AUTH_TOKEN", PROVIDER_SESSION_PLACEHOLDER);
     }
-    env.ANTHROPIC_API_KEY = undefined;
-    env.CLAUDE_CODE_OAUTH_TOKEN = undefined;
+    injections.unset("ANTHROPIC_API_KEY");
+    injections.unset("CLAUDE_CODE_OAUTH_TOKEN");
   } else if (params.identityCredential !== undefined) {
     // Without a provider the child may talk to its endpoint directly (no door is engaged), so the identity's own resolved credential still has to travel in the environment.
     for (const [variable, value] of Object.entries(credentialVariables(params.identityCredential.target, params.identityCredential.token))) {
       if (value === undefined) {
-        env[variable] = undefined;
+        injections.unset(variable);
       } else {
         inject(variable, value);
       }
@@ -300,8 +300,10 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
     // Loopback cannot be an upstream host the door fronts, so routing plain-http loopback traffic through the CONNECT surface is never correct: a proxy-aware plain-http client (an HTTP-transport MCP server on 127.0.0.1) sends such a request to the surface in absolute form, which the surface, speaking only CONNECT, answers with an empty 400 so the target server is never reached. Every process in the child's tree is exempted in both variable spellings clients read, each keeping whatever the parent environment or the provider's own env already listed there (an inherited exclusion must survive; a repeat entry folds away) rather than replacing it.
     // The configured bypass hosts ride beside loopback, under both spellings because clients read one or the other: what the parent already set stays, and nothing is listed twice.
     const bypassed = [...LOOPBACK_HOSTS, ...(params.proxyBypass ?? [])];
-    env.NO_PROXY = withBypassHosts(env.NO_PROXY, bypassed);
-    env.no_proxy = withBypassHosts(env.no_proxy, bypassed);
+    for (const list of ["NO_PROXY", "no_proxy"] as const) {
+      injections.recordBypassHosts(list, appendedBypassHosts(env[list], bypassed));
+      env[list] = withBypassHosts(env[list], bypassed);
+    }
   }
 
   if (params.statusline !== undefined) {

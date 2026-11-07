@@ -58,4 +58,48 @@ describe("recordInjections and withoutInjected", () => {
     injections.finish();
     expect(injections.env).toEqual({});
   });
+
+  it("leaves no record of a variable the launcher unset after setting it", () => {
+    const injections = recordInjections({});
+    injections.set("ANTHROPIC_API_KEY", "sk-provider-env");
+    injections.unset("ANTHROPIC_API_KEY");
+    injections.finish();
+    expect(injections.env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(injections.env[INJECTED_ENV]).toBeUndefined();
+  });
+
+  it("drops the bypass hosts the parent appended and keeps the person's own, case-insensitively, in their original spelling and order", () => {
+    const injections = recordInjections({ NO_PROXY: "Corp.example,MCP.example.com" });
+    injections.recordBypassHosts("NO_PROXY", ["127.0.0.1", "::1"]);
+    injections.env.NO_PROXY = "Corp.example,MCP.example.com,127.0.0.1,::1";
+    injections.finish();
+    expect(withoutInjected(injections.env).NO_PROXY).toBe("Corp.example,MCP.example.com");
+  });
+
+  it("removes a bypass list the parent alone filled", () => {
+    const injections = recordInjections({});
+    injections.recordBypassHosts("no_proxy", ["127.0.0.1", "localhost"]);
+    injections.env.no_proxy = "127.0.0.1,localhost";
+    injections.finish();
+    expect("no_proxy" in withoutInjected(injections.env)).toBe(false);
+  });
+
+  it("matches a recorded header by name without regard to case, and leaves a block it removes nothing from exactly as written", () => {
+    const injections = recordInjections({});
+    injections.env.ANTHROPIC_CUSTOM_HEADERS = "X-Agent-Shim-Provider: z";
+    injections.recordHeaders(["X-Agent-Shim-Provider"]);
+    injections.finish();
+    expect("ANTHROPIC_CUSTOM_HEADERS" in withoutInjected({ ...injections.env, ANTHROPIC_CUSTOM_HEADERS: "x-agent-shim-provider: z" })).toBe(false);
+    const untouched = "x-user:   spaced\n\nnot a header line\nx-other: 1";
+    expect(withoutInjected({ ...injections.env, ANTHROPIC_CUSTOM_HEADERS: untouched }).ANTHROPIC_CUSTOM_HEADERS).toBe(untouched);
+  });
+
+  it("keeps the person's lines exactly as written when it removes an injected one beside them", () => {
+    const injections = recordInjections({});
+    injections.env.ANTHROPIC_CUSTOM_HEADERS = "x-agent-shim-provider: z";
+    injections.recordHeaders(["x-agent-shim-provider"]);
+    injections.finish();
+    const mixed = "x-user:   spaced\nx-agent-shim-provider: z\nnot a header line";
+    expect(withoutInjected({ ...injections.env, ANTHROPIC_CUSTOM_HEADERS: mixed }).ANTHROPIC_CUSTOM_HEADERS).toBe("x-user:   spaced\nnot a header line");
+  });
 });
