@@ -20,8 +20,6 @@ const SESSION_B = "cse_00000000-0000-4000-8000-00000000000b";
 const CAPACITY = 4;
 /** How long an SSE read may wait for its frame. Loopback runs in milliseconds; the bound exists only so an overloaded machine fails visibly instead of hanging the suite. */
 const WAIT_BUDGET_MS = 5_000;
-/** How long a test waits for a subscription's request to land before appending, generous against a loopback hop's real sub-millisecond cost. */
-const SETTLE_MS = 50;
 
 /** Reads SSE frames off a response body until `count` data-bearing frames have arrived, then cancels the body. */
 async function sseFrames(body: Readonly<ReadableStream<Uint8Array>>, count: number): Promise<readonly SseParsedEvent[]> {
@@ -131,13 +129,9 @@ describe("the session events surface of the typed API", () => {
   it("follows live through the typed client and refuses an evicted cursor with GONE, naming the head", async () => {
     const leave = new AbortController();
     const stream = await client.rcSessions.events({}, { signal: leave.signal });
-    const next = stream.next();
-    // The follower starts at the head of the moment its request lands; the append waits for that.
-    await new Promise((resolve) => {
-      setTimeout(resolve, SETTLE_MS);
-    });
+    // The follower's start was fixed when the request was handled, so an append before the first pull is still delivered.
     log.append({ kind: "session-ended", session: SESSION_B, reason: "archived", at: 5 });
-    const delivered = await next;
+    const delivered = await stream.next();
     expect(delivered.done).toBe(false);
     expect(delivered.value).toMatchObject({ kind: "session-ended", session: SESSION_B, reason: "archived" });
     leave.abort();

@@ -10,6 +10,7 @@ import {
   RcSessionEventsReadOutputSchema,
   RcSessionEventsStreamInputSchema,
   followRcSessionEvents,
+  type RcSessionEvent,
   type RcSessionEventLog,
 } from "./rcEventLog";
 
@@ -35,6 +36,20 @@ const RC_API_TAG = "remote-control";
 /** The oRPC error code an expired cursor is refused with: the resource the cursor named is gone for good, which is HTTP 410's own meaning, and a retry with the same cursor can never succeed. */
 const CURSOR_EXPIRED_CODE = "GONE";
 
+/** Frames one follower as the stream's events, each event's cursor its SSE id, and turns an expired cursor into the `GONE` refusal naming the head. */
+async function* sseOf(follower: Readonly<AsyncGenerator<RcSessionEvent, void>>): AsyncGenerator<RcSessionEvent, void> {
+  try {
+    for await (const event of follower) {
+      yield withEventMeta(event, { id: event.cursor });
+    }
+  } catch (error: unknown) {
+    if (error instanceof RcSessionEventCursorExpiredError) {
+      throw new ORPCError(CURSOR_EXPIRED_CODE, { message: error.message, data: { head: error.head } });
+    }
+    throw error;
+  }
+}
+
 /** Builds the session events router: one stream and one page read, behind the control-token middleware. */
 export function createRcSessionEventsApiRouter(deps: RcSessionEventsApiDeps) {
   const authed = doorApiAuth(deps.expectedToken);
@@ -44,19 +59,8 @@ export function createRcSessionEventsApiRouter(deps: RcSessionEventsApiDeps) {
         .meta(openapi({ method: "GET", path: "/rest/rc/session-events", summary: "Stream every observed session's state transitions, pending requests and endings (SSE), resumable by cursor", tags: [RC_API_TAG] }))
         .input(RcSessionEventsStreamInputSchema)
         .output(eventIterator(RcSessionEventSchema))
-        .handler(async function* ({ input, signal, lastEventId }) {
-          const follower = followRcSessionEvents(deps.sessionEvents, { since: lastEventId ?? input.since, session: input.session }, signal);
-          try {
-            for await (const event of follower) {
-              yield withEventMeta(event, { id: event.cursor });
-            }
-          } catch (error: unknown) {
-            if (error instanceof RcSessionEventCursorExpiredError) {
-              throw new ORPCError(CURSOR_EXPIRED_CODE, { message: error.message, data: { head: error.head } });
-            }
-            throw error;
-          }
-        }),
+        // A plain function rather than a generator, so the follower's start is fixed when the request is handled, before the response begins: a generator handler's body would run only at the first pull, and an event appended between the response and that pull would fall before its start.
+        .handler(({ input, signal, lastEventId }) => sseOf(followRcSessionEvents(deps.sessionEvents, { since: lastEventId ?? input.since, session: input.session }, signal))),
       eventsPage: authed
         .meta(
           openapi({

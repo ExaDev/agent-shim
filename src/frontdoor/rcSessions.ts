@@ -179,6 +179,8 @@ export interface RcSessionTrackerDeps {
   readonly credentialStore?: RcCredentialStore;
   /** Where each transition a supervisor acts on is handed as the tracker files the fact behind it (a session appearing or ending, its worker state changing, a pending request born or retired): the door's session event log (`rcEventLog.ts`). Absent, the tracker records the same facts and tells no one. */
   readonly onTransition?: (transition: RcSessionTransition) => void;
+  /** Told when the tracker closes, so whatever its transitions feed stops waiting for more: the door's session event log ends its followers here. */
+  readonly onClose?: () => void;
 }
 
 /** The live record of observed Remote Control sessions. */
@@ -205,7 +207,7 @@ export interface RcSessionTracker {
   readonly liveTasksOf: (sessionId?: string) => readonly LiveTask[];
   /** Retires one pending control request as answered: what a successful answer write calls, so the request stops being listed the moment it is answered. */
   readonly completePending: (sessionId: string, requestId: string) => void;
-  /** Stops the idle sweep timer. The entries themselves are unreachable the moment the door drops them. */
+  /** Stops the idle sweep timer and tells the transition sink's owner (`onClose`) that no more transitions follow. The entries themselves are unreachable the moment the door drops them. */
   readonly close: () => void;
 }
 
@@ -702,6 +704,7 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
     },
     close: () => {
       clearInterval(timer);
+      deps.onClose?.();
     },
   };
 }

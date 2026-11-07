@@ -158,8 +158,12 @@ export interface RcSessionEventLog {
   readonly head: () => string;
   /** Reads the events after a cursor, or answers that the cursor has expired. */
   readonly read: (input: Readonly<RcSessionEventsReadInput>) => RcSessionEventsRead;
-  /** Adds a listener told after every append, which a follower waits on instead of polling. Returns the detach function. */
+  /** Adds a listener told after every append and once on close, which a follower waits on instead of polling. Returns the detach function. */
   readonly onAppend: (listener: () => void) => () => void;
+  /** Ends every follower: each returns once it has yielded what it already read. The recorded events stay readable, and an append after the close is still recorded; only following ends. Idempotent. */
+  readonly close: () => void;
+  /** Whether `close` has been called, which a follower checks on every wake. */
+  readonly closed: () => boolean;
 }
 
 /** What separates a cursor's generation from its sequence: never part of a UUID, so the split is unambiguous. */
@@ -218,6 +222,7 @@ export function createRcSessionEventLog(deps: RcSessionEventLogDeps): RcSessionE
   const events: RcSessionEvent[] = [];
   let lastSequence = 0;
   const listeners = new Set<() => void>();
+  let isClosed = false;
 
   const expired = (reason: string): RcSessionEventsRead => ({ status: "expired", message: `${reason}; ${RESYNC_ADVICE}`, head: cursorOf(deps.generation, lastSequence) });
 
@@ -275,6 +280,16 @@ export function createRcSessionEventLog(deps: RcSessionEventLogDeps): RcSessionE
         listeners.delete(listener);
       };
     },
+    close: () => {
+      if (isClosed) {
+        return;
+      }
+      isClosed = true;
+      for (const listener of listeners) {
+        listener();
+      }
+    },
+    closed: () => isClosed,
   };
 }
 
@@ -291,10 +306,17 @@ export class RcSessionEventCursorExpiredError extends Error {
 }
 
 /**
- * Follows the log as an async iterator: yields every event after `since` (after the head at the moment of the call when omitted, so a fresh follower sees only what happens next), optionally one session's alone, then waits on the log's own append notification for each further event, never polling. Throws `RcSessionEventCursorExpiredError` when the cursor cannot be honoured, at the start or later if the consumer falls further behind than the log retains, and ends quietly by throwing the signal's reason once `signal` aborts.
+ * Follows the log as an async iterator: yields every event after `since` (after the head at the moment of this call when omitted, so a fresh follower sees only what happens next), optionally one session's alone, then waits on the log's own append notification for each further event, never polling. The start is fixed when the follower is created, not when it is first pulled, so a consumer that subscribes and pulls later (a stream response whose first pull runs after its request has landed) still sees every event appended in between.
+ *
+ * Throws `RcSessionEventCursorExpiredError` when the cursor cannot be honoured, at the start or later if the consumer falls further behind than the log retains. Rejects with the signal's reason once `signal` aborts, the way an aborted fetch rejects. Returns once the log is closed.
  */
-export async function* followRcSessionEvents(log: RcSessionEventLog, input: Readonly<{ since?: string | undefined; session?: string | undefined }>, signal?: AbortSignal): AsyncGenerator<RcSessionEvent, void> {
-  let cursor = input.since ?? log.head();
+export function followRcSessionEvents(log: RcSessionEventLog, input: Readonly<{ since?: string | undefined; session?: string | undefined }>, signal?: AbortSignal): AsyncGenerator<RcSessionEvent, void> {
+  return followAfter(log, input.since ?? log.head(), input.session, signal);
+}
+
+/** The follower's loop, from a start `followRcSessionEvents` has already fixed. */
+async function* followAfter(log: RcSessionEventLog, since: string, session: string | undefined, signal: AbortSignal | undefined): AsyncGenerator<RcSessionEvent, void> {
+  let cursor = since;
   const aborted = new Promise<void>((resolve) => {
     signal?.addEventListener("abort", () => {
       resolve();
@@ -302,22 +324,22 @@ export async function* followRcSessionEvents(log: RcSessionEventLog, input: Read
   });
   for (;;) {
     signal?.throwIfAborted();
+    if (log.closed()) {
+      return;
+    }
     // The wake is registered before the read, so an event appended between the read and the wait can never be slept past.
-    let wake: (() => void) | undefined;
-    const appended = new Promise<void>((resolve) => {
-      wake = resolve;
-    });
-    const detach = log.onAppend(() => {
-      wake?.();
+    let detach = (): void => undefined;
+    const woken = new Promise<void>((resolve) => {
+      detach = log.onAppend(resolve);
     });
     try {
-      const read = log.read({ since: cursor, ...(input.session === undefined ? {} : { session: input.session }) });
+      const read = log.read({ since: cursor, ...(session === undefined ? {} : { session }) });
       if (read.status === "expired") {
         throw new RcSessionEventCursorExpiredError(read.message, read.head);
       }
       if (read.events.length === 0) {
         cursor = read.cursor;
-        await Promise.race([appended, aborted]);
+        await Promise.race([woken, aborted]);
         continue;
       }
       for (const event of read.events) {
