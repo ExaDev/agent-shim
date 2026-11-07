@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { stageSessionControlPlugin } from "./sessionControlPlugin";
 
 /**
- * Guards the control plugin against the constraint Claude Code's own loader enforces, which calling the generated hooks directly (sessionControlPlugin.test.ts) cannot see: the 2.1.319 loader refuses a hooks module that passes the plugin API object (`$`) to a function not declared at the module's top level, and then loads nothing of it. Two checks: a static one over the generated source, and the CLI's own `claude plugin validate`, run with the native binary the Agent SDK dependency ships for this platform (it needs no login), so it runs wherever the tests do.
+ * Guards the control plugin against the constraint Claude Code's own loader enforces, which calling the generated hooks directly (sessionControlPlugin.test.ts) cannot see: the 2.1.319 loader refuses a hooks module that passes the plugin API object (`$`) to a function not declared at the module's top level, and then loads nothing of it. Two checks: a static one over the generated source, and the CLI's own `claude plugin validate`, run with the native binary the Agent SDK dependency ships for this platform (it needs no login), so it runs wherever the tests do. That binary is whatever Claude Code release the pinned SDK bundles, not necessarily the 2.1.319 the constraint was found on (SDK 0.3.311 bundles 2.1.311, whose validator enforces it too); the case prints the version it ran, so an SDK bump whose binary stops enforcing the rule shows in the test output.
  */
 
 /** The names of the functions the generated module declares at its top level. */
@@ -63,6 +63,9 @@ describe("the control plugin as Claude Code's loader reads it", () => {
     try {
       const run = spawnSync(bundledClaudeBinary(), ["plugin", "validate", plugin.directory], { env: { HOME: config, CLAUDE_CONFIG_DIR: config, PATH: process.env.PATH }, encoding: "utf8", timeout: VALIDATE_TIMEOUT_MS });
       expect(run.error).toBeUndefined();
+      const version = spawnSync(bundledClaudeBinary(), ["--version"], { env: { HOME: config, CLAUDE_CONFIG_DIR: config, PATH: process.env.PATH }, encoding: "utf8", timeout: VALIDATE_TIMEOUT_MS }).stdout.trim();
+      console.info(`plugin validate ran with the Agent SDK's bundled Claude Code ${version}`);
+      expect(version).toMatch(/^\d+\.\d+\.\d+/u);
       expect(`${run.stdout}${run.stderr}`).toContain("Validation passed");
       expect(run.status).toBe(0);
     } finally {
