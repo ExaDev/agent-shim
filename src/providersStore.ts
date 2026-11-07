@@ -504,19 +504,32 @@ export type ProviderSelection =
   | { readonly ok: true; readonly provider: SelectedProvider }
   | { readonly ok: false; readonly status: number; readonly message: string };
 
+/** The inputs that decide which provider a launch names: the flag, the cascade and the identity's own declaration. */
+type ProviderNaming = Pick<ResolveProviderParams, "paths" | "port" | "cliProvider" | "cascade" | "identityProvider">;
+
 /**
- * Selects which API provider this launch routes through, if any: the `--provider` flag first, then the cascade's `launch.provider` selection, then the launching identity's own `provider`, any of which may name a renamed provider by its former name. Returns undefined when nothing selected a provider at all.
- *
- * Reads the provider's definition only: its credential is neither resolved nor run, so a read-only caller can name the provider a launch would use without touching a secret store or a credential command.
+ * The name of the provider a launch routes through, if any: the `--provider` flag first, then the cascade's `launch.provider` selection, then the launching identity's own `provider`, with a former name resolved to the provider it became. Returns undefined when nothing selected a provider at all. A name no provider file defines is returned as named, for the caller to refuse.
  */
-export function selectProvider(params: Pick<ResolveProviderParams, "paths" | "port" | "cliProvider" | "cascade" | "identityProvider">): ProviderSelection | undefined {
+export function selectedProviderName(params: ProviderNaming): string | undefined {
   const cliName = params.cliProvider !== undefined && params.cliProvider !== "" ? params.cliProvider : undefined;
   const named = cliName ?? (params.cascade === undefined ? params.identityProvider : cascadeProviderName(params.cascade, params.identityProvider));
   if (named === undefined) {
     return undefined;
   }
   // A launch that names a renamed provider by its old name (a committed `.agent-shim.json`, a shell habit) runs on the provider it became.
-  const name = canonicalProviderName(named, (candidate) => loadProvider(params.paths.providersDir, candidate, params.port) !== undefined, () => loadProviderAliases(params.paths.providerAliasesFile, params.port));
+  return canonicalProviderName(named, (candidate) => loadProvider(params.paths.providersDir, candidate, params.port) !== undefined, () => loadProviderAliases(params.paths.providerAliasesFile, params.port));
+}
+
+/**
+ * Selects which API provider this launch routes through, if any, by the name `selectedProviderName` gives. Returns undefined when nothing selected a provider at all.
+ *
+ * Reads the provider's definition only: its credential is neither resolved nor run, so a read-only caller can name the provider a launch would use without touching a secret store or a credential command.
+ */
+export function selectProvider(params: ProviderNaming): ProviderSelection | undefined {
+  const name = selectedProviderName(params);
+  if (name === undefined) {
+    return undefined;
+  }
 
   const definition = loadProvider(params.paths.providersDir, name, params.port);
   if (definition === undefined) {
