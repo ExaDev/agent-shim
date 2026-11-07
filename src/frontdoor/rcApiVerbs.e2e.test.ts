@@ -5,7 +5,9 @@ import { KEYGEN_TIMEOUT_MS } from "./connectTestWorld";
 import { createRcApiNodeHandler, frontDoorRcApiClient } from "./rcApi";
 import { RC_GOAL_CONDITION_MAX_CHARS, RC_SESSION_COMMAND_MAX_WAIT_MS, type RcCompactOptions, type RcSessionCommandResult } from "./rcSessionCommands";
 import { createRcEventFanout } from "./rcStream";
-import type { RcEventWriteResult } from "./rcWrites";
+import { HTTP_STATUS } from "../codex/http";
+import { createRcSessionTracker, RC_IDLE_EXPIRY_MS } from "./rcSessions";
+import type { RcAnswerDecision, RcEventWriteResult } from "./rcWrites";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
 
 /**
@@ -201,6 +203,65 @@ describe("the wider control-verb family on the door's typed API, end to end over
     try {
       const api = frontDoorRcApiClient(handle.port, ca.certPem, CONTROL_TOKEN);
       await expect(api.rc.endSession({ session: "cse_missing" })).rejects.toMatchObject({ code: "BAD_GATEWAY", message: "the front door has not observed Remote Control session cse_missing" });
+    } finally {
+      await handle.close();
+    }
+  });
+  it("lists a pending question's questions and carries an answer's choices to the operation, through the typed client", async () => {
+    const session = "cse_00000000-0000-4000-8000-0000000000d1";
+    const tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS });
+    const heartbeat = tracker.observeExchange({ method: "POST", url: `/v1/code/sessions/${session}/worker/heartbeat`, headers: { authorization: "Bearer b" } });
+    heartbeat?.onResponse(HTTP_STATUS.ok, {});
+    heartbeat?.onEnd();
+    const questions = [{ question: "Which checks?", header: "Checks", multiSelect: true, options: [{ label: "lint", description: "style" }, { label: "test" }] }];
+    tracker.fileStreamEvent(session, { event_type: "control_request", sequence_num: 1, source: "worker", payload: { type: "control_request", request_id: "req_typed", request: { subtype: "can_use_tool", tool_name: "AskUserQuestion", input: { questions } } } });
+    const decisions: RcAnswerDecision[] = [];
+    const unused = async (): Promise<RcEventWriteResult> => await Promise.resolve({ ok: false, message: "unexercised" });
+    const surface = createRcApiNodeHandler({
+      expectedToken: CONTROL_TOKEN,
+      list: tracker.list,
+      statusOf: (sessionId?: string) => tracker.statusOf(sessionId),
+      pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
+      inject: unused,
+      answer: async (_session, _request, decision) => {
+        decisions.push(decision);
+        return await Promise.resolve({ ok: true, sequenceNums: [1] });
+      },
+      interrupt: unused,
+      setModel: unused,
+      setPermissionMode: unused,
+      endSession: unused,
+      getUsage: unused,
+      getContextUsage: unused,
+      readFile: unused,
+      fileSuggestions: unused,
+      keepAlive: unused,
+      mcpStatus: unused,
+      mcpReconnect: unused,
+      mcpAuthenticate: unused,
+      mcpOAuthCallbackUrl: unused,
+      teleport: unused,
+      fanout: createRcEventFanout(),
+    });
+    const server = createFrontDoorServer(
+      async () => {
+        await Promise.resolve();
+      },
+      () => undefined,
+      mintLeaf(ca, LOOPBACK_LEAF_NAMES, new Date()),
+      undefined,
+      [surface],
+    );
+    const handle = await listenFrontDoor(server, { ca: ca.certPem });
+    try {
+      const api = frontDoorRcApiClient(handle.port, ca.certPem, CONTROL_TOKEN);
+      const listed = await api.rc.pending({ session });
+      expect(listed.pending[0]?.questions).toEqual(questions);
+      await api.rc.answer({ session, request: "req_typed", approve: true, choices: [["lint", 2, { text: "fmt" }]] });
+      expect(decisions).toEqual([{ approve: true, message: undefined, choices: [["lint", 2, { text: "fmt" }]] }]);
+      // The shared schema refuses choices that come with a denial before the operation is reached.
+      await expect(api.rc.answer({ session, request: "req_typed", approve: false, choices: [["lint"]] })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      expect(decisions).toHaveLength(1);
     } finally {
       await handle.close();
     }
