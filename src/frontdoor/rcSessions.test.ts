@@ -290,7 +290,7 @@ describe("the Remote Control pending-request lifecycle", () => {
       authorization: "Bearer b",
       requestBody: workerEventsBody({ type: "control_request", request_id: REQUEST_ID, request: { subtype: "can_use_tool", tool_name: "Bash", input: { command: "pnpm test" } } }),
     }).respond(HTTP_STATUS.ok);
-    // Several heartbeat intervals pass with the session's heartbeats arriving: the worker sets no deadline (the captured fixture's question was answered well past the fourteen seconds the tracker used to allow, and the session continued), so the request is still listed.
+    // Several heartbeat intervals pass with the session's heartbeats arriving: the worker sets no deadline, so the request stays pending until something retires it.
     const heartbeatLater = (): void => {
       advance(HEARTBEAT_INTERVAL_MS);
       exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer b" }).respond(HTTP_STATUS.ok);
