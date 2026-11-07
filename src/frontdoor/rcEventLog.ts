@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { DOOR_EVENT_BUFFER_EVENTS } from "./eventHub";
 import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
 import { RC_PENDING_SUMMARY_EXCERPT_CHARS } from "./rcSessions";
 
@@ -118,6 +119,14 @@ export const RcSessionEventsReadInputSchema = z.strictObject({
 
 /** What one read asks for. */
 export type RcSessionEventsReadInput = z.output<typeof RcSessionEventsReadInputSchema>;
+
+/**
+ * What one page read asks for over the typed API: the log's own read, with the page size defaulted and capped so a caller naming none still receives a bounded answer. A page answer lands whole in its reader's memory (an agent's context, through the MCP tool), so an unbounded default would hand it the whole window.
+ */
+export const RcSessionEventsPageInputSchema = RcSessionEventsReadInputSchema.extend({
+  /** The most events this page carries. When omitted, the bound the door's event backbone already holds per slow consumer (`DOOR_EVENT_BUFFER_EVENTS`, oRPC's own documented default for that case), so a reader with no stated preference receives one consumer buffer's worth at a time. At most the whole retained window (`RC_SESSION_EVENT_LOG_CAPACITY`), since no page can return more than the log holds. */
+  limit: z.int().positive().max(RC_SESSION_EVENT_LOG_CAPACITY).default(DOOR_EVENT_BUFFER_EVENTS),
+});
 
 /** The query the event stream takes: where to resume (the SSE `Last-Event-ID` header outranks it on a reconnect) and an optional session filter. */
 export const RcSessionEventsStreamInputSchema = RcSessionEventsReadInputSchema.omit({ limit: true });

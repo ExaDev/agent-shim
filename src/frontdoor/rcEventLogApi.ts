@@ -6,7 +6,7 @@ import { doorApiAuth, READ_ONLY_OPERATION_EXTENSION } from "./rcApi";
 import {
   RcSessionEventCursorExpiredError,
   RcSessionEventSchema,
-  RcSessionEventsReadInputSchema,
+  RcSessionEventsPageInputSchema,
   RcSessionEventsReadOutputSchema,
   RcSessionEventsStreamInputSchema,
   followRcSessionEvents,
@@ -68,7 +68,7 @@ export function createRcSessionEventsApiRouter(deps: RcSessionEventsApiDeps) {
             spec: (current) => ({ ...current, [READ_ONLY_OPERATION_EXTENSION]: true }),
           }),
         )
-        .input(RcSessionEventsReadInputSchema)
+        .input(RcSessionEventsPageInputSchema)
         .output(RcSessionEventsReadOutputSchema)
         .handler(({ input }) => deps.sessionEvents.read(input)),
     },
