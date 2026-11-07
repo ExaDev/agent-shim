@@ -27,7 +27,8 @@ import { withoutContextMarker } from "../models/identity";
 import type { TargetObservation } from "../selection/signals";
 import type { UsageSnapshot } from "../usage/schema";
 import { PROVIDER_PATH_PREFIX, directOrigin, parseProviderPath, type FrontDoorRoute, type ModelChoice, type RoutedRequest } from "./route";
-import { Readable } from "node:stream";
+import { followingMainLoop, withModel, type MainLoopRouteRecord } from "./mainLoopRoute";
+import { TIER_ENV_VARIABLES, claudeTierOf } from "../models/tiers";
 import { scanRequestHead } from "./requestScan";
 
 /** How often the door logs that one upstream could not be connected to, while it stays down. */
@@ -189,6 +190,8 @@ export function createProviderRouteResolver(deps: {
   readonly log: (line: string) => void;
   /** The clock that interval is measured on. */
   readonly now: () => number;
+  /** Where each provider-less session's latest main-loop request was served, which its helper requests follow (see `followingMainLoop`): the door's one record, bounded by its session registry. */
+  readonly mainLoopRoutes: MainLoopRouteRecord;
 }): (request: RoutedRequest) => Promise<RouteResolution> {
   /** When each upstream (by the subject its routes name it with) last had a failure to connect logged. */
   const couldNotConnectLoggedAt = new Map<string, number>();
@@ -410,7 +413,8 @@ export function createProviderRouteResolver(deps: {
     },
   });
 
-  return async (request) => {
+  /** The routing loop, which hands `noteRequestedModel` the model name the request's body carried each time a scan reads it, the first name first. */
+  const resolveByName = async (request: RoutedRequest, noteRequestedModel: (model: string | undefined) => void): Promise<RouteResolution> => {
     // A provider session arrives believing it is talking to Claude Code's own API (that belief is load-bearing: the CLI's Remote Control activation gate admits only that host, with no override), so its inference rides a bare /v1/ path. The rewrite to the session's provider scoped path happens here, before anything else, because the whole pipeline must see it: the body scan, the resolution and above all the route that serves, since a translating route re-derives its provider from the scoped path and a bare path would leave it unrouted. The Remote Control family never takes this branch, whichever surface serves it, because a provider serves inference, not the CCR session protocol.
     const scopedRequest = scopeSessionProviderPath(request);
     const serveScoped = (resolution: { ok: true; route: FrontDoorRoute }): { ok: true; route: FrontDoorRoute } =>
@@ -445,6 +449,7 @@ export function createProviderRouteResolver(deps: {
       if (resolvesNames) {
         // Whole-body, because a resolved name is served under its target's own model name: the qualified or virtual name the session sent is rewritten in the one copy of the body this scan holds, exactly as a `routes` entry that names a model is.
         const scan = await scanRequestHead(current, true);
+        noteRequestedModel(scan.model);
         if (scan.replayed === undefined) {
           // Nothing was read (the body was empty): the original request is the honest handover.
           const resolution = resolve(current);
@@ -486,10 +491,8 @@ export function createProviderRouteResolver(deps: {
             return resolution.ok ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url }, ...(modelChoice === undefined ? {} : { modelChoice }) } : resolution;
           }
           if (requested !== undefined && routed.model !== requested) {
-            // The rewrite replaces the model field's value in the one copy of the body the whole-body scan already holds, so the target receives exactly the request that matched with exactly one field changed; the framing header is dropped because the new name is a different length.
-            const rewritten = (scan.text ?? "").replace(new RegExp('"model":\\s*"' + requested.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + '"'), '"model":"' + routed.model + '"');
-            const headers = Object.fromEntries(Object.entries(replay.headers).filter(([name]) => name.toLowerCase() !== "content-length"));
-            replay = { ...replay, headers, body: Readable.from([Buffer.from(rewritten, "utf8")]) };
+            // The target receives exactly the request that matched, with exactly its model field changed.
+            replay = withModel(replay, scan.text ?? "", requested, routed.model);
           }
           if (routed.provider !== providerName) {
             const scopedPrefix = providerName === undefined ? undefined : `${PROVIDER_PATH_PREFIX}${encodeURIComponent(providerName)}`;
@@ -523,6 +526,7 @@ export function createProviderRouteResolver(deps: {
         }),
       );
       const scan = await scanRequestHead(current, whole);
+      noteRequestedModel(scan.model);
       if (scan.replayed === undefined) {
         // Nothing was read (the body was empty): the original request is the honest handover.
         const resolution = resolve(current);
@@ -555,11 +559,8 @@ export function createProviderRouteResolver(deps: {
         return resolution.ok ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url }, ...(modelChoice === undefined ? {} : { modelChoice }) } : resolution;
       }
       if (matched.model !== undefined && scan.text !== undefined && scan.model !== undefined) {
-        // The rewrite replaces the model field's value in the one copy of the body the whole-body scan already holds, so the target receives exactly the request that matched with exactly one field changed.
-        const rewritten = scan.text.replace(new RegExp('"model":\\s*"' + scan.model.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + '"'), '"model":"' + matched.model + '"');
-        // The rewritten body's byte count no longer matches the client's content-length (the new model name is a different length), so the framing header is dropped and the forward re-frames the body itself.
-        const headers = Object.fromEntries(Object.entries(replay.headers).filter(([name]) => name.toLowerCase() !== "content-length"));
-        replay = { ...replay, headers, body: Readable.from([Buffer.from(rewritten, "utf8")]) };
+        // The target receives exactly the request that matched, with exactly its model field changed.
+        replay = withModel(replay, scan.text, scan.model, matched.model);
       }
       // The match rides the target's own scoped path, so the loop's next turn resolves it exactly as a direct dial would: its kind, its credential, and its own routes list all apply. The path after this provider's own prefix (or the whole bare /v1/ path of a session-named provider) is the target's to serve, query included.
       const rest = scoped === undefined ? path : path.slice(`${PROVIDER_PATH_PREFIX}${encodeURIComponent(scoped.provider)}`.length);
@@ -568,6 +569,43 @@ export function createProviderRouteResolver(deps: {
       current = { ...current, url: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(matched.provider)}${rest}${query}`, body: replay.body, headers: replay.headers };
     }
   };
+
+  /**
+   * The model name a helper's Claude model name is sent to `provider` under, through the provider's own tier mapping: an `http` provider's tier environment variable, a router's `models.tiers` pointer. A codex or antigravity provider maps a Claude name by tier in its own translator, so its helpers keep the name they asked for; so does a qualified ref (`<provider>/<model>`), which the routing loop resolves by name, and a name that selects no tier the provider maps.
+   */
+  const helperModel = (provider: string, session: RoutedRequest["session"], requested: string): string | undefined => {
+    const tier = requested.includes("/") ? undefined : claudeTierOf(requested);
+    if (tier === undefined) {
+      return undefined;
+    }
+    let definition;
+    try {
+      definition = loadProvider(deps.providersDir, provider, deps.fs);
+    } catch {
+      // An invalid provider file is the routing loop's own refusal to report, with its reason, when the helper reaches it.
+      return undefined;
+    }
+    if (definition === undefined) {
+      return undefined;
+    }
+    if (isHttpProvider(definition)) {
+      const model = definition.env?.[TIER_ENV_VARIABLES[tier]];
+      return model === undefined || model === "" ? undefined : model;
+    }
+    return isRouterProvider(definition) ? deps.models?.(session)?.tiers?.[tier] : undefined;
+  };
+
+  return followingMainLoop(
+    async (request) => {
+      // The first scan reads the body as the client sent it; a later one reads a target's rewrite, which is not what the session asked for.
+      let requestedModel: string | undefined;
+      const resolution = await resolveByName(request, (model) => {
+        requestedModel ??= model;
+      });
+      return resolution.ok && requestedModel !== undefined ? { ...resolution, requestedModel } : resolution;
+    },
+    { record: deps.mainLoopRoutes, helperModel },
+  );
 }
 
 /** The credential headers one resolved provider credential becomes on the wire, in the form Claude Code itself gives that target: a bearer or OAuth token as `Authorization`, an API key as `x-api-key`. */

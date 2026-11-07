@@ -66,6 +66,7 @@ import { createLiveSessionRegistry } from "./liveSessionRegistry";
 import { createLaunchEventPublisher } from "./launchEvents";
 import { serveRouted, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
+import { createMainLoopRouteRecord } from "./mainLoopRoute";
 import { readModels } from "../modelsStore";
 import { FRONTDOOR_START_TIMEOUT_MS } from "./ensure";
 import type { ListenSource, Predecessor } from "./handover";
@@ -322,6 +323,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       accountMoves: async (sessionId, to, model) => await requestAccountMove({ fs: realFarmFs, paths, runningAmong: realRunningAmong, idOf: (name) => identityIdOf(paths, name), now: () => Date.now() }, sessionId, to, model),
       ...(rcSelfHostSurface === undefined ? {} : { rcSelfHostRoute: rcSelfHostSurface.route }),
       log, now: () => Date.now(),
+      // Where each provider-less session's main loop last went, which its helper requests follow: held for as long as the registry view holds the session's launch, and empty again after a restart until each session's next main-loop request.
+      mainLoopRoutes: createMainLoopRouteRecord({ holdsSession: (sessionId) => sessionRegistry.holdsSession(sessionId) }),
     }),
     rcTracker,
     rcHub,

@@ -70,8 +70,10 @@ export const UsageRecordSchema = z.strictObject({
   endpoint: z.string(),
   /** The model the response named. */
   model: z.string().optional(),
-  /** The model the session requested when a routing layer chose a different model, or when no response model was available to compare it with. Absent when the response confirms that the requested name was served unchanged. */
+  /** The model name the request asked for, as its body carried it before any routing layer rewrote it: compared with `model`, it tells a choice or tier mapping apart from a name served unchanged. Present whenever the door read the request's body, on an error response too; a record written before the door recorded it on every request carries it only when the served model differed or was unknown. */
   requestedModel: z.string().optional(),
+  /** The request's class, as Claude Code stated it in its `x-claude-code-request-class` header: `main` for the conversation's own loop, otherwise `subagent`, `workflow`, `compaction`, `auxiliary` (a hook judge, a title) or `side_reply`. Absent when the client sent none. Claude Code derives it from the request's query source, which it does not send, so the query source itself is never recorded. */
+  requestClass: z.string().min(1).optional(),
   /** The distinct providers the choice could have landed on, present only when there was more than one, so a reader can tell a choice that crossed providers from one that stayed inside a single provider's lineup. */
   candidateProviders: z.array(z.string()).optional(),
   status: z.number().int(),

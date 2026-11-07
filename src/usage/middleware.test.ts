@@ -34,6 +34,7 @@ function event(overrides: Partial<RoutedResponseEvent> = {}): RoutedResponseEven
     modelChoice: undefined,
     requestedModel: undefined,
     clientSessionId: undefined,
+    requestClass: undefined,
     status: OK_STATUS,
     headers: SSE_HEADERS,
     ...overrides,
@@ -578,13 +579,15 @@ describe("a model choice among alternatives", () => {
     expect(record).not.toHaveProperty("candidateProviders");
   });
 
-  it("records no reconstructed choice when the served model is the name the request carried, however the request travelled", () => {
+  it("records no reconstructed choice when the served model is the name the request carried, however the request travelled: the requested name is the served one", () => {
     const h = harness();
     const body = begin(h, event({ requestedModel: "claude-sonnet-4-5" }));
     body.chunk(bytes(sse("message_start", { type: "message_start", message: { id: "msg_1", model: "claude-sonnet-4-5", content: [], usage: { input_tokens: 5, output_tokens: 1 } } })));
     finishBody(h, body);
     h.flush();
-    expect(singleRecord(h)).not.toHaveProperty("requestedModel");
+    const record = singleRecord(h);
+    expect(record.requestedModel).toBe(record.model);
+    expect(record).not.toHaveProperty("candidateProviders");
   });
 
   it("keeps an explicitly noted choice over a reconstructed one, and records its providers when there were several", () => {

@@ -46,6 +46,10 @@
     "requestedModel": {
       "type": "string"
     },
+    "requestClass": {
+      "type": "string",
+      "minLength": 1
+    },
     "candidateProviders": {
       "type": "array",
       "items": {
