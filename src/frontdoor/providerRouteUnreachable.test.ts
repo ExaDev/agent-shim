@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
 import { fakeAuth, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
-import { FAKE_HOME, admitLaunchToken, fakeAsyncCredentials, fakeFs, followsLaunchFlag } from "../test-helpers";
+import { FAKE_HOME, admitLaunchToken, fakeAsyncCredentials, fakeFs, followsLaunchFlag, mainLoopRoutesOfLiveSessions } from "../test-helpers";
 import { serveRouted } from "./pipeline";
 import { COULD_NOT_CONNECT_LOG_INTERVAL_MS, createProviderRouteResolver } from "./providerRoute";
 import { AUTH_HEADER } from "./route";
@@ -54,7 +54,7 @@ describe("an http provider the door cannot connect to", () => {
     const upstream = recordingFetch(() => {
       throw new Error("these tests never answer an upstream call");
     });
-    const resolve = createProviderRouteResolver({
+    const resolve = createProviderRouteResolver({ mainLoopRoutes: mainLoopRoutesOfLiveSessions(),
       log: (line) => {
         lines.push(line);
       },

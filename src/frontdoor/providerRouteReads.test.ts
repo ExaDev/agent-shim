@@ -5,7 +5,7 @@ import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fakeAuth, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
 import { cosmiconfigReader, type ConfigFileReader } from "../config/load";
-import { fakeAsyncCredentials, fakeFs } from "../test-helpers";
+import { fakeAsyncCredentials, fakeFs, mainLoopRoutesOfLiveSessions } from "../test-helpers";
 import { createProviderRouteResolver } from "./providerRoute";
 import type { RoutedRequest } from "./route";
 
@@ -41,7 +41,7 @@ describe("how many configuration files the door reads to resolve one request", (
       return real(file);
     };
     const upstream = recordingFetch(() => new Response("{}", { status: 200 }));
-    const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0,
+    const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0, mainLoopRoutes: mainLoopRoutesOfLiveSessions(),
       fs: { ...fakeFs({}), readConfigFile: counting },
       providersDir,
       codexPorts: { upstreams: sameUpstreamForEveryLogin({ fetch: upstream.fetch, auth: fakeAuth(), timers: { after: () => () => undefined }, randomId: () => "random" }), writeUsageSnapshot: () => undefined, now: () => 0, log: () => undefined },

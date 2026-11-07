@@ -8,7 +8,7 @@ import { HTTP_STATUS } from "../codex/http";
 import { createCodexRoutePorts } from "../codex/commands";
 import { realFsPort } from "../realPorts";
 import { resolveLayoutPaths } from "../paths";
-import { fakeAsyncCredentials, followsLaunchFlag } from "../test-helpers";
+import { fakeAsyncCredentials, followsLaunchFlag, mainLoopRoutesOfLiveSessions } from "../test-helpers";
 import { createDoorPipelines } from "./assembly";
 import { createCredentialCustody } from "./custody";
 import { CONNECT_INTERCEPT_HOST, CONNECT_INTERCEPT_HOSTS, CONNECT_TAP_HOSTS, createLeafCache, generateCa, startConnectServer, type CaMaterial } from "./connect";
@@ -182,7 +182,7 @@ describe("the self-hosted Remote Control mode end to end", () => {
         });
       },
     });
-    const resolver = createProviderRouteResolver({ log: () => undefined, now: () => 0,
+    const resolver = createProviderRouteResolver({ log: () => undefined, now: () => 0, mainLoopRoutes: mainLoopRoutesOfLiveSessions(),
       fs: realFsPort,
       providersDir: resolveLayoutPaths().providersDir,
       codexPorts: createCodexRoutePorts(() => undefined, resolveLayoutPaths().chatgptSignInFile),

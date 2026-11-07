@@ -4,6 +4,7 @@ import { HTTP_STATUS } from "../codex/http";
 import { CLIENT_SESSION_ID_PATTERN } from "../usage/schema";
 import type { HeadroomDecision } from "./headroomDecision";
 import { applyHeadroomHop, headroomReady, type HeadroomHopDeps } from "./headroomHop";
+import { requestClassOf } from "./mainLoopRoute";
 import type { Lineage } from "./lineage";
 import { CLIENT_SESSION_HEADER, identifyRequest, withCanonicalProviderTarget, type FrontDoorRoute, type ModelChoice, type RoutedRequest, type RoutedResponse, type SessionIdentity } from "./route";
 
@@ -30,6 +31,8 @@ export interface RoutedResponseEvent {
   readonly requestedModel: string | undefined;
   /** Claude Code's own id for the conversation, from the request's `x-claude-code-session-id` header; undefined when the client sent none. Unlike the launch's session id it changes when the conversation is cleared, so it is what ties a request to the client's per-conversation cost. */
   readonly clientSessionId: string | undefined;
+  /** The request's class as Claude Code stated it in `x-claude-code-request-class` (`main`, `subagent`, `workflow`, `compaction`, `auxiliary`, `side_reply`); undefined when the client sent none. */
+  readonly requestClass: string | undefined;
   readonly status: number;
   readonly headers: Readonly<Record<string, string>>;
 }
@@ -54,7 +57,7 @@ export type ResponseObserver = (event: RoutedResponseEvent) => ResponseBodyObser
 
 /** The outcome of resolving a request's target to a route. */
 export type RouteResolution =
-  | { readonly ok: true; readonly route: FrontDoorRoute; /** The request this resolution serves, when resolving it rewrote the original (a routed request carries a body the route's own scan replayed): consumers that read the body again, the headroom hop above all, must read this one, because the original's remainder is teed into the replay and stalls once the replay's buffer fills. Absent when the resolution serves the original request as received. */ readonly request?: RoutedRequest; /** The model choice this resolution made, when resolving the request's model name chose among alternatives (a virtual model's or a family's selection through its mode) and served it under a member's own name. */ readonly modelChoice?: ModelChoice }
+  | { readonly ok: true; readonly route: FrontDoorRoute; /** The request this resolution serves, when resolving it rewrote the original (a routed request carries a body the route's own scan replayed): consumers that read the body again, the headroom hop above all, must read this one, because the original's remainder is teed into the replay and stalls once the replay's buffer fills. Absent when the resolution serves the original request as received. */ readonly request?: RoutedRequest; /** The model choice this resolution made, when resolving the request's model name chose among alternatives (a virtual model's or a family's selection through its mode) and served it under a member's own name. */ readonly modelChoice?: ModelChoice; /** The model name the request's own body carried, when resolving it read the body: the name the session asked for, before any rewrite. */ readonly requestedModel?: string }
   | { readonly ok: false; readonly status: number; readonly message: string };
 
 /** Everything the ordered pipeline depends on, injected so it runs against fakes in tests. */
@@ -150,6 +153,8 @@ interface ObservedRequest {
   readonly requestedModel: { value: string | undefined };
   /** The client's own conversation id, as the request carried it. */
   readonly clientSessionId: string | undefined;
+  /** The request's class, as the request carried it. */
+  readonly requestClass: string | undefined;
 }
 
 /** The conversation id Claude Code stamps on its requests, or undefined when the request carries none (an older client) or carries something that is not a single id: Node joins a header sent twice into one comma-separated string, which the id pattern refuses. */
@@ -225,7 +230,7 @@ export function createRoutedResponse(
     start: (status, headers) => {
       for (const observe of deps.responseObservers) {
         try {
-          const body = observe({ session, route, method: request.method, path: request.path, servedPath: context.servedPath, receivedAt: request.receivedAt, viaHeadroom: request.viaHeadroom, lineage: request.thread.lineage, modelChoice: request.modelChoice.value, requestedModel: request.requestedModel.value, clientSessionId: request.clientSessionId, status, headers });
+          const body = observe({ session, route, method: request.method, path: request.path, servedPath: context.servedPath, receivedAt: request.receivedAt, viaHeadroom: request.viaHeadroom, lineage: request.thread.lineage, modelChoice: request.modelChoice.value, requestedModel: request.requestedModel.value, clientSessionId: request.clientSessionId, requestClass: request.requestClass, status, headers });
           if (body !== undefined) {
             bodyObservers.push(body);
           }
@@ -277,7 +282,7 @@ export function createRoutedResponse(
  */
 export async function serveRouted(incoming: PipelineRequest, deps: PipelineDeps): Promise<void> {
   const request: PipelineRequest = { ...incoming, url: withCanonicalProviderTarget(incoming.url, deps.canonicalProvider) };
-  const observed: ObservedRequest = { method: request.method, path: pathOf(request.url), receivedAt: deps.now(), viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined }, requestedModel: { value: undefined }, clientSessionId: clientSessionIdOf(incoming.headers) };
+  const observed: ObservedRequest = { method: request.method, path: pathOf(request.url), receivedAt: deps.now(), viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined }, requestedModel: { value: undefined }, clientSessionId: clientSessionIdOf(incoming.headers), requestClass: requestClassOf(incoming.headers) };
   const identity = identifyRequest(request.headers);
   const identified = { ...identity, session: { ...identity.session, provider: identity.session.provider === undefined ? undefined : deps.canonicalProvider(identity.session.provider) } };
   const admission = deps.admit({ url: request.url, headers: request.headers, forwardable: identified.forwardableHeaders });
@@ -308,6 +313,10 @@ export async function serveRouted(incoming: PipelineRequest, deps: PipelineDeps)
   // The resolution's model choice reaches the observers the same way a serving route's does: stashed on the observed request before any head is written.
   if (resolution.modelChoice !== undefined) {
     observed.modelChoice.value = resolution.modelChoice;
+  }
+  // Likewise the name the request asked for, so a request that never crosses the hop (whose own reading of the body would otherwise be the only one) still records it, on an error response too.
+  if (resolution.requestedModel !== undefined) {
+    observed.requestedModel.value = resolution.requestedModel;
   }
   // Only the client-facing pipeline decides: a request coming back on the direct listener has already been through that decision, and asking again from there would let a daemon-less pipeline overwrite the session's choice.
   const wantsHeadroom =

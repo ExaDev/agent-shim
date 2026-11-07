@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { CodexRoutePorts } from "../codex/route";
 import { HTTP_STATUS } from "../codex/http";
 import { fakeAuth, fakeResponse, parseAnthropicSse, recordingFetch, sameUpstreamForEveryLogin, type RecordedCall } from "../codex/testing";
-import { FAKE_HOME, admitLaunchToken, fakeAsyncCredentials, fakeFs, followsLaunchFlag } from "../test-helpers";
+import { FAKE_HOME, admitLaunchToken, fakeAsyncCredentials, fakeFs, followsLaunchFlag, mainLoopRoutesOfLiveSessions } from "../test-helpers";
 import type { SessionIdentity } from "./route";
 import { AUTH_HEADER, HEADROOM_FLAG_HEADER, IDENTITY_HEADER, SESSION_HEADER, type FrontDoorRoute } from "./route";
 import { serveRouted, type PipelineDeps, type RouteResolution } from "./pipeline";
@@ -73,7 +73,7 @@ async function startProviderDoor(files: Record<string, unknown>, preferredPort?:
     log: () => undefined,
   };
   let ownPort = 0;
-  const resolveRoute = createProviderRouteResolver({ log: () => undefined, now: () => 0, fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: ports, directPort: () => ownPort, env: {}, credentials: fakeAsyncCredentials() });
+  const resolveRoute = createProviderRouteResolver({ log: () => undefined, now: () => 0, mainLoopRoutes: mainLoopRoutesOfLiveSessions(), fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: ports, directPort: () => ownPort, env: {}, credentials: fakeAsyncCredentials() });
   const door = await startDoor(resolveRoute, preferredPort);
   ownPort = door.port;
   return { ...door, calls: upstream.calls };

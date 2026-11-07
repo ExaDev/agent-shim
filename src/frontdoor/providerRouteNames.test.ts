@@ -5,7 +5,7 @@ import { HTTP_STATUS } from "../codex/http";
 import type { CodexRoutePorts } from "../codex/route";
 import { fakeAuth, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
 import type { ModelsConfig } from "../config/schema";
-import { FAKE_HOME, fakeAsyncCredentials, fakeFs } from "../test-helpers";
+import { FAKE_HOME, fakeAsyncCredentials, fakeFs, mainLoopRoutesOfLiveSessions } from "../test-helpers";
 import { createProviderRouteResolver } from "./providerRoute";
 import type { RoutedRequest } from "./route";
 
@@ -27,7 +27,7 @@ function codexPorts(): Omit<CodexRoutePorts, "loadProvider"> {
 }
 
 function resolver(files: Record<string, unknown>, models?: ModelsConfig, accountMoves?: (sessionId: string, to: string, model: string) => Promise<boolean>): ReturnType<typeof createProviderRouteResolver> {
-  return createProviderRouteResolver({ log: () => undefined, now: () => 0,
+  return createProviderRouteResolver({ log: () => undefined, now: () => 0, mainLoopRoutes: mainLoopRoutesOfLiveSessions(),
     fs: fakeFs(files),
     providersDir: PROVIDERS_DIR,
     codexPorts: codexPorts(),

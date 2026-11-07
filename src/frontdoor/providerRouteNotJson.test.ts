@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { HTTP_STATUS } from "../codex/http";
 import { fakeAuth, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
 import { cosmiconfigReader } from "../config/load";
-import { fakeAsyncCredentials, fakeFs } from "../test-helpers";
+import { fakeAsyncCredentials, fakeFs, mainLoopRoutesOfLiveSessions } from "../test-helpers";
 import { createProviderRouteResolver } from "./providerRoute";
 import type { RoutedRequest } from "./route";
 
@@ -36,7 +36,7 @@ describe("createProviderRouteResolver and a provider file that is not JSON", () 
     const upstream = recordingFetch(() => {
       throw new Error("a refused request must not reach an upstream");
     });
-    const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0,
+    const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0, mainLoopRoutes: mainLoopRoutesOfLiveSessions(),
       fs: { ...fakeFs({}), readConfigFile: cosmiconfigReader() },
       providersDir,
       codexPorts: { upstreams: sameUpstreamForEveryLogin({ fetch: upstream.fetch, auth: fakeAuth(), timers: { after: () => () => undefined }, randomId: () => "random" }), writeUsageSnapshot: () => undefined, now: () => 0, log: () => undefined },

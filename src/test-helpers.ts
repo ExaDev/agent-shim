@@ -20,6 +20,7 @@ import type { CascadeInput } from "./resolve/walk";
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
 import type { PipelineDeps } from "./frontdoor/pipeline";
 import { AUTH_HEADER } from "./frontdoor/route";
+import { createMainLoopRouteRecord, type MainLoopRouteRecord } from "./frontdoor/mainLoopRoute";
 import type { FrontDoorSessionDetails } from "./frontdoor/state";
 
 /** The shipped classification map, parsed once, for use as the default in tests. */
@@ -489,6 +490,11 @@ export function fakeFrontDoorEnv(identity?: string, extra: Readonly<Record<strin
     AGENT_SHIM_INJECTED: expect.stringMatching(/^\{.*\}$/),
     ...extra,
   };
+}
+
+/** A main-loop route record that holds every session it is told of, for tests whose sessions have no registry record to bound it by. */
+export function mainLoopRoutesOfLiveSessions(): MainLoopRouteRecord {
+  return createMainLoopRouteRecord({ holdsSession: () => true });
 }
 
 /** A headroom decision that always takes the routing the session's launch asked for, for tests that exercise the pipeline without caring about a session's earlier choice. */
