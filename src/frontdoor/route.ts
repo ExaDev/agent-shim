@@ -224,4 +224,8 @@ export interface FrontDoorRoute {
    * Serves the request directly: headroom has already been applied, or does not apply to this route. Writes the response through `response` and resolves once the response has ended.
    */
   readonly serve: (request: RoutedRequest, response: RoutedResponse) => Promise<void>;
+  /**
+   * Told of every request the pipeline dispatches to this route, before it is either served directly or handed to the headroom hop in front of the route, so what the observer records covers both ways a request leaves. A throw refuses the request: the pipeline answers it with an internal error and dials nothing.
+   */
+  readonly observeDispatch?: (request: RoutedRequest) => void;
 }

@@ -596,3 +596,27 @@ describe("a Remote Control call that carries no identity header, served through 
     expect(await statusAfter(undefined, {})).not.toHaveProperty("identity");
   });
 });
+
+describe("a route's dispatch observer", () => {
+  /** A daemon between restarts: the hop answers 502 itself, so deciding to hop needs no live daemon. */
+  const headroom = { headroomSocket: () => undefined, hopSecret: "secret", custody: createCredentialCustody(() => "id"), log: () => undefined };
+
+  it("is told of a request once, whether the route serves it or the headroom hop in front of it forwards it", async () => {
+    const dispatched: string[] = [];
+    const route = recordingRoute({ observeDispatch: (request) => { dispatched.push(request.url); } });
+    const { deps: base } = deps({ ok: true, route });
+    await serveRouted(pipelineRequest({}).request, base);
+    await serveRouted(pipelineRequest({ [HEADROOM_FLAG_HEADER]: "1" }).request, { ...base, headroom });
+    expect(dispatched).toEqual(["/providers/codex/v1/messages", "/providers/codex/v1/messages"]);
+    // Only the first request was served by the route: the second went to the hop, which is the case an observer wrapped around `serve` never saw.
+    expect(route.seen).toHaveLength(1);
+  });
+
+  it("refuses the request, serving nothing, when the observer throws", async () => {
+    const route = recordingRoute({ observeDispatch: () => { throw new Error("observer refuses"); } });
+    const { request, response } = pipelineRequest({});
+    await serveRouted(request, deps({ ok: true, route }).deps);
+    expect(route.seen).toEqual([]);
+    expect(response.writtenHead?.status).toBe(HTTP_STATUS.internalServerError);
+  });
+});
