@@ -44,13 +44,45 @@ function expiredHeadOf(error: unknown): string | undefined {
   return typeof data === "object" && data !== null && "head" in data && typeof data.head === "string" ? data.head : undefined;
 }
 
+/** A stream that failed after printing up to `lastCursor`: the original failure is the `cause`. */
+export class RcSessionEventsStreamEndedError extends Error {
+  readonly lastCursor: string | undefined;
+
+  constructor(cause: unknown, lastCursor: string | undefined) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "RcSessionEventsStreamEndedError";
+    this.lastCursor = lastCursor;
+  }
+}
+
+/**
+ * Prints one stream's events as `frontdoor rc events` does, one line each, and resolves to the cursor of the last event printed (or `since` when none was), the cursor a later `--since` resumes after. A failure is rethrown with that cursor attached as `lastCursor`, so the caller can say where to resume whatever ended the stream.
+ */
+export async function printRcSessionEvents(events: Readonly<AsyncIterable<RcSessionEvent>>, options: Readonly<{ json: boolean; since: string | undefined }>, write: (line: string) => void): Promise<string | undefined> {
+  let last = options.since;
+  try {
+    for await (const event of events) {
+      write(options.json ? JSON.stringify(event) : formatRcSessionEvent(event));
+      last = event.cursor;
+    }
+  } catch (error: unknown) {
+    throw new RcSessionEventsStreamEndedError(error, last);
+  }
+  return last;
+}
+
+/** How a stream's end is reported: where to resume after the last event printed. */
+function resumeHint(lastCursor: string | undefined): string {
+  return lastCursor === undefined ? "no event was printed; follow afresh, or resume after the head `frontdoor rc events` names" : `resume with --since ${lastCursor}`;
+}
+
 /** Registers `frontdoor rc events` on the `frontdoor rc` command. */
 export function registerRcEventsCommand(rc: Command, paths: LayoutPaths): void {
   withExamples(
     rc
       .command("events")
       .description(
-        "Follow every observed Remote Control session at once: each session appearing or ending, each worker state change (idle, running, requires_action), and each pending control request's birth and retirement, every line tagged with its session and the cursor a later --since resumes after. A cursor the door no longer holds (evicted, or from a previous door) fails naming the head to resume after once `frontdoor rc status` has restated the present. Read-only, until Ctrl-C leaves.",
+        "Follow every observed Remote Control session at once: each session appearing or ending, each worker state change (idle, running, requires_action), and each pending control request's birth and retirement, every line tagged with its session and the cursor a later --since resumes after. A cursor the door no longer holds (evicted, or from a previous door) fails naming the head to resume after once `frontdoor rc status` has restated the present. It does not reconnect: when the stream ends or fails (a door restart above all, whose new generation would refuse the cursor anyway), it names the last cursor printed. Read-only, until Ctrl-C leaves.",
       )
       .argument("[session]", "One cse_ session id, to follow that session alone; every observed session when omitted.")
       .option("--all", "Follow every observed session: the explicit spelling of omitting the session.")
@@ -69,16 +101,22 @@ export function registerRcEventsCommand(rc: Command, paths: LayoutPaths): void {
         process.once("SIGINT", onInterrupt);
         try {
           const stream = await client.rcSessions.events({ ...(session === undefined ? {} : { session }), ...(options.since === undefined ? {} : { since: options.since }) }, { signal: leave.signal });
-          for await (const event of stream) {
-            console.log(options.json === true ? JSON.stringify(event) : formatRcSessionEvent(event));
-          }
+          const last = await printRcSessionEvents(stream, { json: options.json === true, since: options.since }, (line) => {
+            console.log(line);
+          });
+          // The door ended the stream cleanly (it is shutting down): say where to resume, since this verb does not reconnect.
+          console.error(`agent-shim: the event stream ended; ${resumeHint(last)}`);
         } catch (error) {
           if (leave.signal.aborted) {
             return;
           }
-          const head = expiredHeadOf(error);
-          if (head !== undefined && error instanceof Error) {
-            throw new Error(`${error.message} (resume with --since ${head})`, { cause: error });
+          const cause = error instanceof RcSessionEventsStreamEndedError ? error.cause : error;
+          const head = expiredHeadOf(cause);
+          if (head !== undefined && cause instanceof Error) {
+            throw new Error(`${cause.message} (resume with --since ${head})`, { cause: error });
+          }
+          if (error instanceof RcSessionEventsStreamEndedError) {
+            throw new Error(`${error.message}; ${resumeHint(error.lastCursor)}`, { cause: error });
           }
           throw error;
         } finally {
