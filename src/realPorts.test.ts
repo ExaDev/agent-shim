@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { realAsyncCredentialPort, realCredentialPort, realFarmFs, realFileSize, realReadFileTail, realRunAsyncWithin, realRunningAmong, resolveContentSourcePath, resolveExecutableCandidate, resolveOwnExecutablePath } from "./realPorts";
+import { realAsyncCredentialPort, realCredentialPort, realFarmFs, realFileSize, realReadFileTail, realRunAsyncWithin, realRunPortWithin, realRunningAmong, resolveContentSourcePath, resolveExecutableCandidate, resolveOwnExecutablePath } from "./realPorts";
 
 /** Owner read and write only: the mode a secret file is written with here. */
 const OWNER_ONLY_PERMISSIONS = 0o600;
@@ -31,6 +31,18 @@ describe("realRunAsyncWithin", () => {
   it("reports a command that cannot be started with no exit status", async () => {
     const missing = await realRunAsyncWithin(GENEROUS_LIMIT_MS)("agent-shim-test-no-such-command", []);
     expect(missing.status).toBeNull();
+  });
+});
+
+describe("realRunPortWithin", () => {
+  it("gives a command that finishes inside the limit its own exit status and output", () => {
+    const run = realRunPortWithin(GENEROUS_LIMIT_MS);
+    expect(run.run(process.execPath, ["-e", "process.stdout.write('out'); process.stderr.write('err'); process.exit(3)"])).toEqual({ status: 3, stdout: "out", stderr: "err" });
+    expect(run.run(process.execPath, ["-e", "process.stdin.pipe(process.stdout)"], "fed")).toEqual({ status: 0, stdout: "fed", stderr: "" });
+  });
+
+  it("stops a command that is still running at the limit and reports it with no exit status", () => {
+    expect(realRunPortWithin(SHORT_LIMIT_MS).run(process.execPath, ["-e", "setInterval(() => undefined, 1000)"]).status).toBeNull();
   });
 });
 

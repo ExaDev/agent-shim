@@ -6,10 +6,13 @@ import { printJson, withExamples } from "../cli/commandDeps";
 import { collectRepeated } from "../cli/parsers";
 import { UsageError } from "../cliError";
 import type { HeadroomFs } from "../headroom/state";
+import type { ClaudeCodeLoginEnv, KeychainProbe } from "../keychainLogin";
+import type { FarmFs, RunPort } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
-import { realFarmFs, realRunPort } from "../realPorts";
+import { realFarmFs, realRunPortWithin } from "../realPorts";
 import { readFrontDoorControlMaterial } from "./doorClient";
 import { frontDoorRcApiClient, type RcApiClient } from "./rcApi";
+import { cliKeychainProbe } from "./keychainProbe";
 import { frontDoorRcControl, realRcControlTransport, type FrontDoorRcControl } from "./rcControl";
 import { registerRcEventsCommand } from "./rcEventsCommand";
 import { rcRateLimitInfoOf } from "./rcLiveUsage";
@@ -238,8 +241,20 @@ export function frontDoorRcApiFromState(fsPort: HeadroomFs, paths: LayoutPaths):
   const { port, ca, token } = readFrontDoorControlMaterial(fsPort, paths, "its typed API");
   return frontDoorRcApiClient(port, ca, token);
 }
-/** Registers the `frontdoor rc` verbs on the frontdoor command: the reads, the writes, the watch, and the self-hosted minting. */
-export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void {
+/** What `frontdoor rc selfhost mint` reads of the machine: the Keychain it asks, the environment a session launched from here would inherit, and the filesystem it writes. Injected so a test mints against a fake Keychain, environment and filesystem. */
+export interface RcMintPorts {
+  readonly keychain: KeychainProbe;
+  readonly login: ClaudeCodeLoginEnv;
+  readonly fs: FarmFs;
+}
+
+/** The mint's real ports: this process's platform, environment and filesystem, with the Keychain asked under the bound `cliKeychainProbe` gives it. `within` builds the Keychain runner for a bound, and is the real one except in a test that checks the bound. */
+export function realRcMintPorts(within: (timeoutMs: number) => RunPort = realRunPortWithin): RcMintPorts {
+  return { keychain: cliKeychainProbe(process.platform, within), login: { env: process.env }, fs: realFarmFs };
+}
+
+/** Registers the `frontdoor rc` verbs on the frontdoor command: the reads, the writes, the watch, and the self-hosted minting, which reads the machine through `mintPorts`. */
+export function registerRcCommand(frontdoor: Command, paths: LayoutPaths, mintPorts: RcMintPorts = realRcMintPorts()): void {
   const rc = withExamples(
     frontdoor.command("rc").description("Observe the Remote Control sessions passing through the front door, watch the stream their attached client receives, send a prompt into one, answer its pending control requests, and steer one with the client half's own control requests (interrupt, model, permission mode, end-session, the usage and context queries, read-file, file-suggestions, keep-alive, and the mcp_* family)."),
     ["agent-shim frontdoor rc list", "agent-shim frontdoor rc pending"],
@@ -717,9 +732,7 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
       .action((identity: string, options: Readonly<{ force?: boolean; json?: boolean }>) => {
         // On macOS a Keychain login filed for the directory's service is read ahead of the minted file, so any is refused before anything is written; nothing is ever deleted.
         const result = mintRcSelfHostLogin({
-          keychain: { run: realRunPort, platform: process.platform },
-          login: { env: process.env },
-          fs: realFarmFs,
+          ...mintPorts,
           identitiesDir: paths.identitiesDir,
           frontdoorDir: paths.frontdoorDir,
           identity,

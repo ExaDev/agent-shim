@@ -421,13 +421,20 @@ const RUN_OUTPUT_LIMIT_MIB = 256;
 const BYTES_PER_MIB = 1_048_576;
 const RUN_OUTPUT_LIMIT_BYTES = RUN_OUTPUT_LIMIT_MIB * BYTES_PER_MIB;
 
-/** The real `RunPort`, used for auxiliary commands whose output this process needs to read — git branch detection for `when: { branch }` conditions, and `check.ts`'s macOS Keychain lookup. */
-export const realRunPort: RunPort = {
-  run(command, args, input) {
-    const result = spawnSyncBlocking("an external command", command, args, { encoding: "utf8", maxBuffer: RUN_OUTPUT_LIMIT_BYTES, ...(input === undefined ? {} : { input }) });
-    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
-  },
-};
+/**
+ * A real `RunPort` that stops a command still running after `timeoutMs`: it is killed and reported with no exit status. For a command that must not hang its caller, such as the attribute-only `security` lookups the mint and `identity remove` make while holding a lock. `realRunPort` is the unbounded form.
+ */
+export function realRunPortWithin(timeoutMs: number | undefined): RunPort {
+  return {
+    run(command, args, input) {
+      const result = spawnSyncBlocking("an external command", command, args, { encoding: "utf8", maxBuffer: RUN_OUTPUT_LIMIT_BYTES, ...(timeoutMs === undefined ? {} : { timeout: timeoutMs }), ...(input === undefined ? {} : { input }) });
+      return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+    },
+  };
+}
+
+/** The real `RunPort`, used for auxiliary commands whose output this process needs to read — git branch detection for `when: { branch }` conditions, and `check.ts`'s macOS Keychain lookup. It puts no bound on a command; `realRunPortWithin` does. */
+export const realRunPort: RunPort = realRunPortWithin(undefined);
 
 /** How long a command run through `realRunAsync` may take before it is killed: the commands it runs are read-only helpers (a `git` query, a process-table read) that answer from local state far inside this, and one that does not is stuck and must not hold a launch. */
 const ASYNC_RUN_TIMEOUT_MS = 2000;

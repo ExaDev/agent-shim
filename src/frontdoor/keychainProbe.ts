@@ -1,5 +1,7 @@
 import { CREDENTIAL_COMMAND_TIMEOUT_MS } from "../credential";
-import { realRunAsyncWithin } from "../realPorts";
+import type { RunPort } from "../launcher/ports";
+import type { KeychainProbe } from "../keychainLogin";
+import { realRunAsyncWithin, realRunPortWithin } from "../realPorts";
 import type { AsyncRun } from "../replayRun";
 import type { ConfigApiDeps } from "./configApi";
 
@@ -12,4 +14,11 @@ import type { ConfigApiDeps } from "./configApi";
  */
 export function doorKeychainProbe(platform: NodeJS.Platform, within: (timeoutMs: number) => AsyncRun = realRunAsyncWithin): ConfigApiDeps["keychain"] {
   return { runAsync: within(CREDENTIAL_COMMAND_TIMEOUT_MS), platform };
+}
+
+/**
+ * How a command-line process asks the macOS Keychain the same attribute-only question the door asks (`doorKeychainProbe`): `security` run synchronously and stopped after `CREDENTIAL_COMMAND_TIMEOUT_MS`, so a hung `security` ends as a `KeychainLookupError` instead of holding the lock the caller is under (the mint's, or `identity remove`'s identity names lock). `within` builds the runner for a bound, and is the real one except in a test that checks the bound.
+ */
+export function cliKeychainProbe(platform: NodeJS.Platform, within: (timeoutMs: number) => RunPort = realRunPortWithin): KeychainProbe {
+  return { run: within(CREDENTIAL_COMMAND_TIMEOUT_MS), platform };
 }
