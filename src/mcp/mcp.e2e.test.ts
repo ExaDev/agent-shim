@@ -15,6 +15,7 @@ import { buildLayoutPaths } from "../paths";
 import { createDoorEventHub, rcFanoutOnDoorHub } from "../frontdoor/eventHub";
 import { RC_ORPC_PATH_PREFIX } from "../frontdoor/rcApi";
 import { createRcSessionTracker, RC_IDLE_EXPIRY_MS } from "../frontdoor/rcSessions";
+import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog } from "../frontdoor/rcEventLog";
 import { createRcEventFanout } from "../frontdoor/rcStream";
 import type { FrontDoorStatus } from "../frontdoor/status";
 import { createMcpServer, serveMcp, type McpServerPorts } from "./server";
@@ -53,6 +54,8 @@ describe("the MCP server over a real door handler", () => {
   let origin: string;
   let close: () => Promise<void>;
   const injected: string[] = [];
+  /** The session event log the door's page read serves, appended to directly by the test that reads it through the tool. */
+  const sessionEvents = createRcSessionEventLog({ generation: "00000000-0000-4000-8000-0000000000ee", capacity: RC_SESSION_EVENT_LOG_CAPACITY });
 
   beforeAll(async () => {
     const events = createDoorEventHub();
@@ -82,6 +85,7 @@ describe("the MCP server over a real door handler", () => {
       mcpOAuthCallbackUrl: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" }),
       teleport: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS }),
       fanout: rcFanoutOnDoorHub(createRcEventFanout(), events),
+      sessionEvents,
       usageSnapshots: () => [],
       usageSnapshotOf: () => undefined,
       liveRateLimits: () => [],
@@ -182,6 +186,17 @@ describe("the MCP server over a real door handler", () => {
     expect(names).not.toContain("rc_send");
     const status = await client.callTool({ name: "frontdoor_status", arguments: {} });
     expect(JSON.parse(textOf(status))).toMatchObject({ supervisorAlive: true, state: { port: 4100 } });
+    await client.close();
+  });
+
+  it("serves every session's transitions as a cursor-paged read tool, and leaves the stream that cannot be a tool out", async () => {
+    const client = await connect({ writes: false, remoteControl: false, history: false });
+    const names = (await client.listTools()).tools.map((tool) => tool.name);
+    expect(names).toContain("rcSessions_eventsPage");
+    expect(names).not.toContain("rcSessions_events");
+    sessionEvents.append({ kind: "session-appeared", session: SESSION_ID, at: 1 });
+    const page = await client.callTool({ name: "rcSessions_eventsPage", arguments: { limit: 1 } });
+    expect(JSON.parse(textOf(page))).toMatchObject({ status: "ok", events: [{ kind: "session-appeared", session: SESSION_ID, sequence: 1 }] });
     await client.close();
   });
 
