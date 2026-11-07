@@ -65,7 +65,7 @@ export {
   type ConnectTarget,
   type LeafCert,
 } from "./frontdoor/connect";
-export { lateRcEventDial, lateRcStreamDial, realConnectEffects, realRcEventDial, realRcStreamDial, type RcDialTarget } from "./frontdoor/connectEffects";
+export { realConnectEffects, realRcEventDial, realRcStreamDial, type RcDialTarget } from "./frontdoor/connectEffects";
 export {
   RC_SESSIONS_PATH_PREFIX,
   RC_IDLE_EXPIRY_MS,

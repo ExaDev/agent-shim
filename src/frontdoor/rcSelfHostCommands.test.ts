@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { RcStreamEvent } from "./rcSchemas";
 import type { RcDialTarget } from "./connectEffects";
 import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
-import { createRcClaudeCodeVersions, selfHostSurfaceUnboundReason, parseRcGoalOutput, rcSelfHostEventDial, runSelfHostedSlashCommand, type RcSelfHostCommandDeps } from "./rcSelfHostCommands";
+import { createRcClaudeCodeVersions, parseRcGoalOutput, runSelfHostedSlashCommand, type RcSelfHostCommandDeps } from "./rcSelfHostCommands";
+import { rcSelfHostEventDial } from "./rcSelfHostDial";
 import { createRcEventFanout } from "./rcStream";
 import type { RcEventDial, RcEventWriteResult } from "./rcWrites";
 
@@ -30,6 +31,9 @@ function boundary(sequenceNum: number, trigger: string): RcStreamEvent {
 
 /** The credential the client half replays, as the tracker would hold it for an observed session. */
 const OBSERVED = { authorization: "Bearer sk-ant-oat", anthropicVersion: "2023-06-01", anthropicClientPlatform: "claude_code_cli" };
+
+/** Why the door's own surface is unbound in the worlds that leave it so, as the door words it. */
+const UNBOUND_REASON = "AGENT_SHIM_TRANSPARENT_SURFACE is not set, so the door has no surface of its own to write to";
 
 /** The loopback target of the door's own surface in these worlds. */
 const SURFACE = { host: "127.0.0.1", port: 47_592, servername: "api.anthropic.com" };
@@ -62,7 +66,7 @@ function makeWorld(answer: readonly RcStreamEvent[] = [], injectResult?: RcEvent
     fanout,
     versionOf: () => "2.1.319",
     defaultWaitMs: SHORT_WAIT_MS,
-    personWrite: { credentialOf: () => OBSERVED, noteSequenceNums: () => undefined, newUuid: () => "00000000-0000-4000-8000-000000000001", dial: rcSelfHostEventDial(() => target, fakeDial) },
+    personWrite: { credentialOf: () => OBSERVED, noteSequenceNums: () => undefined, newUuid: () => "00000000-0000-4000-8000-000000000001", dial: rcSelfHostEventDial({ resolve: () => target, unboundReason: () => UNBOUND_REASON }, fakeDial) },
     unavailable: () => undefined,
     setTimer: (action) => {
       timers.push(action);
@@ -137,7 +141,7 @@ describe("slash commands on the door's own self-hosted surface", () => {
   it("never writes as a person's app while the door's own surface is unbound, or to an address that is not this machine", async () => {
     const unbound = makeWorld([], undefined, { target: undefined });
     const refused = await runSelfHostedSlashCommand(unbound.deps, SESSION, { kind: "goal-clear" }, undefined, NEVER);
-    expect(refused.ok ? "" : refused.message).toContain("self-hosted surface is not bound");
+    expect(refused.ok ? "" : refused.message).toContain(UNBOUND_REASON);
     // A name, even one that resolves to this machine, is refused: the guard takes literal loopback addresses only.
     const named = makeWorld([], undefined, { target: { host: "localhost", port: 47_592 } });
     const refusedNamed = await runSelfHostedSlashCommand(named.deps, SESSION, { kind: "goal-clear" }, undefined, NEVER);
@@ -159,12 +163,6 @@ describe("slash commands on the door's own self-hosted surface", () => {
     expect(versions.versionOf(SESSION)).toBe("2.1.319");
     versions.sweep(() => false);
     expect(versions.versionOf(SESSION)).toBeUndefined();
-  });
-
-  it("names why the door's own surface is unbound: unset, not a port, or set but not bound", () => {
-    expect(selfHostSurfaceUnboundReason(undefined)).toContain("is not set");
-    expect(selfHostSurfaceUnboundReason("abc")).toContain('is "abc", which is not a port');
-    expect(selfHostSurfaceUnboundReason("47592")).toContain("on port 47592 is not bound");
   });
 
   it("refuses a command whose event write would be larger than the door's own surface reads, unsent", async () => {

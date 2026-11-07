@@ -1,8 +1,8 @@
-import { realRcEventDial, type RcDialTarget } from "./connectEffects";
 import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
+import type { RcSelfHostEventDial } from "./rcSelfHostDial";
 import type { RcStreamEvent } from "./rcSchemas";
 import type { RcEventFanout } from "./rcStream";
-import { buildRcEventWriteBody, buildRcUserMessagePayload, noOAuthCredentialResult, rcEventWriteResultFromAnswer, rcSessionNotObservedMessage, rcWriteHeaders, type RcDialAnswer, type RcEventDial, type RcEventWriteResult, type RcInjectDeps } from "./rcWrites";
+import { buildRcEventWriteBody, buildRcUserMessagePayload, noOAuthCredentialResult, rcEventWriteResultFromAnswer, rcSessionNotObservedMessage, rcWriteHeaders, type RcDialAnswer, type RcEventWriteResult, type RcInjectDeps } from "./rcWrites";
 
 /**
  * Slash commands on the door's own self-hosted Remote Control surface: the route the goal and compaction verbs take for a session no supervisor owns when the door serves Remote Control itself (`rcSessionCommands.ts` chooses the route).
@@ -14,55 +14,6 @@ import { buildRcEventWriteBody, buildRcUserMessagePayload, noOAuthCredentialResu
 
 /** The platform the door writes a command under on its own surface: the claude.ai web app, the one person's app the door itself serves (its browser page). */
 const RC_PERSON_CLIENT_PLATFORM = "web_claude_ai";
-
-/** The brand only `rcSelfHostEventDial` puts on a dial: not exported, so no other code can make a value of the type. */
-const SELF_HOST_DIAL: unique symbol = Symbol("the door's own self-hosted surface");
-
-/** The loopback addresses a dial to the door's own surface may name, as literals: a name would make the guard depend on how it resolves. Anything else is another machine, the real API host above all. */
-const LOOPBACK_HOSTS: readonly string[] = ["127.0.0.1", "::1"];
-
-/**
- * A dial that reaches the door's own self-hosted surface and nothing else: the one dial a command written as a person's app may ride. Unlike the client half's other dials (`lateRcEventDial`), which fall back to the real API host while no target is resolved, this one refuses: a write whose target is not resolved, or resolves to anything but a loopback address, is never sent.
- */
-export interface RcSelfHostEventDial {
-  readonly [SELF_HOST_DIAL]: true;
-  readonly writeEvents: RcEventDial["writeEvents"];
-}
-
-/** Builds the dial to the door's own self-hosted surface over `resolve`, the late-bound target of that surface (its transparent port, once bound); `makeDial` is the real event dial in production and a fake in tests. */
-export function rcSelfHostEventDial(resolve: () => RcDialTarget | undefined, makeDial: (target: RcDialTarget) => RcEventDial = realRcEventDial): RcSelfHostEventDial {
-  let built: { readonly for: RcDialTarget; readonly dial: RcEventDial } | undefined;
-  return {
-    [SELF_HOST_DIAL]: true,
-    writeEvents: async (sessionId, headers, body) => {
-      const target = resolve();
-      if (target === undefined) {
-        throw new Error("the door's self-hosted surface is not bound, so a command written as a person's app has nowhere to go but the real API host, and is not sent");
-      }
-      if (!LOOPBACK_HOSTS.includes(target.host)) {
-        throw new Error(`the door's self-hosted surface resolved to ${target.host}, which is not this machine, so a command written as a person's app is not sent there`);
-      }
-      if (built?.for !== target) {
-        built = { for: target, dial: makeDial(target) };
-      }
-      return await built.dial.writeEvents(sessionId, headers, body);
-    },
-  };
-}
-
-/**
- * Why the door's own self-hosted surface is not bound, from the one input that decides whether it ever will be: `AGENT_SHIM_TRANSPARENT_SURFACE` as the door started with it. Unset or not a port, it never binds; set to a port, the listener has not bound it yet or could not.
- */
-export function selfHostSurfaceUnboundReason(transparentSurface: string | undefined): string {
-  const port = transparentSurface === undefined ? Number.NaN : Number(transparentSurface);
-  if (transparentSurface === undefined) {
-    return "AGENT_SHIM_TRANSPARENT_SURFACE is not set, so the door has no surface of its own to write to";
-  }
-  if (!Number.isInteger(port) || port <= 0) {
-    return `AGENT_SHIM_TRANSPARENT_SURFACE is "${transparentSurface}", which is not a port, so the door has no surface of its own to write to`;
-  }
-  return `the door's transparent surface on port ${String(port)} is not bound: its listener has not started yet or could not bind the port (the door's log says which)`;
-}
 
 /** What a person's-app write needs: the client half's credential accessors and id minting, and the self-hosted dial in place of the general one. */
 export type RcPersonWriteDeps = Omit<RcInjectDeps, "dial"> & { readonly dial: RcSelfHostEventDial };

@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import type { CompactionResult } from "../supervise/realCompact";
 import { activeGoalOfTranscript } from "../supervise/sessionGoal";
-import { rcSelfHostEventDial, type RcSelfHostCommandDeps } from "./rcSelfHostCommands";
+import type { RcSelfHostCommandDeps } from "./rcSelfHostCommands";
+import { rcSelfHostEventDial } from "./rcSelfHostDial";
 import { RC_GOAL_CONDITION_MAX_CHARS, RC_SESSION_COMMAND_VERIFIED_VERSIONS, createRcSessionCommands, type RcSessionCommandDeps, type RcSupervisedTarget } from "./rcSessionCommands";
 import { createRcEventFanout } from "./rcStream";
 
@@ -73,7 +74,7 @@ function supervisedWorld(options: Readonly<{ version?: string; transcript?: stri
 /** A self-hosted session with no supervisor, whose self-hosted dial records each write and whose surface answers 500; `unavailable` is the surface's refusal, when it gives one. */
 function selfHostedWorld(version: string | undefined, unavailable?: string, accepts = false) {
   const written: string[] = [];
-  const dial = rcSelfHostEventDial(() => ({ host: "127.0.0.1", port: 47_592 }), () => ({
+  const dial = rcSelfHostEventDial({ resolve: () => ({ host: "127.0.0.1", port: 47_592 }), unboundReason: () => "the surface is unbound" }, () => ({
     writeEvents: async (_sessionId, _headers, body) => {
       written.push(body);
       // An accepting surface numbers the write and its worker never answers, so only the verb's own deadline ends the wait.

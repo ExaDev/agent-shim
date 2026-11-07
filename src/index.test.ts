@@ -357,8 +357,6 @@ describe("library surface", () => {
       "isRcContextUsageDetail",
       "isRcPermissionMode",
       "isRcReadFileEncoding",
-      "lateRcEventDial",
-      "lateRcStreamDial",
       "launchRequiredUpstreams",
       "listDirectoryRules",
       "listIdentities",

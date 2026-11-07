@@ -73,7 +73,7 @@ The route depends on two things: whether the session was launched under an agent
 | compact | yes, through the plugin | yes, on the door's own surface | refused, the same | refused, the same |
 | a slash command through `send` | delivered as a peer's message, never run | the same | the same | the same |
 
-Self-hosting needs its transparent surface bound before it writes a command as a person's app: that write rides a dial that reaches only the door's own loopback surface and refuses while none is bound, so it can never fall back to the real API host. A refusal names its reason, and a session two live supervised launches both claim is refused rather than guessed at.
+Self-hosting needs its transparent surface bound before the door writes anything for a session: every client-half dial in that mode (the goal and compaction writes as a person's app, and `send`, `answer`, `interrupt` and the other control verbs) reaches only the door's own loopback surface and refuses while none is bound, so none can fall back to the real API host. A refusal names its reason, and a session two live supervised launches both claim is refused rather than guessed at.
 
 ## The trust boundary
 

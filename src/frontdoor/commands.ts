@@ -47,7 +47,7 @@ import { createRoutingSettingReader } from "../headroom/routingSetting";
 import { createHeadroomDecision } from "./headroomDecision";
 import { captureFromEnv } from "./capture";
 import { CONNECT_INTERCEPT_HOST, CONNECT_INTERCEPT_HOSTS, CONNECT_LIMITS, CONNECT_TAP_HOSTS, HTTPS_PORT, LOOPBACK_LEAF_NAMES, createLeafCache, ensureCa, generateCa, mintLeaf, realConnectCertStore, startConnectServer, type CaMaterial } from "./connect";
-import { lateRcEventDial, lateRcStreamDial, realConnectEffects, realRcEventDial, realRcStreamDial, type RcDialTarget } from "./connectEffects";
+import { realConnectEffects, realRcEventDial, realRcStreamDial, type RcDialTarget } from "./connectEffects";
 import { createCredentialCustody } from "./custody";
 import { collectCheckReport } from "../checkReport";
 import { collectDoctorReport } from "../doctorReport";
@@ -85,7 +85,8 @@ import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, isRcSessionExchange, observi
 import { targetRefs } from "../models/targets";
 import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
 import { createDoorRcSessionCommands } from "./doorSessionCommands";
-import { createRcClaudeCodeVersions, rcSelfHostEventDial, selfHostSurfaceUnboundReason } from "./rcSelfHostCommands";
+import { createRcClaudeCodeVersions } from "./rcSelfHostCommands";
+import { rcSelfHostEventDial, rcSelfHostStreamDial, selfHostSurfaceUnboundReason, type RcSelfHostDialSource } from "./rcSelfHostDial";
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
 import type { RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
@@ -219,10 +220,10 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     return ca;
   };
 
-  // The transparent surface's port, known only once the connect listener has bound it. The self-hosted mode's client-half dials read it through `rcSelfHostDialTarget`, exactly the late-filled-closure pattern the direct port uses above: no dial can happen before the bind, because a tracked session needs traffic first and the traffic needs the surface.
+  // The transparent surface's port, known only once the connect listener has bound it. The self-hosted mode's client-half dials read it through `rcSelfHostDials`, the late-filled-closure pattern the direct port uses above. A session can be tracked before the bind (self-hosting without `AGENT_SHIM_TRANSPARENT_SURFACE` never binds one, and a bound one takes traffic only after the listener starts), so the dials are built over a source with no default target: until the surface is bound they refuse, naming why, and never fall back to the real API host.
   let transparentPort: number | undefined;
   let selfHostDialTarget: RcDialTarget | undefined;
-  /** Where the door's own Remote Control client half dials when the self-hosted mode is on: the door's own transparent surface, presenting the API host's name so the traffic terminates exactly as the CLI's does. Undefined while the mode is off or the surface is not yet bound, in which case the dial keeps its default (the real host). */
+  /** Where the door's own Remote Control client half dials when the self-hosted mode is on: the door's own transparent surface, presenting the API host's name so the traffic terminates exactly as the CLI's does. Undefined while the mode is off or the surface is not yet bound. */
   const rcSelfHostDialTarget = (): RcDialTarget | undefined => {
     if (!rcSelfHost || transparentPort === undefined) {
       return undefined;
@@ -230,6 +231,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     selfHostDialTarget ??= { host: "127.0.0.1", port: transparentPort, servername: CONNECT_INTERCEPT_HOST, ca: [loadCa().certPem] };
     return selfHostDialTarget;
   };
+  const rcSelfHostDials: RcSelfHostDialSource = { resolve: rcSelfHostDialTarget, unboundReason: () => selfHostSurfaceUnboundReason(process.env.AGENT_SHIM_TRANSPARENT_SURFACE) };
 
   // The served CCR surface itself: one per door process, in memory only. Its route rides the resolver below (so its exchanges are observed by the tracker exactly as the real host's are), and its local answers ride the connect surface's config.
   const rcSelfHostSurface = rcSelfHost
@@ -280,7 +282,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     sequenceNumOf: rcTracker.sequenceNumOf,
     storedSequenceNumOf: rcCredentialStore.readCursor,
     saveSequenceNum: rcCredentialStore.writeCursor,
-    dial: rcSelfHost ? lateRcStreamDial(rcSelfHostDialTarget) : realRcStreamDial(),
+    dial: rcSelfHost ? rcSelfHostStreamDial(rcSelfHostDials) : realRcStreamDial(),
     fanout: rcFanout,
     newClientId: randomUUID,
     backoffMs: RC_STREAM_BACKOFF_MS,
@@ -529,7 +531,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     startProviderListener: async (source) => {
       const authority = loadCa();
       // The write operations the control routes and the typed API both carry out: the door itself dials the real API host over its interception-proof agent, using the observed credential, which is why the CLI never dials the API directly. A confirmed write advances the session's sequence cursor through the tracker, so a stream resume continues after the door's own events too. In the self-hosted mode the dial's target is resolved per call so it names the door's own surface once that has bound.
-      const rcDial = rcSelfHost ? lateRcEventDial(rcSelfHostDialTarget) : realRcEventDial();
+      const selfHostEventDial = rcSelfHost ? rcSelfHostEventDial(rcSelfHostDials) : undefined;
+      const rcDial = selfHostEventDial ?? realRcEventDial();
       const rcInject = async (sessionId: string, text: string) =>
         await injectRcUserMessage({ credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial, newUuid: randomUUID }, sessionId, text);
       const rcAnswer = async (sessionId: string, requestId: string, decision: RcAnswerDecision) =>
@@ -553,14 +556,12 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       const rcSessionCommands = createDoorRcSessionCommands({
         paths,
         isTracked: (sessionId) => rcTracker.statusOf(sessionId).length > 0,
-        selfHost: rcSelfHost
-          ? {
-              personWrite: { credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, newUuid: randomUUID, dial: rcSelfHostEventDial(rcSelfHostDialTarget) },
-              unavailable: () => (rcSelfHostDialTarget() === undefined ? selfHostSurfaceUnboundReason(process.env.AGENT_SHIM_TRANSPARENT_SURFACE) : undefined),
-              fanout: rcFanout,
-              versions: rcClaudeCodeVersions,
-            }
-          : undefined,
+        selfHost: selfHostEventDial === undefined ? undefined : {
+          personWrite: { credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, newUuid: randomUUID, dial: selfHostEventDial },
+          unavailable: () => (rcSelfHostDialTarget() === undefined ? rcSelfHostDials.unboundReason() : undefined),
+          fanout: rcFanout,
+          versions: rcClaudeCodeVersions,
+        },
       });
       // The control-plane reads the typed API serves beside Remote Control, each one the same read-only collector the CLI's own verbs use, so the door's answer and `frontdoor status`'s can never disagree, plus the live rate-limit observations the event backbone files.
       const controlDeps = {
