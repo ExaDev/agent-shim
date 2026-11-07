@@ -272,7 +272,7 @@ export interface RcSessionTracker {
   readonly observeExchange: (request: RcObservedRequest) => RcExchangeObserver | undefined;
   /** Every live entry, idle ones expired first, sorted oldest-created first. */
   readonly list: () => readonly RcSessionSummary[];
-  /** Every live entry as the tracker holds it, with the same sweeping and order as `list`, filtered to one session when named. The worker state is whatever was observed or already read: reading a missing one from the service is the status resolver's job (`createRcStatusResolver`) (`rcStatus.ts`), since this accessor is synchronous. */
+  /** Every live entry as the tracker holds it, with the same sweeping and order as `list`, filtered to one session when named. The worker state is whatever was observed or already read: reading a missing one from the service is the status resolver's job (`createRcStatusResolver` in `rcStatus.ts`), since this accessor is synchronous. */
   readonly statusOf: (sessionId?: string) => readonly RcTrackedSessionStatus[];
   /** Every control request awaiting an answer, idle sessions expired first, oldest-observed first, filtered to one session when named. */
   readonly pendingOf: (sessionId?: string) => readonly RcPendingRequestSummary[];
