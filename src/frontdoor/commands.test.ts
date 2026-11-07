@@ -167,6 +167,24 @@ describe("frontdoor rc", () => {
     ]);
   });
 
+  it("states what identifies a session on a line of its own, only for the facts present", () => {
+    const createdAt = 1_000;
+    const lines = formatRcSessionStatus([
+      { id: "cse_1", createdAt, lastSeenAt: createdAt, workerState: undefined, workerIdleSeconds: undefined, pending: [], name: "fix the thing", identity: "work", model: "claude-opus-4", pid: 4_001, cwd: "/repo" },
+      { id: "cse_2", createdAt, lastSeenAt: createdAt, workerState: undefined, workerIdleSeconds: undefined, pending: [], pid: 4_002 },
+    ]);
+    expect(lines).toEqual([
+      "cse_1  created 1970-01-01T00:00:01.000Z  last seen 1970-01-01T00:00:01.000Z",
+      '  session: name "fix the thing"  identity work  model claude-opus-4  pid 4001  cwd "/repo"',
+      "  worker: not observed",
+      "  pending: none",
+      "cse_2  created 1970-01-01T00:00:01.000Z  last seen 1970-01-01T00:00:01.000Z",
+      "  session: pid 4002",
+      "  worker: not observed",
+      "  pending: none",
+    ]);
+  });
+
   it("formats the pending request list, one line per request and a plain line when there are none", () => {
     expect(formatRcPendingList([])).toEqual(["no pending control requests observed"]);
     expect(formatRcPendingList([{ sessionId: "cse_1", requestId: "req_1", type: "can_use_tool", summary: 'Bash {"command":"pnpm test"}', observedAt: 1_000 }])).toEqual([

@@ -29,11 +29,12 @@ const CLOCK_START_MS = 1_000;
 const HTTP_CONFLICT = 409;
 
 /** One exchange driven through the tracker the way the door's adapters drive it: request facts, the request body's chunks and end, then the response head, body and end. */
-function exchange(tracker: RcSessionTracker, request: { method: string; url: string; authorization?: string; headers?: Record<string, string>; requestBody?: string }): { readonly respond: (status: number, body?: string, headers?: Record<string, string>) => void } {
+function exchange(tracker: RcSessionTracker, request: { method: string; url: string; authorization?: string; headers?: Record<string, string>; requestBody?: string; identity?: string }): { readonly respond: (status: number, body?: string, headers?: Record<string, string>) => void } {
   const observed = tracker.observeExchange({
     method: request.method,
     url: request.url,
     headers: { ...(request.authorization === undefined ? {} : { authorization: request.authorization }), ...(request.headers ?? {}) },
+    ...(request.identity === undefined ? {} : { identity: request.identity }),
   });
   return {
     respond: (status, body = "", headers = {}) => {
@@ -325,6 +326,70 @@ describe("the Remote Control session status", () => {
     expect(tracker.statusOf()[0]?.workerIdleSeconds).toEqual({ value: 27, observedAt: CLOCK_START_MS + 2 * HEARTBEAT_INTERVAL_MS });
     expect(tracker.statusOf()[0]?.workerState).toEqual({ value: "WORKER_STATUS_RUNNING", observedAt: CLOCK_START_MS });
     expect(tracker.statusOf("cse_00000000-0000-4000-8000-0000000000ff")).toEqual([]);
+  });
+
+  it("reports the model the worker registration's metadata named, the latest one winning, and no model key before one is seen", () => {
+    const { tracker } = trackerWithClock();
+    exchange(tracker, { method: "PUT", url: WORKER_PATH, authorization: "Bearer b", requestBody: JSON.stringify({ worker_status: "idle", worker_epoch: 1, external_metadata: { task_summary: null } }) }).respond(HTTP_STATUS.ok);
+    expect(tracker.statusOf()[0]).not.toHaveProperty("model");
+    exchange(tracker, { method: "PUT", url: WORKER_PATH, authorization: "Bearer b", requestBody: JSON.stringify({ worker_epoch: 1, external_metadata: { model: "claude-opus-4" } }) }).respond(HTTP_STATUS.ok);
+    expect(tracker.statusOf()[0]?.model).toBe("claude-opus-4");
+    exchange(tracker, { method: "PUT", url: WORKER_PATH, authorization: "Bearer b", requestBody: JSON.stringify({ worker_epoch: 1, external_metadata: { model: null } }) }).respond(HTTP_STATUS.ok);
+    expect(tracker.statusOf()[0]?.model).toBe("claude-opus-4");
+    exchange(tracker, { method: "PUT", url: WORKER_PATH, authorization: "Bearer b", requestBody: JSON.stringify({ worker_epoch: 1, external_metadata: { model: "claude-sonnet-4" } }) }).respond(HTTP_STATUS.ok);
+    expect(tracker.statusOf()[0]?.model).toBe("claude-sonnet-4");
+  });
+
+  it("reads the model and working directory the session's init event stated, whether the worker wrote it or the client stream carried it", () => {
+    const { tracker } = trackerWithClock();
+    exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer b" }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
+    tracker.fileStreamEvent(SESSION_ID, { event_id: "e", sequence_num: 1, event_type: "system", source: "worker", payload: { type: "system", subtype: "init", model: "claude-opus-4", cwd: "/repo" }, created_at: "2026-01-01T00:00:00Z" });
+    expect(tracker.statusOf()[0]).toMatchObject({ model: "claude-opus-4", cwd: "/repo" });
+    exchange(tracker, { method: "POST", url: `/v1/code/sessions/${SESSION_ID}/worker/events`, authorization: "Bearer b", requestBody: JSON.stringify({ worker_epoch: 1, events: [{ payload: { type: "system", subtype: "init", model: "claude-haiku-4" } }] }) }).respond(HTTP_STATUS.ok);
+    expect(tracker.statusOf()[0]).toMatchObject({ model: "claude-haiku-4", cwd: "/repo" });
+  });
+
+  it("reports the identity the session's own requests named, the latest one winning, and none when no request named one", () => {
+    const { tracker } = trackerWithClock();
+    exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer b" }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
+    expect(tracker.statusOf()[0]).not.toHaveProperty("identity");
+    exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer b", identity: "work", requestBody: JSON.stringify({ idle_seconds: 1 }) }).respond(HTTP_STATUS.ok);
+    expect(tracker.statusOf()[0]?.identity).toBe("work");
+    exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer b", requestBody: JSON.stringify({ idle_seconds: 2 }) }).respond(HTTP_STATUS.ok);
+    expect(tracker.statusOf()[0]?.identity).toBe("work");
+    exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer b", identity: "personal", requestBody: JSON.stringify({ idle_seconds: 3 }) }).respond(HTTP_STATUS.ok);
+    expect(tracker.statusOf()[0]?.identity).toBe("personal");
+  });
+
+  it("takes the identity from the create exchange that births the session", () => {
+    const { tracker } = trackerWithClock();
+    exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer b", identity: "work" }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
+    expect(tracker.statusOf()[0]?.identity).toBe("work");
+  });
+
+  it("carries the launching identity from a routed request through the observing wrapper", async () => {
+    const { tracker } = trackerWithClock();
+    const route: FrontDoorRoute = {
+      name: "stand-in",
+      headroomEligible: false,
+      headroomUpstream: undefined,
+      serve: async (_request: RoutedRequest, response: RoutedResponse) => {
+        response.start(HTTP_STATUS.ok, {});
+        await response.write(JSON.stringify({ session: { id: SESSION_ID } }));
+        response.end();
+      },
+    };
+    const request: RoutedRequest = {
+      method: "POST",
+      url: "/v1/code/sessions",
+      headers: { authorization: "Bearer sk-ant-oat" },
+      body: new IncomingMessage(new Socket()),
+      signal: new AbortController().signal,
+      session: { identity: "work", sessionId: undefined, provider: undefined, headroom: false, projectId: undefined },
+    };
+    const response: RoutedResponse = { headersSent: false, start: () => undefined, flush: () => undefined, write: async () => { await Promise.resolve(); }, end: () => undefined, destroy: () => undefined };
+    await observingRoutedRoute(route, tracker).serve(request, response);
+    expect(tracker.statusOf()[0]?.identity).toBe("work");
   });
 
   it("reports no worker facts for a session observed only through its create", () => {

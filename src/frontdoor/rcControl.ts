@@ -490,6 +490,12 @@ function isRcWorkerFact(value: unknown, valueIs: (candidate: unknown) => boolean
   return valueIs(value.value) && typeof value.observedAt === "number";
 }
 
+/** Whether a record's field is absent or undefined, or holds a value of the named primitive type: how the optional identification fields of a status are checked without an assertion. */
+function isOptionalOfType(record: object, field: string, kind: "string" | "number"): boolean {
+  const held: unknown = Object.getOwnPropertyDescriptor(record, field)?.value;
+  return held === undefined || typeof held === kind;
+}
+
 /** Whether one value is a session status as this surface defines it: a summary plus the worker facts and the pending list. The worker facts may be absent, since a door that observed none serialises no field for them. */
 function isRcSessionStatus(value: unknown): value is RcSessionStatus {
   if (!isRcSessionSummary(value)) {
@@ -502,6 +508,9 @@ function isRcSessionStatus(value: unknown): value is RcSessionStatus {
     return false;
   }
   if ("workerIdleSeconds" in value && value.workerIdleSeconds !== undefined && !isRcWorkerFact(value.workerIdleSeconds, (candidate) => typeof candidate === "number")) {
+    return false;
+  }
+  if (!isOptionalOfType(value, "identity", "string") || !isOptionalOfType(value, "model", "string") || !isOptionalOfType(value, "name", "string") || !isOptionalOfType(value, "cwd", "string") || !isOptionalOfType(value, "pid", "number")) {
     return false;
   }
   return value.pending.every((candidate) => isRcPendingRequestSummary(candidate));

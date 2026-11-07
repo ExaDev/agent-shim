@@ -52,6 +52,16 @@ export function formatRcSessionStatus(statuses: readonly RcSessionStatus[]): str
   const lines: string[] = [];
   for (const status of statuses) {
     lines.push(`${status.id}  created ${new Date(status.createdAt).toISOString()}  last seen ${new Date(status.lastSeenAt).toISOString()}`);
+    const identification = [
+      status.name === undefined ? undefined : `name ${JSON.stringify(status.name)}`,
+      status.identity === undefined ? undefined : `identity ${status.identity}`,
+      status.model === undefined ? undefined : `model ${status.model}`,
+      status.pid === undefined ? undefined : `pid ${String(status.pid)}`,
+      status.cwd === undefined ? undefined : `cwd ${JSON.stringify(status.cwd)}`,
+    ].filter((part) => part !== undefined);
+    if (identification.length > 0) {
+      lines.push(`  session: ${identification.join("  ")}`);
+    }
     const worker =
       status.workerState === undefined && status.workerIdleSeconds === undefined
         ? "not observed"

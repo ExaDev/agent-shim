@@ -79,6 +79,7 @@ import { createRcClientPage } from "./rcClientPage";
 import { createRcSelfHostSurface, rcSelfHostFromEnv } from "./rcSelfHost";
 import { readRcSelfHostRecord } from "./rcSelfHostMint";
 import { realRcWebFetch, rcWebFetchAllowsPrivateFromEnv } from "./rcWebFetch";
+import { createRcSessionRegistryReader, rcStatusWithRegistry } from "./rcSessionRegistry";
 import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, isRcSessionExchange, observingRoutedRoute } from "./rcSessions";
 import { targetRefs } from "../models/targets";
 import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
@@ -244,6 +245,11 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
   // The door's session event log: every transition the tracker files (a session appearing or ending, a worker state change, a pending request born or retired), in one cursor-ordered window the typed API's `rcSessions.events` stream and `rcSessions.eventsPage` read, so one subscription follows every session. Its generation id makes a cursor from a previous door process fail loudly instead of reading as a position in this one.
   const rcSessionEvents = createRcSessionEventLog({ generation: randomUUID(), capacity: RC_SESSION_EVENT_LOG_CAPACITY });
   const rcTracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS, credentialStore: rcCredentialStore, onTransition: rcSessionEvents.append, onClose: rcSessionEvents.close });
+  // The status read every Remote Control surface serves: the tracker's observations plus what the Claude Code session registry says (name, process id, working directory), searched across every identity's registry on each read so an identity added after the door started is covered.
+  const rcStatusOf = rcStatusWithRegistry(
+    rcTracker.statusOf,
+    createRcSessionRegistryReader({ fs: realSessionFs, identities: () => listIdentities(paths).map((entry) => ({ name: entry.name, configDir: identityDirectoryOfName(paths, entry.name) })), isRunning: realIsProcessAlive }),
+  );
   // The door's event backbone: one publisher/subscriber spine for every door-wide source, serving the typed API's `events.subscribe`. The Remote Control client read stream is its first publisher (through the wrap below, which moves nothing about how RC events flow) and the launch lifecycle is its first door-native one, fed by the supervisor's tick from the session registry; the usage source publishes every snapshot the store writes, the door health source the supervisor's own transitions, and the expiring-quota source the windows the supervisor's tick sees entering their final span (kept fresh by the usage source's own events, seeded from the snapshot directory).
   const doorEvents = createDoorEventHub();
   // The usage source's publisher, registered here so the store (created below) can hand it every snapshot it writes, and the expiring-quota checker that reads those same snapshots off the backbone rather than the disk.
@@ -588,12 +594,12 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         },
         log,
         mintLeaf(authority, LOOPBACK_LEAF_NAMES, new Date()),
-        createRcControlHandler({ expectedToken: rcControlToken, list: rcTracker.list, statusOf: rcTracker.statusOf, pendingOf: rcTracker.pendingOf, inject: rcInject, answer: rcAnswer, interrupt: rcInterrupt, setModel: rcSetModel, setPermissionMode: rcSetPermissionMode, endSession: rcEndSession, getUsage: rcGetUsage, getContextUsage: rcGetContextUsage, readFile: rcReadFile, fileSuggestions: rcFileSuggestions, keepAlive: rcKeepAlive, mcpStatus: rcMcpStatus, mcpReconnect: rcMcpReconnect, mcpAuthenticate: rcMcpAuthenticate, mcpOAuthCallbackUrl: rcMcpOAuthCallbackUrl, teleport: rcTeleport }),
+        createRcControlHandler({ expectedToken: rcControlToken, list: rcTracker.list, statusOf: rcStatusOf, pendingOf: rcTracker.pendingOf, inject: rcInject, answer: rcAnswer, interrupt: rcInterrupt, setModel: rcSetModel, setPermissionMode: rcSetPermissionMode, endSession: rcEndSession, getUsage: rcGetUsage, getContextUsage: rcGetContextUsage, readFile: rcReadFile, fileSuggestions: rcFileSuggestions, keepAlive: rcKeepAlive, mcpStatus: rcMcpStatus, mcpReconnect: rcMcpReconnect, mcpAuthenticate: rcMcpAuthenticate, mcpOAuthCallbackUrl: rcMcpOAuthCallbackUrl, teleport: rcTeleport }),
         [
           createDoorApiNodeHandler({
             expectedToken: rcControlToken,
             paths,
-            statusOf: rcTracker.statusOf,
+            statusOf: rcStatusOf,
             pendingOf: rcTracker.pendingOf,
             inject: rcInject,
             answer: rcAnswer,

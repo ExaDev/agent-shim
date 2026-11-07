@@ -84,6 +84,15 @@ export {
   type RcWorkerFact,
 } from "./frontdoor/rcSessions";
 export {
+  createRcSessionRegistryReader,
+  rcStatusWithRegistry,
+  withRegisteredSessionFacts,
+  type RcRegisteredSession,
+  type RcRegistryIdentity,
+  type RcSessionRegistryDeps,
+  type RcSessionRegistryFs,
+} from "./frontdoor/rcSessionRegistry";
+export {
   RC_CONTEXT_USAGE_DETAILS,
   RC_PERMISSION_MODES,
   RC_READ_FILE_ENCODINGS,
