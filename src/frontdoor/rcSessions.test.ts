@@ -447,6 +447,38 @@ describe("the Remote Control pending-request lifecycle", () => {
         requestBody: JSON.stringify({ worker_epoch: 1, events: [{ payload: { type: "control_request", request_id: `req-${String(RC_PENDING_PER_SESSION_MAX)}`, request: { subtype: "can_use_tool", tool_name: "AskUserQuestion", input: {} } } }] }),
       }).respond(HTTP_STATUS.ok);
       expect(tracker.statusOf()[0]?.pendingDropped).toBe(2);
+      // An id past the length cap is the same request on every observation, so its replay is not counted again either, on either channel.
+      const longId = "y".repeat(RC_REQUEST_ID_MAX_CHARS + 1);
+      const droppedBefore = tracker.statusOf()[0]?.pendingDropped ?? 0;
+      ask(tracker, longId, RC_PENDING_PER_SESSION_MAX + droppedBefore + 1);
+      ask(tracker, "x".repeat(RC_REQUEST_ID_MAX_CHARS + 1), RC_PENDING_PER_SESSION_MAX + droppedBefore + 2);
+      expect(tracker.statusOf()[0]?.pendingDropped).toBe(droppedBefore + 1);
+      exchange(tracker, {
+        method: "POST",
+        url: `/v1/code/sessions/${SESSION_ID}/worker/events`,
+        authorization: "Bearer b",
+        requestBody: JSON.stringify({ worker_epoch: 1, events: [{ payload: { type: "control_request", request_id: longId, request: { subtype: "can_use_tool", tool_name: "Write", input: {} } } }] }),
+      }).respond(HTTP_STATUS.ok);
+      expect(tracker.statusOf()[0]?.pendingDropped).toBe(droppedBefore + 1);
+    });
+
+    it("keeps an answered request's id remembered through a flood of dropped ones", () => {
+      const { tracker } = trackerWithClock();
+      heartbeat(tracker);
+      ask(tracker, "req-answered", 0);
+      tracker.completePending(SESSION_ID, "req-answered");
+      for (let index = 0; index < RC_PENDING_PER_SESSION_MAX; index += 1) {
+        ask(tracker, `req-${String(index)}`, index + 1);
+      }
+      // More distinct dropped ids than one record holds: they must not push the answered id out of its own.
+      for (let index = 0; index <= RC_RETIRED_TOMBSTONES_MAX; index += 1) {
+        ask(tracker, `req-dropped-${String(index)}`, RC_PENDING_PER_SESSION_MAX + 1 + index);
+      }
+      const dropped = tracker.statusOf()[0]?.pendingDropped;
+      expect(dropped).toBe(RC_RETIRED_TOMBSTONES_MAX + 1);
+      // A replay of the answered request would be counted as dropped again (the pending set is full) if its id had been forgotten.
+      ask(tracker, "req-answered", 2 * RC_RETIRED_TOMBSTONES_MAX);
+      expect(tracker.statusOf()[0]?.pendingDropped).toBe(dropped);
     });
 
     it("marks a request past the parse cap as oversized, holding its summary only", () => {
