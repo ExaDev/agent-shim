@@ -180,9 +180,22 @@ export function createProviderRouteResolver(deps: {
    * The self-hosted Remote Control route, when the door runs that mode: it takes over the `/v1/code/sessions` family and the `/v1/sessions` compatibility list, which would otherwise ride the pass-through to the real API. Every other `/v1/` request of a self-hosted session is answered by the connect surface's local answers before it reaches this resolver. Absent, every `/v1/` target rides the pass-through exactly as before.
    */
   readonly rcSelfHostRoute?: FrontDoorRoute;
+  /** Told of every request the routed pass-through to Claude Code's own API serves, before it is dialled: the door's capture records each one, so a record of everything that left for the real API covers the routed pipeline as well as the connect surface's piped exchanges. A throw refuses the request before anything is dialled. */
+  readonly observeAnthropicPassthrough?: (request: RoutedRequest) => void;
 }): (request: RoutedRequest) => Promise<RouteResolution> {
   /** The pass-through every bare /v1/ request from the CONNECT surface rides: straight to Claude Code's own API, with no per-request upstream for a headroom hop (the daemon's default upstream is exactly that API, which is what an OAuth session wants). */
-  const oauthRoute = createPassthroughRoute("anthropic", { baseUrl: `https://${CONNECT_INTERCEPT_HOST}:${String(HTTPS_PORT)}`, stripPrefix: undefined, headroomUpstream: undefined });
+  const anthropicRoute = createPassthroughRoute("anthropic", { baseUrl: `https://${CONNECT_INTERCEPT_HOST}:${String(HTTPS_PORT)}`, stripPrefix: undefined, headroomUpstream: undefined });
+  const observe = deps.observeAnthropicPassthrough;
+  const oauthRoute: FrontDoorRoute =
+    observe === undefined
+      ? anthropicRoute
+      : {
+          ...anthropicRoute,
+          serve: async (request, response) => {
+            observe(request);
+            await anthropicRoute.serve(request, response);
+          },
+        };
 
   /** Resolves a credential block on the request path; requests in flight together for the same block share one run of its sources. */
   const resolveCredential = shareInFlightResolutions(resolveCredentialAsync);

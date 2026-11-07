@@ -102,6 +102,7 @@ describe("MITM proxy over real sockets", () => {
         refusedTunnel: (target) => {
           events.push({ kind: "connect-refused", host: target.host, port: target.port });
         },
+        routedForward: () => undefined,
         upgrade: (request) => {
           events.push({ kind: "upgrade", url: request.url });
         },
@@ -291,6 +292,7 @@ describe("MITM proxy over real sockets", () => {
       const capture: ConnectCapture = {
         connect: () => undefined,
         refusedTunnel: () => undefined,
+        routedForward: () => undefined,
         upgrade: (request) => {
           streams.push(`upgrade ${request.url ?? "?"}`);
         },
@@ -374,6 +376,7 @@ describe("MITM proxy over real sockets", () => {
       const capture: ConnectCapture = {
         connect: () => undefined,
         refusedTunnel: () => undefined,
+        routedForward: () => undefined,
         upgrade: () => {
           throw new Error("no upgrade reaches a tap host");
         },
@@ -437,6 +440,7 @@ describe("MITM proxy over real sockets", () => {
         refusedTunnel: () => {
           throw new Error("this surface refuses no tunnel");
         },
+        routedForward: () => undefined,
         upgrade: () => undefined,
         observePassthrough: (request) => {
           requests.push(request.url ?? "?");
@@ -476,6 +480,7 @@ describe("MITM proxy over real sockets", () => {
         refusedTunnel: () => {
           throw new Error("this surface refuses no tunnel");
         },
+        routedForward: () => undefined,
         upgrade: () => {
           throw new Error("no upgrade reaches a blind tunnel");
         },
@@ -511,6 +516,7 @@ describe("MITM proxy over real sockets", () => {
         refusedTunnel: (target) => {
           refused.push(target.host);
         },
+        routedForward: () => undefined,
         upgrade: () => undefined,
         observePassthrough: () => {
           throw new Error("no piped exchange reaches a blind tunnel");

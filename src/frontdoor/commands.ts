@@ -303,6 +303,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
   // This generation's control token, minted per door start and written owner-only: the value the door's control routes demand and only this user's CLI can read. A crashed door's stale file never authenticates, because the next generation mints a fresh one over it.
   // A successor started by a handover keeps the token of the door it replaces instead of minting one: both doors accept on the same addresses until the old one drains, so a control request made with the token file's value must be admitted by whichever of them takes it. The old door wrote the file before its provider listener first accepted, so it is there for as long as that door serves.
   const rcControlToken = lifecycle.predecessor === undefined ? randomUUID() : inheritedControlToken(paths);
+  // Capture is a per-door diagnostic, decided by the environment of the launch that starts (or restarts) the door, because the door is one process serving every launch: a per-launch toggle would record some sessions and silently not others. The value is read once, at door start, so it never changes mid-process; the route resolver records the routed pass-through to the real API through it and the connect surface everything it pipes and tunnels.
+  const capture = captureFromEnv(process.env, paths.logsDir);
   // The door's in-memory view of the session registry, which the listeners' admission and the route resolver's per-launch models lookup both answer from: the supervisor's tick refreshes it, and only an id the view does not hold is looked up in the registry directory.
   const sessionRegistry = createLiveSessionRegistry({ fs: realFarmFs, sessionsDir: paths.frontdoorSessionsDir });
   const resolveRoute = rcObservingResolver(
@@ -323,6 +325,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       observations: (target) => observations.observation(target),
       accountMoves: async (sessionId, to, model) => await requestAccountMove({ fs: realFarmFs, paths, runningAmong: realRunningAmong, idOf: (name) => identityIdOf(paths, name), now: () => Date.now() }, sessionId, to, model),
       ...(rcSelfHostSurface === undefined ? {} : { rcSelfHostRoute: rcSelfHostSurface.route }),
+      ...(capture === undefined ? {} : { observeAnthropicPassthrough: (request: RoutedRequest) => { capture.routedForward(request); } }),
     }),
     rcTracker,
     rcHub,
@@ -672,10 +675,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         writeFrontDoorSession(realFarmFs, paths.frontdoorSessionsDir, { pid: process.pid, startedAt: Date.now(), token: transparentCapability });
       }
       const leafFor = createLeafCache(loadCa(), () => new Date());
-      // Capture is a per-door diagnostic, decided by the environment of the launch that starts (or restarts) the door, because the door is one process serving every launch: a per-launch toggle would record some sessions and silently not others. The value is read here, at door start, so it never changes mid-process.
-      const capture = captureFromEnv(process.env, paths.logsDir);
       if (capture !== undefined) {
-        log(`capture enabled, recording CONNECT targets and piped exchanges to ${path.join(paths.logsDir, "frontdoor-capture.jsonl")}`);
+        log(`capture enabled, recording CONNECT targets, piped exchanges and the routed pass-through to the real API to ${path.join(paths.logsDir, "frontdoor-capture.jsonl")}`);
       }
       if (rcSelfHostSurface !== undefined) {
         log("self-hosted Remote Control surface on: the door serves the CCR session family itself, and its own client-half dials its own transparent surface");
