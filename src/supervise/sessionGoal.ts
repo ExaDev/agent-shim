@@ -33,25 +33,25 @@ function goalStatusOf(line: string): Record<string, unknown> | undefined {
   return row.attachment;
 }
 
-/** The goal active at the end of a transcript's text, or null when none is. */
-export function activeGoalOfTranscript(text: string): TranscriptGoal | null {
-  let goal: TranscriptGoal | null = null;
-  for (const line of text.split("\n")) {
-    const status = goalStatusOf(line);
-    if (status === undefined || typeof status.condition !== "string") {
-      continue;
-    }
-    if (status.sentinel === true) {
-      goal = status.met === true ? null : { condition: status.condition, iterations: 0 };
-      continue;
-    }
-    if (status.met === true || status.failed === true) {
-      goal = null;
-      continue;
-    }
-    if (goal !== null && goal.condition === status.condition) {
-      goal = { condition: goal.condition, iterations: goal.iterations + 1, ...(typeof status.reason === "string" ? { lastCheck: status.reason } : {}) };
-    }
+/** The goal after one transcript line, given the goal before it: the change a `goal_status` row makes, or the same goal for any other line. */
+export function goalAfterLine(goal: TranscriptGoal | null, line: string): TranscriptGoal | null {
+  const status = goalStatusOf(line);
+  if (status === undefined || typeof status.condition !== "string") {
+    return goal;
+  }
+  if (status.sentinel === true) {
+    return status.met === true ? null : { condition: status.condition, iterations: 0 };
+  }
+  if (status.met === true || status.failed === true) {
+    return null;
+  }
+  if (goal !== null && goal.condition === status.condition) {
+    return { condition: goal.condition, iterations: goal.iterations + 1, ...(typeof status.reason === "string" ? { lastCheck: status.reason } : {}) };
   }
   return goal;
+}
+
+/** The goal active at the end of a transcript's text, or null when none is. */
+export function activeGoalOfTranscript(text: string): TranscriptGoal | null {
+  return text.split("\n").reduce<TranscriptGoal | null>(goalAfterLine, null);
 }

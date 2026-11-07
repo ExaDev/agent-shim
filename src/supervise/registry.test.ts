@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
+import { createTranscriptFollower, type TranscriptFollower } from "./transcriptFollower";
 import { USAGE_SCHEMA_VERSION, type UsageRecord } from "../usage/schema";
 import { committedContextTokens, liveSupervised, readModelMove, requestAccountMove, readSessionState, registerSupervised, removeModelMove, sessionStatePath, stateDirOf, readSessionControl, supervisedSessionOf, supervisedSessionOfBridge, unregisterSupervised, writeModelMove, writeSessionControl, writeSessionState, type SupervisedSession } from "./registry";
 
@@ -88,6 +89,18 @@ describe("finding a session's registry entry across pools", () => {
   });
 });
 
+/** A follower over the fake filesystem's files, read as a real one reads them: the size, then the bytes of a range. */
+function fakeFollower(fs: ReturnType<typeof createFakeFarmFs>): TranscriptFollower {
+  const bytesOf = (file: string): Buffer | undefined => {
+    const text = fs.readFileUtf8(file);
+    return text === undefined ? undefined : Buffer.from(text, "utf8");
+  };
+  return createTranscriptFollower({
+    sizeOf: async (file) => await Promise.resolve(bytesOf(file)?.length),
+    readRange: async (file, start, end) => await Promise.resolve((bytesOf(file) ?? Buffer.alloc(0)).subarray(start, end)),
+  });
+}
+
 describe("finding the supervised session a Remote Control session belongs to", () => {
   const everyoneRunning = async (pids: readonly number[]): Promise<ReadonlySet<number>> => await Promise.resolve(new Set(pids));
   const BRIDGE_ROW = JSON.stringify({ type: "bridge-session", sessionId: "local-1", bridgeSessionId: "cse_abc", lastSequenceNum: 4 });
@@ -99,10 +112,10 @@ describe("finding the supervised session a Remote Control session belongs to", (
     writeSessionState(fs, paths, "subs", "s1", { mark: "idle", transcriptPath: "/t/one.jsonl", at: T1 });
     writeSessionState(fs, paths, "other", "s2", { mark: "idle", transcriptPath: "/t/two.jsonl", at: T1 });
     writeSessionControl(fs, paths, "other", "s2", { pid: 100, directory: "/plugin" });
-    const found = await supervisedSessionOfBridge(fs, paths, "cse_abc", everyoneRunning);
+    const found = await supervisedSessionOfBridge(fs, paths, "cse_abc", everyoneRunning, fakeFollower(fs));
     expect(found.kind === "found" ? found.session.session.sessionId : found.kind).toBe("s2");
     expect(found.kind === "found" ? found.session.control : undefined).toEqual({ pid: 100, directory: "/plugin" });
-    await expect(supervisedSessionOfBridge(fs, paths, "cse_other", everyoneRunning)).resolves.toEqual({ kind: "none" });
+    await expect(supervisedSessionOfBridge(fs, paths, "cse_other", everyoneRunning, fakeFollower(fs))).resolves.toEqual({ kind: "none" });
   });
 
   it("joins only by a bridge-session row, never by the same text inside another row a model could have written", async () => {
@@ -111,7 +124,7 @@ describe("finding the supervised session a Remote Control session belongs to", (
     const fs = createFakeFarmFs({ "/t/steered.jsonl": `${injected}\n` });
     registerSupervised(fs, paths, session({ sessionId: "s1" }));
     writeSessionState(fs, paths, "subs", "s1", { mark: "idle", transcriptPath: "/t/steered.jsonl", at: T1 });
-    await expect(supervisedSessionOfBridge(fs, paths, "cse_abc", everyoneRunning)).resolves.toEqual({ kind: "none" });
+    await expect(supervisedSessionOfBridge(fs, paths, "cse_abc", everyoneRunning, fakeFollower(fs))).resolves.toEqual({ kind: "none" });
   });
 
   it("takes each transcript's latest bridge row, so a session that reconnected under a new id no longer answers to its old one", async () => {
@@ -119,8 +132,8 @@ describe("finding the supervised session a Remote Control session belongs to", (
     const fs = createFakeFarmFs({ "/t/two.jsonl": `${OLD}\n${BRIDGE_ROW}\n` });
     registerSupervised(fs, paths, session({ sessionId: "s2" }));
     writeSessionState(fs, paths, "subs", "s2", { mark: "idle", transcriptPath: "/t/two.jsonl", at: T1 });
-    expect((await supervisedSessionOfBridge(fs, paths, "cse_abc", everyoneRunning)).kind).toBe("found");
-    await expect(supervisedSessionOfBridge(fs, paths, "cse_old", everyoneRunning)).resolves.toEqual({ kind: "none" });
+    expect((await supervisedSessionOfBridge(fs, paths, "cse_abc", everyoneRunning, fakeFollower(fs))).kind).toBe("found");
+    await expect(supervisedSessionOfBridge(fs, paths, "cse_old", everyoneRunning, fakeFollower(fs))).resolves.toEqual({ kind: "none" });
   });
 
   it("refuses to choose when two live launches both claim the id", async () => {
@@ -129,7 +142,7 @@ describe("finding the supervised session a Remote Control session belongs to", (
     registerSupervised(fs, paths, session({ sessionId: "s2", pool: "other" }));
     writeSessionState(fs, paths, "subs", "s1", { mark: "idle", transcriptPath: "/t/a.jsonl", at: T1 });
     writeSessionState(fs, paths, "other", "s2", { mark: "idle", transcriptPath: "/t/b.jsonl", at: T1 });
-    const found = await supervisedSessionOfBridge(fs, paths, "cse_abc", everyoneRunning);
+    const found = await supervisedSessionOfBridge(fs, paths, "cse_abc", everyoneRunning, fakeFollower(fs));
     expect(found.kind === "ambiguous" ? found.sessionIds : found.kind).toEqual(["s1", "s2"]);
   });
 
@@ -138,7 +151,7 @@ describe("finding the supervised session a Remote Control session belongs to", (
     registerSupervised(fs, paths, session({ sessionId: "s2" }));
     writeSessionState(fs, paths, "subs", "s2", { mark: "idle", transcriptPath: "/t/two.jsonl", at: T1 });
     writeSessionControl(fs, paths, "subs", "s2", { pid: 7, directory: "/stale" });
-    const found = await supervisedSessionOfBridge(fs, paths, "cse_abc", everyoneRunning);
+    const found = await supervisedSessionOfBridge(fs, paths, "cse_abc", everyoneRunning, fakeFollower(fs));
     expect(found.kind === "found" ? found.session.control : "not found").toBeUndefined();
     unregisterSupervised(fs, paths, "subs", "s2");
     expect(readSessionControl(fs, paths, "subs", "s2")).toBeUndefined();
