@@ -32,3 +32,23 @@ To start without missing anything, read the head first (every page answer names 
 - **MCP:** `agent-shim mcp` derives `rcSessions_eventsPage` from the page read, a read tool available without any opt-in like `rc_status` and `rc_pending`, which expose the same facts. The stream itself is not a tool, because the MCP adapter skips streaming operations; an agent pages with the returned cursor instead.
 - **CLI:** `agent-shim frontdoor rc events [<cse_id> | --all] [--since <cursor>] [--json]` follows the stream until Ctrl-C, one line per event (cursor, instant, session, kind, detail) or one JSON object per line. An expired cursor fails naming the head to resume after. It does not reconnect: when the stream ends or fails it names the last cursor printed, to pass as `--since` (a door restart starts a new generation, whose answer to that cursor is the expiry and its head).
 - **Library:** `createRcSessionEventLog` builds the log, `createRcSessionTracker`'s `onTransition` feeds it, `followRcSessionEvents` follows it as an async iterator (throwing `RcSessionEventCursorExpiredError`), and `createRcSessionEventsApiRouter` serves it; the schemas are `RcSessionEventSchema`, `RcSessionTransitionSchema` and the read and stream input and output schemas.
+
+## Which sessions it covers
+
+A Remote Control session reaches the door in one of three ways, and the stream covers all three because it is fed by the one tracker every Remote Control exchange crosses, whichever backend serves it:
+
+1. **An Anthropic OAuth login, inference on Anthropic.** The session's Remote Control calls ride the door's `/v1/` pass-through to the real service, where the tracker observes them, and the door's own writes reach the real service with the observed credential.
+2. **An Anthropic OAuth login, inference on a provider.** The door routes inference by the provider header and leaves Remote Control on the same pass-through as kind 1, so the tracker sees exactly what it sees for kind 1.
+3. **A third-party provider with no Anthropic login (self-hosted mode).** With `AGENT_SHIM_FRONTDOOR_RC_SELF_HOST=1` the door serves the CCR session family itself (see [rc-interception-rig.md](rc-interception-rig.md#the-self-hosted-proof-no-login-at-all)), and that surface is mounted as a route on the same resolver the tracker wraps, so its exchanges are observed exactly as the real service's are.
+
+| Event | Kinds 1 and 2 (real service) | Kind 3 (self-hosted) |
+|---|---|---|
+| `session-appeared` | Supported | Supported |
+| `worker-state` (`idle`, `running`, `requires_action`) | Supported | Supported |
+| `pending-born` and `pending-retired` (`answered`, `expired`) | Supported, including an approval that arrives only on the client read stream | Supported |
+| `session-ended` | `archived`, `conflict`, `expired` | `archived`, `conflict` (the surface answers a stale-epoch write with the protocol's own conflict header), `expired` |
+| Resume after a cursor, expiry of an evicted or foreign cursor | Supported | Supported |
+
+The cases are covered by tests: `src/frontdoor/connect.rc.test.ts` drives a session against a stand-in for the real service through the connect surface (kinds 1 and 2 share this path), and `src/frontdoor/rcSelfHost.e2e.test.ts` drives one through the self-hosted surface's real assembly. Kind 3 was also followed end to end with a real Claude Code against a mock provider, with no Anthropic login, as the rig's self-hosted proof describes. Kinds 1 and 2 were not run live for this stream, because that needs the rig's manual browser login.
+
+One known gap affects kind 3 outside this stream: a self-hosted session still sends some non-Remote-Control startup calls to the real hosts through the door (issue #731). With that traffic blocked the session still activates, and the stream behaves identically.
