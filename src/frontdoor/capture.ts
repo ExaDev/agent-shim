@@ -66,6 +66,8 @@ export interface ConnectCapture {
   readonly tapStream?: (host: string) => StreamTap;
   /** Records one authenticated CONNECT target: the host and port only, since a blind tunnel's bytes are unreadable by construction. */
   readonly connect: (target: { readonly host: string; readonly port: number }, intercepted: boolean) => void;
+  /** Records one CONNECT target the surface refused to tunnel to (the self-hosted mode's rule): nothing was dialled, so it is recorded apart from `connect`, whose blind entries are tunnels that ran. */
+  readonly refusedTunnel: (target: { readonly host: string; readonly port: number }) => void;
   /** Records one non-routed request's head and returns the observer its forwarding drives, so the capture correlates every later chunk with the request it belongs to. */
   readonly observePassthrough: (request: CapturedRequestShape) => PassthroughObserver;
   /** Records one HTTP upgrade request arriving on a terminated session. The surface destroys the socket afterwards either way, with or without a capture, matching Node's own no-listener behaviour exactly. */
@@ -136,6 +138,9 @@ export function createFileCapture(file: string, now: () => Date = () => new Date
   return {
     connect: (target, intercepted) => {
       append({ kind: "connect", host: target.host, port: target.port, intercepted });
+    },
+    refusedTunnel: (target) => {
+      append({ kind: "connect-refused", host: target.host, port: target.port });
     },
     upgrade: (request) => {
       append({ kind: "upgrade", method: request.method ?? "?", url: request.url ?? "?", headers: redactHeaders(request.headers) });

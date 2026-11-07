@@ -62,6 +62,7 @@ const CONNECT_ESTABLISHED = "HTTP/1.1 200 Connection Established\r\n\r\n";
 /** The status lines the surface refuses a connection with, each closing it once written. */
 const REFUSAL = {
   badRequest: "400 Bad Request",
+  forbidden: "403 Forbidden",
   proxyAuthenticationRequired: "407 Proxy Authentication Required",
   requestTimeout: "408 Request Timeout",
   headTooLarge: "431 Request Header Fields Too Large",
@@ -363,6 +364,10 @@ export interface ConnectServerConfig {
   readonly limits: ConnectLimits;
   /** The diagnostic tap, when capturing is enabled; absent means nothing is recorded. */
   readonly capture?: ConnectCapture;
+  /**
+   * Whether a blind tunnel the launch presenting `capability` asks for is refused rather than dialled: the self-hosted Remote Control mode's rule that its sessions reach no host the door does not serve (see `rcSelfHostLaunches.ts`). A refused tunnel is answered 403 with a body naming the mode, and nothing is dialled. Absent, every blind tunnel is dialled.
+   */
+  readonly refusesBlindTunnel?: (capability: string) => boolean;
 }
 
 /** A running connect surface. */
@@ -685,6 +690,21 @@ function createConnectionLedger(limits: ConnectLimits, isLiveCapability: (token:
 /**
  * Answers a connection with a bodiless status and closes it once the answer is written. The head parser is detached first, so nothing that arrives afterwards can be read as a CONNECT head and routed on a connection already refused.
  */
+/** The `x-agent-shim-refusal` value a refused self-hosted tunnel carries, so a client or a test can tell the mode's refusal from any other 403. */
+export const SELF_HOSTED_TUNNEL_REFUSAL = "self-hosted-remote-control";
+
+/** Refuses a CONNECT with a plain-text body saying why and a header naming the rule that refused it, for a refusal the client (or a person reading its debug log) should be able to attribute. */
+function refuseWithReason(socket: net.Socket, status: string, rule: string, reason: string): void {
+  socket.removeAllListeners("data");
+  socket.pause();
+  if (socket.destroyed || socket.writableEnded) {
+    return;
+  }
+  socket.end(`HTTP/1.1 ${status}\r\nx-agent-shim-refusal: ${rule}\r\ncontent-type: text/plain; charset=utf-8\r\ncontent-length: ${String(Buffer.byteLength(reason))}\r\nconnection: close\r\n\r\n${reason}`, () => {
+    socket.destroy();
+  });
+}
+
 function refuse(socket: net.Socket, status: string, headers: readonly string[] = []): void {
   socket.removeAllListeners("data");
   socket.pause();
@@ -760,6 +780,11 @@ function routeConnect(socket: net.Socket, head: string, context: ConnectionConte
     return;
   }
   const session = sessions.find((entry) => entry.host === target.host);
+  if (session === undefined && config.refusesBlindTunnel?.(capability) === true) {
+    config.capture?.refusedTunnel(target);
+    refuseWithReason(socket, REFUSAL.forbidden, SELF_HOSTED_TUNNEL_REFUSAL, `the front door's self-hosted Remote Control mode does not tunnel to ${target.host}: a self-hosted session reaches no host the door does not serve itself`);
+    return;
+  }
   if (!ledger.establish(socket, capability, session === undefined ? "blind" : "terminated")) {
     refuse(socket, REFUSAL.serviceUnavailable);
     return;

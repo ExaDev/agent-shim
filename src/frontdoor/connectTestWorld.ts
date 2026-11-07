@@ -167,6 +167,7 @@ export function makeTlsWorld(
     readonly limits?: Partial<ConnectLimits>;
     readonly isLiveCapability?: (token: string) => boolean;
     readonly capture?: ConnectCapture;
+    readonly refusesBlindTunnel?: (capability: string) => boolean;
     readonly tapHosts?: readonly string[];
     readonly transparent?: { readonly port: number; readonly capability: string };
     readonly rc?: { readonly tracker: RcSessionTracker; readonly onExchangeSettled?: () => void };
@@ -372,6 +373,7 @@ export function makeTlsWorld(
               }),
           limits: { ...CONNECT_LIMITS, ...options.limits },
           ...(options.capture === undefined ? {} : { capture: options.capture }),
+          ...(options.refusesBlindTunnel === undefined ? {} : { refusesBlindTunnel: options.refusesBlindTunnel }),
         },
         effects,
         { preferredPort: undefined },

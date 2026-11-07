@@ -87,11 +87,11 @@ export function readRcSelfHostRecord(fs: Pick<FarmFs, "readFileUtf8">, frontdoor
   if (parsed === undefined) {
     return undefined;
   }
-  const { accessToken, refreshToken, organizationUuid, accountUuid } = parsed;
+  const { accessToken, refreshToken, organizationUuid, accountUuid, identityId } = parsed;
   if (typeof accessToken !== "string" || accessToken === "" || typeof refreshToken !== "string" || refreshToken === "" || typeof organizationUuid !== "string" || organizationUuid === "" || typeof accountUuid !== "string" || accountUuid === "") {
     return undefined;
   }
-  return { accessToken, refreshToken, organizationUuid, accountUuid };
+  return { accessToken, refreshToken, organizationUuid, accountUuid, ...(typeof identityId === "string" && identityId !== "" ? { identityId } : {}) };
 }
 
 /**
@@ -158,7 +158,7 @@ export function mintRcSelfHostCredential(deps: RcSelfHostMintDeps): RcSelfHostMi
   }, null, 2)}\n`);
 
   deps.fs.mkdirPrivate(recordDir);
-  deps.fs.writeFilePrivate(recordFile, `${JSON.stringify({ accessToken, refreshToken, organizationUuid, accountUuid }, null, 2)}\n`);
+  deps.fs.writeFilePrivate(recordFile, `${JSON.stringify({ accessToken, refreshToken, organizationUuid, accountUuid, identityId: id }, null, 2)}\n`);
 
   return { identity: deps.identity, organizationUuid, credentialsFile, claudeJsonFile, recordFile, replaced: existingIsOwn };
 }

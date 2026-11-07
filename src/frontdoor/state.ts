@@ -323,7 +323,7 @@ export function summaryOf(session: Readonly<FrontDoorSession>): FrontDoorSession
 }
 
 /** Reads one registry file, or undefined when it is unreadable or not a record: one bad file must not stop a listing, so this never throws. */
-export function readFrontDoorSessionRecord(fs: HeadroomFs, sessionsDir: string, name: string): FrontDoorSession | undefined {
+export function readFrontDoorSessionRecord(fs: Pick<HeadroomFs, "readFileUtf8">, sessionsDir: string, name: string): FrontDoorSession | undefined {
   try {
     const parsed = FrontDoorSessionSchema.safeParse(JSON.parse(fs.readFileUtf8(path.join(sessionsDir, name)) ?? ""));
     return parsed.success ? parsed.data : undefined;

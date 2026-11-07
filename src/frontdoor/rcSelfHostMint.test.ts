@@ -66,6 +66,8 @@ describe("the self-hosted credential minting", () => {
     expect(claudeJson.cachedGrowthBookFeatures).toMatchObject({ tengu_ccr_bridge: true, tengu_bridge_repl_v2: true });
     const record = readRcSelfHostRecord(fs, "/state/frontdoor");
     expect(record?.accessToken).toBe(credentials.claudeAiOauth.accessToken);
+    // The record names the identity by its id (the directory name), which is what attributes a launch to the mode.
+    expect(record?.identityId).toBe("rig");
     expect(fs.modeOf("/state/identities/rig/.credentials.json")).toBe(PRIVATE_FILE_MODE);
     expect(fs.modeOf("/state/frontdoor/rc-selfhost/credential.json")).toBe(PRIVATE_FILE_MODE);
   });

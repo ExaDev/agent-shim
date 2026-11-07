@@ -1,0 +1,40 @@
+import { identityIdOver } from "../identityRecords";
+import { launchIdentitiesOf } from "../launcher/launchRecords";
+import { isLiveCapability } from "./capability";
+import { isSessionRecordName, readFrontDoorSessionRecord } from "./state";
+import type { HeadroomFs } from "../headroom/state";
+
+/**
+ * Which CONNECT tunnels belong to a self-hosted Remote Control session (ExaDev/agent-shim#731): the launch whose capability the tunnel presented runs the identity the door's credential was minted into. A blind tunnel from such a launch is refused, because the hosts the CLI dials that way are Anthropic's and other third parties' (its updater and plugin marketplace) and the mode's contract is that a self-hosted session reaches none of them; a tunnel from any other launch (a native login, a provider session on another identity) is untouched.
+ *
+ * The decision is read from files the door and the launcher already keep, fresh on every call, because a blind tunnel is rare and launches come and go: the session registry names the launcher pid behind each capability, the launch records name the identity that pid launches, and the minted record names the identity's id. Ids, not names, are compared, so a rename between the mint and the launch changes nothing.
+ */
+
+/** Everything the check reads, injected so it runs against an in-memory filesystem in unit tests. */
+export interface RcSelfHostLaunchDeps {
+  readonly fs: Pick<HeadroomFs, "readFileUtf8" | "readdir">;
+  readonly sessionsDir: string;
+  readonly launchesDir: string;
+  readonly identitiesDir: string;
+  /** The id of the identity the door's credential was minted into, or undefined while nothing is minted (then no launch is self-hosted). */
+  readonly mintedIdentityId: () => string | undefined;
+}
+
+/** Builds the check: whether the launch presenting `capability` runs the identity the door's credential was minted into. */
+export function createRcSelfHostLaunchCheck(deps: RcSelfHostLaunchDeps): (capability: string) => boolean {
+  return (capability) => {
+    const minted = deps.mintedIdentityId();
+    if (minted === undefined) {
+      return false;
+    }
+    const launch = deps.fs
+      .readdir(deps.sessionsDir)
+      .filter(isSessionRecordName)
+      .map((name) => readFrontDoorSessionRecord(deps.fs, deps.sessionsDir, name))
+      .find((record) => record !== undefined && isLiveCapability(capability, [record.token]));
+    if (launch === undefined) {
+      return false;
+    }
+    return launchIdentitiesOf(deps.fs, deps.launchesDir, launch.pid).some((identity) => identityIdOver(deps.fs, deps.identitiesDir, identity) === minted);
+  };
+}
