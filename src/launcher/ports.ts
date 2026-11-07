@@ -13,6 +13,8 @@ export interface FsPort {
   readonly readConfigFile: ConfigFileReader;
   /** Lists one directory's immediate child names, or an empty list when it does not exist. Used to name the known providers in an unknown-provider refusal. */
   readonly readdir: (dir: string) => readonly string[];
+  /** Whether two paths are one directory on disk, by device and inode: true for a spelling that differs by a trailing separator, a case difference on a filesystem that ignores case, or a symlink; false when either does not exist or cannot be reached. Relative paths are read against the process's working directory. */
+  readonly sameDirectory: (first: string, second: string) => boolean;
 }
 
 /** What one node of a tree is, as reported by an `lstat` that never follows symlinks. */

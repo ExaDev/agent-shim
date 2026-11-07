@@ -107,7 +107,7 @@ describe("the aliases file", () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  const port = (files: Readonly<Record<string, unknown>>): FsPort => ({ readFileUtf8: () => undefined, readConfigFile: (file) => files[file], readdir: () => [] });
+  const port = (files: Readonly<Record<string, unknown>>): FsPort => ({ sameDirectory: () => false, readFileUtf8: () => undefined, readConfigFile: (file) => files[file], readdir: () => [] });
 
   it("reads as none when no provider was ever renamed", () => {
     expect(readProviderAliases(paths)).toEqual({});

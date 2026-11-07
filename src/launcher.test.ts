@@ -849,6 +849,7 @@ describe("runLauncher crash recovery ordering", () => {
     // The configuration port reads the same tree, so the identity is found by name in the superseded farm before recovery puts it back.
     let identityWasReadableWhenLoaded: boolean | undefined;
     const fsPort: FsPort = {
+      sameDirectory: () => false,
       readFileUtf8: () => undefined,
       readConfigFile: (filePath) => {
         if (filePath === `${identitiesDir}/work/identity.json`) {

@@ -7,6 +7,7 @@ import type { FsPort } from "./ports";
 
 function fakeFs(overrides: Partial<FsPort> = {}): FsPort {
   return {
+    sameDirectory: () => false,
     readFileUtf8: () => undefined,
     readConfigFile: () => undefined,
     readdir: () => [],
