@@ -36,6 +36,7 @@ import {
   isRcPermissionMode,
   isRcReadFileEncoding,
   rcEventWriteResultFromAnswer,
+  RC_WORKER_READ_ANSWER_EXCERPT_CHARS,
   RC_WORKER_READ_TIMEOUT_MS,
   readRcSessionFile,
   readRcWorkerState,
@@ -785,6 +786,21 @@ describe("reading a session's worker state from the service", () => {
       await vi.advanceTimersByTimeAsync(RC_WORKER_READ_TIMEOUT_MS);
       expect(await read).toEqual({ ok: false, message: expect.stringContaining("did not answer the worker state read") as unknown });
     });
+  });
+
+  it("quotes at most an excerpt of the API's answer in a failure, saying how much was left out", async () => {
+    const { tracker } = observedSession();
+    const overflow = 1_000;
+    const page = "x".repeat(RC_WORKER_READ_ANSWER_EXCERPT_CHARS + overflow);
+    for (const status of [HTTP_STATUS.unauthorized, HTTP_STATUS.forbidden, HTTP_STATUS.ok]) {
+      const { dial } = readingDial(async () => await Promise.resolve({ status, body: page }));
+      const read = await readRcWorkerState({ credentialOf: tracker.credentialOf, dial }, SESSION_ID);
+      expect(read.ok).toBe(false);
+      if (!read.ok) {
+        expect(read.message).toContain(`${"x".repeat(RC_WORKER_READ_ANSWER_EXCERPT_CHARS)}... (${String(overflow)} more characters)`);
+        expect(read.message).not.toContain("x".repeat(RC_WORKER_READ_ANSWER_EXCERPT_CHARS + 1));
+      }
+    }
   });
 
   it("refuses an accepted answer that names no worker state rather than reporting an empty one", async () => {
