@@ -22,7 +22,7 @@ const SELF_HOST_DIAL: unique symbol = Symbol("the door's own self-hosted surface
 const LOOPBACK_HOSTS: readonly string[] = ["127.0.0.1", "::1"];
 
 /**
- * A dial that reaches the door's own self-hosted surface and nothing else: the one dial a command written as a person's app may ride. Unlike the client half's other dials (`lateRcEventDial`), which fall back to the real API host while no target is resolved, this one refuses: a write whose target is not resolved, or resolves to anything but a loopback address, is never sent.
+ * A dial that reaches the door's own self-hosted surface and nothing else: the one dial a command written as a person's app may ride. Like the client half's other late-targeted dials (`lateRcEventDial`) it refuses a call made while no target is resolved, and unlike them it also refuses a target that is not a loopback address: a write whose target is not resolved, or resolves to anything but a loopback address, is never sent.
  */
 export interface RcSelfHostEventDial {
   readonly [SELF_HOST_DIAL]: true;
