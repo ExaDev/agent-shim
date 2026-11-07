@@ -336,18 +336,18 @@ export function requireNoClaudeCodeLoginForMint(keychain: KeychainProbe, configD
 }
 
 /**
- * The note `identity remove` gives for an identity the self-hosted mint wrote into (`selfHosted`) whose Claude Code login item is still in the Keychain, or undefined when there is nothing to say. The removal leaves the item, as it leaves every identity's (a login another identity, or a later `identity add --keep-keychain-login`, may still want); this only names it and the command that deletes it, since a minted login is the one kind with nothing to keep. Asked by attributes only, and only on macOS. It is asked after the identity is gone, so a Keychain that could not be asked is a note too, saying the identity was removed and the check could not be made, never a failure of a removal that has already happened.
+ * The note `identity remove` gives for an identity the self-hosted mint wrote into (`selfHostedDir` is its directory, undefined for any other identity) whose Claude Code login item is still in the Keychain, or undefined when there is nothing to say. The removal leaves the item, as it leaves every identity's (a login another identity, or a later `identity add --keep-keychain-login`, may still want); this only names it and the command that deletes it, since a minted login is the one kind with nothing to keep. Asked by attributes only, and only on macOS. It is asked after the identity is gone, so a Keychain that could not be asked is a note too, saying the identity was removed and the check could not be made, never a failure of a removal that has already happened.
  */
-export function selfHostedLoginLeftover(keychain: KeychainProbe, configDir: string, selfHosted: boolean, login: ClaudeCodeLoginEnv): string | undefined {
-  if (!selfHosted || keychain.platform !== "darwin") {
+export function selfHostedLoginLeftover(keychain: KeychainProbe, selfHostedDir: string | undefined, login: ClaudeCodeLoginEnv): string | undefined {
+  if (selfHostedDir === undefined || keychain.platform !== "darwin") {
     return undefined;
   }
   let found: ReturnType<typeof claudeCodeLoginFound>;
   try {
-    found = claudeCodeLoginFound(keychain.run, configDir, login);
+    found = claudeCodeLoginFound(keychain.run, selfHostedDir, login);
   } catch (error) {
     if (error instanceof KeychainLookupError) {
-      return `The identity was removed, but the Keychain could not be checked for a Claude Code login a self-hosted mint may have left for its directory (service ${claudeCodeKeychainService(configDir)}): ${error.message}`;
+      return `The identity was removed, but the Keychain could not be checked for a Claude Code login a self-hosted mint may have left for its directory (service ${claudeCodeKeychainService(selfHostedDir)}): ${error.message}`;
     }
     throw error;
   }

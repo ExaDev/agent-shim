@@ -496,7 +496,7 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
             throw error;
           }
         }
-        warnings.push(...leftoverWarnings(selfHostedLoginLeftover({ run: renamePorts.run, platform: renamePorts.platform }, configDir, selfHosted, renamePorts.claudeLogin)));
+        warnings.push(...leftoverWarnings(selfHostedLoginLeftover({ run: renamePorts.run, platform: renamePorts.platform }, selfHosted ? configDir : undefined, renamePorts.claudeLogin)));
         });
         reportMutation(options.json, { action: "removed", kind: "identity", name, ...(warnings.length === 0 ? {} : { warnings }) }, () => {
           console.log(`Removed identity "${name}".`);

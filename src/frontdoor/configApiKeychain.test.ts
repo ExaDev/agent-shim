@@ -16,6 +16,7 @@ import { createConfigApiRouter } from "./configApi";
 import { RC_SELF_HOST_MINT_MARKER } from "./rcSelfHostMint";
 import { ConfigIdentityAddInputSchema } from "./configSchemas";
 import { realFarmFs } from "../realPorts";
+import { renameJournalFile, writeRenameJournal } from "../identityRenameJournal";
 
 const TOKEN = "control-token-for-the-config-api-keychain-tests";
 
@@ -244,6 +245,22 @@ describe("config.identity.remove and the credential the Keychain store caches", 
     expect(keychain.calls.filter((call) => call.args[0] === "delete-generic-password").map((call) => call.args)).toEqual([["delete-generic-password", "-s", KEYCHAIN_CACHE_SERVICE, "-a", "identity lab"]]);
     expect(keychain.calls.some((call) => call.args.includes("-g") || call.args.includes("-w"))).toBe(false);
     expect(await api.identity.remove({ name: "work", confirm: true })).toEqual({ action: "removed", kind: "identity", name: "work" });
+  });
+
+  it("refuses to remove a name only an unfinished rename covers with the rename's own refusal, not as an unknown identity", async () => {
+    addIdentity(paths, "work");
+    writeRenameJournal(realFarmFs, renameJournalFile(paths.identityRenamesDir, "work", "client"), { version: 1, from: "work", to: "client", startedAt: "2026-10-30T10:00:00.000Z", pid: 1, steps: [{ description: "move identities/work to identities/client", started: false, done: false }] });
+    fs.rmSync(path.join(paths.identitiesDir, "work"), { recursive: true, force: true });
+    const runAsync: AsyncRun = async () => await Promise.resolve({ status: 0, stdout: "", stderr: "" });
+    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" }, fs: realFarmFs, claudeLogin: TEST_CLAUDE_LOGIN }), {
+      context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
+    }).config;
+    const failure: unknown = await api.identity.remove({ name: "client", confirm: true }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(failure).toHaveProperty("message", expect.stringContaining('Cannot remove identity "client"'));
+    expect(failure).not.toMatchObject({ code: "NOT_FOUND" });
   });
 
   it("answers a removal whose leftover check meets a locked Keychain as removed, with the warning, not as a retryable failure", async () => {

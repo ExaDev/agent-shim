@@ -307,7 +307,7 @@ describe("the self-hosted mint's Keychain checks, which refuse and never delete"
 
   it("reports a Keychain that cannot be asked at removal as a note saying the identity was removed, never as a failure", () => {
     const locked = { run: (): { status: number; stdout: string; stderr: string } => ({ status: LOCKED_KEYCHAIN_STATUS, stdout: "", stderr: "User interaction is not allowed." }) };
-    const note = selfHostedLoginLeftover({ run: locked, platform: "darwin" }, LAB_DIR, true, TEST_CLAUDE_LOGIN);
+    const note = selfHostedLoginLeftover({ run: locked, platform: "darwin" }, LAB_DIR, TEST_CLAUDE_LOGIN);
     expect(note).toContain("The identity was removed, but the Keychain could not be checked");
     expect(note).toContain(LAB_SERVICE);
   });
@@ -315,9 +315,9 @@ describe("the self-hosted mint's Keychain checks, which refuse and never delete"
   it("names a self-hosted identity's leftover login on removal without deleting it, and says nothing for an unmarked identity or off macOS", () => {
     const keychain = createFakeKeychain();
     keychain.seed(LAB_SERVICE, "alex", "a-made-up-login");
-    expect(selfHostedLoginLeftover(darwin(keychain), LAB_DIR, true, TEST_CLAUDE_LOGIN)).toContain(`security delete-generic-password -s '${LAB_SERVICE}' -a 'alex'`);
-    expect(selfHostedLoginLeftover(darwin(keychain), LAB_DIR, false, TEST_CLAUDE_LOGIN)).toBeUndefined();
-    expect(selfHostedLoginLeftover({ run: keychain.run, platform: "linux" }, LAB_DIR, true, TEST_CLAUDE_LOGIN)).toBeUndefined();
+    expect(selfHostedLoginLeftover(darwin(keychain), LAB_DIR, TEST_CLAUDE_LOGIN)).toContain(`security delete-generic-password -s '${LAB_SERVICE}' -a 'alex'`);
+    expect(selfHostedLoginLeftover(darwin(keychain), undefined, TEST_CLAUDE_LOGIN)).toBeUndefined();
+    expect(selfHostedLoginLeftover({ run: keychain.run, platform: "linux" }, LAB_DIR, TEST_CLAUDE_LOGIN)).toBeUndefined();
     expect(keychain.items.has(LAB_SERVICE)).toBe(true);
     expect(keychain.calls.some((call) => call.args[0] === "delete-generic-password")).toBe(false);
     expect(neverReadsAPassword(keychain)).toBe(true);
