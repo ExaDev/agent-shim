@@ -28,8 +28,8 @@ What the page drives:
 - `rc/status` (all sessions): the session list, refreshed on a short poll and on demand.
 - `events.subscribe` (every source, or an `rc`-only filter): the live feed. Reconnects on any drop; because the door's event backbone holds no replay, a reconnect starts at the live head, and the per-source sequence numbers surface whatever the gap swallowed as a visible "dropped events" line rather than hiding it.
 - `rc/send`: the prompt box, to the selected session.
-- `rc/pending` (the selected session, or all): the approval cards, and for a pending question its questions with one radio button or checkbox per option.
-- `rc/answer`: each card's Approve and Deny (with an optional denial message), or for a question Answer (sending the chosen labels as `choices`) and Dismiss.
+- `rc/pending` (the selected session, or all): the approval cards, and for a pending question its questions with one radio button or checkbox per option and a free-text box. The poll redraws the list only when the pending requests change, so a pick or typed text survives every refresh until it is sent.
+- `rc/answer`: each card's Approve and Deny (with an optional denial message), or for a question Answer and Dismiss. Answer sends `choices`: per question the picked labels, plus the typed text as `{"text": ...}`, which joins the picks of a multi-select question and replaces the pick of a single-select one.
 
 Remote Control events render their envelope: payloads that carry a content array of text blocks (assistant and user messages) render as their prose, everything else as its event type plus a bounded JSON sketch. Steering beyond this (interrupt, model, permission mode) stays on the CLI verbs, which the door already serves; the page is a control surface, not an app.
 

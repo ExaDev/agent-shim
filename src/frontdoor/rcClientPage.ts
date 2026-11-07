@@ -210,8 +210,29 @@ function selectSession(id) {
   };
 }
 
+// The identity of one pending list as the page draws it: the request ids in order. The poll redraws the list only when this changes, so a half-made choice (a picked radio button, a typed message) survives every refresh of the same requests.
+function pendingKey(pending) {
+  return pending.map(function (request) { return request.sessionId + '/' + request.requestId; }).join(' ');
+}
+
+// Turns what one question card holds into the answer's choices: per question, the picked labels in option order and the typed free text when there is any (the dialog's own "Type something" row), which joins the picks of a multi-select question and replaces the pick of a single-select one, since that takes one answer. Returns the choices, or the refusal naming the first question left without a selection.
+function answerChoices(picked, typed, multiSelect) {
+  var choices = [];
+  for (var q = 0; q < picked.length; q++) {
+    var text = typed[q] === undefined ? '' : typed[q].trim();
+    var chosen = text !== '' && multiSelect[q] !== true ? [] : picked[q].slice();
+    if (text !== '') { chosen.push({ text: text }); }
+    if (chosen.length === 0) { return { error: 'choose an option for question ' + String(q + 1) + ', or type an answer' }; }
+    choices.push(chosen);
+  }
+  return { choices: choices };
+}
+
 function renderPending(pending) {
   if (ui === null) { return; }
+  var key = pendingKey(pending);
+  if (ui.pendingKey === key) { return; }
+  ui.pendingKey = key;
   var list = ui.pendingList;
   list.textContent = '';
   if (pending.length === 0) {
@@ -241,7 +262,7 @@ function renderPending(pending) {
   }
 }
 
-// Draws each question of a pending question request with one input per option (radio buttons for a single-select question, checkboxes for a multi-select one), and returns a reader of the chosen labels, one list per question in order, which the answer sends as its choices.
+// Draws each question of a pending question request with one input per option (radio buttons for a single-select question, checkboxes for a multi-select one) and a free-text box, and returns a reader of the answer's choices built by answerChoices.
 function renderQuestions(card, request) {
   var groups = [];
   for (var q = 0; q < request.questions.length; q++) {
@@ -261,11 +282,19 @@ function renderQuestions(card, request) {
       block.appendChild(label);
       inputs.push(box);
     }
-    groups.push(inputs);
+    var other = el('input');
+    other.type = 'text';
+    other.placeholder = question.multiSelect ? 'or add your own answer' : 'or type your own answer';
+    block.appendChild(other);
+    groups.push({ inputs: inputs, other: other });
     card.appendChild(block);
   }
   return function () {
-    return groups.map(function (inputs) { return inputs.filter(function (box) { return box.checked; }).map(function (box) { return box.value; }); });
+    return answerChoices(
+      groups.map(function (group) { return group.inputs.filter(function (box) { return box.checked; }).map(function (box) { return box.value; }); }),
+      groups.map(function (group) { return group.other.value; }),
+      request.questions.map(function (question) { return question.multiSelect === true; })
+    );
   };
 }
 
@@ -274,9 +303,9 @@ function answerRequest(request, approve, denialInput, pickers) {
     var input = { session: request.sessionId, request: request.requestId, approve: approve };
     if (!approve && denialInput.value !== '') { input.text = denialInput.value; }
     if (approve && pickers !== null) {
-      var choices = pickers();
-      if (choices.some(function (chosen) { return chosen.length === 0; })) { window.alert('choose an option for every question'); return; }
-      input.choices = choices;
+      var built = pickers();
+      if (built.error !== undefined) { window.alert(built.error); return; }
+      input.choices = built.choices;
     }
     rpc('rc/answer', input).then(function () {
       renderEvent({ source: 'page', sequence: 0, payload: { note: (pickers !== null ? 'answered' : approve ? 'approved' : 'denied') + ' ' + request.requestId } }, 0);
