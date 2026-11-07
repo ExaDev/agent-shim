@@ -33,7 +33,7 @@ function boundary(sequenceNum: number, trigger: string): RcStreamEvent {
 const OBSERVED = { authorization: "Bearer sk-ant-oat", anthropicVersion: "2023-06-01", anthropicClientPlatform: "claude_code_cli" };
 
 /** Why the door's own surface is unbound in the worlds that leave it so, as the door words it. */
-const UNBOUND_REASON = "AGENT_SHIM_TRANSPARENT_SURFACE is not set, so the door has no surface of its own to write to";
+const UNBOUND_REASON = "AGENT_SHIM_TRANSPARENT_SURFACE is not set, so the door has no surface of its own to reach";
 
 /** The loopback target of the door's own surface in these worlds. */
 const SURFACE = { host: "127.0.0.1", port: 47_592, servername: "api.anthropic.com" };

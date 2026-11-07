@@ -67,7 +67,7 @@ The route depends on two things: whether the session was launched under an agent
 
 | Verb | Supervised, either mode | Not supervised, owned by the self-hosted service, its surface bound | Not supervised, owned by the self-hosted service, without `AGENT_SHIM_TRANSPARENT_SURFACE` | Not supervised, not owned by the self-hosted service, or door not self-hosting |
 |---|---|---|---|---|
-| goal get | yes, from the transcript | yes, `/goal` on the door's own surface | refused: the door has no surface of its own to write to | refused: no in-process channel, and the real service treats the door's writes as a peer's |
+| goal get | yes, from the transcript | yes, `/goal` on the door's own surface | refused: the door has no surface of its own to reach | refused: no in-process channel, and the real service treats the door's writes as a peer's |
 | goal set | yes, through the plugin | yes, on the door's own surface | refused, the same | refused, the same |
 | goal clear | yes, through the plugin | yes, on the door's own surface | refused, the same | refused, the same |
 | compact | yes, through the plugin | yes, on the door's own surface | refused, the same | refused, the same |

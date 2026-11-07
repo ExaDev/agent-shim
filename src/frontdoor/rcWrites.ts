@@ -69,6 +69,19 @@ export function perSessionRcEventDial(isSelfHosted: RcSelfHostedChoice, selfHost
 }
 
 /**
+ * The error a dial throws when it declines, on purpose, to send a request at all (the self-hosted mode's dials do, for a surface that is not bound and for a target that is not this machine). It is the guard working, not a network failure, so the verbs word it as a refusal and never as the API host being unreachable.
+ */
+export class RcDialRefusal extends Error {
+  override readonly name = "RcDialRefusal";
+}
+
+/** The failure message of a verb whose dial threw: a refusal says the door refused to do `action` and why, and any other error is the API host not being reached. */
+function rcDialFailureMessage(action: string, error: unknown): string {
+  const reason = error instanceof Error ? error.message : String(error);
+  return error instanceof RcDialRefusal ? `the door refused to ${action}: ${reason}` : `the door could not reach the API host to ${action}: ${reason}`;
+}
+
+/**
  * What one client-half write produced: the sequence numbers the real service assigned, or a verbose failure message ready to show a user. A write that carried a `control_request` also names the request id it minted, because the worker's `control_response` echoes exactly that id on the stream: a consumer that wants the answer matches it there, and the id is surfaced here since only the door ever knew it.
  */
 export type RcEventWriteResult = { readonly ok: true; readonly sequenceNums: readonly number[]; readonly requestId?: string } | { readonly ok: false; readonly message: string };
@@ -175,7 +188,7 @@ export async function injectRcUserMessage(deps: RcInjectDeps, sessionId: string,
   try {
     answer = await deps.dial.writeEvents(sessionId, rcWriteHeaders(credential), body);
   } catch (error) {
-    return { ok: false, message: `the door could not reach the API host to inject into session ${sessionId}: ${error instanceof Error ? error.message : String(error)}` };
+    return { ok: false, message: rcDialFailureMessage(`inject into session ${sessionId}`, error) };
   }
   const result = rcEventWriteResultFromAnswer(answer);
   if (result.ok) {
@@ -418,7 +431,7 @@ export async function answerRcControlRequest(deps: RcAnswerDeps, sessionId: stri
   try {
     answer = await deps.dial.writeEvents(sessionId, rcWriteHeaders(credential), body);
   } catch (error) {
-    return { ok: false, message: `the door could not reach the API host to answer on session ${sessionId}: ${error instanceof Error ? error.message : String(error)}` };
+    return { ok: false, message: rcDialFailureMessage(`answer on session ${sessionId}`, error) };
   } finally {
     // The claim lives exactly as long as the write, whichever way it settles.
     release();
@@ -459,7 +472,7 @@ async function deliverRcClientPayload(deps: RcControlRequestDeps, sessionId: str
   try {
     answer = await (to === "teleport-events" ? deps.dial.writeTeleportEvents(sessionId, rcWriteHeaders(credential), body) : deps.dial.writeEvents(sessionId, rcWriteHeaders(credential), body));
   } catch (error) {
-    return { ok: false, message: `the door could not reach the API host to ${action}: ${error instanceof Error ? error.message : String(error)}` };
+    return { ok: false, message: rcDialFailureMessage(action, error) };
   }
   const result = rcEventWriteResultFromAnswer(answer);
   if (result.ok) {

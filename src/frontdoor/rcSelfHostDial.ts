@@ -1,7 +1,7 @@
 import { realRcEventDial, realRcStreamDial, type RcDialTarget } from "./connectEffects";
 import { rcSelfHostedChoiceOf, type RcSelfHostSurface } from "./rcSelfHost";
 import { perSessionRcStreamDial, type RcStreamDial } from "./rcStream";
-import { perSessionRcEventDial, type RcEventDial, type RcObservedCredential } from "./rcWrites";
+import { RcDialRefusal, perSessionRcEventDial, type RcEventDial, type RcObservedCredential } from "./rcWrites";
 
 /** The brand only `rcSelfHostEventDial` and `rcSelfHostStreamDial` put on a dial: not exported, so no other code can make a value of either type. */
 const SELF_HOST_DIAL: unique symbol = Symbol("the door's own self-hosted surface");
@@ -35,10 +35,10 @@ export interface RcSelfHostStreamDial extends RcStreamDial {
 function loopbackTargetOf(source: RcSelfHostDialSource): RcDialTarget {
   const target = source.resolve();
   if (target === undefined) {
-    throw new Error(`${source.unboundReason()}; nothing is sent, because with no surface of its own to dial the request would go to the real API host`);
+    throw new RcDialRefusal(`${source.unboundReason()}; nothing is sent (a session the door's own service owns is never sent to the real API host)`);
   }
   if (!LOOPBACK_HOSTS.includes(target.host)) {
-    throw new Error(`the door's self-hosted surface resolved to ${target.host}, which is not this machine, so nothing is sent there`);
+    throw new RcDialRefusal(`the door's self-hosted surface resolved to ${target.host}, which is not this machine, so nothing is sent there`);
   }
   return target;
 }
@@ -82,10 +82,10 @@ export function rcSelfHostStreamDial(source: RcSelfHostDialSource, makeDial: (ta
 export function selfHostSurfaceUnboundReason(transparentSurface: string | undefined): string {
   const port = transparentSurface === undefined ? Number.NaN : Number(transparentSurface);
   if (transparentSurface === undefined) {
-    return "AGENT_SHIM_TRANSPARENT_SURFACE is not set, so the door has no surface of its own to write to";
+    return "AGENT_SHIM_TRANSPARENT_SURFACE is not set, so the door has no surface of its own to reach";
   }
   if (!Number.isInteger(port) || port <= 0) {
-    return `AGENT_SHIM_TRANSPARENT_SURFACE is "${transparentSurface}", which is not a port, so the door has no surface of its own to write to`;
+    return `AGENT_SHIM_TRANSPARENT_SURFACE is "${transparentSurface}", which is not a port, so the door has no surface of its own to reach`;
   }
   return `the door's transparent surface on port ${String(port)} is not bound: its listener has not started yet or could not bind the port (the door's log says which)`;
 }

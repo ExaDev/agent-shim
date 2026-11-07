@@ -3,10 +3,10 @@ import { describe, expect, it } from "vitest";
 import type { RcDialTarget } from "./connectEffects";
 import { rcSelfHostEventDial, rcSelfHostStreamDial, rcSelfHostedDials, selfHostSurfaceUnboundReason, type RcSelfHostDialSource } from "./rcSelfHostDial";
 import type { RcPresenceAnswer, RcStreamDial } from "./rcStream";
-import { answerRcControlRequest, injectRcUserMessage, interruptRcSession, type RcEventDial } from "./rcWrites";
+import { RcDialRefusal, answerRcControlRequest, injectRcUserMessage, interruptRcSession, type RcEventDial } from "./rcWrites";
 
 const SESSION = "cse_00000000-0000-4000-8000-000000000000";
-const REASON = "AGENT_SHIM_TRANSPARENT_SURFACE is not set, so the door has no surface of its own to write to";
+const REASON = "AGENT_SHIM_TRANSPARENT_SURFACE is not set, so the door has no surface of its own to reach";
 const LOOPBACK: RcDialTarget = { host: "127.0.0.1", port: 47_592, servername: "api.anthropic.com" };
 const HEADERS = { authorization: "Bearer sk-ant-oat" };
 const ANSWERED = { status: 200, body: "{}" };
@@ -80,6 +80,18 @@ function makeWorld(resolve: () => RcDialTarget | undefined) {
 }
 
 describe("the door's dials in the self-hosted mode", () => {
+  it("refuse with an error that is recognisably the guard's own, whose reason is neutral about whether the request reads or writes", async () => {
+    const world = makeWorld(() => undefined);
+    const writes = world.eventDial.writeEvents(SESSION, HEADERS, "{}");
+    await expect(writes).rejects.toBeInstanceOf(RcDialRefusal);
+    await expect(world.streamDial.openStream(SESSION, HEADERS, undefined, new AbortController().signal)).rejects.toBeInstanceOf(RcDialRefusal);
+    const elsewhere = makeWorld(() => ({ ...LOOPBACK, host: "api.anthropic.com" }));
+    await expect(elsewhere.eventDial.writeEvents(SESSION, HEADERS, "{}")).rejects.toBeInstanceOf(RcDialRefusal);
+    for (const unset of [undefined, "abc", "47592"]) {
+      expect(selfHostSurfaceUnboundReason(unset)).not.toMatch(/\bwrite\b/);
+    }
+  });
+
   it("refuse every request while the surface is unbound, naming why, and build no dial at all", async () => {
     const world = makeWorld(() => undefined);
     const signal = new AbortController().signal;
@@ -133,9 +145,11 @@ describe("the door's dials in the self-hosted mode", () => {
     for (const resolution of resolutions) {
       const world = makeWorld(() => resolution);
       const deps = { credentialOf: () => ({ authorization: "Bearer sk-ant-oat", anthropicVersion: undefined, anthropicClientPlatform: "claude_code_cli" }), noteSequenceNums: () => undefined, dial: world.eventDial, newUuid: () => "00000000-0000-4000-8000-000000000001" };
-      await injectRcUserMessage(deps, SESSION, "hello");
-      await interruptRcSession(deps, SESSION);
-      await answerRcControlRequest({ ...deps, pendingOf: () => [{ sessionId: SESSION, requestId: "req_1", type: "can_use_tool", summary: "Bash", observedAt: 0 }], completePending: () => undefined }, SESSION, "req_1", { approve: true, message: undefined });
+      const results = [
+        await injectRcUserMessage(deps, SESSION, "hello"),
+        await interruptRcSession(deps, SESSION),
+        await answerRcControlRequest({ ...deps, pendingOf: () => [{ sessionId: SESSION, requestId: "req_1", type: "can_use_tool", summary: "Bash", observedAt: 0 }], completePending: () => undefined }, SESSION, "req_1", { approve: true, message: undefined }),
+      ];
       for (const sent of world.sent) {
         expect(sent.endsWith("@127.0.0.1") || sent.endsWith("@::1")).toBe(true);
       }
@@ -144,6 +158,13 @@ describe("the door's dials in the self-hosted mode", () => {
       }
       if (resolution === undefined) {
         expect(world.sent).toEqual([]);
+      }
+      if (resolution === undefined || !LOOPBACK_HOSTS.includes(resolution.host)) {
+        // The guard's refusal is not a network failure, so no verb words it as one: the target was never the API host, and the dial never tried it.
+        for (const result of results) {
+          expect(result.ok ? "" : result.message).toMatch(/^the door refused to /);
+          expect(result.ok ? "" : result.message).not.toContain("could not reach");
+        }
       }
     }
   });
