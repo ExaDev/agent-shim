@@ -13,7 +13,7 @@ import { buildLayoutPaths, type LayoutPaths } from "../paths";
 import type { AsyncRun } from "../replayRun";
 import { claudeCodeKeychainService } from "../usage/signIn";
 import { createConfigApiRouter } from "./configApi";
-import { RC_SELF_HOST_MINT_MARKER } from "./rcSelfHostMint";
+import { RC_SELF_HOST_MINT_MARKER } from "../selfHostMintMarker";
 import { ConfigIdentityAddInputSchema } from "./configSchemas";
 import { realFarmFs } from "../realPorts";
 import { renameJournalFile, writeRenameJournal } from "../identityRenameJournal";

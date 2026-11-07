@@ -58,7 +58,7 @@ import {
   ConfigRuleSetOutputSchema,
 } from "./configSchemas";
 import { doorApiAuth } from "./rcApi";
-import { isSelfHostMinted } from "./rcSelfHostMint";
+import { isSelfHostMinted } from "../selfHostMintMarker";
 
 /**
  * The door's configuration management as a typed oRPC API: the writes the CLI's `identity`, `profile`, `pool`, `provider` and `rule` verbs make, as `config.<noun>.<verb>` procedures, every one behind the same per-generation control token as the rest of the mount.

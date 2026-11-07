@@ -13,7 +13,7 @@ import { readRenameJournal, renameJournalFile, writeRenameJournal } from "./iden
 import type { SessionProcess } from "./identitySessions";
 import { addIdentity, identityExists, identityIdOf, readActiveIdentity, useIdentity } from "./identityStore";
 import { createFakeKeychain } from "./keychainTestWorld";
-import { RC_SELF_HOST_MINT_MARKER } from "./frontdoor/rcSelfHostMint";
+import { RC_SELF_HOST_MINT_MARKER } from "./selfHostMintMarker";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { buildProgram } from "./program";
 import { realFarmFs } from "./realPorts";

@@ -10,7 +10,7 @@ import { realFarmFs } from "../realPorts";
 import { createFakeFarmFs } from "../test-helpers";
 import { claudeCodeKeychainService } from "../usage/signIn";
 import { realRcMintPorts, registerRcCommand, type RcMintPorts } from "./rcCommands";
-import { RC_SELF_HOST_MINT_MARKER } from "./rcSelfHostMint";
+import { RC_SELF_HOST_MINT_MARKER } from "../selfHostMintMarker";
 
 const ROOT = "/state";
 const IDENTITY_DIR = `${ROOT}/identities/rig`;

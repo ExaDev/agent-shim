@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { KeychainLoginError, KeychainLookupError } from "../keychainLogin";
 import type { RunPort } from "../launcher/ports";
-import { RC_SELF_HOST_MINT_MARKER, RC_SELF_HOST_RECORD_DIR, RC_SELF_HOST_RECORD_FILE, isSelfHostMinted, mintRcSelfHostCredential, mintRcSelfHostLogin, readRcSelfHostRecord } from "./rcSelfHostMint";
+import { RC_SELF_HOST_RECORD_DIR, RC_SELF_HOST_RECORD_FILE, mintRcSelfHostCredential, mintRcSelfHostLogin, readRcSelfHostRecord } from "./rcSelfHostMint";
+import { RC_SELF_HOST_MINT_MARKER, isSelfHostMinted } from "../selfHostMintMarker";
 import { TEST_CLAUDE_LOGIN, createFakeKeychain } from "../keychainTestWorld";
 import { claudeCodeKeychainService } from "../usage/signIn";
 import { createFakeFarmFs } from "../test-helpers";
@@ -181,13 +182,5 @@ describe("the guarded self-hosted mint on a fresh directory", () => {
     expect(() => guarded(fs, run)).toThrow(KeychainLookupError);
     expect(() => guarded(fs, run)).toThrow('Nothing was minted into identity "rig"');
     expect(mintedFiles.map((file) => fs.readFileUtf8(file))).toEqual([undefined, undefined, undefined, undefined]);
-  });
-});
-
-describe("the mint's marker contents", () => {
-  it("counts only a marker naming when it minted, not an empty or foreign file", () => {
-    const fs = createFakeFarmFs();
-    fs.seed({ "/a/.agent-shim-selfhost-mint": "", "/b/.agent-shim-selfhost-mint": "{}", "/c/.agent-shim-selfhost-mint": '{"mintedAt":"not a date"}', "/d/.agent-shim-selfhost-mint": '{"mintedAt":"2026-01-01T00:00:00.000Z"}' });
-    expect(["/a", "/b", "/c", "/d"].map((dir) => isSelfHostMinted(fs, dir))).toEqual([false, false, false, true]);
   });
 });

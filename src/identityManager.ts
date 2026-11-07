@@ -20,7 +20,7 @@ import { realFarmFs } from "./realPorts";
 import { describeIdentityMove, describeIdentityRename, discardRenameJournal, moveIdentity, renameIdentity, type IdentityRenamePorts } from "./identityRename";
 import { realIdentityRenamePorts } from "./realIdentityRename";
 import { KEEP_KEYCHAIN_LOGIN_DESCRIPTION, KeychainCacheDeleteError, leftoverWarnings, selfHostedLoginLeftover, type KeychainProbe } from "./keychainLogin";
-import { isSelfHostMinted } from "./frontdoor/rcSelfHostMint";
+import { isSelfHostMinted } from "./selfHostMintMarker";
 import { InvalidIdentityNameError, REMOVED_STATE, identityExists, readIdentity, addIdentity, addNewIdentity, requireIdentityAddable, useIdentity, type IdentityListing, listIdentities, setDefaultConfigProfile, setIdentityLabel, setIdentityProvider, setAllowAmbientCredential, setIdentityCredential, setIdentityAnchors, removeIdentityWithLockHeld, requireNoUnfinishedRenameNaming, identityDirectory, requireIdentityId, identityNotFound } from "./identityStore";
 import { realIdentityNamesLockPorts, withIdentityNamesLock } from "./identityNamesLock";
 import { describeAccountHolder, describeIdentityAccount, groupByLogin, loginKeyOf, readIdentityAccount, summariseIdentityAccount, type IdentityAccountRead, type IdentityAccountSummary } from "./identityAccounts";
