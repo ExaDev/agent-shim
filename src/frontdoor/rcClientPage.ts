@@ -193,7 +193,7 @@ function renderSessions(statuses) {
     var status = statuses[i];
     var worker = status.workerState === undefined ? 'worker unknown' : 'worker ' + status.workerState.value;
     var row = el('div', 'session' + (status.id === ui.selected ? ' selected' : ''));
-    row.appendChild(el('div', null, shortId(status.id)));
+    row.appendChild(el('div', null, status.name === undefined ? shortId(status.id) : status.name + ' (' + shortId(status.id) + ')'));
     row.appendChild(el('div', 'dim', worker + (status.pending.length === 0 ? '' : ', ' + String(status.pending.length) + ' pending') + ', seen ' + new Date(status.lastSeenAt).toLocaleTimeString()));
     row.addEventListener('click', selectSession(status.id));
     list.appendChild(row);

@@ -36,6 +36,16 @@ const RcSessionStatusSchema = z.strictObject({
   workerState: workerFactSchema(z.string()).optional(),
   workerIdleSeconds: workerFactSchema(z.number()).optional(),
   pending: z.readonly(z.array(RcPendingRequestSummarySchema)),
+  /** The identity the session runs as, when known; absent otherwise. */
+  identity: z.string().optional(),
+  /** The model the session last stated, when the door saw one. */
+  model: z.string().optional(),
+  /** The session's name from the Claude Code session registry, when the registry holds it. */
+  name: z.string().optional(),
+  /** The session process's id from the registry. */
+  pid: z.number().optional(),
+  /** The session's working directory, from its init event or the registry. */
+  cwd: z.string().optional(),
 });
 
 /** One event off the client read stream, exactly as the door forwards it to subscribers: the envelope the API host sent, with the fields the door itself relies on typed and the rest (the payload above all) carried verbatim for the consumer to narrow. */

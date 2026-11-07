@@ -11,6 +11,7 @@ import type { DoctorReport } from "../doctorReport";
 import { LIFECYCLE_AND_CODEX_TEST_DEPS } from "./lifecycleCodexTestDeps";
 import { createDoorApiNodeHandler } from "./controlApi";
 import { createDoorEventHub, rcFanoutOnDoorHub } from "./eventHub";
+import { withRegisteredSessionFacts } from "./rcSessionRegistry";
 import { createRcSessionTracker, RC_IDLE_EXPIRY_MS, type RcSessionTracker } from "./rcSessions";
 import type { RcStreamEvent } from "./rcSchemas";
 import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog } from "./rcEventLog";
@@ -157,7 +158,7 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
       expectedToken: CONTROL_TOKEN,
       paths: buildLayoutPaths(configRoot),
       list: tracker.list,
-      statusOf: (sessionId?: string) => tracker.statusOf(sessionId),
+      statusOf: (sessionId?: string) => withRegisteredSessionFacts(tracker.statusOf(sessionId), new Map([[SESSION_ID, { pid: 4_001, localSessionId: "11111111-1111-4111-8111-111111111111", cwd: "/repo", name: "fix the thing", identity: "work" }]])),
       pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
       inject: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS }),
       answer: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" }),
@@ -290,7 +291,7 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
   it("decodes query parameters and keeps the named-session refusal rule", async () => {
     const named = await call("GET", `/rest/rc/status?session=${SESSION_ID}`);
     expect(named.status).toBe(HTTP_STATUS.ok);
-    expect(JSON.parse(named.text)).toMatchObject({ statuses: [{ id: SESSION_ID }] });
+    expect(JSON.parse(named.text)).toMatchObject({ statuses: [{ id: SESSION_ID, pid: 4_001, cwd: "/repo", name: "fix the thing", identity: "work" }] });
     const unknown = await call("GET", "/rest/rc/status?session=cse_00000000-0000-4000-8000-0000000000ff");
     expect(unknown.status).toBe(HTTP_STATUS.notFound);
     expect(unknown.text).toContain("has not observed Remote Control session");

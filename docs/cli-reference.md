@@ -139,7 +139,7 @@ agent-shim codex logout [--json]
 agent-shim frontdoor status [--json]        # also probes the serving door's two listeners and reports whether each accepted
 agent-shim frontdoor restart [--json]        # replace the serving door in place; running sessions reach it on their next request
 agent-shim frontdoor rc list [--json]
-agent-shim frontdoor rc status [<cse_id>] [--json]
+agent-shim frontdoor rc status [<cse_id>] [--json]   # also names each session, its identity, model, process id and working directory where known
 agent-shim frontdoor rc pending [<cse_id>] [--json]
 agent-shim frontdoor rc send --session <cse_id> --text <text> [--json]
 agent-shim frontdoor rc answer --session <cse_id> --request <id> --approve | --deny [--text <text>] [--json]
@@ -192,6 +192,17 @@ claude @<identity> ...                      # the same, once `agent-shim shim en
 ```
 
 `identity add` refuses, on macOS, when the Keychain already holds a Claude Code login filed for the directory the new identity would be created in (left by an identity stored there that was moved with `identity rename --move` or removed), because the new identity would start signed in as that account; the message names the entry and the `security delete-generic-password` command that removes it. `--keep-keychain-login` creates the identity signed in as that account on purpose, and if another identity holds that login the two share it.
+
+### Remote Control session status
+
+`frontdoor rc status`, `GET /rest/rc/status`, the `rc_status` MCP tool and the library's `RcSessionStatus` all report one entry per observed session, and an entry carries `identity`, `model`, `name`, `pid` and `cwd` beside its worker state and pending requests. A field the door has no source for is absent from the entry, never blank or null. The sources are:
+
+- `identity`: the launcher-injected identity header on the session's own requests, the latest one winning, so a session moved to another account reports the account it runs as now. When the door saw none, the identity whose own session registry holds the session (see below).
+- `model`: the `model` in the worker registration's `external_metadata` or in the session's `init` event, whichever came later.
+- `name`, `pid`: the Claude Code session registry, one file per live session process under `<configuration directory>/sessions`, joined to the door's session by its `bridgeSessionId` (`session_<x>` for the door's `cse_<x>`). An entry whose process has exited is ignored, and of several live entries for one session the most recently updated is read.
+- `cwd`: the `cwd` in the session's `init` event, else the registry's.
+
+The registry is read on every status request, through every identity's configuration directory, so an identity added after the door started is searched. Identities share one registry by default (sessions are history, which is shared), so it is read once and says nothing about which identity launched a session in it; only a registry an identity holds on its own contributes an `identity`. A session found in no registry (it runs on another host, has not written its entry yet, or lives in a directory no identity of this door uses) is reported with only what the door itself observed, and a door that observed no `init` event, no registration metadata and no identity header reports none of those either. Sessions are addressed by their `cse_` id in every verb: `rc status` is how a name is mapped to its id.
 
 ### `agent-shim configure`: which file it writes to
 

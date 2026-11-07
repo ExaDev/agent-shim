@@ -95,6 +95,12 @@ interface RcSessionRecord {
   workerState: RcWorkerFact<string> | undefined;
   /** The idle the latest heartbeat carried, with when that exchange was observed. */
   workerIdleSeconds: RcWorkerFact<number> | undefined;
+  /** The identity the session's most recent request named (the launcher-injected header the door strips), so a session that moved between identities reports the one it runs as now. */
+  identity: string | undefined;
+  /** The model the session last stated: the worker registration's metadata or the session's init event, whichever came later. */
+  model: string | undefined;
+  /** The working directory the session's init event stated. */
+  cwd: string | undefined;
   /** The highest sequence number the door has seen for this session, from the client read stream's envelopes or from its own confirmed writes: the value a stream resume continues after. */
   sequenceNum: number | undefined;
   /** The background tasks and subagents the session's events described, by `task_id`. Memory only, like everything here; the transcripts on disk are the authoritative record. */
@@ -139,6 +145,16 @@ export interface RcSessionStatus extends RcSessionSummary {
   readonly workerIdleSeconds: RcWorkerFact<number> | undefined;
   /** The session's control requests awaiting an answer, oldest-observed first. */
   readonly pending: readonly RcPendingRequestSummary[];
+  /** The identity (login) the session runs as, when the door saw it on the session's own requests or the session's own registry named it. Absent when neither knows. */
+  readonly identity?: string;
+  /** The model the session last stated, when the door saw one. */
+  readonly model?: string;
+  /** The session's name as the Claude Code session registry holds it (see `rcSessionRegistry.ts`); the tracker never sets it. */
+  readonly name?: string;
+  /** The session process's id from the registry; the tracker never sets it. */
+  readonly pid?: number;
+  /** The session's working directory, from its init event or else the registry. */
+  readonly cwd?: string;
 }
 
 /** One observed session as the control surface lists it: the identification and timing only, never the credential. */
@@ -155,6 +171,8 @@ export interface RcObservedRequest {
   readonly method?: string;
   readonly url?: string;
   readonly headers: Readonly<IncomingHttpHeaders>;
+  /** The identity the launcher injected on this request, when the door's identity step read one; the headers above no longer carry it. */
+  readonly identity?: string;
 }
 
 /** What one observed exchange drives, in arrival order: the request body chunks and their end (present only for the exchanges whose request payloads the tracker reads), then the response's head, each body chunk, and the end exactly once. */
@@ -339,6 +357,14 @@ function answeredRequestIdsOfControlResponsePayload(payload: Record<string, unkn
   return id === undefined ? [] : [id];
 }
 
+/** The facts a `system` `init` payload states about its session: the model it runs and the directory it was started in. Every other payload yields nothing. */
+function initFactsOfPayload(payload: Record<string, unknown>): { readonly model: string | undefined; readonly cwd: string | undefined } | undefined {
+  if (payload.type !== "system" || payload.subtype !== "init") {
+    return undefined;
+  }
+  return { model: nonEmptyString(payload, "model"), cwd: nonEmptyString(payload, "cwd") };
+}
+
 /** What one parsed request body yielded, filed only once the exchange's own response is known to be a success. */
 interface RcRequestBodyFacts {
   /** Control requests awaiting an answer, from a worker event batch. */
@@ -349,6 +375,8 @@ interface RcRequestBodyFacts {
   readonly idleSeconds: number | undefined;
   /** The state a worker registration named. */
   readonly workerStatus: string | undefined;
+  /** The model a worker registration's metadata named. */
+  readonly model?: string;
   /** The payloads of the batch, which the live task book reads the system events out of. */
   readonly payloads: readonly Record<string, unknown>[];
 }
@@ -363,7 +391,10 @@ function parseRcRequestBody(kind: RcRequestBodyKind, body: string): RcRequestBod
   }
   if (kind === "worker-registration") {
     // The field the CLI's own worker state update sends is `worker_status` (its `UpdateSessionWorkerState` call, verified in the 2.1.88 source dump and the 2.1.289 bundle's strings), so that is the field the tracker reads.
-    return { controlRequests: [], answeredRequestIds: [], idleSeconds: undefined, workerStatus: nonEmptyString(parseJsonObject(body), "worker_status"), payloads: [] };
+    const registration = parseJsonObject(body);
+    const metadata = registration === undefined || !isRecord(registration.external_metadata) ? undefined : registration.external_metadata;
+    const model = nonEmptyString(metadata, "model");
+    return { controlRequests: [], answeredRequestIds: [], idleSeconds: undefined, workerStatus: nonEmptyString(registration, "worker_status"), payloads: [], ...(model === undefined ? {} : { model }) };
   }
   const controlRequests: Omit<RcPendingRequestRecord, "sessionId" | "observedAt">[] = [];
   const answeredRequestIds: string[] = [];
@@ -439,8 +470,8 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
   timer.unref();
 
   /** Begins describing one session. Only for an id the tracker does not hold: an entry is never replaced, so a session appears once and every appearance is matched by one ending. */
-  const birth = (id: string, facts: Readonly<{ oauthAuthorization: string | undefined; anthropicVersion: string | undefined; anthropicClientPlatform: string | undefined }>): RcSessionRecord => {
-    const record: RcSessionRecord = { id, createdAt: deps.now(), lastSeenAt: deps.now(), ...facts, pending: new Map(), retired: new Map(), workerState: undefined, workerIdleSeconds: undefined, sequenceNum: undefined, liveTasks: new Map() };
+  const birth = (id: string, facts: Readonly<{ oauthAuthorization: string | undefined; anthropicVersion: string | undefined; anthropicClientPlatform: string | undefined; identity: string | undefined }>): RcSessionRecord => {
+    const record: RcSessionRecord = { id, createdAt: deps.now(), lastSeenAt: deps.now(), ...facts, pending: new Map(), retired: new Map(), workerState: undefined, workerIdleSeconds: undefined, model: undefined, cwd: undefined, sequenceNum: undefined, liveTasks: new Map() };
     entries.set(id, record);
     deps.onTransition?.({ kind: "session-appeared", session: id, at: record.createdAt });
     return record;
@@ -454,12 +485,22 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
   };
 
   /** Refreshes a tracked entry from one observed call: the protocol headers and the OAuth-kind bearer are latest-wins because the freshest observed value is the live one. A worker call's JWT is not an OAuth credential, so it refreshes the entry's liveness without touching the injection credential (a worker JWT replayed on the client half is answered 401). */
-  const refresh = (entry: RcSessionRecord, facts: Readonly<{ oauthAuthorization: string | undefined; anthropicVersion: string | undefined; anthropicClientPlatform: string | undefined }>): void => {
+  const refresh = (entry: RcSessionRecord, facts: Readonly<{ oauthAuthorization: string | undefined; anthropicVersion: string | undefined; anthropicClientPlatform: string | undefined; identity: string | undefined }>): void => {
     entry.lastSeenAt = deps.now();
     entry.oauthAuthorization = facts.oauthAuthorization ?? entry.oauthAuthorization;
     entry.anthropicVersion = facts.anthropicVersion ?? entry.anthropicVersion;
     entry.anthropicClientPlatform = facts.anthropicClientPlatform ?? entry.anthropicClientPlatform;
+    entry.identity = facts.identity ?? entry.identity;
     persistCredential(entry);
+  };
+
+  /** Files the model and directory a session's init payload states; a field the payload omits leaves the earlier one in place. */
+  const noteInit = (entry: RcSessionRecord, payload: Record<string, unknown>): void => {
+    const init = initFactsOfPayload(payload);
+    if (init !== undefined) {
+      entry.model = init.model ?? entry.model;
+      entry.cwd = init.cwd ?? entry.cwd;
+    }
   };
 
   const observeExchange = (request: RcObservedRequest): RcExchangeObserver | undefined => {
@@ -472,6 +513,7 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
       oauthAuthorization: oauthAuthorizationOf(request.headers),
       anthropicVersion: singleHeader(request.headers, "anthropic-version"),
       anthropicClientPlatform: singleHeader(request.headers, "anthropic-client-platform"),
+      identity: request.identity,
     };
     if (tail === "") {
       // The bare path is the create (POST) and the list (GET); only the create births an entry, and its id arrives in the response, so the request's facts travel with the observer and are filed when the id is known.
@@ -561,7 +603,9 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
       }
       for (const payload of factsOfBody.payloads) {
         entryNow.liveTasks = applyAgentTaskEvent(entryNow.liveTasks, id, payload, now);
+        noteInit(entryNow, payload);
       }
+      entryNow.model = factsOfBody.model ?? entryNow.model;
       if (factsOfBody.idleSeconds !== undefined) {
         entryNow.workerIdleSeconds = { value: factsOfBody.idleSeconds, observedAt: now };
       }
@@ -634,7 +678,15 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
       sweep();
       return sortedEntries()
         .filter((entry) => sessionId === undefined || entry.id === sessionId)
-        .map((entry) => ({ ...summaryOf(entry), workerState: entry.workerState, workerIdleSeconds: entry.workerIdleSeconds, pending: pendingSorted(entry) }));
+        .map((entry) => ({
+          ...summaryOf(entry),
+          workerState: entry.workerState,
+          workerIdleSeconds: entry.workerIdleSeconds,
+          pending: pendingSorted(entry),
+          ...(entry.identity === undefined ? {} : { identity: entry.identity }),
+          ...(entry.model === undefined ? {} : { model: entry.model }),
+          ...(entry.cwd === undefined ? {} : { cwd: entry.cwd }),
+        }));
     },
     pendingOf: (sessionId) => {
       sweep();
@@ -678,6 +730,7 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
         return;
       }
       entry.liveTasks = applyAgentTaskEvent(entry.liveTasks, sessionId, event.payload, deps.now());
+      noteInit(entry, event.payload);
       const pending = pendingOfControlRequestPayload(event.payload);
       if (pending !== undefined) {
         // Only the worker emits control requests (the ground truth of the client half: the stream's `control_request` envelopes name the worker as their source), so a request from anyone else is not birthed.
@@ -718,7 +771,7 @@ export function observingRoutedRoute(route: FrontDoorRoute, tracker: RcSessionTr
   return {
     ...route,
     serve: async (request, response) => {
-      const observed = tracker.observeExchange({ method: request.method, url: request.url, headers: request.headers });
+      const observed = tracker.observeExchange({ method: request.method, url: request.url, headers: request.headers, ...(request.session.identity === undefined ? {} : { identity: request.session.identity }) });
       if (observed?.onRequestChunk !== undefined) {
         // Additive listeners, the same pattern the connect test world's recording uses: the pipe the route attaches keeps sole control of flow control, and the observer simply sees the same chunk deliveries the upstream does. Attaching these switches the body to flowing mode, which is safe here because the observer only asks for request bodies on the Remote Control subpaths, and those always ride the bare `/v1/` pass-through route, which pipes the body onward synchronously inside its serve.
         request.body.on("data", (chunk: Buffer) => {

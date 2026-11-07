@@ -25,7 +25,19 @@ const REQUEST_ID = "req_00000000-0000-4000-8000-00000000000a";
 const MINTED_REQUEST_ID = "minted-00000000-0000-4000-8000-00000000000b";
 const PENDING: readonly RcPendingRequestSummary[] = [{ sessionId: SESSION_ID, requestId: REQUEST_ID, type: "can_use_tool", summary: 'Bash {"command":"pnpm test"}', observedAt: 1_500 }];
 const STATUSES: readonly RcSessionStatus[] = [
-  { id: SESSION_ID, createdAt: 1_000, lastSeenAt: 2_000, workerState: { value: "WORKER_STATUS_RUNNING", observedAt: 1_200 }, workerIdleSeconds: { value: 7, observedAt: 2_000 }, pending: [...PENDING] },
+  {
+    id: SESSION_ID,
+    createdAt: 1_000,
+    lastSeenAt: 2_000,
+    workerState: { value: "WORKER_STATUS_RUNNING", observedAt: 1_200 },
+    workerIdleSeconds: { value: 7, observedAt: 2_000 },
+    pending: [...PENDING],
+    identity: "work",
+    model: "claude-opus-4",
+    name: "fix the thing",
+    pid: 4_001,
+    cwd: "/repo",
+  },
   { id: QUIET_SESSION_ID, createdAt: 1_100, lastSeenAt: 2_100, workerState: undefined, workerIdleSeconds: undefined, pending: [] },
 ];
 
@@ -387,6 +399,15 @@ describe("the control client", () => {
   afterEach(async () => {
     await running?.stop();
     running = undefined;
+  });
+
+  it("refuses a status answer whose identification fields have the wrong type rather than passing them on", async () => {
+    const started = await serve((_request, response) => {
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ statuses: [{ id: SESSION_ID, createdAt: 1, lastSeenAt: 2, pending: [], pid: "4001" }] }));
+    });
+    running = started;
+    await expect(frontDoorRcControl(plainTransport(started.port), TOKEN).statusOf()).rejects.toThrow("named no status list");
   });
 
   it("lists sessions, reads status and pending, and delivers writes through the transport, surfacing the door's verbose failure message", async () => {
