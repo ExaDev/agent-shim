@@ -8,13 +8,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addIdentity, requireIdentityAddable, identityExists } from "../identityStore";
 import { nonWaitingIdentityNamesLockPorts, IdentityNamesLockBusyError } from "../identityNamesLock";
 import { KEYCHAIN_CACHE_SERVICE, KEYCHAIN_ITEM_NOT_FOUND_STATUS } from "../credentialCache";
-import { cacheEntryProbe, createFakeKeychain, type FakeKeychain } from "../keychainTestWorld";
+import { cacheEntryProbe, createFakeKeychain, type FakeKeychain, TEST_CLAUDE_LOGIN } from "../keychainTestWorld";
 import { buildLayoutPaths, type LayoutPaths } from "../paths";
 import type { AsyncRun } from "../replayRun";
 import { claudeCodeKeychainService } from "../usage/signIn";
 import { createConfigApiRouter } from "./configApi";
 import { RC_SELF_HOST_MINT_MARKER } from "./rcSelfHostMint";
 import { ConfigIdentityAddInputSchema } from "./configSchemas";
+import { realFarmFs } from "../realPorts";
 
 const TOKEN = "control-token-for-the-config-api-keychain-tests";
 
@@ -52,7 +53,7 @@ describe("config.identity.add and a Keychain login left behind for the directory
   }
 
   function client(platform: NodeJS.Platform = "darwin", runAsync: AsyncRun = asynchronously()) {
-    return createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform } }), {
+    return createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform }, fs: realFarmFs, claudeLogin: TEST_CLAUDE_LOGIN }), {
       context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
     }).config;
   }
@@ -185,7 +186,7 @@ describe("config.identity.remove and the credential the Keychain store caches", 
       }
       return await Promise.resolve({ status: 0, stdout: "", stderr: "" });
     };
-    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" } }), {
+    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" }, fs: realFarmFs, claudeLogin: TEST_CLAUDE_LOGIN }), {
       context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
     }).config;
     await api.identity.remove({ name: "work", confirm: true });
@@ -201,7 +202,7 @@ describe("config.identity.remove and the credential the Keychain store caches", 
       asked.push(args);
       return await Promise.resolve({ status: 0, stdout: "", stderr: "" });
     };
-    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" } }), {
+    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" }, fs: realFarmFs, claudeLogin: TEST_CLAUDE_LOGIN }), {
       context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
     }).config;
     expect(await api.identity.remove({ name: "client", confirm: true })).toEqual({ action: "removed", kind: "identity", name: "client" });
@@ -213,7 +214,7 @@ describe("config.identity.remove and the credential the Keychain store caches", 
     fs.mkdirSync(path.join(paths.identitiesDir, "work"), { recursive: true });
     fs.writeFileSync(path.join(paths.identitiesDir, "work", "identity.json"), JSON.stringify({ name: "client", allowAmbientCredential: false }));
     const runAsync: AsyncRun = async () => await Promise.resolve({ status: LOCKED_KEYCHAIN_STATUS, stdout: "", stderr: "" });
-    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" } }), {
+    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" }, fs: realFarmFs, claudeLogin: TEST_CLAUDE_LOGIN }), {
       context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
     }).config;
     const failure: unknown = await api.identity.remove({ name: "client", confirm: true }).then(
@@ -226,54 +227,32 @@ describe("config.identity.remove and the credential the Keychain store caches", 
     expect(fs.existsSync(path.join(paths.identitiesDir, "work"))).toBe(false);
   });
 
-  it("deletes the Claude Code login item of an identity the self-hosted mint wrote into, by service and account, and asks nothing more for one it did not", async () => {
-    const previousUser = process.env.USER;
-    process.env.USER = "alex";
-    try {
-      addIdentity(paths, "lab");
-      const labDir = path.join(paths.identitiesDir, "lab");
-      fs.writeFileSync(path.join(labDir, RC_SELF_HOST_MINT_MARKER), "{}\n");
-      addIdentity(paths, "work");
-      const asked: (readonly string[])[] = [];
-      const runAsync: AsyncRun = async (_command, args) => {
-        asked.push(args);
-        return await Promise.resolve({ status: 0, stdout: "", stderr: "" });
-      };
-      const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" } }), {
-        context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
-      }).config;
-      await api.identity.remove({ name: "lab", confirm: true });
-      expect(asked).toEqual([
-        ["delete-generic-password", "-s", KEYCHAIN_CACHE_SERVICE, "-a", "identity lab"],
-        ["delete-generic-password", "-s", claudeCodeKeychainService(labDir), "-a", "alex"],
-      ]);
-      asked.length = 0;
-      await api.identity.remove({ name: "work", confirm: true });
-      expect(asked).toEqual([["delete-generic-password", "-s", KEYCHAIN_CACHE_SERVICE, "-a", "identity work"]]);
-    } finally {
-      if (previousUser === undefined) {
-        delete process.env.USER;
-      } else {
-        process.env.USER = previousUser;
-      }
-    }
-  });
-
-  it("reports a self-hosted login delete security refused as INTERNAL_SERVER_ERROR naming the command, with the identity removed", async () => {
+  it("leaves the Claude Code login item of every identity, answering with a warning naming a self-hosted identity's leftover, asked by attributes only", async () => {
     addIdentity(paths, "lab");
     const labDir = path.join(paths.identitiesDir, "lab");
-    fs.writeFileSync(path.join(labDir, RC_SELF_HOST_MINT_MARKER), "{}\n");
-    const runAsync: AsyncRun = async (_command, args) => await Promise.resolve({ status: args.includes(KEYCHAIN_CACHE_SERVICE) ? 0 : LOCKED_KEYCHAIN_STATUS, stdout: "", stderr: "" });
-    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" } }), {
+    fs.writeFileSync(path.join(labDir, RC_SELF_HOST_MINT_MARKER), `${JSON.stringify({ mintedAt: "2026-01-01T00:00:00.000Z" })}\n`);
+    addIdentity(paths, "work");
+    const keychain = createFakeKeychain();
+    keychain.seed(claudeCodeKeychainService(labDir), "alex", "a-made-up-real-login");
+    const runAsync: AsyncRun = async (command, args) => await Promise.resolve(keychain.run.run(command, args));
+    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" }, fs: realFarmFs, claudeLogin: TEST_CLAUDE_LOGIN }), {
       context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
     }).config;
-    const failure: unknown = await api.identity.remove({ name: "lab", confirm: true }).then(
-      () => undefined,
-      (error: unknown) => error,
-    );
-    expect(failure).toMatchObject({ code: "INTERNAL_SERVER_ERROR" });
-    expect(failure).toHaveProperty("message", expect.stringContaining(`security delete-generic-password -s '${claudeCodeKeychainService(labDir)}'`));
-    expect(fs.existsSync(labDir)).toBe(false);
+    const removed = await api.identity.remove({ name: "lab", confirm: true });
+    expect(removed.warnings?.join("\n")).toContain(`security delete-generic-password -s '${claudeCodeKeychainService(labDir)}' -a 'alex'`);
+    expect(keychain.items.has(claudeCodeKeychainService(labDir))).toBe(true);
+    expect(keychain.calls.filter((call) => call.args[0] === "delete-generic-password").map((call) => call.args)).toEqual([["delete-generic-password", "-s", KEYCHAIN_CACHE_SERVICE, "-a", "identity lab"]]);
+    expect(keychain.calls.some((call) => call.args.includes("-g") || call.args.includes("-w"))).toBe(false);
+    expect(await api.identity.remove({ name: "work", confirm: true })).toEqual({ action: "removed", kind: "identity", name: "work" });
+  });
+
+  it("asks nothing about a self-hosted identity's login off macOS", async () => {
+    addIdentity(paths, "lab");
+    fs.writeFileSync(path.join(paths.identitiesDir, "lab", RC_SELF_HOST_MINT_MARKER), `${JSON.stringify({ mintedAt: "2026-01-01T00:00:00.000Z" })}\n`);
+    const runAsync: AsyncRun = async () => await Promise.reject(new Error("off macOS nothing is asked of the Keychain"));
+    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "linux" }, fs: realFarmFs, claudeLogin: TEST_CLAUDE_LOGIN }), {
+      context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
+    }).config;
+    expect(await api.identity.remove({ name: "lab", confirm: true })).toEqual({ action: "removed", kind: "identity", name: "lab" });
   });
 });
-

@@ -643,6 +643,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
             ...controlDeps,
             ...lifecycleAndCodexDeps,
             keychain: doorKeychainProbe(process.platform),
+            claudeLogin: { env: process.env, username: () => os.userInfo().username },
+            fs: realFarmFs,
             events: doorEvents,
           }),
           // The self-hosted web client rides the same listener under the same per-generation token as the typed API it speaks: no extra process, no new trust surface.

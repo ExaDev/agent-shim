@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { RC_SELF_HOST_MINT_MARKER, isSelfHostMinted, mintRcSelfHostCredential, readRcSelfHostRecord } from "./rcSelfHostMint";
+import { RC_SELF_HOST_MINT_MARKER, isSelfHostMinted, mintRcSelfHostCredential, mintRcSelfHostLogin, readRcSelfHostRecord } from "./rcSelfHostMint";
+import { TEST_CLAUDE_LOGIN, createFakeKeychain } from "../keychainTestWorld";
+import { claudeCodeKeychainService } from "../usage/signIn";
 import { createFakeFarmFs } from "../test-helpers";
 
 /**
@@ -105,3 +107,45 @@ describe("the self-hosted mint's marker", () => {
     expect(isSelfHostMinted(fs, "/state/identities/real")).toBe(false);
   });
 });
+
+describe("the guarded self-hosted mint on macOS", () => {
+  const seededFs = () => {
+    const fs = createFakeFarmFs();
+    fs.seed({ "/state/identities/rig/identity.json": '{"name":"rig"}' });
+    return fs;
+  };
+  const guarded = (fs: ReturnType<typeof createFakeFarmFs>, keychain: ReturnType<typeof createFakeKeychain>, force = false) =>
+    mintRcSelfHostLogin({ fs, identitiesDir: "/state/identities", frontdoorDir: "/state/frontdoor", identity: "rig", newUuid: () => "00000000-0000-4000-8000-000000000001", randomToken: () => "randomtokenmaterial", force, now: () => 0, keychain: { run: keychain.run, platform: "darwin" }, login: TEST_CLAUDE_LOGIN });
+
+  it("asks the Keychain for the identity's directory before writing, and mints when no login is filed", () => {
+    const fs = seededFs();
+    const keychain = createFakeKeychain();
+    guarded(fs, keychain);
+    expect(keychain.calls[0]?.args).toEqual(["find-generic-password", "-s", claudeCodeKeychainService("/state/identities/rig")]);
+    expect(fs.readFileUtf8("/state/identities/rig/.credentials.json")).toBeDefined();
+  });
+
+  it("refuses, writing nothing, when a login is filed for the directory, even a second mint into a directory the first one marked, and even with force", () => {
+    const fs = seededFs();
+    const clean = createFakeKeychain();
+    guarded(fs, clean);
+    expect(isSelfHostMinted(fs, "/state/identities/rig")).toBe(true);
+    const credentialsAfterFirst = fs.readFileUtf8("/state/identities/rig/.credentials.json");
+    // A real /login since: the CLI filed its login in the Keychain.
+    const keychain = createFakeKeychain();
+    keychain.seed(claudeCodeKeychainService("/state/identities/rig"), "alex", "a-made-up-real-login");
+    expect(() => guarded(fs, keychain, true)).toThrow("--force does not override this");
+    expect(fs.readFileUtf8("/state/identities/rig/.credentials.json")).toBe(credentialsAfterFirst);
+    expect(keychain.items.has(claudeCodeKeychainService("/state/identities/rig"))).toBe(true);
+    expect(keychain.calls.some((call) => call.args[0] === "delete-generic-password")).toBe(false);
+  });
+});
+
+describe("the mint's marker contents", () => {
+  it("counts only a marker naming when it minted, not an empty or foreign file", () => {
+    const fs = createFakeFarmFs();
+    fs.seed({ "/a/.agent-shim-selfhost-mint": "", "/b/.agent-shim-selfhost-mint": "{}", "/c/.agent-shim-selfhost-mint": '{"mintedAt":"not a date"}', "/d/.agent-shim-selfhost-mint": '{"mintedAt":"2026-01-01T00:00:00.000Z"}' });
+    expect(["/a", "/b", "/c", "/d"].map((dir) => isSelfHostMinted(fs, dir))).toEqual([false, false, false, true]);
+  });
+});
+

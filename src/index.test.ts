@@ -373,6 +373,7 @@ describe("library surface", () => {
       "mergeLiveTasks",
       "mintLeaf",
       "mintRcSelfHostCredential",
+      "mintRcSelfHostLogin",
       "observingRoutedRoute",
       "parseConnectTarget",
       "parseRcGoalOutput",

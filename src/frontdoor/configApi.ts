@@ -12,13 +12,11 @@ import { summariseCredential } from "../credential";
 import { mergeCredentialCache } from "../credentialCacheChange";
 import { addDirectoryRule, DirectoryRuleAlreadyExistsError, DirectoryRuleNotFoundError, listDirectoryRules, removeDirectoryRule, requireRuleSelector, updateDirectoryRule } from "../directoryRulesStore";
 import { addIdentity, IdentityAlreadyExistsError, IdentityNotFoundError, identityDirectoryOfName, identityExists, readIdentity, removeIdentityWithLockHeld, REMOVED_STATE, loggedIdentityIds, requireIdentityAddable, requireIdentityNames, setAllowAmbientCredential, setDefaultConfigProfile, setIdentityLabel, setIdentityProvider, setIdentityAnchors, setIdentityCredential, useIdentity, type IdentityCredentialChange, identityNotFound } from "../identityStore";
-import { KeychainCacheDeleteError, KeychainLoginError, KeychainLookupError, SelfHostedLoginDeleteError, claudeCodeKeychainAccount, claudeCodeLoginDeleteArgs, requireKeychainCacheDeleted, requireSelfHostedLoginDeleted } from "../keychainLogin";
-import { isSelfHostMinted } from "./rcSelfHostMint";
-import { realFarmFs } from "../realPorts";
-import os from "node:os";
+import { KeychainCacheDeleteError, KeychainLoginError, KeychainLookupError, leftoverWarnings, requireKeychainCacheDeleted, selfHostedLoginLeftover, type ClaudeCodeLoginEnv } from "../keychainLogin";
 import { acquireIdentityNamesLock, nonWaitingIdentityNamesLockPorts } from "../identityNamesLock";
 import { IdentityLockBusyError } from "../launcher/lock";
 import { poolNameOf } from "../launcher/identity";
+import type { FarmFs } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
 import { resolveWithAsyncRuns, type AsyncRun } from "../replayRun";
 import { addPool, changePool, isPoolChange, PoolAlreadyExistsError, PoolNotFoundError, readPools, removePool, requirePool } from "../poolStore";
@@ -60,6 +58,7 @@ import {
   ConfigRuleSetOutputSchema,
 } from "./configSchemas";
 import { doorApiAuth } from "./rcApi";
+import { isSelfHostMinted } from "./rcSelfHostMint";
 
 /**
  * The door's configuration management as a typed oRPC API: the writes the CLI's `identity`, `profile`, `pool`, `provider` and `rule` verbs make, as `config.<noun>.<verb>` procedures, every one behind the same per-generation control token as the rest of the mount.
@@ -77,6 +76,10 @@ export interface ConfigApiDeps {
   readonly paths: LayoutPaths;
   /** How the door asks the macOS Keychain whether a login is already filed for a directory an identity is about to be created in: `security` run without blocking the event loop, and the platform, since only macOS has a Keychain. The door builds it with `doorKeychainProbe`. */
   readonly keychain: { readonly runAsync: AsyncRun; readonly platform: NodeJS.Platform };
+  /** The file reads `identity remove` makes of the directory it is about to delete (whether the self-hosted mint wrote into it). */
+  readonly fs: Pick<FarmFs, "readFileUtf8">;
+  /** The environment and user a Claude Code session would derive its Keychain login item from, for naming a self-hosted identity's leftover item. */
+  readonly claudeLogin: ClaudeCodeLoginEnv;
 }
 
 /** The OpenAPI tag the configuration procedures group under in the document. */
@@ -113,7 +116,7 @@ function refusal(error: unknown): never {
     throw new ORPCError("CONFLICT", { message: error.message });
   }
   // The request was carried out but left a Keychain entry behind, so it is no fault of the request.
-  if (error instanceof KeychainCacheDeleteError || error instanceof SelfHostedLoginDeleteError) {
+  if (error instanceof KeychainCacheDeleteError) {
     throw new ORPCError("INTERNAL_SERVER_ERROR", { message: error.message });
   }
   if (error instanceof CliError) {
@@ -269,9 +272,9 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
             requireConfirmation(input.confirm, `identity "${input.name}", its directory, and ${REMOVED_STATE}`);
             const lock = guarded(() => acquireIdentityNamesLock(paths, nonWaitingIdentityNamesLockPorts));
             try {
-              // Read before the directory goes: only an identity the self-hosted mint wrote into has its Claude Code login item deleted below.
+              // Read before the directory goes: the removal leaves every Claude Code login item, and for an identity the self-hosted mint wrote into, a leftover one is named in the answer.
               const configDir = guarded(() => identityDirectoryOfName(paths, input.name));
-              const selfHosted = isSelfHostMinted(realFarmFs, configDir);
+              const selfHosted = isSelfHostMinted(deps.fs, configDir);
               const id = guarded(() => removeIdentityWithLockHeld(paths, input.name, nonWaitingIdentityNamesLockPorts));
               // The Keychain store's cached credential is forgotten too, through the runner that does not block the event loop; an item that is not there is no failure, and any other leaves the entry behind, so it is reported (the identity itself is removed by then).
               if (deps.keychain.platform === "darwin") {
@@ -280,16 +283,9 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
                 guarded(() => {
                   requireKeychainCacheDeleted(owner, status, input.name);
                 });
-                // A minted self-hosted login Claude Code copied into the Keychain would otherwise outlive the identity and sign in the next identity made in the same directory.
-                if (selfHosted) {
-                  const account = claudeCodeKeychainAccount(process.env, () => os.userInfo().username);
-                  const deleted = await deps.keychain.runAsync("security", claudeCodeLoginDeleteArgs(configDir, account));
-                  guarded(() => {
-                    requireSelfHostedLoginDeleted(input.name, configDir, account, deleted.status);
-                  });
-                }
               }
-              return { action: "removed" as const, kind: "identity" as const, name: input.name };
+              const warnings = leftoverWarnings(await guardedAsync(async () => await resolveWithAsyncRuns((run) => selfHostedLoginLeftover({ run, platform: deps.keychain.platform }, configDir, selfHosted, deps.claudeLogin), deps.keychain.runAsync)));
+              return { action: "removed" as const, kind: "identity" as const, name: input.name, ...(warnings.length === 0 ? {} : { warnings: [...warnings] }) };
             } finally {
               lock.release();
             }

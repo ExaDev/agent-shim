@@ -1,3 +1,4 @@
+import os from "node:os";
 import { randomBytes, randomUUID } from "node:crypto";
 
 import { COMPACT_TIMEOUT_MS } from "../supervise/compactTimeout";
@@ -14,12 +15,10 @@ import { frontDoorRcControl, realRcControlTransport, type FrontDoorRcControl } f
 import { registerRcEventsCommand } from "./rcEventsCommand";
 import { rcRateLimitInfoOf } from "./rcLiveUsage";
 import type { RcRateLimitInfo } from "./rcSchemas";
-import { isSelfHostMinted, mintRcSelfHostCredential, type RcSelfHostMintResult } from "./rcSelfHostMint";
 import { RC_GOAL_CLEAR_WORDS, RC_SESSION_COMMAND_MAX_WAIT_MS, RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "./rcSessionCommands";
 import type { RcQuestionSelection } from "./rcQuestions";
 import { RC_PENDING_PER_SESSION_MAX, rcExcerpt, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
-import { identityDirectoryOfName } from "../identityStore";
-import { prepareSelfHostedKeychainLogin } from "../keychainLogin";
+import { mintRcSelfHostLogin, type RcSelfHostMintResult } from "./rcSelfHostMint";
 import { RC_CONTEXT_USAGE_DETAILS, RC_PERMISSION_MODES, RC_READ_FILE_ENCODINGS, isRcContextUsageDetail, isRcPermissionMode, isRcReadFileEncoding, type RcEventWriteResult } from "./rcWrites";
 import type { RcStreamEvent } from "./rcSchemas";
 
@@ -714,13 +713,13 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
       .command("mint")
       .description("Mint the local OAuth credential, account block and feature-cache seed one identity needs to activate Remote Control against the door's own served surface, and record the door-side copy the surface authenticates against. Refuses to replace a real claude.ai login unless --force. Never prints a token.")
       .argument("<identity>", "The identity to mint into, as `agent-shim identity list` names it.")
-      .option("--force", "Replace an existing OAuth credential this door did not mint.")
+      .option("--force", "Replace an existing OAuth credential file this door did not mint. On macOS it does not override the refusal of a Keychain login a session in the directory would read.")
       .option("--json", "Print the mint result as JSON.")
       .action((identity: string, options: Readonly<{ force?: boolean; json?: boolean }>) => {
-        // On macOS a Keychain login filed for the directory wins over the minted file, so it is cleared (an earlier mint's copy) or refused (a real login) before anything is written.
-        const configDir = identityDirectoryOfName(paths, identity);
-        prepareSelfHostedKeychainLogin({ run: realRunPort, platform: process.platform }, configDir, identity, isSelfHostMinted(realFarmFs, configDir));
-        const result = mintRcSelfHostCredential({
+        // On macOS a Keychain login a session in the directory would read wins over the minted file, so any is refused before anything is written; nothing is ever deleted.
+        const result = mintRcSelfHostLogin({
+          keychain: { run: realRunPort, platform: process.platform },
+          login: { env: process.env, username: () => os.userInfo().username },
           fs: realFarmFs,
           identitiesDir: paths.identitiesDir,
           frontdoorDir: paths.frontdoorDir,

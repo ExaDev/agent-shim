@@ -109,7 +109,8 @@ export const ConfigIdentitySetInputSchema = z.strictObject({
 export const ConfigIdentitySetOutputSchema = storedMutationOutput("identity", "updated", IdentityValueSchema);
 
 export const ConfigIdentityRemoveInputSchema = z.strictObject({ name: z.string().min(1), confirm: RemovalConfirmationSchema });
-export const ConfigIdentityRemoveOutputSchema = mutationOutput("identity", "removed");
+/** The removal's answer: the mutation shape, plus a warning when a self-hosted identity's Claude Code login item is still in the Keychain (the removal never deletes one; the warning names it and the command that does). */
+export const ConfigIdentityRemoveOutputSchema = z.strictObject({ ...mutationOutput("identity", "removed").shape, warnings: z.array(z.string()).optional() });
 
 /**
  * The statusline settings a config write through the API may set: any dotted key except the `extra` group. The extra segment's command runs a program the caller chooses with the person's privileges at every refresh, so a delegated writer (an MCP agent or the web client with the writes grant) must not be able to store one in a profile; the person sets it in their own files, the same boundary the project-file refusal in `schema.ts` draws. The refusal is on setting, not unsetting: removing an extra command through the API is safe, because it takes a program away.
