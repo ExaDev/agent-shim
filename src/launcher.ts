@@ -303,6 +303,7 @@ interface DecidedLaunch {
  * Says, on the launch's warning stream, that an identity named on the command line outranked the `CLAUDE_CONFIG_DIR` the launch inherited, so the child runs in the identity's directory and not the one a parent session exported. Silent when nothing was set aside, and when the inherited directory already is the identity's own, since nothing then differs from what the caller asked for.
  */
 function warnOfSupersededConfigDir(warn: (message: string) => void, fs: Pick<FsPort, "sameDirectory">, superseded: string | undefined, identity: string, identityDir: string): void {
+  // `sameDirectory` already reads an unreachable path as a different directory; any other filesystem error propagates, since a filesystem failing that way fails the launch's next read of the identity's directory anyway and hiding it here would only move the report.
   if (superseded === undefined || superseded === identityDir || fs.sameDirectory(superseded, identityDir)) {
     return;
   }
