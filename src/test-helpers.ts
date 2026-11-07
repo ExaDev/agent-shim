@@ -480,6 +480,7 @@ export function fakeFrontDoorEnv(identity?: string, extra: Readonly<Record<strin
     no_proxy: "127.0.0.1,localhost,::1",
     NODE_EXTRA_CA_CERTS: FAKE_TRUST_BUNDLE,
     ANTHROPIC_CUSTOM_HEADERS: expect.stringMatching(new RegExp(`^${identityHeader}x-agent-shim-session: [0-9a-f-]{36}\\nx-agent-shim-auth: launch-token-for-tests$`)),
+    AGENT_SHIM_INJECTED: expect.stringMatching(/^\{.*\}$/),
     ...extra,
   };
 }

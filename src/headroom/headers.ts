@@ -32,6 +32,19 @@ export function mergeAnthropicCustomHeaders(
   return [...merged].map(([name, value]) => `${name}: ${value}`).join("\n");
 }
 
+/** The entries of one `ANTHROPIC_CUSTOM_HEADERS` block, in order, blank and malformed lines skipped. */
+export function parseAnthropicCustomHeaders(block: string): readonly CustomHeaderEntry[] {
+  return block.split("\n").flatMap((line) => {
+    const entry = parseCustomHeaderLine(line);
+    return entry === undefined ? [] : [entry];
+  });
+}
+
+/** `block` with only the entries `keep` accepts, written back as `Name: Value` lines in their original order. */
+export function filterAnthropicCustomHeaders(block: string, keep: (entry: CustomHeaderEntry) => boolean): string {
+  return parseAnthropicCustomHeaders(block).filter(keep).map(({ name, value }) => `${name}: ${value}`).join("\n");
+}
+
 /** Parses one `Name: Value` line, or undefined for a blank/malformed line (no colon at all). The value keeps any further colons and surrounding whitespace is trimmed. */
 function parseCustomHeaderLine(line: string): CustomHeaderEntry | undefined {
   const trimmed = line.trim();
