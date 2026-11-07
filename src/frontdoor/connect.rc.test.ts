@@ -12,6 +12,7 @@ import { KEYGEN_TIMEOUT_MS, RC_TEST_SEQUENCE_NUM, RC_TEST_SESSION_ID, HTTP_OK, S
 import { createRcApiNodeHandler, frontDoorRcApiClient } from "./rcApi";
 import { createRcControlHandler, frontDoorRcControl, realRcControlTransport, type RcControlTransport } from "./rcControl";
 import { createRcCredentialStore } from "./rcCredentialStore";
+import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog, type RcSessionEventLog } from "./rcEventLog";
 import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, type RcSessionTracker } from "./rcSessions";
 import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcEventDial, type RcEventWriteResult, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
@@ -136,10 +137,15 @@ const loopbackTransport = (port: number): RcControlTransport => ({
     }),
 });
 
+/** The door generation the session event log stamps, a made-up UUID of the production shape. */
+const SESSION_EVENTS_GENERATION = "00000000-0000-4000-8000-0000000000f2";
+
 describe("Remote Control observation and injection over the connect surface", () => {
   let ca: CaMaterial;
   let upstreamCa: CaMaterial;
   let tracker: RcSessionTracker;
+  /** The door's session event log, fed by the tracker as the door wires it, so the all-sessions stream's view of a session on the real service (an OAuth login, whatever provider serves its inference) is asserted against the observed exchanges. */
+  let sessionEvents: RcSessionEventLog;
 
   beforeAll(() => {
     ca = generateCa(new Date());
@@ -148,7 +154,8 @@ describe("Remote Control observation and injection over the connect surface", ()
 
   // A fresh tracker per case: every case drives the same session id, and a session's state (its sequence cursor above all) must not carry from one case into the next.
   beforeEach(() => {
-    tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS });
+    sessionEvents = createRcSessionEventLog({ generation: SESSION_EVENTS_GENERATION, capacity: RC_SESSION_EVENT_LOG_CAPACITY });
+    tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS, onTransition: sessionEvents.append, onClose: sessionEvents.close });
   });
 
   afterEach(() => {
@@ -570,6 +577,13 @@ describe("Remote Control observation and injection over the connect surface", ()
         const approved = await client.answerRequest(RC_TEST_SESSION_ID, RC_TEST_REQUEST_ID, { approve: true, message: undefined });
         expect(approved).toEqual({ ok: true, sequenceNums: [RC_TEST_SEQUENCE_NUM], requestId: RC_TEST_REQUEST_ID });
         expect(await client.pendingOf(RC_TEST_SESSION_ID)).toEqual([]);
+        // The all-sessions event stream saw the session on the real service appear, and its stream-borne approval born once (the stream delivered it twice) and retired by the door's answer.
+        const filed = sessionEvents.read({ session: RC_TEST_SESSION_ID });
+        expect(filed.status === "ok" ? filed.events.map((event) => ("requestId" in event ? `${event.kind} ${event.requestId}${"reason" in event ? ` ${event.reason}` : ""}` : event.kind)) : []).toEqual([
+          "session-appeared",
+          `pending-born ${RC_TEST_REQUEST_ID}`,
+          `pending-retired ${RC_TEST_REQUEST_ID} answered`,
+        ]);
         const write = world.upstreamRequests.find((seen) => seen.url === `/v1/code/sessions/${RC_TEST_SESSION_ID}/events`);
         expect(write?.headers.authorization).toBe(CREATE_BEARER);
         expect(JSON.parse(write?.body ?? "{}")).toEqual({
