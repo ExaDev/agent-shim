@@ -381,6 +381,17 @@ describe("the Remote Control pending-request lifecycle", () => {
       expect(tracker.pendingOf().map((request) => request.requestId)).toEqual([OTHER_REQUEST_ID]);
     });
 
+    it("tells a request filed in the same clock millisecond apart by observation order: one filed before the idle registration began retires, one filed while it was in flight survives", () => {
+      // The clock never moves in this case, so only the order of observations can tell the two requests apart.
+      const { tracker } = trackerWithClock();
+      register(tracker, { worker_status: "requires_action", worker_epoch: 1 });
+      ask(tracker, REQUEST_ID, 1);
+      const idle = exchange(tracker, { method: "PUT", url: workerPath, authorization: "Bearer b", requestBody: JSON.stringify({ worker_status: "idle", worker_epoch: 1 }) });
+      ask(tracker, OTHER_REQUEST_ID, 2);
+      idle.respond(HTTP_STATUS.ok);
+      expect(tracker.pendingOf().map((request) => request.requestId)).toEqual([OTHER_REQUEST_ID]);
+    });
+
     it("retires every earlier request when a registration names a new worker epoch", () => {
       const { tracker, advance } = trackerWithClock();
       register(tracker, { worker_status: "requires_action", worker_epoch: 1 });

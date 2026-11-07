@@ -148,6 +148,8 @@ interface RcPendingRequestRecord {
   /** The `can_use_tool` request's input exactly as the worker sent it, which an answer to a question carries back with its answers added; absent for every other request. Memory only, never listed. */
   readonly toolInput: Record<string, unknown> | undefined;
   readonly observedAt: number;
+  /** Where the request was filed in the tracker's own observation order, which a worker registration is compared against: two observations in one clock millisecond still have distinct, ordered sequence numbers. Never listed. */
+  readonly observedSequence: number;
 }
 
 /** One pending control request as the control surface lists it: identification, type, summary and timing, never any credential. */
@@ -377,7 +379,7 @@ function payloadEventsOf(body: string): readonly Record<string, unknown>[] {
 /**
  * One `control_request` payload as the tracker records it, or undefined when it names no id a `control_response` could echo. The id is the payload's `request_id`, the field the protocol's trust rule names; a top-level `uuid` is accepted as a fallback because the payload family also carries one, and a request with neither cannot be answered.
  */
-function pendingOfControlRequestPayload(payload: Record<string, unknown>): Omit<RcPendingRequestRecord, "sessionId" | "observedAt"> | undefined {
+function pendingOfControlRequestPayload(payload: Record<string, unknown>): Omit<RcPendingRequestRecord, "sessionId" | "observedAt" | "observedSequence"> | undefined {
   const parsed = fullPendingOfControlRequestPayload(payload);
   // A request body is already bounded by the parse cap, but a stream envelope is not: a question whose serialised payload is past the cap in UTF-8 bytes keeps its summary (itself an excerpt) and drops the input an answer would carry back. Only a question holds its input, so any other request is held as it is: its summary is already an excerpt, and approving or denying it carries none of its input.
   const isQuestion = parsed !== undefined && (parsed.questions !== undefined || parsed.unanswerable !== undefined);
@@ -388,7 +390,7 @@ function pendingOfControlRequestPayload(payload: Record<string, unknown>): Omit<
 }
 
 /** The pending record of one `control_request` payload, every field held whole. */
-function fullPendingOfControlRequestPayload(payload: Record<string, unknown>): Omit<RcPendingRequestRecord, "sessionId" | "observedAt"> | undefined {
+function fullPendingOfControlRequestPayload(payload: Record<string, unknown>): Omit<RcPendingRequestRecord, "sessionId" | "observedAt" | "observedSequence"> | undefined {
   if (payload.type !== "control_request") {
     return undefined;
   }
@@ -454,7 +456,7 @@ function initFactsOfPayload(payload: Record<string, unknown>): { readonly model:
 /** What one parsed request body yielded, filed only once the exchange's own response is known to be a success. */
 interface RcRequestBodyFacts {
   /** Control requests awaiting an answer, from a worker event batch. */
-  readonly controlRequests: readonly Omit<RcPendingRequestRecord, "sessionId" | "observedAt">[];
+  readonly controlRequests: readonly Omit<RcPendingRequestRecord, "sessionId" | "observedAt" | "observedSequence">[];
   /** Request ids an event write answered, which retire their pending entries. */
   readonly answeredRequestIds: readonly string[];
   /** Request ids a worker event write withdrew with a `control_cancel_request`, which retire their pending entries as withdrawn. */
@@ -486,7 +488,7 @@ function parseRcRequestBody(kind: RcRequestBodyKind, body: string): RcRequestBod
     const model = nonEmptyString(metadata, "model");
     return { controlRequests: [], answeredRequestIds: [], withdrawnRequestIds: [], idleSeconds: undefined, workerStatus: nonEmptyString(registration, "worker_status"), workerEpoch: finiteNumber(registration, "worker_epoch"), payloads: [], ...(model === undefined ? {} : { model }) };
   }
-  const controlRequests: Omit<RcPendingRequestRecord, "sessionId" | "observedAt">[] = [];
+  const controlRequests: Omit<RcPendingRequestRecord, "sessionId" | "observedAt" | "observedSequence">[] = [];
   const answeredRequestIds: string[] = [];
   const withdrawnRequestIds: string[] = [];
   const payloads = payloadEventsOf(body);
@@ -507,6 +509,8 @@ function parseRcRequestBody(kind: RcRequestBodyKind, body: string): RcRequestBod
 /** Creates the tracker. One per door process; everything it holds dies with it. */
 export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTracker {
   const entries = new Map<string, RcSessionRecord>();
+  /** The count of pending requests filed so far, across every session: the order a worker registration is compared against. */
+  let observationSequence = 0;
   /** Remembers one request id as no longer to be listed, forgetting the oldest remembered id once the window is full, so the record stays bounded however long the session lives. */
   const rememberRetired = (entry: RcSessionRecord, requestId: string): void => {
     // A Set keeps insertion order, so the first id is the oldest remembered; re-remembering an id moves it to the newest end.
@@ -529,7 +533,7 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
   /**
    * Files one observed control request, telling the sink only of a request not already pending, since the same request is observed both on the worker's event write and on the client read stream. A request that already retired is not filed again (its later copy is the same request, not a new one), and a request already pending keeps the instant it was first observed, so the oldest-first order is the order the worker asked in. A request is counted as dropped instead of stored when its id is not one the protocol mints or the session already holds the pending cap.
    */
-  const addPending = (entry: RcSessionRecord, request: Omit<RcPendingRequestRecord, "sessionId" | "observedAt">, now: number): void => {
+  const addPending = (entry: RcSessionRecord, request: Omit<RcPendingRequestRecord, "sessionId" | "observedAt" | "observedSequence">, now: number): void => {
     if (entry.retired.has(request.requestId)) {
       return;
     }
@@ -548,7 +552,8 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
       }
       return;
     }
-    entry.pending.set(request.requestId, { sessionId: entry.id, ...request, observedAt: now });
+    observationSequence += 1;
+    entry.pending.set(request.requestId, { sessionId: entry.id, ...request, observedAt: now, observedSequence: observationSequence });
     deps.onTransition?.({ kind: "pending-born", session: entry.id, requestId: request.requestId, type: request.type, summary: request.summary, at: now });
   };
   const expire = (id: string, reason: RcSessionEndReason): void => {
@@ -614,8 +619,8 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
       return undefined;
     }
     const tail = pathnameOf(request.url).slice(RC_SESSIONS_PATH_PREFIX.length);
-    // When this exchange began, which is when the worker sent it: a worker registration naming a state other than `requires_action` speaks for the requests the worker had asked by then, never for one observed after.
-    const startedAt = deps.now();
+    // How far the tracker's observations had reached when this exchange began, which is when the worker sent it: a registration that retires speaks for the requests the worker had asked by then, never for one observed after. A sequence rather than the clock, so a request filed in the same millisecond the registration began is still told apart.
+    const startedAtSequence = observationSequence;
     const facts = {
       oauthAuthorization: oauthAuthorizationOf(request.headers),
       anthropicVersion: singleHeader(request.headers, "anthropic-version"),
@@ -737,7 +742,7 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
       }
       if (epochChanged || factsOfBody.workerStatus === RC_WORKER_IDLE) {
         for (const [requestId, pending] of entryNow.pending) {
-          if (pending.observedAt < startedAt) {
+          if (pending.observedSequence <= startedAtSequence) {
             retirePending(entryNow, requestId, "worker-stopped");
           }
         }
