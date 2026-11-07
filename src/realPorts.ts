@@ -17,6 +17,7 @@ import { launchRequiredUpstreams } from "./headroom/supervisor";
 import type { HeadroomSocketTrustPorts } from "./headroom/socket";
 import { removeSession } from "./headroom/state";
 import type { LayoutPaths } from "./paths";
+import { sameDirectory } from "./sameDirectory";
 import type { FarmFs, FsPort, HeadroomPort, LogPort, ProcPort, RunPort, SpawnPort } from "./launcher/ports";
 import type { AsyncRun } from "./replayRun";
 import type { HoldPort } from "./launcher/hold";
@@ -33,6 +34,7 @@ function isEnoent(error: unknown): boolean {
 
 /** The real, `node:fs`-backed `FsPort` used by the actual `claude` launcher — never used in tests. */
 export const realFsPort: FsPort = {
+  sameDirectory,
   fileRevision(filePath) {
     try {
       const stat = fs.statSync(filePath, { bigint: true });

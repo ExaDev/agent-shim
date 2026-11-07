@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { prepareLaunch } from "./launcher";
+import { prepareLaunch, resolveLaunch } from "./launcher";
 import { FAKE_CLAUDE_HOME, createFakeFarmFs, discovered, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
 
 describe("prepareLaunch decision", () => {
@@ -82,5 +82,40 @@ describe("prepareLaunch decision", () => {
   it("reports the configuration profile that applied and how it was selected", () => {
     const { decision } = plan({}, ["@work", "--config-profile", "strict", "--print"], { [`${paths.configProfilesDir}/strict.json`]: {} });
     expect(decision).toMatchObject({ configProfile: "strict", configProfileSource: "cli-flag" });
+  });
+
+  describe("the warning about an inherited CLAUDE_CONFIG_DIR an identity set aside", () => {
+    const identityDir = `${paths.identitiesDir}/work`;
+
+    /** The warnings of a launch of `@work` over an inherited `CLAUDE_CONFIG_DIR`, with `symlinks` as the directories the filesystem reaches through a link. */
+    function warningsFor(inherited: string, symlinks: Readonly<Record<string, string>> = {}): readonly string[] {
+      const log = fakeLog();
+      prepareLaunch({ paths, namesLock: { fs: createFakeFarmFs(), nowMs: () => Date.now(), pid: process.pid, isRunning: () => true, sleep: () => undefined }, fs: fakeFs({}, symlinks), proc: fakeProc({ CLAUDE_CONFIG_DIR: inherited }, ["@work", "--print"]), log, resolveClaudeBinary: () => discovered, frontdoor: fakeFrontDoorPort() });
+      return log.warns;
+    }
+
+    it("says nothing when the inherited directory is the identity's own spelled with a trailing separator", () => {
+      expect(warningsFor(`${identityDir}/`)).toEqual([]);
+    });
+
+    it("says nothing when the inherited directory is a symlink to the identity's own", () => {
+      expect(warningsFor("/home/testuser/link-to-work", { "/home/testuser/link-to-work": identityDir })).toEqual([]);
+    });
+
+    it("says so for a symlink to some other directory", () => {
+      expect(warningsFor("/home/testuser/link-elsewhere", { "/home/testuser/link-elsewhere": "/somewhere/else" })).toHaveLength(1);
+    });
+
+    it("says so for a relative inherited path, which names no directory of the identities", () => {
+      const [warning] = warningsFor("relative/dir");
+      expect(warning).toContain("CLAUDE_CONFIG_DIR relative/dir");
+    });
+
+    it("says nothing in a read-only resolution, which changes nothing and is asked about, not run", () => {
+      const log = fakeLog();
+      const resolution = resolveLaunch({ paths, fs: fakeFs({}), proc: fakeProc({ CLAUDE_CONFIG_DIR: "/somewhere/else" }, ["@work", "--print"]), log, resolveClaudeBinary: () => discovered, frontdoor: fakeFrontDoorPort() });
+      expect(log.warns).toEqual([]);
+      expect(resolution.decision).toMatchObject({ identity: "work", configDirEscapeHatch: false, configDir: identityDir });
+    });
   });
 });

@@ -52,7 +52,6 @@ import { resolveClaudeVersion, type PinnedClaudeVersion } from "./launcher/claud
 import { runLaunchUpdateCheck, type UpdateLaunchPort } from "./update/launchHook";
 import { targetRefs } from "./models/targets";
 import { profileFilePath } from "./config/names";
-import { sameDirectory } from "./sameDirectory";
 import { INJECTED_ENV, withoutInjected } from "./launcher/injected";
 
 /**
@@ -303,8 +302,8 @@ interface DecidedLaunch {
 /**
  * Says, on the launch's warning stream, that an identity named on the command line outranked the `CLAUDE_CONFIG_DIR` the launch inherited, so the child runs in the identity's directory and not the one a parent session exported. Silent when nothing was set aside, and when the inherited directory already is the identity's own, since nothing then differs from what the caller asked for.
  */
-function warnOfSupersededConfigDir(warn: (message: string) => void, superseded: string | undefined, identity: string, identityDir: string): void {
-  if (superseded === undefined || path.resolve(superseded) === path.resolve(identityDir) || sameDirectory(superseded, identityDir)) {
+function warnOfSupersededConfigDir(warn: (message: string) => void, fs: Pick<FsPort, "sameDirectory">, superseded: string | undefined, identity: string, identityDir: string): void {
+  if (superseded === undefined || superseded === identityDir || fs.sameDirectory(superseded, identityDir)) {
     return;
   }
   warn(`agent-shim: the identity named on the command line outranks the inherited CLAUDE_CONFIG_DIR ${superseded}; running as ${identity} in ${identityDir}`);
@@ -360,7 +359,7 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean, onRecorded
     const farmIdentity = configDirEscapeHatchApplies || identityDecision.name === undefined ? undefined : resolveIdentityId(paths.identitiesDir, identityDecision.name, fs);
     const farm = farmIdentity === undefined ? undefined : params.farm;
     if (!readOnly && farmIdentity !== undefined && identityDecision.name !== undefined) {
-      warnOfSupersededConfigDir(log.warn, identityDecision.supersededConfigDir, identityDecision.name, path.join(paths.identitiesDir, farmIdentity));
+      warnOfSupersededConfigDir(log.warn, fs, identityDecision.supersededConfigDir, identityDecision.name, path.join(paths.identitiesDir, farmIdentity));
     }
 
     // Recovery runs before the identity is loaded, not merely before the farm is rebuilt: `identity.json` lives inside the farm root, so a crash between the swap's two renames leaves it in a superseded directory. Reading it first would launch with the identity's own configuration profile silently unset.

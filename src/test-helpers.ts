@@ -415,9 +415,15 @@ const EXISTING_IDENTITIES: Readonly<Record<string, unknown>> = Object.fromEntrie
 );
 
 /** A fake `FsPort` over `ownFiles`, layered over `EXISTING_IDENTITIES` so a test only spells out the files it is actually about. */
-export function fakeFs(ownFiles: Record<string, unknown>): FsPort {
+export function fakeFs(ownFiles: Record<string, unknown>, symlinks: Readonly<Record<string, string>> = {}): FsPort {
   const files: Record<string, unknown> = { ...EXISTING_IDENTITIES, ...ownFiles };
+  // A path as the directory it reaches: absolute and without a trailing separator, with a symlink followed to its target.
+  const reached = (target: string): string => {
+    const resolved = path.resolve(target);
+    return symlinks[resolved] ?? resolved;
+  };
   return {
+    sameDirectory: (first, second) => reached(first) === reached(second),
     fileRevision: (filePath) => {
       const value = files[`${filePath}.revision`];
       return typeof value === "string" ? value : undefined;

@@ -18,6 +18,7 @@ import { fakeCredentials } from "./test-helpers";
 /** A minimal real-filesystem `FsPort` over the temp root, so `resolveProvider` is exercised against files `addProvider` actually wrote, the same way the real launcher reads them. */
 function tempFsPort(): FsPort {
   return {
+    sameDirectory: () => false,
     readFileUtf8: (filePath) => {
       try {
         return fs.readFileSync(filePath, "utf8");
