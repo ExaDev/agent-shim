@@ -12,9 +12,9 @@ Every event has `kind`, `session` (the `cse_` id), `at` (when the door filed it,
 | `session-ended` | `reason`: `expired`, `archived` or `conflict` | The session's liveness bound passed with no traffic, an archive was accepted, or the service closed the worker with a conflict header. Its outstanding requests are retired (`session-ended`) first. |
 | `worker-state` | `state`, and `previous` once a state was already known | A worker registration named a state other than the one the door last saw (`idle`, `running`, `requires_action`, carried as the worker's own string). A re-registration of the same state is not an event. |
 | `pending-born` | `requestId`, `type`, `summary` | A control request (a `can_use_tool` approval above all) began awaiting an answer. The same request seen on the worker's event write and on the client read stream is one birth. |
-| `pending-retired` | `requestId`, `reason`: `answered`, `expired` or `session-ended` | A `control_response` answered it (whoever sent it), its answer deadline passed, or its session ended. |
+| `pending-retired` | `requestId`, `reason`: `answered`, `withdrawn`, `worker-stopped` or `session-ended` | A `control_response` answered it (whoever sent it), the worker withdrew it with a `control_cancel_request` (it was resolved in the session's own terminal), a worker registration reported the worker no longer waiting on it, or its session ended. The worker sets no answer deadline, so a request is never retired by time alone; see [rc-questions.md](rc-questions.md). |
 
-The events are fed from the session tracker (`src/frontdoor/rcSessions.ts`) through an injected sink as it files each fact, never by polling, so their order is the order the door observed things in. A deadline expiry is noticed by the tracker's sweep, which runs at the shorter of the answer deadline and the session liveness bound, and by every status read.
+The events are fed from the session tracker (`src/frontdoor/rcSessions.ts`) through an injected sink as it files each fact, never by polling, so their order is the order the door observed things in. A session's expiry is noticed by the tracker's sweep, which runs at the session liveness bound, and by every status read.
 
 ## Cursors, resume and expiry
 
@@ -48,7 +48,7 @@ What covers each event, per backend. "Connect surface" is `src/frontdoor/connect
 | `session-appeared` | Connect surface | Self-hosted |
 | `worker-state` | Tracker | Self-hosted (`idle`, `running`) |
 | `pending-born`, `pending-retired` `answered` | Connect surface (an approval delivered only on the client read stream) | Self-hosted |
-| `pending-retired` `expired` | Tracker | Tracker |
+| `pending-retired` `withdrawn`, `worker-stopped` | Tracker | Tracker |
 | `session-ended` `archived` | Tracker | Self-hosted |
 | `session-ended` `conflict` | Tracker | Tracker (the surface answers a stale-epoch write with the protocol's conflict header) |
 | `session-ended` `expired` | Tracker | Tracker |
@@ -56,4 +56,4 @@ What covers each event, per backend. "Connect surface" is `src/frontdoor/connect
 
 A door that starts while a session is already running sees it appear at its first accepted call through that door, and reports no `worker-state` until the worker's next registration, exactly as `rc status` shows no worker state for it until then.
 
-A retired request is remembered for one answer deadline (`RC_PENDING_DEADLINE_MS`, swept at the tracker's sweep cadence), so a copy of it that arrives on the other channel inside that window is not born again. A copy arriving later, or a request the tracker never saw pending, is born as a new request.
+A retired request is remembered for as long as its session is tracked, so a copy of it that arrives later on the other channel is not born again; a request the tracker never saw pending is born as a new request.

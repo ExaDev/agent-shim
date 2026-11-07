@@ -18,7 +18,7 @@ import {
   type RcSessionTransition,
 } from "./rcEventLog";
 import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
-import { RC_IDLE_EXPIRY_MS, RC_PENDING_DEADLINE_MS, RC_REQUEST_PARSE_CAP_BYTES, createRcSessionTracker, type RcSessionTracker } from "./rcSessions";
+import { RC_IDLE_EXPIRY_MS, RC_REQUEST_PARSE_CAP_BYTES, createRcSessionTracker, type RcSessionTracker } from "./rcSessions";
 
 /** A made-up door generation id of the production shape. */
 const GENERATION = "00000000-0000-4000-8000-0000000000aa";
@@ -488,7 +488,7 @@ describe("the tracker's transitions into the log", () => {
     ]);
   });
 
-  it("never re-births a request the door answered between the worker's write and the stream's copy of it, until its deadline has passed", () => {
+  it("never re-births a request the door answered between the worker's write and the stream's copy of it, however late the copy arrives", () => {
     const { tracker, advance, kinds } = trackedLog();
     exchange(tracker, "POST", `/v1/code/sessions/${SESSION_A}/worker/events`, workerEvents(canUseTool));
     // A supervisor answers at once, before the client read stream has delivered its own copy of the request.
@@ -496,11 +496,10 @@ describe("the tracker's transitions into the log", () => {
     tracker.fileStreamEvent(SESSION_A, { event_type: "control_request", sequence_num: 1, source: "worker", payload: canUseTool });
     expect(tracker.pendingOf(SESSION_A)).toEqual([]);
     expect(kinds().filter((event) => typeof event === "object" && event !== null && "kind" in event && event.kind === "pending-born")).toHaveLength(1);
-    // Past one answer deadline the retirement is forgotten, so the record of it stays bounded.
-    advance(RC_PENDING_DEADLINE_MS);
-    tracker.pendingOf();
+    // No deadline bounds when a copy can arrive, so a much later one is still not re-born while the session lives.
+    advance(RC_IDLE_EXPIRY_MS - 1);
     tracker.fileStreamEvent(SESSION_A, { event_type: "control_request", sequence_num: 2, source: "worker", payload: canUseTool });
-    expect(tracker.pendingOf(SESSION_A).map((request) => request.requestId)).toEqual(["req_1"]);
+    expect(tracker.pendingOf(SESSION_A)).toEqual([]);
   });
 
   it("sees a session already running when the door started as appearing, with no worker state until its next registration", () => {
@@ -512,12 +511,15 @@ describe("the tracker's transitions into the log", () => {
     expect(kinds().at(-1)).toEqual({ kind: "worker-state", session: SESSION_A, state: "running" });
   });
 
-  it("records a pending request retiring at its deadline", () => {
+  it("records a pending request the worker withdrew, and one the worker stopped waiting on", () => {
     const { tracker, advance, kinds } = trackedLog();
     exchange(tracker, "POST", `/v1/code/sessions/${SESSION_A}/worker/events`, workerEvents(canUseTool));
-    advance(RC_PENDING_DEADLINE_MS);
-    tracker.pendingOf();
-    expect(kinds().at(-1)).toEqual({ kind: "pending-retired", session: SESSION_A, requestId: "req_1", reason: "expired" });
+    tracker.fileStreamEvent(SESSION_A, { event_type: "control_cancel_request", sequence_num: 1, source: "worker", payload: { type: "control_cancel_request", request_id: "req_1" } });
+    expect(kinds().at(-1)).toEqual({ kind: "pending-retired", session: SESSION_A, requestId: "req_1", reason: "withdrawn" });
+    tracker.fileStreamEvent(SESSION_A, { event_type: "control_request", sequence_num: 2, source: "worker", payload: { ...canUseTool, request_id: "req_2" } });
+    advance(1);
+    exchange(tracker, "PUT", `/v1/code/sessions/${SESSION_A}/worker`, JSON.stringify({ worker_status: "idle", worker_epoch: 1 }));
+    expect(kinds().filter((event) => typeof event === "object" && event !== null && "kind" in event && event.kind === "pending-retired").at(-1)).toEqual({ kind: "pending-retired", session: SESSION_A, requestId: "req_2", reason: "worker-stopped" });
   });
 
   it("records a session ending by idle expiry, by archive and by conflict, retiring its outstanding requests first", () => {
@@ -567,16 +569,17 @@ describe("the tracker's transitions into the log", () => {
     ]);
   });
 
-  it("emits a deadline expiry from the sweep timer alone, with no read to prompt it, and ends followers when the tracker closes", async () => {
+  it("emits a session expiry from the sweep timer alone, with no read to prompt it, and ends followers when the tracker closes", async () => {
     vi.useFakeTimers();
     try {
       const log = createRcSessionEventLog({ generation: GENERATION, capacity: ROOMY_CAPACITY });
       const tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS, onTransition: log.append, onClose: log.close });
       exchange(tracker, "POST", `/v1/code/sessions/${SESSION_A}/worker/events`, workerEvents(canUseTool));
       const follower = followRcSessionEvents(log, {});
-      // The sweep runs at the shorter of its two deadlines, so one answer deadline past the birth, plus one sweep period, the timer alone has retired the request.
-      await vi.advanceTimersByTimeAsync(RC_PENDING_DEADLINE_MS + Math.min(RC_IDLE_EXPIRY_MS, RC_PENDING_DEADLINE_MS));
-      expect(await eventOf(follower.next())).toMatchObject({ kind: "pending-retired", session: SESSION_A, requestId: "req_1", reason: "expired" });
+      // One liveness bound past the last traffic, plus one sweep period, the timer alone has ended the session, retiring its request first.
+      await vi.advanceTimersByTimeAsync(2 * RC_IDLE_EXPIRY_MS);
+      expect(await eventOf(follower.next())).toMatchObject({ kind: "pending-retired", session: SESSION_A, requestId: "req_1", reason: "session-ended" });
+      expect(await eventOf(follower.next())).toMatchObject({ kind: "session-ended", session: SESSION_A, reason: "expired" });
       tracker.close();
       expect(await follower.next()).toEqual({ value: undefined, done: true });
     } finally {
