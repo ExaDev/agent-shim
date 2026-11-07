@@ -48,11 +48,13 @@ function requestIdOf(nowMs: number): string {
 }
 
 /**
- * Removes every result whose request is gone: one the plugin wrote after its caller had given up and removed the request (an abort, or a wait that passed while the plugin was mid-run), which nothing else would ever read. A caller removes its request before its result, so a result with no request belongs to no live caller.
+ * Removes every result whose request is gone: one the plugin wrote after its caller had given up and removed the request (an abort, or a wait that passed while the plugin was mid-run), which nothing else would ever read.
  */
 function removeOrphanResults(plugin: Readonly<PluginPaths>): void {
+  // Results are listed before requests: a request renamed in, and its result written, between the two reads then shows in the second, so its live marker is never taken for an orphan (listed the other way round, the result would be seen without its request and removed, and a reload would run the request again). A caller removes its request before its result and never recreates it, so a result listed first whose request is absent from the later listing is a true orphan.
+  const results = readdirSync(plugin.results);
   const requests = new Set(readdirSync(plugin.requests));
-  for (const name of readdirSync(plugin.results)) {
+  for (const name of results) {
     if (!requests.has(name)) {
       rmSync(path.join(plugin.results, name), { force: true });
     }
