@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
 import { RC_GOAL_CONDITION_MAX_CHARS, RC_SESSION_COMMAND_MAX_WAIT_MS } from "./rcSessionCommands";
 
 /**
@@ -18,7 +19,7 @@ export const RcGoalSessionInputSchema = z.strictObject({
 /** The goal set's input: one non-empty session id, the condition (as long as `/goal` accepts) and an optional wait bound. */
 export const RcGoalSetInputSchema = z.strictObject({
   session: z.string().min(1),
-  condition: z.string().min(1).max(RC_GOAL_CONDITION_MAX_CHARS),
+  condition: z.string().min(1).max(RC_GOAL_CONDITION_MAX_CHARS).regex(/^[^\r\n]*$/u, "a goal condition is one line"),
   waitMs: WaitMsSchema,
 });
 
@@ -28,10 +29,10 @@ export const RcCompactInputSchema = z.strictObject({
   waitMs: WaitMsSchema,
 });
 
-/** The instructed compaction's input: the compaction's, plus the non-empty summarisation instructions that make it a directive. */
+/** The instructed compaction's input: the compaction's, plus the non-empty summarisation instructions that make it a directive, no longer than the control body cap every write the door makes into a session is held to. */
 export const RcCompactWithInstructionsInputSchema = z.strictObject({
   session: z.string().min(1),
-  instructions: z.string().trim().min(1),
+  instructions: z.string().trim().min(1).max(CONTROL_BODY_CAP_BYTES),
   waitMs: WaitMsSchema,
 });
 
