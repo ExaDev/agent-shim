@@ -220,6 +220,7 @@ describe("library surface", () => {
       "RcRateLimitWindowSchema",
       "RcSessionEventCursorExpiredError",
       "RcSessionEventSchema",
+      "RcSessionEventsPageInputSchema",
       "RcSessionEventsReadInputSchema",
       "RcSessionEventsReadOutputSchema",
       "RcSessionEventsStreamInputSchema",

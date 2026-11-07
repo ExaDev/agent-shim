@@ -249,6 +249,7 @@ export {
   RC_SESSION_EVENT_LOG_CAPACITY,
   RcSessionEventCursorExpiredError,
   RcSessionEventSchema,
+  RcSessionEventsPageInputSchema,
   RcSessionEventsReadInputSchema,
   RcSessionEventsReadOutputSchema,
   RcSessionEventsStreamInputSchema,
