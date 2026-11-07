@@ -90,9 +90,11 @@ On Claude Code 2.1.319 in the isolated self-hosted lab (`scripts/rc-self-host-la
 - `send "/goal <condition>"` with the session's own platform left no goal set: the worker read it as a peer's message.
 - The worker reads its inbound events over SSE at `GET /v1/code/sessions/{id}/worker/events/stream` (its debug log names `SSETransport`), and the user, assistant and `compact_boundary` events it writes carry the uuids of the transcript rows they mirror; `system` `init` and `status` events and the `result` have no transcript row.
 
-## Inbound platform rewriting (not built, not yet verified live)
+## Inbound platform rewriting (rejected)
 
-The door relays the worker's inbound stream for a real-service session, so it could leave its own write honest (`claude_code_cli`, as `send` writes it) and change `client_platform` to `web_claude_ai` on the relayed copy of the events it wrote itself, which would make the worker run the command: the worker reads the field from the payload on its SSE stream, and runs a slash command whose payload names a person's app. That is not built: the worker's decision would rest on a value the service never stated, and the plugin route already reaches every supervised session without it. It is not yet verified live either, because the only place it applies is the relay to the real service, which the isolated lab does not reach.
+One more route was considered and rejected. For a session on the real service, the door relays the worker's inbound stream, so it could write its command honestly (`claude_code_cli`, as `send` writes it) and then change `client_platform` to `web_claude_ai` on the relayed copy of the events it wrote itself, identified by the payload uuids it minted. That would work mechanically: the worker reads its inbound events over SSE at `GET /v1/code/sessions/{id}/worker/events/stream`, takes `client_platform` from each event's payload, and runs a slash command whose payload names a person's app. The SSE framing carries no length, and the sequence numbers and keepalives would pass through untouched.
+
+It is rejected because the worker would then trust a value the service never stated: the service's own record of the event still says `claude_code_cli`, so the change defeats the bridge's peer-versus-person boundary from inside the stream instead of at the service. The plugin route already reaches every supervised session without it, so an unsupervised session on the real service is refused rather than reached this way. It was never built, and so never run against a real-service relay; the isolated lab has no such relay.
 
 ## Self-hosted mode
 
