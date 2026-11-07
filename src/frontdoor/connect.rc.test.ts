@@ -4,7 +4,7 @@ import * as os from "node:os";
 // Named for the module, not `path`: this file's request helpers take a `path` parameter, which an import of the same name would shadow.
 import nodePath from "node:path";
 
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { realFarmFs } from "../realPorts";
 import { CONNECT_INTERCEPT_HOST, LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial } from "./connect";
@@ -144,8 +144,16 @@ describe("Remote Control observation and injection over the connect surface", ()
   beforeAll(() => {
     ca = generateCa(new Date());
     upstreamCa = generateCa(new Date());
-    tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS });
   }, KEYGEN_TIMEOUT_MS);
+
+  // A fresh tracker per case: every case drives the same session id, and a session's state (its sequence cursor above all) must not carry from one case into the next.
+  beforeEach(() => {
+    tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS });
+  });
+
+  afterEach(() => {
+    tracker.close();
+  });
 
   it(
     "records the session and bearer the door observed from the CLI's own calls, and injects through the door's dial so the API host receives the client-half write",
