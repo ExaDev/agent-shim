@@ -70,6 +70,8 @@ export interface ConnectCapture {
   readonly refusedTunnel: (target: { readonly host: string; readonly port: number }) => void;
   /** Records one non-routed request's head and returns the observer its forwarding drives, so the capture correlates every later chunk with the request it belongs to. */
   readonly observePassthrough: (request: CapturedRequestShape) => PassthroughObserver;
+  /** Records one request the routed pipeline's pass-through sends to Claude Code's own API: the head only, since the pass-through streams its body without a tap. Together with the piped exchanges it is everything that left for the real API. */
+  readonly routedForward: (request: CapturedRequestShape) => void;
   /** Records one HTTP upgrade request arriving on a terminated session. The surface destroys the socket afterwards either way, with or without a capture, matching Node's own no-listener behaviour exactly. */
   readonly upgrade: (request: CapturedRequestShape) => void;
 }
@@ -141,6 +143,9 @@ export function createFileCapture(file: string, now: () => Date = () => new Date
     },
     refusedTunnel: (target) => {
       append({ kind: "connect-refused", host: target.host, port: target.port });
+    },
+    routedForward: (request) => {
+      append({ kind: "routed-forward", method: request.method ?? "?", url: request.url ?? "?", headers: redactHeaders(request.headers) });
     },
     upgrade: (request) => {
       append({ kind: "upgrade", method: request.method ?? "?", url: request.url ?? "?", headers: redactHeaders(request.headers) });

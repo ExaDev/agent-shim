@@ -205,6 +205,11 @@ describe("the self-hosted Remote Control mode end to end", () => {
       env: {},
       credentials: fakeAsyncCredentials(),
       rcSelfHostRoute: surface.route,
+      // The routed pass-through to the real API is recorded and refused here, like every other upstream dial in this world: a self-hosted session's request reaching it is a leak the dial record shows.
+      observeAnthropicPassthrough: (request) => {
+        upstreamDials.push(`routed ${request.method} ${request.url}`);
+        throw new Error(`the e2e world dials no real host, and the routed pass-through was asked for ${request.url}`);
+      },
     });
     const observingResolver = async (request: Parameters<typeof resolver>[0]) => {
       const resolution = await resolver(request);

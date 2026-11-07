@@ -109,6 +109,19 @@ describe("createFileCapture", () => {
     expect(lines[5]).toMatchObject({ id: 1, requestBytesCapped: false, responseBytesCapped: false });
   });
 
+  it("records a refused tunnel and a routed pass-through apart from the piped exchanges, credentials redacted", () => {
+    const dir = tempDir();
+    const file = path.join(dir, "frontdoor-capture.jsonl");
+    const capture = createFileCapture(file, () => new Date("2026-10-03T12:00:00.000Z"));
+    capture.refusedTunnel({ host: "downloads.example.test", port: 443 });
+    capture.routedForward({ method: "GET", url: "/v1/mcp_servers", headers: { authorization: "Bearer oauth-token" } });
+    const lines = fs.readFileSync(file, "utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(lines).toEqual([
+      { ts: "2026-10-03T12:00:00.000Z", kind: "connect-refused", host: "downloads.example.test", port: 443 },
+      { ts: "2026-10-03T12:00:00.000Z", kind: "routed-forward", method: "GET", url: "/v1/mcp_servers", headers: { authorization: "<redacted>" } },
+    ]);
+  });
+
   it("truncates a chunk past the excerpt cap and stops storing a direction past the stream cap, while still counting nothing further", () => {
     const dir = tempDir();
     const file = path.join(dir, "frontdoor-capture.jsonl");

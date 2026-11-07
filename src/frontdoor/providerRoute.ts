@@ -269,6 +269,8 @@ export function createProviderRouteResolver(deps: {
   readonly messagesBodyLimitBytes?: number;
   /** The models of a provider's cached catalogue, after its own filters, or none: where a bare name takes the model it selects when the provider's env names no tier model. */
   readonly catalogueModelsOf?: (name: string, provider: HttpProvider) => readonly CatalogueModel[];
+  /** Told of every request the routed pass-through to Claude Code's own API serves, before it is dialled: the door's capture records each one, so a record of everything that left for the real API covers the routed pipeline as well as the connect surface's piped exchanges. A throw refuses the request before anything is dialled. */
+  readonly observeAnthropicPassthrough?: (request: RoutedRequest) => void;
 }): (request: RoutedRequest) => Promise<RouteResolution> {
   /** When each upstream (by the subject its routes name it with) last had a failure to connect logged. */
   const couldNotConnectLoggedAt = new Map<string, number>();
@@ -289,7 +291,7 @@ export function createProviderRouteResolver(deps: {
   };
 
   /** The pass-through every bare /v1/ request from the CONNECT surface rides: straight to Claude Code's own API, with no per-request upstream for a headroom hop (the daemon's default upstream is exactly that API, which is what an OAuth session wants). */
-  const oauthRoute = createPassthroughRoute("anthropic", {
+  const anthropicRoute = createPassthroughRoute("anthropic", {
     baseUrl: `https://${CONNECT_INTERCEPT_HOST}:${String(HTTPS_PORT)}`,
     stripPrefix: undefined,
     headroomUpstream: undefined,
@@ -297,6 +299,17 @@ export function createProviderRouteResolver(deps: {
     connectTimeoutMs: DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS,
     couldNotConnect: couldNotConnectFor("the Anthropic API"),
   });
+  const observe = deps.observeAnthropicPassthrough;
+  const oauthRoute: FrontDoorRoute =
+    observe === undefined
+      ? anthropicRoute
+      : {
+          ...anthropicRoute,
+          serve: async (request, response) => {
+            observe(request);
+            await anthropicRoute.serve(request, response);
+          },
+        };
 
   /** Resolves a credential block on the request path; requests in flight together for the same block share one run of its sources. */
   const resolveCredential = shareInFlightResolutions(resolveCredentialAsync);
