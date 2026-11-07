@@ -74,7 +74,7 @@ const SELF_HOSTED_QUIET_REASON = `the front door's tracker holds no record of th
 
 /** The reason an unobserved session whose create no door generation observed has no record, and no worker state either. */
 const NEVER_OBSERVED_REASON =
-  "the front door has never observed this session: it registered with the Remote Control service without its create crossing any door generation on this machine (it was launched without routing through the front door, or before the door was serving),, so the door holds no record and no credential for it, and no self-hosted Remote Control service of the door holds it either";
+  "the front door has never observed this session: it registered with the Remote Control service without its create crossing any door generation on this machine (it was launched without routing through the front door, or before the door was serving), so the door holds no record and no credential for it, and no self-hosted Remote Control service of the door holds it either";
 
 /** The message for an unobserved session's missing worker state when the door holds no credential to read it with. */
 function noCredentialMessage(sessionId: string): string {

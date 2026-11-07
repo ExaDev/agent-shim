@@ -345,6 +345,8 @@ describe("the Remote Control status of registered sessions the door holds no rec
     const { dial, reads } = readingDial({});
     const { unobserved } = await resolverOf(tracker, dial, { registered: new Map([registeredAs(OBSERVED_SESSION_ID)]) })();
     expect(unobserved[0]?.reason).toContain("has never observed this session");
+    // Each clause of the reason is joined once: no doubled punctuation from the clauses it is built from.
+    expect(unobserved[0]?.reason).not.toMatch(/[,.;:]{2}/u);
     expect(unobserved[0]?.workerState).toBeUndefined();
     expect(unobserved[0]?.workerStateUnavailable).toContain(`holds no credential for session ${OBSERVED_SESSION_ID}`);
     expect(reads).toEqual([]);
