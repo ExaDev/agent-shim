@@ -77,7 +77,7 @@ import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog } from "./rcEven
 import { createRcLiveUsage } from "./rcLiveUsage";
 import { createRcClientPage } from "./rcClientPage";
 import { createRcSelfHostSurface, rcSelfHostFromEnv } from "./rcSelfHost";
-import { readRcSelfHostRecord } from "./rcSelfHostMint";
+import { backfillRcSelfHostIdentity, readRcSelfHostRecord } from "./rcSelfHostMint";
 import { createRcSelfHostLaunchCheck } from "./rcSelfHostLaunches";
 import { parentTable, peerProcessOf } from "./peerProcess";
 import { realRcWebFetch, rcWebFetchAllowsPrivateFromEnv } from "./rcWebFetch";
@@ -688,9 +688,12 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         if (wantedTransparentPort === undefined || Number.isNaN(wantedTransparentPort)) {
           log("self-hosted Remote Control surface: AGENT_SHIM_TRANSPARENT_SURFACE is not set, so nothing redirects the CLI's Remote Control traffic to this door and the door's own client half has no surface to dial; set it to the interception port the mode is deployed with");
         }
-        const minted = readRcSelfHostRecord(realFarmFs, paths.frontdoorDir);
-        if (minted !== undefined && minted.identityId === undefined) {
-          log("self-hosted Remote Control surface: the minted credential predates recording its identity, so no launch can be told apart from it and every launch's calls on the intercepted hosts are refused until the identity is minted again (agent-shim frontdoor rc selfhost mint <identity>)");
+        // A mint from before the record named its identity is attributed to the identity holding its credential, so existing users keep their native sessions; only one no single identity holds is left to refuse every launch.
+        const backfill = backfillRcSelfHostIdentity(realFarmFs, paths.identitiesDir, paths.frontdoorDir);
+        if (backfill.kind === "backfilled") {
+          log(`self-hosted Remote Control surface: recorded the minted credential's identity (${backfill.identityId}), which the mint predated recording`);
+        } else if (backfill.kind === "unmatched") {
+          log(`self-hosted Remote Control surface: the minted credential names no identity and ${String(backfill.holders)} identities hold it, so no launch can be told apart from it and every launch's calls on the intercepted hosts are refused until the identity is minted again (agent-shim frontdoor rc selfhost mint <identity>)`);
         }
       }
       const server = await startConnectServer(

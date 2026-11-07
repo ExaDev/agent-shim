@@ -5,6 +5,7 @@ import { isIdentityName } from "../usage/account";
 import type { FarmFs } from "../launcher/ports";
 import type { RcSelfHostCredentialRecord } from "./rcSelfHost";
 import { RC_SELF_HOST_EMAIL, RC_SELF_HOST_SCOPE_LIST } from "./rcSelfHostLocal";
+import { isLiveCapability } from "./capability";
 
 /**
  * The minting half of the self-hosted Remote Control mode (ExaDev/agent-shim#207): the local credential that lets a Claude Code session activate Remote Control against the door's own served surface with no claude.ai login anywhere.
@@ -92,6 +93,57 @@ export function readRcSelfHostRecord(fs: Pick<FarmFs, "readFileUtf8">, frontdoor
     return undefined;
   }
   return { accessToken, refreshToken, organizationUuid, accountUuid, ...(typeof identityId === "string" && identityId !== "" ? { identityId } : {}) };
+}
+
+/** The ids of the identities whose `.credentials.json` holds the record's minted access token, compared in constant time: the identity a mint wrote its credential into is among them, and for a record that names no identity they are the candidates for it. */
+function identitiesHoldingMint(fs: Pick<FarmFs, "readFileUtf8" | "readdir">, identitiesDir: string, record: RcSelfHostCredentialRecord): readonly string[] {
+  return fs.readdir(identitiesDir).filter((id) => {
+    if (id.startsWith(".")) {
+      return false;
+    }
+    const oauth = readJsonObject(fs, path.join(identitiesDir, id, CREDENTIALS_FILE))?.claudeAiOauth;
+    return isRecord(oauth) && typeof oauth.accessToken === "string" && isLiveCapability(oauth.accessToken, [record.accessToken]);
+  });
+}
+
+/** What `doctor` reports about the self-hosted mint: nothing when nothing is minted, and otherwise whether the mint can be attributed to one identity, either because its record names it or because exactly one identity holds its credential (which the door records at start). */
+export interface RcSelfHostMintFacts {
+  readonly attributable: boolean;
+  /** How many identities hold the credential of a record that names none; absent for a record that names one. */
+  readonly holders?: number;
+}
+
+/** Reads the facts `doctor` reports about the self-hosted mint, none when nothing is minted. */
+export function rcSelfHostMintFacts(fs: Pick<FarmFs, "readFileUtf8" | "readdir">, identitiesDir: string, frontdoorDir: string): { readonly rcSelfHostMint?: RcSelfHostMintFacts } {
+  const record = readRcSelfHostRecord(fs, frontdoorDir);
+  if (record === undefined) {
+    return {};
+  }
+  if (record.identityId !== undefined) {
+    return { rcSelfHostMint: { attributable: true } };
+  }
+  const holders = identitiesHoldingMint(fs, identitiesDir, record).length;
+  return { rcSelfHostMint: { attributable: holders === 1, holders } };
+}
+
+/** What `backfillRcSelfHostIdentity` found: nothing to do, the id it recorded, or that no single identity holds the minted credential (none, or more than one). */
+export type RcSelfHostBackfill = { readonly kind: "not-needed" } | { readonly kind: "backfilled"; readonly identityId: string } | { readonly kind: "unmatched"; readonly holders: number };
+
+/**
+ * Records the identity id a mint from before ids were recorded names none of: the identity whose `.credentials.json` holds the minted access token is the one the mint wrote. The record is rewritten only when exactly one identity holds it; otherwise it is left as it is, the door goes on refusing every launch's calls (see `rcSelfHostLaunches.ts`), and `doctor` reports it with the command that fixes it.
+ */
+export function backfillRcSelfHostIdentity(fs: Pick<FarmFs, "readFileUtf8" | "readdir" | "writeFilePrivate">, identitiesDir: string, frontdoorDir: string): RcSelfHostBackfill {
+  const record = readRcSelfHostRecord(fs, frontdoorDir);
+  if (record === undefined || record.identityId !== undefined) {
+    return { kind: "not-needed" };
+  }
+  const holders = identitiesHoldingMint(fs, identitiesDir, record);
+  const [identityId] = holders;
+  if (holders.length !== 1 || identityId === undefined) {
+    return { kind: "unmatched", holders: holders.length };
+  }
+  fs.writeFilePrivate(path.join(frontdoorDir, RC_SELF_HOST_RECORD_DIR, RC_SELF_HOST_RECORD_FILE), `${JSON.stringify({ ...record, identityId }, null, 2)}\n`);
+  return { kind: "backfilled", identityId };
 }
 
 /**
