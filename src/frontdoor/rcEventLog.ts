@@ -342,9 +342,8 @@ async function* followAfter(log: RcSessionEventLog, since: string, session: stri
   });
   for (;;) {
     signal?.throwIfAborted();
-    if (log.closed()) {
-      return;
-    }
+    // Whether the log was closed before this read: a follower returns only after one read that found nothing more, so an event appended just before the close is still delivered.
+    const closedBeforeRead = log.closed();
     // The wake is registered before the read, so an event appended between the read and the wait can never be slept past.
     let detach = (): void => undefined;
     const woken = new Promise<void>((resolve) => {
@@ -357,6 +356,9 @@ async function* followAfter(log: RcSessionEventLog, since: string, session: stri
       }
       if (read.events.length === 0) {
         cursor = read.cursor;
+        if (closedBeforeRead) {
+          return;
+        }
         await Promise.race([woken, aborted]);
         continue;
       }
