@@ -233,7 +233,7 @@ export interface RcDialTarget {
  */
 export function realRcEventDial(target: RcDialTarget = { host: CONNECT_INTERCEPT_HOST, port: HTTPS_PORT }): RcEventDial {
   const agent = new ExemptTlsAgent();
-  const send = async (method: "GET" | "POST", path: string, headers: Readonly<Record<string, string>>, body: string | undefined): Promise<RcDialAnswer> =>
+  const send = async (method: "GET" | "POST", path: string, headers: Readonly<Record<string, string>>, body: string | undefined, signal?: AbortSignal): Promise<RcDialAnswer> =>
     await new Promise<RcDialAnswer>((resolve, reject) => {
       const options: https.RequestOptions = {
         host: target.host,
@@ -243,6 +243,8 @@ export function realRcEventDial(target: RcDialTarget = { host: CONNECT_INTERCEPT
         // The Host header names the host whose API this is, not the address dialled: a redirected test dials a loopback stand-in while still speaking to the API host by name, exactly as the forwarded paths present their SNI.
         headers: { ...headers, host: target.servername ?? target.host, ...(body === undefined ? {} : { "content-length": String(Buffer.byteLength(body, "utf8")) }) },
         agent,
+        // A read's deadline aborts the request wherever it is (connecting, waiting for the answer, or mid-body), and the abort surfaces as the request's error.
+        ...(signal === undefined ? {} : { signal }),
       };
       // The request's own TLS facts ride in the options (a stand-in's servername, its trust anchors, its verification stance), exactly as the forwarding target's do.
       options.servername = target.servername ?? target.host;
@@ -268,7 +270,7 @@ export function realRcEventDial(target: RcDialTarget = { host: CONNECT_INTERCEPT
   return {
     writeEvents: async (sessionId, headers, body) => await post(`/v1/code/sessions/${encodeURIComponent(sessionId)}/events`, headers, body),
     writeTeleportEvents: async (sessionId, headers, body) => await post(`/v1/code/sessions/${encodeURIComponent(sessionId)}/teleport-events`, headers, body),
-    readWorker: async (sessionId, headers) => await send("GET", `/v1/code/sessions/${encodeURIComponent(sessionId)}/worker`, headers, undefined),
+    readWorker: async (sessionId, headers, signal) => await send("GET", `/v1/code/sessions/${encodeURIComponent(sessionId)}/worker`, headers, undefined, signal),
   };
 }
 
@@ -297,7 +299,7 @@ export function lateRcEventDial(resolve: () => RcDialTarget | undefined): RcEven
   return {
     writeEvents: async (sessionId, headers, body) => await dialFor().writeEvents(sessionId, headers, body),
     writeTeleportEvents: async (sessionId, headers, body) => await dialFor().writeTeleportEvents(sessionId, headers, body),
-    readWorker: async (sessionId, headers) => await dialFor().readWorker(sessionId, headers),
+    readWorker: async (sessionId, headers, signal) => await dialFor().readWorker(sessionId, headers, signal),
   };
 }
 

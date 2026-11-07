@@ -50,8 +50,8 @@ export interface RcEventDial {
    * Posts one write to the session's teleport-events path instead of its events path: the write half of the channel the CLI only ever reads (`GET /teleport-events`, the teleport-to-local hydration's page source, verified in the 2.1.289 bundle, which contains no POST sender for it at all). The door's own client half is the one sender this surface has, so this method exists for `teleportRcSession` alone.
    */
   readonly writeTeleportEvents: (sessionId: string, headers: Readonly<Record<string, string>>, body: string) => Promise<RcDialAnswer>;
-  /** Reads the session's worker record: `GET /v1/code/sessions/{id}/worker`, the one read this dial makes, over the same interception-proof agent as the writes (see `readRcWorkerState`). */
-  readonly readWorker: (sessionId: string, headers: Readonly<Record<string, string>>) => Promise<RcDialAnswer>;
+  /** Reads the session's worker record: `GET /v1/code/sessions/{id}/worker`, the one read this dial makes, over the same interception-proof agent as the writes (see `readRcWorkerState`). The signal tears the request down wherever it is when the read's deadline passes. */
+  readonly readWorker: (sessionId: string, headers: Readonly<Record<string, string>>, signal: AbortSignal) => Promise<RcDialAnswer>;
 }
 
 /**
@@ -617,6 +617,14 @@ export function buildRcMarkReadBody(eventId: string | undefined): Record<string,
   return eventId === undefined ? {} : { event_id: eventId };
 }
 
+/**
+ * The deadline of one worker-state read. Every status surface (the CLI, the REST and RPC procedures, the MCP tool, and the web client, which polls) awaits the reads of the sessions it reports, so a read the API host never answers would hold every one of those answers open with it. A worker record is one small JSON answer; five seconds leaves room for a fresh TLS handshake over a slow link, while an interactive caller still gets its answer within about one of the web client's four-second polls.
+ */
+export const RC_WORKER_READ_TIMEOUT_MS = 5_000;
+
+/** Milliseconds in a second, for stating the read's deadline in a message a person reads. */
+const MS_PER_SECOND = 1_000;
+
 /** What one worker-state read produced: the state string the service named, or a verbose failure message ready to show a user. */
 export type RcWorkerStateReadResult = { readonly ok: true; readonly workerStatus: string } | { readonly ok: false; readonly message: string };
 
@@ -639,6 +647,11 @@ function workerStatusOf(body: string): string | undefined {
   return typeof workerStatus === "string" && workerStatus !== "" ? workerStatus : undefined;
 }
 
+/** The failure a worker-state read reports when the API host did not answer within its deadline. */
+function workerReadTimedOut(sessionId: string): RcWorkerStateReadResult {
+  return { ok: false, message: `the API host did not answer the worker state read of session ${sessionId} within ${String(RC_WORKER_READ_TIMEOUT_MS / MS_PER_SECOND)} s, so the read was abandoned; the next status read asks again` };
+}
+
 /** Everything one worker-state read needs, injected so the decision logic runs against fakes in unit tests. */
 export interface RcWorkerReadDeps {
   /** Reads the observed credential for a session: the tracker's accessor, in production. */
@@ -648,7 +661,7 @@ export interface RcWorkerReadDeps {
 }
 
 /**
- * Reads one observed session's worker state from the service: `GET /v1/code/sessions/{id}/worker`, authenticated by the observed bearer and carrying the observed protocol headers over the door's interception-proof dial, like every client-half write. This is how a session whose last state change predates the door (or whose record expired and was recreated by a heartbeat) still gets a state: the request body that would have named it never crossed the door. A dial that cannot reach the API host, a refused or failed answer, and an answer naming no `worker.worker_status` are reported as a verbose failure, never as an empty state.
+ * Reads one observed session's worker state from the service: `GET /v1/code/sessions/{id}/worker`, authenticated by the observed bearer and carrying the observed protocol headers over the door's interception-proof dial, like every client-half write. This is how a session whose last state change predates the door (or whose record expired and was recreated by a heartbeat) still gets a state: the request body that would have named it never crossed the door. A dial that cannot reach the API host, one that does not answer within `RC_WORKER_READ_TIMEOUT_MS` (its request is aborted, and the read settles at the deadline even when a dial ignores the signal), a refused or failed answer, and an answer naming no `worker.worker_status` are reported as a verbose failure, never as an empty state.
  */
 export async function readRcWorkerState(deps: RcWorkerReadDeps, sessionId: string): Promise<RcWorkerStateReadResult> {
   const credential = deps.credentialOf(sessionId);
@@ -658,11 +671,26 @@ export async function readRcWorkerState(deps: RcWorkerReadDeps, sessionId: strin
   if (credential.authorization === undefined) {
     return noOAuthCredentialResult(sessionId);
   }
-  let answer: RcDialAnswer;
+  const controller = new AbortController();
+  let deadline: NodeJS.Timeout | undefined;
+  const timedOut = new Promise<"timed out">((resolve) => {
+    deadline = setTimeout(() => {
+      controller.abort();
+      resolve("timed out");
+    }, RC_WORKER_READ_TIMEOUT_MS);
+  });
+  let answer: RcDialAnswer | "timed out";
   try {
-    answer = await deps.dial.readWorker(sessionId, rcClientHeaders(credential));
+    answer = await Promise.race([deps.dial.readWorker(sessionId, rcClientHeaders(credential), controller.signal), timedOut]);
   } catch (error) {
-    return { ok: false, message: `the door could not reach the API host to read the worker state of session ${sessionId}: ${error instanceof Error ? error.message : String(error)}` };
+    return controller.signal.aborted
+      ? workerReadTimedOut(sessionId)
+      : { ok: false, message: `the door could not reach the API host to read the worker state of session ${sessionId}: ${error instanceof Error ? error.message : String(error)}` };
+  } finally {
+    clearTimeout(deadline);
+  }
+  if (answer === "timed out") {
+    return workerReadTimedOut(sessionId);
   }
   if (answer.status === HTTP_STATUS.unauthorized) {
     return { ok: false, message: staleBearerMessage(answer.body) };

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
 
@@ -36,6 +36,7 @@ import {
   isRcPermissionMode,
   isRcReadFileEncoding,
   rcEventWriteResultFromAnswer,
+  RC_WORKER_READ_TIMEOUT_MS,
   readRcSessionFile,
   readRcWorkerState,
   reconnectRcSessionMcpServer,
@@ -897,6 +898,53 @@ describe("reading a session's worker state from the service", () => {
     expect(await readRcWorkerState({ credentialOf: tracker.credentialOf, dial: refused.dial }, SESSION_ID)).toEqual({ ok: false, message: `the API answered HTTP 403 to the worker state read of session ${SESSION_ID}: no` });
     const unreachable = readingDial(async () => await Promise.reject(new Error("ECONNREFUSED")));
     expect(await readRcWorkerState({ credentialOf: tracker.credentialOf, dial: unreachable.dial }, SESSION_ID)).toEqual({ ok: false, message: expect.stringContaining("ECONNREFUSED") as unknown });
+  });
+
+  describe("against a host that never answers", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("aborts the request at the read's deadline and reports the timeout, even when the dial ignores the signal", async () => {
+      vi.useFakeTimers();
+      const { tracker } = observedSession();
+      const signals: AbortSignal[] = [];
+      const hung: RcEventDial = {
+        ...dialOf(async () => await Promise.reject(new Error("a worker state read never writes events"))),
+        // Never settles, whatever the signal says: the read must still settle at its deadline.
+        readWorker: async (_sessionId, _headers, signal) => {
+          signals.push(signal);
+          return await new Promise<never>(() => undefined);
+        },
+      };
+      let settled: Awaited<ReturnType<typeof readRcWorkerState>> | undefined;
+      void readRcWorkerState({ credentialOf: tracker.credentialOf, dial: hung }, SESSION_ID).then((result) => {
+        settled = result;
+      });
+      await vi.advanceTimersByTimeAsync(RC_WORKER_READ_TIMEOUT_MS - 1);
+      expect(settled).toBeUndefined();
+      expect(signals[0]?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(signals[0]?.aborted).toBe(true);
+      expect(settled).toEqual({ ok: false, message: expect.stringContaining("did not answer the worker state read") as unknown });
+    });
+
+    it("reports a dial that rejects on the abort as the timeout, not as an unreachable host", async () => {
+      vi.useFakeTimers();
+      const { tracker } = observedSession();
+      const aborting: RcEventDial = {
+        ...dialOf(async () => await Promise.reject(new Error("a worker state read never writes events"))),
+        readWorker: async (_sessionId, _headers, signal) =>
+          await new Promise<never>((_resolve, reject) => {
+            signal.addEventListener("abort", () => {
+              reject(new Error("The operation was aborted"));
+            });
+          }),
+      };
+      const read = readRcWorkerState({ credentialOf: tracker.credentialOf, dial: aborting }, SESSION_ID);
+      await vi.advanceTimersByTimeAsync(RC_WORKER_READ_TIMEOUT_MS);
+      expect(await read).toEqual({ ok: false, message: expect.stringContaining("did not answer the worker state read") as unknown });
+    });
   });
 
   it("refuses an accepted answer that names no worker state rather than reporting an empty one", async () => {
