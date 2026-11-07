@@ -9,7 +9,7 @@ import { PlanClassSchema } from "./plan";
 /** One ranked member as `pool pick --json` prints it. */
 const PoolPickCandidateViewSchema = z.strictObject({
   identity: z.string(),
-  /** In pick order: `scored` has usable quota data, `unknown` has none, `pay-per-use` bills by use, `ineligible` is refused right now. */
+  /** In pick order: `scored` has usable quota data, `unknown` has none and no plan known to bill by use, `pay-per-use` bills by use whether or not usage is recorded, `ineligible` is refused right now. */
   class: z.enum(["scored", "unknown", "pay-per-use", "ineligible"]),
   /** Plan-size-weighted remaining quota per hour until its reset; present for `scored` only. */
   score: z.number().optional(),
