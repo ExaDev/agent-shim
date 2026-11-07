@@ -1,8 +1,14 @@
+import * as nodeFs from "node:fs";
+import * as os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { createRcSessionRegistryReader, rcStatusWithRegistry, withIdentityNames, withRegisteredSessionFacts, type RcRegisteredSession, type RcSessionRegistryFs } from "./rcSessionRegistry";
+import { buildLayoutPaths } from "../paths";
+import { realRcSessionRegistryFs } from "./rcSessionRegistryFs";
+
+import { RC_REGISTRY_ENTRY_MAX_BYTES, createRcSessionRegistryReader, rcRegistryIdentitiesOf, rcStatusWithRegistry, withIdentityNames, withRegisteredSessionFacts, type RcRegisteredSession, type RcSessionRegistryFs } from "./rcSessionRegistry";
 import type { RcSessionStatus } from "./rcSessions";
 
 const CSE_ID = "cse_00000000-0000-4000-8000-000000000001";
@@ -39,6 +45,10 @@ function fakeRegistryFs(files: Readonly<Record<string, string>>, redirects: Read
     realpath: (candidate) => {
       const real = realpathOf(candidate);
       return Object.keys(files).some((file) => file.startsWith(`${real}/`)) ? real : undefined;
+    },
+    statEntry: (candidate) => {
+      const body = files[realpathOf(candidate)];
+      return body === undefined ? undefined : { regular: true, sizeBytes: body.length };
     },
   };
 }
@@ -190,5 +200,90 @@ describe("withIdentityNames", () => {
     expect(result[0]?.identity).toBe("work");
     expect(result[1]).not.toHaveProperty("identity");
     expect(result[2]).not.toHaveProperty("identity");
+  });
+});
+
+describe("the registry reader over a real filesystem it does not own", () => {
+  const roots: string[] = [];
+  afterEach(() => {
+    for (const root of roots.splice(0)) {
+      nodeFs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  /** A real configuration directory with a `sessions` directory, one good entry for a live process, and whatever hostile files the case adds. */
+  function world(addHostile: (sessionsDir: string) => void): ReturnType<typeof createRcSessionRegistryReader> {
+    const root = nodeFs.mkdtempSync(path.join(os.tmpdir(), "rc-registry-"));
+    roots.push(root);
+    const sessionsDir = path.join(root, "sessions");
+    nodeFs.mkdirSync(sessionsDir);
+    nodeFs.writeFileSync(path.join(sessionsDir, "1.json"), entry({ pid: LIVE_PID, bridgeSessionId: BRIDGE_ID, name: "good" }));
+    addHostile(sessionsDir);
+    return createRcSessionRegistryReader({ fs: realRcSessionRegistryFs, identities: () => [{ name: "work", configDir: root }], isRunning: alive });
+  }
+
+  it("skips a directory named like an entry instead of failing the read for every session", () => {
+    const reader = world((dir) => { nodeFs.mkdirSync(path.join(dir, "2.json")); });
+    expect(reader().get(CSE_ID)?.name).toBe("good");
+  });
+
+  it("skips a file it cannot open instead of failing the read for every session", () => {
+    const reader = world((dir) => {
+      const locked = path.join(dir, "2.json");
+      nodeFs.writeFileSync(locked, entry({ pid: OTHER_LIVE_PID, bridgeSessionId: OTHER_BRIDGE_ID }));
+      nodeFs.chmodSync(locked, 0);
+    });
+    const read = reader();
+    expect(read.get(CSE_ID)?.name).toBe("good");
+    // The assertion that makes this case discriminating: where the process can open a mode-0 file (running as root), the file is simply read.
+    expect(read.has(OTHER_CSE_ID)).toBe(process.getuid?.() === 0);
+  });
+
+  it("never opens a FIFO named like an entry, which would block the read forever", () => {
+    const reader = world((dir) => { execFileSync("mkfifo", [path.join(dir, "2.json")]); });
+    expect(reader().get(CSE_ID)?.name).toBe("good");
+  });
+
+  it("never follows a link named like an entry", () => {
+    const reader = world((dir) => { nodeFs.symlinkSync("/dev/zero", path.join(dir, "2.json")); });
+    expect(reader().get(CSE_ID)?.name).toBe("good");
+  });
+
+  it("skips a file larger than any entry can be", () => {
+    const reader = world((dir) => {
+      nodeFs.writeFileSync(path.join(dir, "2.json"), entry({ pid: OTHER_LIVE_PID, bridgeSessionId: OTHER_BRIDGE_ID, padding: "x".repeat(RC_REGISTRY_ENTRY_MAX_BYTES) }));
+    });
+    expect(reader().has(OTHER_CSE_ID)).toBe(false);
+    expect(reader().get(CSE_ID)?.name).toBe("good");
+  });
+});
+
+describe("the identities the registry reader searches", () => {
+  const roots: string[] = [];
+  afterEach(() => {
+    for (const root of roots.splice(0)) {
+      nodeFs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  function store(identities: Readonly<Record<string, string>>): ReturnType<typeof buildLayoutPaths> {
+    const root = nodeFs.mkdtempSync(path.join(os.tmpdir(), "rc-identities-"));
+    roots.push(root);
+    const paths = buildLayoutPaths(root);
+    for (const [id, name] of Object.entries(identities)) {
+      nodeFs.mkdirSync(path.join(paths.identitiesDir, id), { recursive: true });
+      nodeFs.writeFileSync(path.join(paths.identitiesDir, id, "identity.json"), JSON.stringify({ name, allowAmbientCredential: false }));
+    }
+    return paths;
+  }
+
+  it("lists an identity under its name with the directory of its id, which differs from the name after a rename", () => {
+    const paths = store({ work: "client" });
+    expect(rcRegistryIdentitiesOf(paths)).toEqual([{ name: "client", configDir: path.join(paths.identitiesDir, "work") }]);
+  });
+
+  it("lists two identities that claim one name instead of throwing, so one misnamed identity never fails every session's status", () => {
+    const paths = store({ one: "twin", two: "twin" });
+    expect(rcRegistryIdentitiesOf(paths).map((listed) => listed.configDir).sort()).toEqual([path.join(paths.identitiesDir, "one"), path.join(paths.identitiesDir, "two")]);
   });
 });
