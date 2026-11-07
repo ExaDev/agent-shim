@@ -3,6 +3,7 @@ import path from "node:path";
 import { identityIdOver } from "../identityRecords";
 import { isIdentityName } from "../usage/account";
 import type { FarmFs } from "../launcher/ports";
+import { isRecord, readJsonObject } from "../jsonObjectFile";
 import { requireNoClaudeCodeLoginForMint, type ClaudeCodeLoginEnv, type KeychainProbe } from "../keychainLogin";
 import type { RcSelfHostCredentialRecord } from "./rcSelfHost";
 import { RC_SELF_HOST_SCOPE_LIST } from "./rcSelfHostLocal";
@@ -74,26 +75,6 @@ export interface RcSelfHostMintResult {
   readonly recordFile: string;
   /** Whether a previous mint of this door's was replaced. */
   readonly replaced: boolean;
-}
-
-/** The guard every parsed file narrowing goes through, per the codebase's `unknown` discipline. */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** Reads and parses one JSON object file, or undefined when it is absent or not one JSON object. */
-function readJsonObject(fs: Pick<FarmFs, "readFileUtf8">, file: string): Record<string, unknown> | undefined {
-  const raw = fs.readFileUtf8(file);
-  if (raw === undefined) {
-    return undefined;
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-  return isRecord(parsed) ? parsed : undefined;
 }
 
 /** Reads the door's previously minted record, or undefined when none exists (or what exists does not parse). */
