@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
 import { USAGE_SCHEMA_VERSION, type UsageRecord } from "../usage/schema";
-import { committedContextTokens, liveSupervised, readModelMove, requestAccountMove, readSessionState, registerSupervised, removeModelMove, sessionStatePath, stateDirOf, supervisedSessionOf, unregisterSupervised, writeModelMove, writeSessionState, type SupervisedSession } from "./registry";
+import { committedContextTokens, liveSupervised, readModelMove, requestAccountMove, readSessionState, registerSupervised, removeModelMove, sessionStatePath, stateDirOf, readSessionControl, supervisedSessionOf, supervisedSessionOfBridge, unregisterSupervised, writeModelMove, writeSessionControl, writeSessionState, type SupervisedSession } from "./registry";
 
 const paths = buildLayoutPaths("/state");
 const T0 = "2026-10-16T10:00:00.000Z";
@@ -85,6 +85,34 @@ describe("finding a session's registry entry across pools", () => {
     await expect(supervisedSessionOf(fs, paths, "s9", everyoneRunning)).resolves.toMatchObject({ pool: "other", identity: "spare" });
     await expect(supervisedSessionOf(fs, paths, "s9", nobodyRunning)).resolves.toBeUndefined();
     await expect(supervisedSessionOf(fs, paths, "missing", everyoneRunning)).resolves.toBeUndefined();
+  });
+});
+
+describe("finding the supervised session a Remote Control session belongs to", () => {
+  const everyoneRunning = async (pids: readonly number[]): Promise<ReadonlySet<number>> => await Promise.resolve(new Set(pids));
+  const BRIDGE_ROW = JSON.stringify({ type: "bridge-session", sessionId: "local-1", bridgeSessionId: "cse_abc", lastSequenceNum: 4 });
+
+  it("joins by the bridge session id the session's own transcript records, with its control record when the same launcher wrote it", async () => {
+    const fs = createFakeFarmFs({ "/t/one.jsonl": `${JSON.stringify({ type: "user" })}\n`, "/t/two.jsonl": `${BRIDGE_ROW}\n` });
+    registerSupervised(fs, paths, session({ sessionId: "s1" }));
+    registerSupervised(fs, paths, session({ sessionId: "s2", pool: "other" }));
+    writeSessionState(fs, paths, "subs", "s1", { mark: "idle", transcriptPath: "/t/one.jsonl", at: T1 });
+    writeSessionState(fs, paths, "other", "s2", { mark: "idle", transcriptPath: "/t/two.jsonl", at: T1 });
+    writeSessionControl(fs, paths, "other", "s2", { pid: 100, directory: "/plugin" });
+    const found = await supervisedSessionOfBridge(fs, paths, "cse_abc", everyoneRunning);
+    expect(found?.session.sessionId).toBe("s2");
+    expect(found?.control).toEqual({ pid: 100, directory: "/plugin" });
+    await expect(supervisedSessionOfBridge(fs, paths, "cse_other", everyoneRunning)).resolves.toBeUndefined();
+  });
+
+  it("ignores a control record a previous launcher left, and the record goes with the session's entry", async () => {
+    const fs = createFakeFarmFs({ "/t/two.jsonl": `${BRIDGE_ROW}\n` });
+    registerSupervised(fs, paths, session({ sessionId: "s2" }));
+    writeSessionState(fs, paths, "subs", "s2", { mark: "idle", transcriptPath: "/t/two.jsonl", at: T1 });
+    writeSessionControl(fs, paths, "subs", "s2", { pid: 7, directory: "/stale" });
+    expect((await supervisedSessionOfBridge(fs, paths, "cse_abc", everyoneRunning))?.control).toBeUndefined();
+    unregisterSupervised(fs, paths, "subs", "s2");
+    expect(readSessionControl(fs, paths, "subs", "s2")).toBeUndefined();
   });
 });
 

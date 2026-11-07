@@ -91,16 +91,50 @@ export function readSessionState(fs: Pick<RegistryFs, "readFileUtf8">, paths: La
   }
 }
 
+/**
+ * Where a supervised session's in-process control plugin listens, written by its launcher for the front door to read: the plugin directory (its request and result files beneath it, `sessionControlPlugin.ts`) and the launcher's pid, which tells a live channel from one a crashed launcher left. A file of its own, beside the registry entry, because a move rewrites the entry while the plugin, staged once per launcher, stays.
+ */
+const SessionControlSchema = z.strictObject({
+  pid: z.number().int().positive(),
+  directory: z.string().min(1),
+});
+export type SessionControl = z.infer<typeof SessionControlSchema>;
+
+function controlFileOf(paths: LayoutPaths, pool: string, sessionId: string): string {
+  return path.join(superviseDirOf(paths, pool), "control", `${sessionId}.json`);
+}
+
+/** Records where a session's control plugin listens. The session id is a file name, so the caller has checked it is a plain identifier. */
+export function writeSessionControl(fs: RegistryFs, paths: LayoutPaths, pool: string, sessionId: string, control: Readonly<SessionControl>): void {
+  fs.mkdirPrivate(path.dirname(controlFileOf(paths, pool, sessionId)));
+  fs.writeFilePrivate(controlFileOf(paths, pool, sessionId), `${JSON.stringify(SessionControlSchema.parse(control))}\n`);
+}
+
+/** Where a session's control plugin listens, or undefined when its launcher recorded none or what is there is not a record of this schema. */
+export function readSessionControl(fs: Pick<RegistryFs, "readFileUtf8">, paths: LayoutPaths, pool: string, sessionId: string): SessionControl | undefined {
+  const raw = fs.readFileUtf8(controlFileOf(paths, pool, sessionId));
+  if (raw === undefined) {
+    return undefined;
+  }
+  try {
+    const parsed = SessionControlSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Registers a session, or replaces its entry when it moves. The session id is a file name, so the caller has checked it is a plain identifier. */
 export function registerSupervised(fs: RegistryFs, paths: LayoutPaths, session: Readonly<SupervisedSession>): void {
   fs.mkdirPrivate(sessionsDirOf(paths, session.pool));
   fs.writeFilePrivate(sessionFileOf(paths, session.pool, session.sessionId), `${JSON.stringify(SupervisedSessionSchema.parse(session))}\n`);
 }
 
-/** Removes a session's entry and its recorded state. Idempotent. */
+/** Removes a session's entry, its recorded state and its control record. Idempotent. */
 export function unregisterSupervised(fs: RegistryFs, paths: LayoutPaths, pool: string, sessionId: string): void {
   fs.removeRecursive(sessionFileOf(paths, pool, sessionId));
   fs.removeRecursive(sessionStatePath(paths, pool, sessionId));
+  fs.removeRecursive(controlFileOf(paths, pool, sessionId));
 }
 
 /** A registry entry with the file it was read from, so a caller that finds its launcher gone can remove it. */
@@ -236,4 +270,38 @@ export async function supervisedSessionOf(fs: RegistryFs, paths: LayoutPaths, se
     return false;
   });
   return live.find(({ session }) => session.sessionId === sessionId)?.session;
+}
+
+/** The text a transcript's `bridge-session` entry carries for one Remote Control session: Claude Code writes `{"type":"bridge-session","sessionId":<local>,"bridgeSessionId":<cse_ id>,...}` each time the bridge's sequence cursor advances (seen on 2.1.296 and 2.1.319). */
+function bridgeSessionNeedle(bridgeSessionId: string): string {
+  return `"bridgeSessionId":${JSON.stringify(bridgeSessionId)}`;
+}
+
+/** A live supervised session together with what the door needs to act on it: its recorded state and where its control plugin listens. */
+export interface SupervisedBridgeSession {
+  readonly session: SupervisedSession;
+  readonly state: SessionState | undefined;
+  readonly control: SessionControl | undefined;
+}
+
+/**
+ * The live supervised session a Remote Control session (`cse_` id) belongs to, across every pool: the one whose current transcript records that bridge session id, which Claude Code writes into the transcript itself, so the join needs nothing the supervisor or the door kept beside it. Entries whose launcher has gone are removed, as `supervisedSessionOf` does.
+ */
+export async function supervisedSessionOfBridge(fs: RegistryFs, paths: LayoutPaths, bridgeSessionId: string, runningAmong: (pids: readonly number[]) => Promise<ReadonlySet<number>>): Promise<SupervisedBridgeSession | undefined> {
+  const listed = fs.readdir(paths.superviseDir).flatMap((pool) => listSupervised(fs, paths, pool));
+  const running = await runningAmong(listed.map(({ session }) => session.pid));
+  const needle = bridgeSessionNeedle(bridgeSessionId);
+  for (const { file, session } of listed) {
+    if (!running.has(session.pid)) {
+      fs.removeRecursive(file);
+      continue;
+    }
+    const state = readSessionState(fs, paths, session.pool, session.sessionId);
+    const transcript = state?.transcriptPath === undefined ? undefined : fs.readFileUtf8(state.transcriptPath);
+    if (transcript?.includes(needle) === true) {
+      const control = readSessionControl(fs, paths, session.pool, session.sessionId);
+      return { session, state, control: control?.pid === session.pid ? control : undefined };
+    }
+  }
+  return undefined;
 }

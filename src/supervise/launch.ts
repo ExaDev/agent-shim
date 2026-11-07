@@ -20,13 +20,13 @@ import { createCompactionDeps } from "./compactionDeps";
 import { quotaHitOf } from "./limit";
 import { createLifecycleRecorder } from "./lifecycle";
 import { currentConversation, hooksPending } from "./hookGuard";
-import { compactInSession, nativeCompactionReady } from "./nativeCompact";
-import { stageNativeCompactionPlugin, withNativeCompactionPlugin } from "./nativeCompactionPlugin";
+import { compactInSession, sessionControlReady } from "./sessionControl";
+import { stageSessionControlPlugin, withSessionControlPlugin } from "./sessionControlPlugin";
 import { markHooksSettings } from "./marks";
 import { createIdentityMover, createMover } from "./move";
 import { createRealCompactor } from "./realCompact";
 import { realSignalPort, realSupervisedSpawnPort, realTimerPort, realWatchDirectory, realWatchExistingDirectory, resetTerminal } from "./realPorts";
-import { readModelMove, readSessionState, registerSupervised, removeModelMove, unregisterSupervised } from "./registry";
+import { readModelMove, readSessionState, registerSupervised, removeModelMove, unregisterSupervised, writeSessionControl } from "./registry";
 import { stopHooksFinished } from "./stopSummary";
 import { stageSupervisedSettings } from "./settings";
 import { supervise, type CompactionDeps } from "./supervise";
@@ -95,8 +95,9 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
   const markSettings = markHooksSettings(selfInvocation([]), paths.root, pool, first.sessionId);
   const settingsArgs = [...params.extraFlags, ...params.passthrough];
   const settings = hasSettingsArgument(settingsArgs) ? combineCallerSettings(settingsArgs, markSettings, (name) => farm.fs.readFileUtf8(path.resolve(farm.cwd, name))) : undefined;
-  const plugin = policy?.compactBeforeLimit === true ? stageNativeCompactionPlugin() : undefined;
-  if (policy?.compactBeforeLimit === true && plugin !== undefined) {
+  // Every supervised launch loads the control plugin: the supervisor compacts through it when the pool asks for that, and the door reaches the session through it for the goal and compaction verbs, finding it through the directory the registry entry names.
+  const plugin = stageSessionControlPlugin();
+  if (policy?.compactBeforeLimit === true) {
       const baseCompaction = createCompactionDeps({
         paths,
         fs: realFarmFs,
@@ -116,7 +117,7 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
         },
         compact: createRealCompactor({ paths, spawnDaemon: params.spawnDaemon }),
       });
-      compaction = { ...baseCompaction, live: { ready: () => nativeCompactionReady(plugin), compact: async (conversationId, signal) => await compactInSession(plugin, conversationId, signal) } };
+      compaction = { ...baseCompaction, live: { ready: () => sessionControlReady(plugin), compact: async (conversationId, signal) => await compactInSession(plugin, conversationId, signal) } };
   }
   const mover = createMover({
     paths,
@@ -157,20 +158,19 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
       lifecycle,
       prepare: (nextLaunch) => {
         const plan = params.prepare(nextLaunch);
-        if (plugin === undefined) return plan;
         rmSync(plugin.ready, { force: true });
-        return { ...plan, args: withNativeCompactionPlugin(plan.args, plugin.directory) };
+        return { ...plan, args: withSessionControlPlugin(plan.args, plugin.directory) };
       },
       spawn: realSupervisedSpawnPort,
       signals: realSignalPort,
       timer: realTimerPort,
       watchChanges: (identity, onChange) => {
-        const stopPlugin = plugin === undefined ? undefined : realWatchExistingDirectory(plugin.directory, (filename) => filename === "ready.json", "the compaction plugin", log)(onChange);
+        const stopPlugin = realWatchExistingDirectory(plugin.directory, (filename) => filename === "ready.json", "the control plugin", log)(onChange);
         const stopSnapshot = realWatchDirectory(paths.usageSnapshotsDir, (filename) => filename === `${identity}.json`, `${identity}'s usage`, log)(onChange);
         const stopSession = watchSessionFiles({ paths, pool, sessionId: first.sessionId, watchTranscript: compaction !== undefined, fs: realFarmFs, log, watch: { directory: realWatchDirectory, existingDirectory: realWatchExistingDirectory } })(onChange);
-        if (plugin !== undefined && nativeCompactionReady(plugin)) queueMicrotask(onChange);
+        if (sessionControlReady(plugin)) queueMicrotask(onChange);
         return () => {
-          stopPlugin?.();
+          stopPlugin();
           stopSnapshot();
           stopSession();
         };
@@ -203,6 +203,7 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
       ...(compaction === undefined ? {} : { compaction }),
       register: (session) => {
         registerSupervised(realFarmFs, paths, session);
+        writeSessionControl(realFarmFs, paths, pool, session.sessionId, { pid: session.pid, directory: plugin.directory });
       },
       unregister: (sessionId) => {
         unregisterSupervised(realFarmFs, paths, pool, sessionId);
@@ -220,6 +221,6 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
     );
   } finally {
     staged?.release();
-    plugin?.release();
+    plugin.release();
   }
 }
