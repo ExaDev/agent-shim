@@ -138,6 +138,11 @@ describe("slash commands on the door's own self-hosted surface", () => {
     const unbound = makeWorld([], undefined, { target: undefined });
     const refused = await runSelfHostedSlashCommand(unbound.deps, SESSION, { kind: "goal-clear" }, undefined, NEVER);
     expect(refused.ok ? "" : refused.message).toContain("self-hosted surface is not bound");
+    // A name, even one that resolves to this machine, is refused: the guard takes literal loopback addresses only.
+    const named = makeWorld([], undefined, { target: { host: "localhost", port: 47_592 } });
+    const refusedNamed = await runSelfHostedSlashCommand(named.deps, SESSION, { kind: "goal-clear" }, undefined, NEVER);
+    expect(refusedNamed.ok ? "" : refusedNamed.message).toContain("which is not this machine");
+    expect(named.written).toEqual([]);
     const elsewhere = makeWorld([], undefined, { target: { host: "api.anthropic.com", port: 443 } });
     const refusedElsewhere = await runSelfHostedSlashCommand(elsewhere.deps, SESSION, { kind: "goal-clear" }, undefined, NEVER);
     expect(refusedElsewhere.ok ? "" : refusedElsewhere.message).toContain("which is not this machine");

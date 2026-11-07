@@ -18,8 +18,8 @@ const RC_PERSON_CLIENT_PLATFORM = "web_claude_ai";
 /** The brand only `rcSelfHostEventDial` puts on a dial: not exported, so no other code can make a value of the type. */
 const SELF_HOST_DIAL: unique symbol = Symbol("the door's own self-hosted surface");
 
-/** The loopback names a dial to the door's own surface may name; anything else is another machine, the real API host above all. */
-const LOOPBACK_HOSTS: readonly string[] = ["127.0.0.1", "::1", "localhost"];
+/** The loopback addresses a dial to the door's own surface may name, as literals: a name would make the guard depend on how it resolves. Anything else is another machine, the real API host above all. */
+const LOOPBACK_HOSTS: readonly string[] = ["127.0.0.1", "::1"];
 
 /**
  * A dial that reaches the door's own self-hosted surface and nothing else: the one dial a command written as a person's app may ride. Unlike the client half's other dials (`lateRcEventDial`), which fall back to the real API host while no target is resolved, this one refuses: a write whose target is not resolved, or resolves to anything but a loopback address, is never sent.
