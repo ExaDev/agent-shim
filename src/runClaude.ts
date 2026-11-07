@@ -94,7 +94,7 @@ export async function runClaude(argvOverride?: readonly string[]): Promise<void>
   await refreshUsage(identityDecision.pool);
 
   // On a terminal, a launch with no identity, a pool pick that would change account, or an identity that is refused right now asks which identity to run as (and `--pick` always does), after the usage it ranks on is current.
-  const picked = await pickLaunchIdentity({ paths, farm, parsed: nativeArgv, decision: identityDecision });
+  const picked = await pickLaunchIdentity({ paths, farm, parsed: nativeArgv, decision: identityDecision, env: procForDecision.env });
   if (picked.kind === "cancelled") {
     throw new IdentityPickerCancelledError();
   }
