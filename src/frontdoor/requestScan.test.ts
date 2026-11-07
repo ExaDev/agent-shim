@@ -82,3 +82,19 @@ describe("scanRequestHead when the client aborts the body", () => {
     expect(uncaught).toEqual([]);
   });
 });
+
+describe("scanRequestHead over a body whose characters span chunks", () => {
+  it("decodes a multi-byte character split across a chunk boundary whole, so a rewrite from the text keeps the body", async () => {
+    const body = JSON.stringify({ model: "claude-haiku-5-5", messages: [{ role: "user", content: "naïve 漢字 🙂" }] });
+    const bytes = Buffer.from(body, "utf8");
+    // Every split point, so each multi-byte character is cut somewhere inside it by one of them.
+    for (let split = 1; split < bytes.length; split += 1) {
+      const source = new PassThrough();
+      const scanning = scanRequestHead(requestOver(source), true);
+      source.write(bytes.subarray(0, split));
+      source.end(bytes.subarray(split));
+      const scan = await scanning;
+      expect(scan.text, `split at byte ${String(split)}`).toBe(body);
+    }
+  });
+});
