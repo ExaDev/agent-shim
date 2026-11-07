@@ -81,9 +81,18 @@ A goal's condition and a compaction's instructions are directives to the receivi
 
 That is why they sit behind a grant of their own. The MCP server exposes `rc_goalSet` and `rc_compactWithInstructions` only under `--allow-remote-control-directives` (or `agent-shim mcp permissions allow remote-control-directives`), which `--allow-remote-control` does not imply, so an agent given the Remote Control tools, a supervised session's own model among them, cannot direct other sessions unless that grant was given too. Holding the door's control token (the owner-only file the CLI and the typed API read) grants every procedure, as it always has.
 
-## Inbound platform rewriting (not built)
+## Verified end to end
 
-The door relays the worker's inbound stream for a real-service session, so it could leave its own write honest (`claude_code_cli`, as `send` writes it) and change `client_platform` to `web_claude_ai` on the relayed copy of the events it wrote itself, which would make the worker run the command. That is not built: the worker's decision would rest on a value the service never stated, and the plugin route already reaches every supervised session without it.
+On Claude Code 2.1.319 in the isolated self-hosted lab (`scripts/rc-self-host-lab.mts`, whose leak check found nothing forwarded upstream and no blind tunnel beyond the CLI's updater and marketplace dials), through the lab door's `frontdoor rc` verbs:
+
+- A supervised Remote Control session (a pool with `resumeOnLimit`, launched with `--remote-control`) was found by its `bridge-session` row, and every verb took the supervised route: goal get with none set, goal set, goal get with the goal, a second goal set naming the goal it replaced, goal clear, compact, and compact with instructions. A goal set starts a turn (its directive reaches the model); a request that arrives while that turn waits on a permission prompt is answered only once the session is idle, which is why every request is bounded by the wait.
+- On the same door, a session no supervisor owns took the self-hosted route for goal set, get and clear and for compact, which ended on a `trigger: "manual"` boundary.
+- `send "/goal <condition>"` with the session's own platform left no goal set: the worker read it as a peer's message.
+- The worker reads its inbound events over SSE at `GET /v1/code/sessions/{id}/worker/events/stream` (its debug log names `SSETransport`), and the user, assistant and `compact_boundary` events it writes carry the uuids of the transcript rows they mirror; `system` `init` and `status` events and the `result` have no transcript row.
+
+## Inbound platform rewriting (not built, not yet verified live)
+
+The door relays the worker's inbound stream for a real-service session, so it could leave its own write honest (`claude_code_cli`, as `send` writes it) and change `client_platform` to `web_claude_ai` on the relayed copy of the events it wrote itself, which would make the worker run the command: the worker reads the field from the payload on its SSE stream, and runs a slash command whose payload names a person's app. That is not built: the worker's decision would rest on a value the service never stated, and the plugin route already reaches every supervised session without it. It is not yet verified live either, because the only place it applies is the relay to the real service, which the isolated lab does not reach.
 
 ## Self-hosted mode
 
