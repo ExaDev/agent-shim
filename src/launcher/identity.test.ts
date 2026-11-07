@@ -42,15 +42,45 @@ describe("decideIdentity", () => {
     expect(reads).toEqual([]);
   });
 
-  it("skips resolution entirely when CLAUDE_CONFIG_DIR is already set, even if every other source would resolve one", () => {
+  it("skips resolution when CLAUDE_CONFIG_DIR is already set and nothing on the command line names an identity, whatever else would resolve one", () => {
     const result = decideIdentity({
       ...baseParams,
-      env: { CLAUDE_CONFIG_DIR: "/somewhere/else" },
-      argv0Identity: "work",
+      env: { CLAUDE_CONFIG_DIR: "/somewhere/else", AGENT_SHIM_IDENTITY: "from-env" },
       directoryPinnedIdentity: "pinned",
       readActiveIdentityFile: () => "persisted",
     });
     expect(result).toEqual({ source: "config-dir-escape-hatch", configDirEscapeHatch: true });
+  });
+
+  it("lets an identity named on the command line outrank an inherited CLAUDE_CONFIG_DIR, recording the directory it set aside", () => {
+    const result = decideIdentity({
+      ...baseParams,
+      env: { CLAUDE_CONFIG_DIR: "/somewhere/else", AGENT_SHIM_IDENTITY: "from-env" },
+      argv0Identity: "work",
+      directoryPinnedIdentity: "pinned",
+      readActiveIdentityFile: () => "persisted",
+    });
+    expect(result).toEqual({ name: "work", source: "argv", configDirEscapeHatch: false, supersededConfigDir: "/somewhere/else" });
+  });
+
+  it("lets a pool named on the command line outrank an inherited CLAUDE_CONFIG_DIR", () => {
+    const result = decideIdentity({ ...baseParams, env: { CLAUDE_CONFIG_DIR: "/somewhere/else" }, argv0Identity: "pool:fleet" });
+    expect(result).toEqual({ pool: "fleet", source: "argv", configDirEscapeHatch: false, supersededConfigDir: "/somewhere/else" });
+  });
+
+  it("records no superseded directory when the identity is named and no CLAUDE_CONFIG_DIR is inherited", () => {
+    expect(decideIdentity({ ...baseParams, env: { CLAUDE_CONFIG_DIR: "" }, argv0Identity: "work" })).not.toHaveProperty("supersededConfigDir");
+    expect(decideIdentity({ ...baseParams, argv0Identity: "work" })).not.toHaveProperty("supersededConfigDir");
+  });
+
+  it("applies the escape hatch above AGENT_SHIM_IDENTITY, since both are environment", () => {
+    const result = decideIdentity({ ...baseParams, env: { CLAUDE_CONFIG_DIR: "/somewhere/else", AGENT_SHIM_IDENTITY: "from-env" } });
+    expect(result).toMatchObject({ source: "config-dir-escape-hatch", configDirEscapeHatch: true });
+    expect(result.name).toBeUndefined();
+  });
+
+  it("still refuses an unsafe command-line selector when CLAUDE_CONFIG_DIR is inherited", () => {
+    expect(() => decideIdentity({ ...baseParams, env: { CLAUDE_CONFIG_DIR: "/somewhere/else" }, argv0Identity: "../../x" })).toThrow(UnsafeNameError);
   });
 
   it("treats an empty-string CLAUDE_CONFIG_DIR as unset, falling through to argv", () => {
