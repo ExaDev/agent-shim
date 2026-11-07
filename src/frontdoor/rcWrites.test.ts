@@ -356,6 +356,21 @@ describe("the control_response payload and answerRcControlRequest over an inject
       expect(dialled).toHaveLength(1);
     });
 
+    it("releases the claim when the write fails, so a second answer is then delivered", async () => {
+      const tracker = trackerWithQuestion();
+      const refusing = dialOf(async () => await Promise.reject(new Error("ECONNREFUSED")));
+      const failed = await answerRcControlRequest(depsOf(tracker, refusing), SESSION_ID, QUESTION_ID, { approve: true, message: undefined, choices: [["SQLite"], ["lint"]] });
+      expect(failed.ok ? "delivered" : failed.message).toContain("could not reach the API host");
+      const { dial, dialled } = dialRecording();
+      expect((await answerRcControlRequest(depsOf(tracker, dial), SESSION_ID, QUESTION_ID, { approve: true, message: undefined, choices: [["SQLite"], ["lint"]] })).ok).toBe(true);
+      expect(dialled).toHaveLength(1);
+      // An answer the API refused (a non-success status) releases the claim the same way.
+      const second = trackerWithQuestion();
+      const refusedStatus = dialOf(async () => await Promise.resolve({ status: HTTP_STATUS.unauthorized, body: "{}" }));
+      expect((await answerRcControlRequest(depsOf(second, refusedStatus), SESSION_ID, QUESTION_ID, { approve: true, message: undefined, choices: [["SQLite"], ["lint"]] })).ok).toBe(false);
+      expect(second.claimPending(SESSION_ID, QUESTION_ID)).toBeDefined();
+    });
+
     it("dismisses a question with a plain denial", async () => {
       const tracker = trackerWithQuestion();
       const { dial, dialled } = dialRecording();
