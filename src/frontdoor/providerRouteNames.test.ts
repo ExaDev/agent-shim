@@ -2,8 +2,7 @@ import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
-import type { CodexRoutePorts } from "../codex/route";
-import { fakeAuth, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
+import { unreachedCodexRoutePorts } from "../codex/testing";
 import type { ModelsConfig } from "../config/schema";
 import { FAKE_HOME, fakeAsyncCredentials, fakeFs, mainLoopRoutesOfLiveSessions } from "../test-helpers";
 import { createProviderRouteResolver } from "./providerRoute";
@@ -13,24 +12,11 @@ const PROVIDERS_DIR = `${FAKE_HOME}/.agent-shim/providers`;
 const OWN_PORT = 4100;
 const httpProvider = { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z" }] } };
 
-/** The codex ports the resolver mounts, none of which these tests reach. */
-function codexPorts(): Omit<CodexRoutePorts, "loadProvider"> {
-  const fetch = recordingFetch(() => {
-    throw new Error("these tests never answer an upstream call");
-  });
-  return {
-    upstreams: sameUpstreamForEveryLogin({ fetch: fetch.fetch, auth: fakeAuth(), timers: { after: () => () => undefined }, randomId: () => "random" }),
-    writeUsageSnapshot: () => undefined,
-    now: () => 0,
-    log: () => undefined,
-  };
-}
-
 function resolver(files: Record<string, unknown>, models?: ModelsConfig, accountMoves?: (sessionId: string, to: string, model: string) => Promise<boolean>): ReturnType<typeof createProviderRouteResolver> {
   return createProviderRouteResolver({ log: () => undefined, now: () => 0, mainLoopRoutes: mainLoopRoutesOfLiveSessions(),
     fs: fakeFs(files),
     providersDir: PROVIDERS_DIR,
-    codexPorts: codexPorts(),
+    codexPorts: unreachedCodexRoutePorts(),
     directPort: () => OWN_PORT,
     env: { Z: "tok-from-z" },
     credentials: fakeAsyncCredentials(),

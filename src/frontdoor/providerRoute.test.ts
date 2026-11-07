@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { CodexRoutePorts } from "../codex/route";
 import type { ModelsConfig } from "../config/schema";
 import { HTTP_STATUS } from "../codex/http";
-import { fakeAuth, fakeResponse, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
+import { fakeAuth, fakeResponse, recordingFetch, sameUpstreamForEveryLogin, unreachedCodexRoutePorts } from "../codex/testing";
 import { FAKE_HOME, admitLaunchToken, fakeAsyncCredentials, fakeFs, followsLaunchFlag, mainLoopRoutesOfLiveSessions } from "../test-helpers";
 import type { FsPort } from "../launcher/ports";
 import type { UsageSnapshot } from "../usage/schema";
@@ -41,21 +41,8 @@ const TEXT_TURN = [
   { type: "response.completed", response: { id: "resp_1", status: "completed", usage: { input_tokens: 9, output_tokens: 2 } } },
 ];
 
-/** The codex ports the resolver mounts, faked to the shape the real front-door process wires: a recording fetch and the fixed-token auth store. */
-function codexPorts(): Omit<CodexRoutePorts, "loadProvider"> {
-  const fetch = recordingFetch(() => {
-    throw new Error("these tests never answer an upstream call");
-  });
-  return {
-    upstreams: sameUpstreamForEveryLogin({ fetch: fetch.fetch, auth: fakeAuth(), timers: { after: () => () => undefined }, randomId: () => "random" }),
-    writeUsageSnapshot: () => undefined,
-    now: () => 0,
-    log: () => undefined,
-  };
-}
-
 function resolver(files: Record<string, unknown>, directPort = OWN_PORT, models?: unknown, accountMoves?: (sessionId: string, to: string, model: string) => Promise<boolean>): ReturnType<typeof createProviderRouteResolver> {
-  return createProviderRouteResolver({ log: () => undefined, now: () => 0, mainLoopRoutes: mainLoopRoutesOfLiveSessions(), fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => directPort, env: { Z: "tok-from-z" }, ...(models === undefined ? {} : { models: () => models as ModelsConfig | undefined }), ...(accountMoves === undefined ? {} : { accountMoves }), credentials: fakeAsyncCredentials() });
+  return createProviderRouteResolver({ log: () => undefined, now: () => 0, mainLoopRoutes: mainLoopRoutesOfLiveSessions(), fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: unreachedCodexRoutePorts(), directPort: () => directPort, env: { Z: "tok-from-z" }, ...(models === undefined ? {} : { models: () => models as ModelsConfig | undefined }), ...(accountMoves === undefined ? {} : { accountMoves }), credentials: fakeAsyncCredentials() });
 }
 
 function request(url: string, body = "{}"): RoutedRequest {
@@ -130,6 +117,12 @@ describe("createProviderRouteResolver", () => {
     }
   });
 
+  it("never rides a self-hosted session's bare /v1/ target on the pass-through to the real API, however it reached the pipeline", async () => {
+    const selfHosted: RoutedRequest = { ...request("/v1/messages"), session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, projectId: undefined, selfHosted: true } };
+    expect(await resolver({})(selfHosted)).toMatchObject({ ok: false, status: HTTP_STATUS.notFound });
+    expect(await resolver({ [`${PROVIDERS_DIR}/z.json`]: httpProvider })({ ...selfHosted, url: "/providers/z/v1/messages" })).toMatchObject({ ok: true });
+  });
+
   it("resolves a bare name only the models block defines on every session, and keeps a name the session's own provider serves itself", async () => {
     const plain = (model: string): RoutedRequest => ({
       ...request("/v1/messages", JSON.stringify({ model, max_tokens: 16, messages: [{ role: "user", content: "hi" }] })),
@@ -137,7 +130,7 @@ describe("createProviderRouteResolver", () => {
     });
     // `fast` is only the block's to serve; `glm-5.3` z serves itself, so it stays z's own.
     const models: ModelsConfig = { virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] }, "glm-5.3": { mode: "ordered", members: ["z/glm-5.3", "s/glm-5.3"] } } };
-    const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0, mainLoopRoutes: mainLoopRoutesOfLiveSessions(), fs: fakeFs({ [`${PROVIDERS_DIR}/z.json`]: httpProvider, [`${PROVIDERS_DIR}/s.json`]: { displayName: "S", baseUrl: "https://api.synthetic.new/anthropic", credential: { sources: [{ literal: "s-token" }] } } }), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => OWN_PORT, env: { Z: "tok-from-z" }, credentials: fakeAsyncCredentials(), models: () => models, targets: () => ["z/glm-5.3", "s/glm-5.3"] });
+    const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0, mainLoopRoutes: mainLoopRoutesOfLiveSessions(), fs: fakeFs({ [`${PROVIDERS_DIR}/z.json`]: httpProvider, [`${PROVIDERS_DIR}/s.json`]: { displayName: "S", baseUrl: "https://api.synthetic.new/anthropic", credential: { sources: [{ literal: "s-token" }] } } }), providersDir: PROVIDERS_DIR, codexPorts: unreachedCodexRoutePorts(), directPort: () => OWN_PORT, env: { Z: "tok-from-z" }, credentials: fakeAsyncCredentials(), models: () => models, targets: () => ["z/glm-5.3", "s/glm-5.3"] });
     const fast = await resolve(plain("fast"));
     if (!fast.ok) throw new Error(fast.message);
     expect(fast.route.name).toBe("http:z");
@@ -195,7 +188,7 @@ describe("createProviderRouteResolver", () => {
       session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, projectId: undefined },
     });
     const models: ModelsConfig = { virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } };
-    const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0, mainLoopRoutes: mainLoopRoutesOfLiveSessions(), fs: fakeFs({ [`${PROVIDERS_DIR}/z.json`]: httpProvider }), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => OWN_PORT, env: { Z: "tok-from-z" }, credentials: fakeAsyncCredentials(), models: () => models, targets: () => ["z/glm-5.3"] });
+    const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0, mainLoopRoutes: mainLoopRoutesOfLiveSessions(), fs: fakeFs({ [`${PROVIDERS_DIR}/z.json`]: httpProvider }), providersDir: PROVIDERS_DIR, codexPorts: unreachedCodexRoutePorts(), directPort: () => OWN_PORT, env: { Z: "tok-from-z" }, credentials: fakeAsyncCredentials(), models: () => models, targets: () => ["z/glm-5.3"] });
 
     const virtual = await resolve(byName("fast"));
     expect(virtual.ok).toBe(true);
@@ -386,7 +379,7 @@ describe("the credential an http provider's route attaches", () => {
     const upstream = await fakeUpstream();
     const mutable = mutableFs();
     mutable.files[`${PROVIDERS_DIR}/z.json`] = { displayName: "Z", baseUrl: `http://127.0.0.1:${String(upstream.port)}`, credential: { sources: [{ literal: "z-first-token" }] } };
-    const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0, mainLoopRoutes: mainLoopRoutesOfLiveSessions(), fs: mutable.fs, providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => OWN_PORT, env: {}, credentials: fakeAsyncCredentials() });
+    const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0, mainLoopRoutes: mainLoopRoutesOfLiveSessions(), fs: mutable.fs, providersDir: PROVIDERS_DIR, codexPorts: unreachedCodexRoutePorts(), directPort: () => OWN_PORT, env: {}, credentials: fakeAsyncCredentials() });
     const door = await startDoor(resolve);
     try {
       expect((await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: "launch-token-for-tests" }, body: "{}" })).status).toBe(HTTP_STATUS.ok);
@@ -535,7 +528,7 @@ describe("per-request routing by model", () => {
       [`${PROVIDERS_DIR}/spent.json`]: { displayName: "Spent", baseUrl: `http://127.0.0.1:${String(spent.port)}`, credential: { sources: [{ literal: "spent-token" }] } },
       [`${PROVIDERS_DIR}/fresh.json`]: { displayName: "Fresh", baseUrl: `http://127.0.0.1:${String(fresh.port)}`, credential: { sources: [{ literal: "fresh-token" }] } },
     };
-    const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0, mainLoopRoutes: mainLoopRoutesOfLiveSessions(), fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => OWN_PORT, env: {}, credentials: fakeAsyncCredentials(), usageSnapshotOf: (identity) => (identity === "work" ? snapshot : undefined) });
+    const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0, mainLoopRoutes: mainLoopRoutesOfLiveSessions(), fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: unreachedCodexRoutePorts(), directPort: () => OWN_PORT, env: {}, credentials: fakeAsyncCredentials(), usageSnapshotOf: (identity) => (identity === "work" ? snapshot : undefined) });
     const server = createFrontDoorServer(
       async (pipelineRequest) => {
         await serveRouted(pipelineRequest, { resolveRoute: resolve, canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [], admit: admitLaunchToken("launch-token-for-tests"), now: () => 0, log: () => undefined });
@@ -676,7 +669,7 @@ describe("a router provider", () => {
     };
     const models: ModelsConfig = { virtual: { fast: { mode: "ordered", members: ["z/one", "m/two"] } } };
     const snapshot: UsageSnapshot = { schemaVersion: 1, identity: "work", updatedAt: new Date(0).toISOString(), providers: { z: { lastRequestAt: new Date(0).toISOString(), lastStatus: 200, rateLimit: { observedAt: new Date(0).toISOString(), headers: {}, unified: { sevenDay: { utilization: 1, resetsAt: new Date(DAY_RESET_MS).toISOString(), status: "rejected" } } } } } };
-    const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0, mainLoopRoutes: mainLoopRoutesOfLiveSessions(), fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => OWN_PORT, env: {}, credentials: fakeAsyncCredentials(), models: () => models, usageSnapshotOf: (identity) => (identity === "work" ? snapshot : undefined) });
+    const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0, mainLoopRoutes: mainLoopRoutesOfLiveSessions(), fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: unreachedCodexRoutePorts(), directPort: () => OWN_PORT, env: {}, credentials: fakeAsyncCredentials(), models: () => models, usageSnapshotOf: (identity) => (identity === "work" ? snapshot : undefined) });
     const server = createFrontDoorServer(
       async (pipelineRequest) => {
         await serveRouted(pipelineRequest, { resolveRoute: resolve, canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [], admit: admitLaunchToken("launch-token-for-tests"), now: () => 0, log: () => undefined });
@@ -824,7 +817,7 @@ describe("a family and the capabilities it carries", () => {
   const spentZ: UsageSnapshot = { schemaVersion: 1, identity: "work", updatedAt: new Date(0).toISOString(), providers: { z: { lastRequestAt: new Date(0).toISOString(), lastStatus: 200, rateLimit: { observedAt: new Date(0).toISOString(), headers: {}, unified: { sevenDay: { utilization: 1, resetsAt: new Date(DAY_RESET_MS).toISOString(), status: "rejected" } } } } } };
 
   const resolverOf = (models: ModelsConfig, snapshot?: UsageSnapshot): ReturnType<typeof createProviderRouteResolver> =>
-    createProviderRouteResolver({ log: () => undefined, now: () => 0, mainLoopRoutes: mainLoopRoutesOfLiveSessions(), fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => OWN_PORT, env: {}, credentials: fakeAsyncCredentials(), models: () => models, targets: () => targets, ...(snapshot === undefined ? {} : { usageSnapshotOf: () => snapshot }) });
+    createProviderRouteResolver({ log: () => undefined, now: () => 0, mainLoopRoutes: mainLoopRoutesOfLiveSessions(), fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: unreachedCodexRoutePorts(), directPort: () => OWN_PORT, env: {}, credentials: fakeAsyncCredentials(), models: () => models, targets: () => targets, ...(snapshot === undefined ? {} : { usageSnapshotOf: () => snapshot }) });
 
   /** A routing session's request for `model`, its body optionally carrying an image block. */
   const asked = (model: string, withImage = false): RoutedRequest => ({
