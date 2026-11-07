@@ -1,3 +1,44 @@
+## [11.88.0](https://github.com/ExaDev/agent-shim/compare/v11.87.5...v11.88.0) (2026-11-07)
+
+### Features
+
+* **cli:** add frontdoor rc events to follow every observed session ([9efa9df](https://github.com/ExaDev/agent-shim/commit/9efa9dfb78f6e79821f0a0f06b7453e0efd57c39)), references [#724](https://github.com/ExaDev/agent-shim/issues/724)
+* **frontdoor:** record Remote Control session transitions in one cursor log ([18b7d80](https://github.com/ExaDev/agent-shim/commit/18b7d8027fa5aec7ee6bfaa1da7a11c3faff0cb9)), references [#724](https://github.com/ExaDev/agent-shim/issues/724)
+* **frontdoor:** serve every Remote Control session's transitions as one stream ([13e1d44](https://github.com/ExaDev/agent-shim/commit/13e1d446705a70d2562c06cec67094e215400649)), references [#724](https://github.com/ExaDev/agent-shim/issues/724)
+
+### Bug Fixes
+
+* **cli:** name the last cursor when frontdoor rc events stops ([09dfa66](https://github.com/ExaDev/agent-shim/commit/09dfa663200b0c223a7a2ea521891ffaef75d5b7)), references [#724](https://github.com/ExaDev/agent-shim/issues/724)
+* **cli:** name the resume cursor when Ctrl-C leaves frontdoor rc events ([fd64631](https://github.com/ExaDev/agent-shim/commit/fd646316e3720e929e7a41f547d43c4ec811d219)), references [#724](https://github.com/ExaDev/agent-shim/issues/724)
+* **frontdoor:** birth a Remote Control session once, on an accepted call ([6edc5b0](https://github.com/ExaDev/agent-shim/commit/6edc5b0b82e09e28fcb9f092ae83d4c954740090)), references [#724](https://github.com/ExaDev/agent-shim/issues/724)
+* **frontdoor:** bound the session event log by bytes, field by field ([246ad34](https://github.com/ExaDev/agent-shim/commit/246ad342576cead9435aed0bc703e8a2eec8a061)), references [#724](https://github.com/ExaDev/agent-shim/issues/724)
+* **frontdoor:** cap a session events page at one consumer buffer ([7b48fc9](https://github.com/ExaDev/agent-shim/commit/7b48fc9be5b2ea6196f780e76090ea45bbc48abb)), references [#724](https://github.com/ExaDev/agent-shim/issues/724)
+* **frontdoor:** copy every stored session event field, cut or not ([f1bbd87](https://github.com/ExaDev/agent-shim/commit/f1bbd87e22c6bbd7a640e516be74aa5da2cf0f7c)), references [#724](https://github.com/ExaDev/agent-shim/issues/724)
+* **frontdoor:** cut session event fields on a code point boundary ([4be1a20](https://github.com/ExaDev/agent-shim/commit/4be1a2005a14530aea3f4bb91c2d8976bcafd498)), references [#724](https://github.com/ExaDev/agent-shim/issues/724)
+* **frontdoor:** default and cap the session events page size ([f8212df](https://github.com/ExaDev/agent-shim/commit/f8212dfd1803541303f522fcfc3c0fbec980f14e)), references [#724](https://github.com/ExaDev/agent-shim/issues/724)
+* **frontdoor:** deliver session events appended just before the log closed ([7338724](https://github.com/ExaDev/agent-shim/commit/73387245e2470d5631d0e85c11530c38d46bceef)), references [#724](https://github.com/ExaDev/agent-shim/issues/724)
+* **frontdoor:** end session events followers when the door retires ([7e04d2f](https://github.com/ExaDev/agent-shim/commit/7e04d2fc9c479d8ac7be143e98c803b7f93d1144)), references [#724](https://github.com/ExaDev/agent-shim/issues/724)
+* **frontdoor:** fix a session events follower's start when it is created ([0cefc9e](https://github.com/ExaDev/agent-shim/commit/0cefc9e3b7358350de0e232e12dda80bddb43b62)), references [#724](https://github.com/ExaDev/agent-shim/issues/724)
+* **frontdoor:** name the head on every session events page ([ba5be75](https://github.com/ExaDev/agent-shim/commit/ba5be75828076fff2e9db6e0e4ff5b8321d8066c)), references [#724](https://github.com/ExaDev/agent-shim/issues/724)
+* **frontdoor:** never re-birth a control request already retired ([b22083c](https://github.com/ExaDev/agent-shim/commit/b22083c4018f4c40fc6492527e2cb4b4b9c5b5ee)), references [#724](https://github.com/ExaDev/agent-shim/issues/724)
+* **frontdoor:** remove a session events follower's abort listener when it ends ([a1e2d1f](https://github.com/ExaDev/agent-shim/commit/a1e2d1f4b9f7e13ea81215f0d0564ef8b4532489)), references [#724](https://github.com/ExaDev/agent-shim/issues/724)
+* **frontdoor:** store each cut session event field in its own string ([1a89c9e](https://github.com/ExaDev/agent-shim/commit/1a89c9e0ba1ed0b2369829f217bf53be9a2fb195)), references [#724](https://github.com/ExaDev/agent-shim/issues/724)
+
+### Code Refactoring
+
+* **frontdoor:** read the longest session event kind off its schema ([48bc621](https://github.com/ExaDev/agent-shim/commit/48bc6213e7e1363067ce072e5d2eb9f48c6b5f53)), references [#724](https://github.com/ExaDev/agent-shim/issues/724)
+
+### Documentation
+
+* describe the Remote Control session event stream ([1d44e02](https://github.com/ExaDev/agent-shim/commit/1d44e0227637c6cf18a33786f4177378b0e1c1e3)), references [#724](https://github.com/ExaDev/agent-shim/issues/724)
+* state per backend what covers each session event ([b4dbb60](https://github.com/ExaDev/agent-shim/commit/b4dbb60390e88852ebc2809ee0912245887bd202)), references [#724](https://github.com/ExaDev/agent-shim/issues/724)
+* state which Remote Control sessions the session event stream covers ([2b12043](https://github.com/ExaDev/agent-shim/commit/2b1204384b4e76151ad33c6fde5f51a07aba52a8)), references [#724](https://github.com/ExaDev/agent-shim/issues/724)
+
+### Tests
+
+* **frontdoor:** follow the session events of both Remote Control backends ([29e6008](https://github.com/ExaDev/agent-shim/commit/29e600833e344894f550cdff4349e368998880f1)), references [#724](https://github.com/ExaDev/agent-shim/issues/724)
+* **frontdoor:** give each session events API case its own log ([3e953dc](https://github.com/ExaDev/agent-shim/commit/3e953dcccd9d2a2737559091b0e2a71f3288157b)), references [#724](https://github.com/ExaDev/agent-shim/issues/724)
+
 ## [11.87.5](https://github.com/ExaDev/agent-shim/compare/v11.87.4...v11.87.5) (2026-11-07)
 
 ### Bug Fixes
