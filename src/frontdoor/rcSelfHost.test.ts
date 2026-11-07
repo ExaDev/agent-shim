@@ -104,6 +104,7 @@ async function makeWorld(record: RcSelfHostCredentialRecord | null = RECORD, opt
     credentialRecord: () => held,
     webFetch,
     ownsLaunch: () => true,
+    ownsPeer: async () => await Promise.resolve(true),
     log: (line) => {
       logLines.push(line);
     },

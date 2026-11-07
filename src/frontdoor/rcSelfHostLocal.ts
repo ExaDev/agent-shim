@@ -69,16 +69,18 @@ export interface RcSelfHostLocalDeps {
   readonly readBody: (request: IncomingMessage, capBytes: number) => Promise<string>;
   /** Whether the launch holding a tunnel's capability is a self-hosted session's (see `rcSelfHostLaunches.ts`): handed to the connect surface, which decides by it which requests reach this surface at all. */
   readonly ownsLaunch: (capability: string) => boolean;
+  /** The same decision for a redirected connection, by the local port of its client end (see `rcSelfHostLaunches.ts`). */
+  readonly ownsPeer: (port: number) => Promise<boolean>;
   /** Where the surface writes one line per call it answers in place of a real host, and per refusal it makes; absent, nothing is logged. */
   readonly log?: (line: string) => void;
 }
 
-/** The local surface the self-hosted service hands to the connect surface: which hosts it takes over as HTTP, and the requests it answers itself. */
+/** The local surface the self-hosted service hands to the connect surface: which sessions are the mode's, and the requests it answers itself. */
 export interface RcSelfHostLocal {
-  /** The hosts whose terminated sessions this surface needs parsed as HTTP (the control-plane host, normally byte-tapped). */
-  readonly parsesHost: (host: string) => boolean;
   /** Whether the launch holding a tunnel's capability is a self-hosted session's. */
   readonly ownsLaunch: (capability: string) => boolean;
+  /** Whether the redirected connection whose client end is on local port `port` is a self-hosted session's, attributed by its peer process. */
+  readonly ownsPeer: (port: number) => Promise<boolean>;
   /**
    * Serves one request of a self-hosted session (the connect surface calls it for no other): everything except what the routed pipeline must serve, which resolves false so routing continues unchanged. That is the Remote Control session family on the API host, and every `/v1/` path of a provider session (it carries its provider's internal header), whose inference the resolver sends to that provider; every other path on either host is answered here, so nothing of a self-hosted session reaches a real host.
    */
@@ -102,8 +104,8 @@ export function createRcSelfHostLocal(deps: RcSelfHostLocalDeps): RcSelfHostLoca
     answerServerJson(response, offline.status, offline.body);
   };
   return {
-    parsesHost: (host: string): boolean => host === RC_SELF_HOST_OAUTH_HOST,
     ownsLaunch: deps.ownsLaunch,
+    ownsPeer: deps.ownsPeer,
     serve: async (host: string, request: IncomingMessage, response: ServerResponse): Promise<boolean> => {
       const method = (request.method ?? "").toUpperCase();
       const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;

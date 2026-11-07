@@ -401,17 +401,15 @@ export interface ConnectServerHandle {
 }
 
 /**
- * A surface the connect layer consults before it routes or pipes anything: the door's self-hosted Remote Control answers (see `rcSelfHost.ts`). Which sessions it owns is decided once per terminated session from the tunnel it arrived on, never from a request's headers: a CONNECT tunnel whose launch `ownsLaunch` names, and every connection the transparent surface terminates, since a redirected connection carries no launch to attribute it to and the mode fails closed. An owned session's requests go to `serve` first, its upgrades and blind tunnels are refused, and nothing it sends reaches a real host except what the routed pipeline serves; every other session is served exactly as with no surface at all. Absent, every request keeps exactly the behaviour it has today.
- *
- * A host this surface needs to parse (`parsesHost`) is served as ordinary HTTP even when it is named as a tap host: the tap exists because that host's channel could not be safely parsed, so taking it over is the surface's own explicit decision, made only for the mode whose contract already excludes the traffic the tap protects.
+ * A surface the connect layer consults before it routes or pipes anything: the door's self-hosted Remote Control answers (see `rcSelfHost.ts`). Which sessions it owns is decided once per terminated session, before the session is chosen and never from a request's headers: a CONNECT tunnel by the launch whose capability it presented (`ownsLaunch`), and a redirected connection, which carries no capability, by the process holding its other end (`ownsPeer`), failing closed when that process cannot be read. An owned session is served by a session set that parses every intercept host as HTTP (the tap hosts included, since the surface answers their traffic itself and the tap protects only traffic that is forwarded): its requests go to `serve` first, its upgrades and blind tunnels are refused, and nothing it sends reaches a real host except what the routed pipeline serves. Every other session is served by the ordinary set, exactly as with no surface at all, tap hosts tapped. Absent, every request keeps exactly the behaviour it has today.
  */
 export interface ConnectLocalSurface {
-  /** Whether this surface needs one host's terminated sessions parsed as HTTP rather than byte-tapped. */
-  readonly parsesHost: (host: string) => boolean;
   /** Serves one request of a session the surface owns (the connect surface consults it for no other); resolves false when the request is for the routed pipeline, so routing continues unchanged. */
   readonly serve: (host: string, request: IncomingMessage, response: ServerResponse) => Promise<boolean>;
   /** Whether the launch whose capability a CONNECT tunnel presented is one this surface owns: its requests are served by `serve`, its upgrades refused and its blind tunnels refused, whatever any request presents. */
   readonly ownsLaunch: (capability: string) => boolean;
+  /** Whether a redirected connection whose client end is on local port `port` is one this surface owns: attributed by the process holding that end, since a redirect carries no launch capability. Resolves true when the connection cannot be attributed at all, so an unattributable session fails closed. */
+  readonly ownsPeer: (port: number) => Promise<boolean>;
 }
 
 /** The statuses the surface answers one request on a terminated session with when it neither serves nor forwards it. */
@@ -437,23 +435,9 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
   const ledger = createConnectionLedger(config.limits, config.isLiveCapability);
   /** The deadline of each terminated session a retiring surface took on, disarmed by its first request (see `serveSecure`). */
   const lateSessionDeadlines = new WeakMap<net.Socket, NodeJS.Timeout>();
-  // Whether each terminated session is the local surface's, decided once from the tunnel it arrived on: a tunnel's launch cannot change while the tunnel is open, and every request and upgrade on it is decided the same way.
+  // Whether each terminated session is the local surface's: decided before the session is chosen (from the CONNECT tunnel's launch, or a redirected connection's peer process) and recorded by the session set that serves it, so every request and upgrade on it is decided the same way.
   const owned = new WeakMap<net.Socket, boolean>();
-  const ownedBySurface = (secure: net.Socket): boolean => {
-    const surface = config.localSurface;
-    if (surface === undefined) {
-      return false;
-    }
-    const known = owned.get(secure);
-    if (known !== undefined) {
-      return known;
-    }
-    const capability = tunnelTokens.get(secure);
-    // A session with no tunnel capability, or the transparent surface's own, arrived by redirect and names no launch: it is the surface's, so an unattributable session fails closed.
-    const decided = capability === undefined || capability === "" || capability === config.transparentCapability || surface.ownsLaunch(capability);
-    owned.set(secure, decided);
-    return decided;
-  };
+  const ownedBySurface = (secure: net.Socket): boolean => owned.get(secure) === true;
   // One HTTP parser per intercept host, so each handler knows by closure which host's session it serves and therefore which upstream a non-routed path is piped to. No socket-to-host bookkeeping to get wrong: the only path into a session's handler is that host's acceptor.
   // An upgrade request is relayed, never parsed: the client wants a 101 and a raw byte channel after it (Remote Control's websocket to the API host is exactly this), which no request/response forwarding can carry. The relay splices the client's TLS session to a fresh TLS connection to the session's real host, byte for byte, using the same pump a tap host uses; the capture records the upgrade's head, and the frames after it flow unrecorded.
   const onUpgrade = (host: string) => (request: IncomingMessage, socket: Duplex, head: Buffer) => {
@@ -473,8 +457,9 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
     // The relayed websocket is teed like a tap host's stream when capturing is on: the door never parses the frames, but the capture records them both directions so the channel's protocol can be decoded offline (see `wsFrames.ts`).
     pumpTapSession(socket, async (clientAlpn) => await effects.connectTlsUpstream(host, HTTPS_PORT, clientAlpn), config.capture?.tapStream?.(host), Buffer.from(headText, "utf8"));
   };
-  const sessions = config.interceptHosts.map((host) => {
-    if (config.tapHosts.includes(host) && !(config.localSurface?.parsesHost(host) ?? false)) {
+  // Two session sets: the one every session not the local surface's is served by (each tap host byte-tapped, exactly as with no surface), and, when a surface is configured, the one its sessions are served by (every host parsed, since the surface answers them itself). A session is handed to one set or the other once its ownership is known, before its TLS is terminated on a CONNECT tunnel.
+  const sessionsFor = (ownedSet: boolean): readonly InterceptSession[] => config.interceptHosts.map((host) => {
+    if (config.tapHosts.includes(host) && !ownedSet) {
       const serveSecure = (secure: net.Socket): void => {
         pumpTapSession(secure, async (clientAlpn) => await effects.connectTlsUpstream(host, HTTPS_PORT, clientAlpn), config.capture?.tapStream?.(host));
       };
@@ -522,6 +507,7 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
     const httpSession = effects.createHttpSession(handler, onUpgrade(host));
     const serveSecure = (secure: net.Socket, capability: string): void => {
       tunnelTokens.set(secure, capability);
+      owned.set(secure, ownedSet);
       if (ledger.retiring()) {
         // A session that reached a retiring surface was accepted before the listener stopped: it is served one request (see `handleHostRequest`), and one that makes none within the time a CONNECT head is given is ended, so it cannot hold the retirement open.
         const deadline = setTimeout(() => {
@@ -535,22 +521,42 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
     const tlsAcceptor = effects.createTlsAcceptor(config.leafFor(host), serveSecure);
     return { host, serveSecure, httpSession, tlsAcceptor };
   });
+  const sessions = sessionsFor(false);
+  const ownedSessions = config.localSurface === undefined ? undefined : sessionsFor(true);
   // The listener owns teardown of everything it accepted: destroying the raw CONNECT socket ends both the blind tunnels and the TLS sessions layered on top of them.
   const listener = await effects.listenLoopback(source, (socket) => {
-    handleConnect(socket, { config, effects, sessions, ledger });
+    handleConnect(socket, { config, effects, sessions, ownedSessions, ledger });
   });
 
   const apiSession = sessions.find((session) => session.host === config.routedHost);
   const sessionByHost = new Map(sessions.map((session) => [session.host, session]));
+  const ownedSessionByHost = new Map((ownedSessions ?? []).map((session) => [session.host, session]));
   // The transparent surface's terminator: one handshake whose SNI name selects the leaf, because a redirect sends every host sharing the API host's address here and each must be terminated as the host it named, never with the API host's certificate.
-  const sniAcceptor = effects.createSniTlsAcceptor(config.interceptHosts, config.leafFor, (secure, host) => {
-    const session = sessionByHost.get(host);
+  const serveRedirected = (secure: net.Socket, host: string, isOwned: boolean): void => {
+    const session = (isOwned ? ownedSessionByHost : sessionByHost).get(host);
     if (session === undefined) {
       // The acceptor fails the handshake of every name it was not given, and it was given exactly the intercept hosts these sessions cover, so reaching here means the acceptor itself misrouted; dropping the session is the fail-closed answer.
       secure.destroy();
       return;
     }
     session.serveSecure(secure, config.transparentCapability ?? "");
+  };
+  // A redirected connection names no launch, so with a local surface configured it is attributed by the process holding its other end (`ownsPeer`) before a session set is chosen. Nothing reads the TLS session meanwhile (no data listener is attached until the session serves it), so whatever the client sends waits in the socket's buffer; with no surface the session is served at once, exactly as before. An attribution that fails is the surface's, failing closed.
+  const sniAcceptor = effects.createSniTlsAcceptor(config.interceptHosts, config.leafFor, (secure, host) => {
+    const surface = config.localSurface;
+    if (surface === undefined) {
+      serveRedirected(secure, host, false);
+      return;
+    }
+    surface.ownsPeer(secure.remotePort ?? 0).then(
+      (isOwned) => {
+        serveRedirected(secure, host, isOwned);
+      },
+      (error: unknown) => {
+        config.log?.(`connect: attributing a redirected ${host} connection failed, so it is served as the local surface's: ${error instanceof Error ? error.message : String(error)}`);
+        serveRedirected(secure, host, true);
+      },
+    );
   });
   const transparent =
     config.transparentPort === undefined || apiSession === undefined
@@ -566,7 +572,7 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
     await listener.close();
     await transparent?.close();
     sniAcceptor.close();
-    for (const { httpSession, tlsAcceptor } of sessions) {
+    for (const { httpSession, tlsAcceptor } of [...sessions, ...(ownedSessions ?? [])]) {
       tlsAcceptor.close();
       httpSession?.close();
     }
@@ -602,6 +608,8 @@ interface ConnectionContext {
   readonly config: ConnectServerConfig;
   readonly effects: ConnectEffects;
   readonly sessions: readonly InterceptSession[];
+  /** The session set the local surface's sessions are served by, when a surface is configured. */
+  readonly ownedSessions: readonly InterceptSession[] | undefined;
   readonly ledger: ConnectionLedger;
 }
 
@@ -812,7 +820,7 @@ function proxyAuthorizationOf(head: string): string | undefined {
  * Applies the decision for one received CONNECT head: authenticate it, then route it. Authentication comes before anything else the head says is acted on, so a client without a live capability learns nothing and causes nothing: no target is parsed for it, dialled or intercepted, and its only answer is 407 with the challenge naming the scheme the surface accepts.
  */
 function routeConnect(socket: net.Socket, head: string, context: ConnectionContext): void {
-  const { config, effects, sessions, ledger } = context;
+  const { config, effects, sessions, ownedSessions, ledger } = context;
   const credential = proxyAuthorizationOf(head);
   const capability = credential === undefined ? undefined : capabilityFromProxyAuthorization(credential);
   if (capability === undefined || !config.isLiveCapability(capability)) {
@@ -827,8 +835,10 @@ function routeConnect(socket: net.Socket, head: string, context: ConnectionConte
     refuse(socket, REFUSAL.badRequest, target === undefined ? [] : [`${REFUSAL_HEADER}: ${target.refusal}`]);
     return;
   }
-  const session = sessions.find((entry) => entry.host === target.host);
-  if (session === undefined && config.localSurface?.ownsLaunch(capability) === true) {
+  // The tunnel's launch decides, once and before its TLS is terminated, which session set serves it and whether a blind tunnel is refused.
+  const isOwned = config.localSurface?.ownsLaunch(capability) === true;
+  const session = (isOwned && ownedSessions !== undefined ? ownedSessions : sessions).find((entry) => entry.host === target.host);
+  if (session === undefined && isOwned) {
     config.capture?.refusedTunnel(target);
     refuseWithReason(socket, REFUSAL.forbidden, SELF_HOSTED_TUNNEL_REFUSAL, `the front door's self-hosted Remote Control mode does not tunnel to ${target.host}: a self-hosted session reaches no host the door does not serve itself`);
     return;
