@@ -130,7 +130,7 @@ export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
               if (held.get(status.id) === holding) {
                 held.delete(status.id);
               }
-              deps.noteReadWorkerState(status.id, read.workerStatus);
+              deps.noteReadWorkerState(status.id, read.workerStatus, holding.requestedAt);
             } else {
               unavailable.set(status.id, read.message);
             }
@@ -155,7 +155,7 @@ export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
     const nowTracked = new Set(deps.statusOf(sessionId).map((status) => status.id));
     for (const session of readUnobserved) {
       if (nowTracked.has(session.id) && session.workerState !== undefined) {
-        deps.noteReadWorkerState(session.id, session.workerState.value);
+        deps.noteReadWorkerState(session.id, session.workerState.value, session.workerState.observedAt);
       }
     }
     // Re-read after the filing, so a state that crossed the door while the reads were in flight is the one reported, and a session that expired meanwhile is no longer listed.
