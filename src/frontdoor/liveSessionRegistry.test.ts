@@ -273,4 +273,21 @@ describe("live session registry", () => {
       expect(registry.modelsOf("s-live")).toBeUndefined();
     });
   });
+  describe("whether a launch carries a session id", () => {
+    it("answers a held session id from memory, finds a launch that registered since the last rescan, and loses a launch with the launch", () => {
+      const { fs, counts, reset } = countedWorld();
+      writeFrontDoorSession(fs, dir, { pid: LIVE, startedAt: 0, token: "a", ...recordOf({ sessionId: "s-live" }) });
+      const registry = createLiveSessionRegistry({ fs, sessionsDir: dir });
+      registry.rescan();
+      reset();
+      expect(registry.holdsSession("s-live")).toBe(true);
+      expect(counts).toEqual({ readdirs: 0, stats: 0, reads: [] });
+      writeFrontDoorSession(fs, dir, { pid: LATE, startedAt: 1, token: "late-token", ...recordOf({ sessionId: "s-late" }) });
+      expect(registry.holdsSession("s-late")).toBe(true);
+      expect(registry.holdsSession("unknown")).toBe(false);
+      const listed = registry.rescan();
+      registry.forget(pruneDeadFrontDoorSessions(fs, dir, listed, () => false));
+      expect(registry.holdsSession("s-live")).toBe(false);
+    });
+  });
 });
