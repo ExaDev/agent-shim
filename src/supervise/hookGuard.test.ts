@@ -52,4 +52,17 @@ describe("hook guards", () => {
     guard.finish(false, false);
     expect(hooksPending(fs, paths, POOL, SESSION)).toBe(true);
   });
+
+  it("reuses a failed hook's marker when its process id is reused", () => {
+    const fs = createFakeFarmFs({});
+    const deps = { fs, paths, now: () => FAKE_NOW_MS, isRunning: () => true, sleep: () => undefined, pid: FIRST, maxAttempts: 1 };
+    announceHook(deps, POOL, SESSION).acquire().finish(false, false);
+    const stop = announceHook(deps, POOL, SESSION).acquire();
+    expect(hooksPending(fs, paths, POOL, SESSION)).toBe(true);
+    stop.finish(true, false);
+    expect(hooksPending(fs, paths, POOL, SESSION)).toBe(true);
+    const next = announceHook(deps, POOL, SESSION).acquire();
+    next.finish(true, true);
+    expect(hooksPending(fs, paths, POOL, SESSION)).toBe(false);
+  });
 });
