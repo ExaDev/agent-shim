@@ -66,11 +66,15 @@ function noCredentialMessage(sessionId: string): string {
 }
 
 /**
- * One read's answer, with when it was made. An answer stands in for a fresh one, for `RC_IDLE_EXPIRY_MS`, wherever nothing on the tracker can hold it: a failed read of a tracked session, and any read of an unobserved one. A status is polled (the web client asks on a short timer), so without a bound every poll would cost one service request per such session; the bound is the tracker's own idle expiry, the span after which the door already treats a session's last observed facts as stale.
+ * One read, held from the moment it is made: while it is in flight every caller asking about the same session shares it, and once it settles its answer stands in for a fresh one, for `RC_IDLE_EXPIRY_MS` from when it settled, wherever nothing on the tracker can hold it (a failed read of a tracked session, and any read of an unobserved one). A status is polled (the web client asks on a short timer, and several surfaces may ask at once), so without the hold every caller would cost one service request per such session; the bound is the tracker's own idle expiry, the span after which the door already treats a session's last observed facts as stale.
  */
 interface HeldRead {
-  readonly at: number;
-  readonly result: RcWorkerStateReadResult;
+  /** When the read was made, which is the instant its answer describes. */
+  readonly requestedAt: number;
+  /** The read itself, settled or not. */
+  readonly result: Promise<RcWorkerStateReadResult>;
+  /** When the read settled; undefined while it is in flight. */
+  settledAt: number | undefined;
 }
 
 /** The status read the door's surfaces serve, holding the reads the tracker cannot (`RC_IDLE_EXPIRY_MS`). */
@@ -81,22 +85,27 @@ export type RcStatusResolver = (sessionId?: string) => Promise<RcStatusReport>;
  */
 export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
   const held = new Map<string, HeldRead>();
-  const heldRead = async (sessionId: string, credentialOf: (id: string) => RcObservedCredential | undefined): Promise<RcWorkerStateReadResult> => {
-    const now = deps.now();
+  /** Whether a held read still stands in for a fresh one: in flight, or settled within the bound. */
+  const stands = (read: HeldRead, now: number): boolean => read.settledAt === undefined || now - read.settledAt < RC_IDLE_EXPIRY_MS;
+  // The entry is filed before the read is awaited, so a caller arriving while it is in flight shares it rather than making its own. This also bounds the fan-out: each session has at most one read outstanding however many callers ask, and the sessions asked about are the Remote Control sessions on one machine, each a running Claude Code process, so no further concurrency cap is needed.
+  const heldRead = (sessionId: string, credentialOf: (id: string) => RcObservedCredential | undefined): HeldRead => {
     const previous = held.get(sessionId);
-    if (previous !== undefined && now - previous.at < RC_IDLE_EXPIRY_MS) {
-      return previous.result;
+    if (previous !== undefined && stands(previous, deps.now())) {
+      return previous;
     }
-    const result = await readRcWorkerState({ credentialOf, dial: deps.dial }, sessionId);
-    held.set(sessionId, { at: now, result });
-    return result;
+    const read: HeldRead = { requestedAt: deps.now(), result: readRcWorkerState({ credentialOf, dial: deps.dial }, sessionId), settledAt: undefined };
+    held.set(sessionId, read);
+    void read.result.then(() => {
+      read.settledAt = deps.now();
+    });
+    return read;
   };
 
   return async (sessionId) => {
     const now = deps.now();
-    // A held read past its bound is dropped, so the map holds only the sessions still being asked about.
+    // A settled read past its bound is dropped, so the map holds only the sessions still being asked about.
     for (const [id, read] of held) {
-      if (now - read.at >= RC_IDLE_EXPIRY_MS) {
+      if (!stands(read, now)) {
         held.delete(id);
       }
     }
@@ -109,10 +118,13 @@ export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
         tracked
           .filter((status) => status.workerState === undefined)
           .map(async (status) => {
-            const read = await heldRead(status.id, deps.credentialOf);
+            const holding = heldRead(status.id, deps.credentialOf);
+            const read = await holding.result;
             if (read.ok) {
-              // A tracked session's state is filed on its record, so the held failure (if any) has nothing left to stand in for.
-              held.delete(status.id);
+              // A tracked session's state is filed on its record, so the held read has nothing left to stand in for (unless a newer read has replaced it meanwhile).
+              if (held.get(status.id) === holding) {
+                held.delete(status.id);
+              }
               deps.noteReadWorkerState(status.id, read.workerStatus);
             } else {
               unavailable.set(status.id, read.message);
@@ -125,8 +137,9 @@ export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
           if (deps.persistedCredentialOf(session.id)?.authorization === undefined) {
             return { ...base, reason: neverObservedReason(), workerState: undefined, workerStateUnavailable: noCredentialMessage(session.id) };
           }
-          const read = await heldRead(session.id, deps.persistedCredentialOf);
-          const at = held.get(session.id)?.at ?? now;
+          const holding = heldRead(session.id, deps.persistedCredentialOf);
+          const read = await holding.result;
+          const at = holding.requestedAt;
           return read.ok
             ? { ...base, reason: quietReason(), workerState: { value: read.workerStatus, observedAt: at, source: "read" }, workerStateUnavailable: undefined }
             : { ...base, reason: quietReason(), workerState: undefined, workerStateUnavailable: read.message };
