@@ -48,6 +48,8 @@ export const TEST_CAPABILITY = "connect-test-capability";
 /** The session id the world's fake routed backend names when a Remote Control create arrives, and the sequence number its fake upstream assigns an injected event: fixed values so the assertions name exactly what the scripted fakes answered. */
 export const RC_TEST_SESSION_ID = "cse_00000000-0000-4000-8000-000000000001";
 export const RC_TEST_SEQUENCE_NUM = 7;
+/** The worker state the fake upstream's worker record names, which a read-state test expects the door to report. */
+export const RC_TEST_READ_WORKER_STATUS = "idle";
 
 /** The `Proxy-Authorization` header a client derives from a launch's `HTTPS_PROXY` URL, built from the URL the launcher would set so the test exercises the same encoding round trip a real client does. */
 export function proxyAuthorizationFor(token: string): string {
@@ -239,6 +241,13 @@ export function makeTlsWorld(
       // The read receipt the attachment owes for what it read: accepted, the answer an accepted receipt earns.
       res.writeHead(HTTP_OK, { "content-type": "application/json", "content-length": 2 });
       res.end("{}");
+      return;
+    }
+    if (options.rc !== undefined && req.method === "GET" && (req.url ?? "").startsWith("/v1/code/sessions/") && (req.url ?? "").endsWith("/worker")) {
+      // The worker record the door's status read fetches: the protocol's documented shape.
+      const answer = JSON.stringify({ worker: { session_id: RC_TEST_SESSION_ID, worker_epoch: 1, worker_status: RC_TEST_READ_WORKER_STATUS, external_metadata: {} } });
+      res.writeHead(HTTP_OK, { "content-type": "application/json", "content-length": String(answer.length) });
+      res.end(answer);
       return;
     }
     if (options.rc !== undefined && req.method === "POST" && (req.url ?? "").startsWith("/v1/code/sessions/") && (req.url ?? "").endsWith("/events")) {

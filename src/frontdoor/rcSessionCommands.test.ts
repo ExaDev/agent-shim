@@ -80,6 +80,7 @@ function selfHostedWorld(version: string | undefined, unavailable?: string, acce
       return await Promise.resolve(accepts ? { status: 200, body: JSON.stringify({ results: [{ sequence_num: String(written.length) }] }) } : { status: 500, body: "the self-hosted surface refused the write" });
     },
     writeTeleportEvents: async () => await Promise.reject(new Error("unused")),
+    readWorker: async () => await Promise.reject(new Error("unused")),
   }));
   const selfHost: RcSelfHostCommandDeps = {
     personWrite: { credentialOf: () => ({ authorization: "Bearer sk-ant-oat", anthropicVersion: undefined, anthropicClientPlatform: "claude_code_cli" }), noteSequenceNums: () => undefined, newUuid: () => "00000000-0000-4000-8000-000000000001", dial },

@@ -17,7 +17,8 @@ import type { RcRateLimitInfo } from "./rcSchemas";
 import { mintRcSelfHostCredential, type RcSelfHostMintResult } from "./rcSelfHostMint";
 import { RC_GOAL_CLEAR_WORDS, RC_SESSION_COMMAND_MAX_WAIT_MS, RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "./rcSessionCommands";
 import type { RcQuestionSelection } from "./rcQuestions";
-import { RC_PENDING_PER_SESSION_MAX, rcExcerpt, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
+import { MS_PER_SECOND, RC_PENDING_PER_SESSION_MAX, rcExcerpt, type RcPendingRequestSummary, type RcSessionSummary, type RcWorkerStateFact } from "./rcSessions";
+import type { RcStatusReport } from "./rcStatus";
 import { RC_CONTEXT_USAGE_DETAILS, RC_PERMISSION_MODES, RC_READ_FILE_ENCODINGS, isRcContextUsageDetail, isRcPermissionMode, isRcReadFileEncoding, type RcEventWriteResult } from "./rcWrites";
 import type { RcStreamEvent } from "./rcSchemas";
 
@@ -48,32 +49,40 @@ export function formatRcSessionList(sessions: readonly RcSessionSummary[]): stri
   return sessions.map((session) => `${session.id}  created ${new Date(session.createdAt).toISOString()}  last seen ${new Date(session.lastSeenAt).toISOString()}`);
 }
 
-/** Formats `agent-shim frontdoor rc status`: one line per observed session, its worker facts, and its pending control requests indented beneath. */
-export function formatRcSessionStatus(statuses: readonly RcSessionStatus[]): string[] {
-  if (statuses.length === 0) {
-    return ["no Remote Control sessions observed"];
+/** The worker state as one phrase: the state and whether it was observed or read, or why there is none. */
+function formatRcWorkerState(fact: RcWorkerStateFact | undefined, unavailable: string | undefined): string {
+  if (fact === undefined) {
+    return `state unknown${unavailable === undefined ? "" : `: ${unavailable}`}`;
+  }
+  return `state ${fact.value} ${fact.source === "read" ? "as read from the service at" : "since"} ${new Date(fact.observedAt).toISOString()}`;
+}
+
+/** The facts that say which session a status entry is, on one line, each only when known: the name and identity, the model a tracked session stated, the process of a tracked session (an unobserved entry names its own on its first line) and the working directory; undefined when none is known. */
+function formatRcIdentification(entry: { readonly name?: string | undefined; readonly identity?: string | undefined; readonly model?: string | undefined; readonly pid?: number | undefined; readonly cwd?: string | undefined }): string | undefined {
+  const parts = [
+    entry.name === undefined ? undefined : `name ${JSON.stringify(entry.name)}`,
+    entry.identity === undefined ? undefined : `identity ${entry.identity}`,
+    entry.model === undefined ? undefined : `model ${entry.model}`,
+    entry.pid === undefined ? undefined : `pid ${String(entry.pid)}`,
+    entry.cwd === undefined ? undefined : `cwd ${JSON.stringify(entry.cwd)}`,
+  ].filter((part) => part !== undefined);
+  return parts.length === 0 ? undefined : parts.join("  ");
+}
+
+/** Formats `agent-shim frontdoor rc status`: one line per tracked session, its worker facts, and its pending control requests indented beneath, then one line per registered session the door holds no record of, with why and its worker state. */
+export function formatRcSessionStatus(report: RcStatusReport): string[] {
+  if (report.statuses.length === 0 && report.unobserved.length === 0) {
+    return ["no Remote Control sessions observed or registered"];
   }
   const lines: string[] = [];
-  for (const status of statuses) {
+  for (const status of report.statuses) {
     lines.push(`${status.id}  created ${new Date(status.createdAt).toISOString()}  last seen ${new Date(status.lastSeenAt).toISOString()}`);
-    const identification = [
-      status.name === undefined ? undefined : `name ${JSON.stringify(status.name)}`,
-      status.identity === undefined ? undefined : `identity ${status.identity}`,
-      status.model === undefined ? undefined : `model ${status.model}`,
-      status.pid === undefined ? undefined : `pid ${String(status.pid)}`,
-      status.cwd === undefined ? undefined : `cwd ${JSON.stringify(status.cwd)}`,
-    ].filter((part) => part !== undefined);
-    if (identification.length > 0) {
-      lines.push(`  session: ${identification.join("  ")}`);
+    const identification = formatRcIdentification(status);
+    if (identification !== undefined) {
+      lines.push(`  session: ${identification}`);
     }
-    const worker =
-      status.workerState === undefined && status.workerIdleSeconds === undefined
-        ? "not observed"
-        : [
-            status.workerState === undefined ? "state unknown" : `state ${status.workerState.value} since ${new Date(status.workerState.observedAt).toISOString()}`,
-            status.workerIdleSeconds === undefined ? "idle unknown" : `idle ${String(status.workerIdleSeconds.value)} s as of ${new Date(status.workerIdleSeconds.observedAt).toISOString()}`,
-          ].join(", ");
-    lines.push(`  worker: ${worker}`);
+    const idle = status.workerIdleSeconds === undefined ? "idle unknown" : `idle ${String(status.workerIdleSeconds.value)} s as of ${new Date(status.workerIdleSeconds.observedAt).toISOString()}`;
+    lines.push(`  worker: ${formatRcWorkerState(status.workerState, status.workerStateUnavailable)}, ${idle}`);
     if (status.pending.length === 0) {
       lines.push("  pending: none");
     } else {
@@ -85,6 +94,15 @@ export function formatRcSessionStatus(statuses: readonly RcSessionStatus[]): str
     if (status.pendingDropped !== undefined) {
       lines.push(`  pending dropped: ${String(status.pendingDropped)} request(s) not listed (the per-session cap, or an id the protocol does not mint)`);
     }
+  }
+  for (const session of report.unobserved) {
+    lines.push(`${session.id}  unobserved  local session ${session.localSessionId}  pid ${String(session.pid)}`);
+    const identification = formatRcIdentification({ name: session.name, identity: session.identity, cwd: session.cwd });
+    if (identification !== undefined) {
+      lines.push(`  session: ${identification}`);
+    }
+    lines.push(`  reason: ${session.reason}`);
+    lines.push(`  worker: ${formatRcWorkerState(session.workerState, session.workerStateUnavailable)}`);
   }
   return lines;
 }
@@ -152,9 +170,6 @@ export function parseRcChoiceFlags(choose: readonly string[], other: readonly st
 
 /** The percent scale, the one unit a whole-percentage rendering divides by. */
 const PERCENT_SCALE = 100;
-
-/** The milliseconds in one second, the unit that converts the payload's own unix-epoch-second reset instants into the epoch milliseconds `Date` reads. */
-const MS_PER_SECOND = 1_000;
 
 /** One utilization fraction as a whole percentage, rounded: the fraction the payload reports (which may exceed 1 when usage runs past a window's cap) stated at the precision a one-line read wants. */
 function percentOf(fraction: number): string {
@@ -266,16 +281,16 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
   withExamples(
     rc
       .command("status")
-      .description("Report each observed Remote Control session's worker state and idle from its latest observed heartbeat and registration, with its pending control requests. Read-only.")
+      .description("Report each observed Remote Control session's worker state and idle from its latest observed heartbeat and registration (or, when none was observed, the state read from the service), with its pending control requests, then each session registered on this machine that the door holds no record of, with why. Read-only.")
       .argument("[session]", "One cse_ session id, as `frontdoor rc list` shows it; every observed session when omitted.")
-      .option("--json", "Print the statuses as JSON.")
+      .option("--json", "Print the status report as JSON.")
       .action(async (session: string | undefined, options: Readonly<{ json?: boolean }>) => {
-        const statuses = await frontDoorRcControlFromState(realFarmFs, paths).statusOf(session);
+        const report = await frontDoorRcControlFromState(realFarmFs, paths).statusOf(session);
         if (options.json === true) {
-          printJson({ statuses });
+          printJson(report);
           return;
         }
-        for (const line of formatRcSessionStatus(statuses)) {
+        for (const line of formatRcSessionStatus(report)) {
           console.log(line);
         }
       }),
@@ -292,7 +307,7 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
         const control = frontDoorRcControlFromState(realFarmFs, paths);
         const pending = await control.pendingOf(session);
         // The status read carries how many requests each session had that the door did not list, so a question dropped at the cap is visible here rather than only in `rc status`.
-        const dropped = (await control.statusOf(session)).flatMap((status) => (status.pendingDropped === undefined ? [] : [{ sessionId: status.id, count: status.pendingDropped }]));
+        const dropped = (await control.statusOf(session)).statuses.flatMap((status) => (status.pendingDropped === undefined ? [] : [{ sessionId: status.id, count: status.pendingDropped }]));
         if (options.json === true) {
           printJson({ pending, ...(dropped.length === 0 ? {} : { dropped }) });
           return;

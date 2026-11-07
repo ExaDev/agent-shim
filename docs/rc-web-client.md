@@ -25,7 +25,7 @@ The page speaks the door's existing typed API directly, with no client library: 
 
 What the page drives:
 
-- `rc/status` (all sessions): the session list, refreshed on a short poll and on demand.
+- `rc/status` (all sessions): the session list, refreshed on a short poll and on demand. A worker state the door read from the service rather than observed is marked `(read)`, a missing one shows its reason on hover, and a session registered on the machine that the door holds no record of is listed as `unobserved`, under its name where the registry holds one, with its reason on hover; such a row cannot be selected, since the door has no record to send or answer through.
 - `events.subscribe` (every source, or an `rc`-only filter): the live feed. Reconnects on any drop; because the door's event backbone holds no replay, a reconnect starts at the live head, and the per-source sequence numbers surface whatever the gap swallowed as a visible "dropped events" line rather than hiding it.
 - `rc/send`: the prompt box, to the selected session.
 - `rc/pending` (the selected session, or all): the approval cards, and for a pending question its questions with one radio button or checkbox per option and a free-text box. The poll redraws the list only when the pending requests change, so a pick or typed text survives every refresh until it is sent.

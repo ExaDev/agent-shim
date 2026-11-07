@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
 
-import { createRcSessionTracker, RC_REQUEST_PARSE_CAP_BYTES, type RcSessionTracker } from "./rcSessions";
+import { RC_REQUEST_PARSE_CAP_BYTES, type RcSessionTracker } from "./rcSessions";
 import {
   RC_CONTEXT_USAGE_DETAILS,
   RC_PERMISSION_MODES,
@@ -47,16 +47,12 @@ import {
   buildRcMarkReadBody,
   type RcEventDial,
 } from "./rcWrites";
+import { HEARTBEAT_PATH, SESSION_ID, dialOf, exchange, trackerWithClock } from "./rcWritesTestWorld";
 
 /**
  * The client-half write tests: every payload builder's exact shape (the SDK's own fields, quoted subtype by subtype), every operation's guard behaviour over an injected dial, and the shared delivery engine's refusals. The tracker scaffolding mirrors `rcSessions.test.ts`'s (a fake clock and an exchange driver), stated locally so each file's tests read beside their own fixtures.
  */
 
-/** A made-up session id of the protocol's shape, and the recurring path that names it. */
-const SESSION_ID = "cse_00000000-0000-4000-8000-000000000001";
-const HEARTBEAT_PATH = `/v1/code/sessions/${SESSION_ID}/worker/heartbeat`;
-/** Where the fake clock starts, so the expected timestamps are the constants the tests name. */
-const CLOCK_START_MS = 1_000;
 /** The sequence numbers the scripted dials answer with, named so the literals never read as magic numbers. */
 const FIRST_SEQUENCE_NUM = 411;
 const SECOND_SEQUENCE_NUM = 412;
@@ -64,49 +60,6 @@ const SECOND_SEQUENCE_NUM = 412;
 const LIVE_STRING_SEQUENCE_NUM = 6;
 /** The status the API closes a superseded worker with, named so the literal never reads as a magic number. */
 const HTTP_CONFLICT = 409;
-
-/** One exchange driven through the tracker the way the door's adapters drive it: request facts, the request body's chunks and end, then the response head, body and end. */
-function exchange(tracker: RcSessionTracker, request: { method: string; url: string; authorization?: string; headers?: Record<string, string>; requestBody?: string }): { readonly respond: (status: number, body?: string, headers?: Record<string, string>) => void } {
-  const observed = tracker.observeExchange({
-    method: request.method,
-    url: request.url,
-    headers: { ...(request.authorization === undefined ? {} : { authorization: request.authorization }), ...(request.headers ?? {}) },
-  });
-  return {
-    respond: (status, body = "", headers = {}) => {
-      if (request.requestBody !== undefined && observed?.onRequestChunk !== undefined) {
-        const half = Math.floor(request.requestBody.length / 2);
-        observed.onRequestChunk(Buffer.from(request.requestBody.slice(0, half), "utf8"));
-        observed.onRequestChunk(Buffer.from(request.requestBody.slice(half), "utf8"));
-        observed.onRequestEnd?.();
-      }
-      observed?.onResponse(status, headers);
-      if (body !== "") {
-        observed?.onBodyChunk(Buffer.from(body, "utf8"));
-      }
-      observed?.onEnd();
-    },
-  };
-}
-
-/** A tracker over a mutable fake clock, so the idle bound is reached by moving time rather than waiting. */
-function trackerWithClock(startAt = CLOCK_START_MS): { readonly tracker: RcSessionTracker; readonly advance: (ms: number) => void } {
-  let now = startAt;
-  const tracker = createRcSessionTracker({ now: () => now, idleMs: 45_000 });
-  return { tracker, advance: (ms) => {
-      now += ms;
-    } };
-}
-
-/**
- * Completes one writeEvents fake into a whole dial: the teleport half stands as a refusal that names the test, because no non-teleport operation may ever post to the teleport path (the one write the family addresses elsewhere), so an unexpected call fails the test loudly instead of answering as though the path were the events path. The teleport operation's own tests pass a recording teleport half of their own.
- */
-function dialOf(writeEvents: RcEventDial["writeEvents"]): RcEventDial {
-  return {
-    writeEvents,
-    writeTeleportEvents: async () => await Promise.reject(new Error("no operation but the teleport write posts to the teleport-events path")),
-  };
-}
 
 describe("the injected event's payload and answer parsing", () => {
   it("builds the Agent SDK user-message payload inside the documented write body", () => {
@@ -782,6 +735,7 @@ describe("the teleport write and the read-receipt body", () => {
           teleports.push(body);
           return await Promise.resolve({ status: HTTP_STATUS.ok, body: JSON.stringify({ results: [{ sequence_num: SECOND_SEQUENCE_NUM }] }) });
         },
+        readWorker: async () => await Promise.reject(new Error("the teleport write never reads the worker record")),
       },
     };
   };
@@ -817,7 +771,7 @@ describe("the teleport write and the read-receipt body", () => {
     if (!empty.ok) {
       expect(empty.message).toContain("non-empty marker");
     }
-    const unreachable = await teleportRcSession({ ...deps, dial: { writeEvents: deps.dial.writeEvents, writeTeleportEvents: async () => await Promise.reject(new Error("ECONNREFUSED")) } }, SESSION_ID, MARKER);
+    const unreachable = await teleportRcSession({ ...deps, dial: { writeEvents: deps.dial.writeEvents, writeTeleportEvents: async () => await Promise.reject(new Error("ECONNREFUSED")), readWorker: deps.dial.readWorker } }, SESSION_ID, MARKER);
     expect(unreachable.ok).toBe(false);
     if (!unreachable.ok) {
       expect(unreachable.message).toContain("could not reach the API host");

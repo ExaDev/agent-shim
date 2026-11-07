@@ -1,5 +1,5 @@
 import { HTTP_STATUS } from "../codex/http";
-import type { RcObservedCredential } from "./rcWrites";
+import type { RcObservedCredential, RcSelfHostedChoice } from "./rcWrites";
 import type { RcStreamEnvelope, RcStreamEvent } from "./rcSchemas";
 
 /**
@@ -171,6 +171,16 @@ export interface RcStreamDial {
   /** Sends one read receipt: the mark_read endpoint's own body (`{event_id}`, or `{}` for the whole session), the duty the CLI's own remote-client half performs with the same body (`markSessionRead`, verified in the 2.1.289 bundle). */
   readonly markRead: (sessionId: string, headers: Readonly<Record<string, string>>, eventId: string | undefined) => Promise<RcPresenceAnswer>;
   readonly openStream: (sessionId: string, headers: Readonly<Record<string, string>>, resume: { readonly fromSequenceNum: number } | undefined, signal: AbortSignal) => Promise<RcStreamAnswer>;
+}
+
+/** The stream dial's per-call backend choice, for the same reason as `perSessionRcEventDial`: a session that is the door's own self-hosted service's, or that carries the credential it minted, attaches to it, and every other session to the real service. */
+export function perSessionRcStreamDial(isSelfHosted: RcSelfHostedChoice, selfHosted: RcStreamDial, service: RcStreamDial): RcStreamDial {
+  const dialOf = (sessionId: string, headers: Readonly<Record<string, string>>): RcStreamDial => (isSelfHosted(sessionId, headers) ? selfHosted : service);
+  return {
+    announcePresence: async (sessionId, headers, clientId, clear) => await dialOf(sessionId, headers).announcePresence(sessionId, headers, clientId, clear),
+    markRead: async (sessionId, headers, eventId) => await dialOf(sessionId, headers).markRead(sessionId, headers, eventId),
+    openStream: async (sessionId, headers, resume, signal) => await dialOf(sessionId, headers).openStream(sessionId, headers, resume, signal),
+  };
 }
 
 /** The fan-out every stream event is handed to: the tracker files what it recognises, and each subscriber receives the event beside it. */

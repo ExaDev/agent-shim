@@ -67,6 +67,7 @@ describe("the captured 2.1.319 question exchange", () => {
         return await Promise.resolve({ status: HTTP_STATUS.ok, body: JSON.stringify({ results: [{ sequence_num: 1 }] }) });
       },
       writeTeleportEvents: async () => await Promise.reject(new Error("the answer path never teleports")),
+      readWorker: async () => await Promise.reject(new Error("the answer path never reads the worker")),
     };
     const credentialOf = () => ({ authorization: "Bearer sk-ant-oat", anthropicVersion: undefined, anthropicClientPlatform: undefined });
     // The choices the live session was answered with, resolved by the door's own path, not the fixture's answers fed back in.
@@ -88,6 +89,7 @@ describe("the captured 2.1.319 question exchange", () => {
         return await Promise.resolve({ status: HTTP_STATUS.ok, body: JSON.stringify({ results: [{ sequence_num: 1 }] }) });
       },
       writeTeleportEvents: async () => await Promise.reject(new Error("the answer path never teleports")),
+      readWorker: async () => await Promise.reject(new Error("the answer path never reads the worker")),
     };
     const credentialOf = () => ({ authorization: "Bearer sk-ant-oat", anthropicVersion: undefined, anthropicClientPlatform: undefined });
     const freeTextId = fixture.freeTextQuestion.payload.request_id;

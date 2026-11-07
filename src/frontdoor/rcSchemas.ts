@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { RC_WORKER_STATE_SOURCES } from "./rcSessions";
 import { RC_CONTEXT_USAGE_DETAILS, RC_PERMISSION_MODES, RC_READ_FILE_ENCODINGS } from "./rcWrites";
 
 /**
@@ -47,10 +48,14 @@ export const RcPendingRequestSummarySchema = z.strictObject({
   observedAt: z.number(),
 });
 
-/** One observed session as the status surface reports it: the list summary plus what the worker's own exchanges carried and the requests awaiting an answer. */
+/** The worker state fact: a worker fact naming a state, with whether the door observed the state cross it or read it from the service. */
+const RcWorkerStateFactSchema = z.strictObject({ ...workerFactSchema(z.string()).shape, source: z.enum(RC_WORKER_STATE_SOURCES) });
+
+/** One observed session as the status surface reports it: the list summary plus what the worker's own exchanges carried (or a read filled in, or why none could be) and the requests awaiting an answer. */
 const RcSessionStatusSchema = z.strictObject({
   ...RcSessionSummarySchema.shape,
-  workerState: workerFactSchema(z.string()).optional(),
+  workerState: RcWorkerStateFactSchema.optional(),
+  workerStateUnavailable: z.string().optional(),
   workerIdleSeconds: workerFactSchema(z.number()).optional(),
   pending: z.readonly(z.array(RcPendingRequestSummarySchema)),
   /** The identity the session runs as, when known; absent otherwise. */
@@ -263,8 +268,24 @@ export const RcTeleportInputSchema = z.strictObject({
 /** The session list's answer shape. */
 export const RcListOutputSchema = z.strictObject({ sessions: z.readonly(z.array(RcSessionSummarySchema)) });
 
-/** The status read's answer shape. */
-export const RcStatusOutputSchema = z.strictObject({ statuses: z.readonly(z.array(RcSessionStatusSchema)) });
+/** One session registered with the Remote Control service on the door's machine that the door holds no record of (`RcUnobservedSession`): its ids, the registering process, why it is unobserved, and the worker state read for it or why none could be. */
+const RcUnobservedSessionSchema = z.strictObject({
+  id: z.string(),
+  localSessionId: z.string(),
+  pid: z.number(),
+  /** The session's name from the Claude Code session registry, when it holds one. */
+  name: z.string().optional(),
+  /** The directory the session was started in, from the registry. */
+  cwd: z.string().optional(),
+  /** The identity whose own registry holds the session's entry, when exactly one does. */
+  identity: z.string().optional(),
+  reason: z.string(),
+  workerState: RcWorkerStateFactSchema.optional(),
+  workerStateUnavailable: z.string().optional(),
+});
+
+/** The status read's answer shape: the tracked sessions' statuses, and the registered sessions the door holds no record of. */
+export const RcStatusOutputSchema = z.strictObject({ statuses: z.readonly(z.array(RcSessionStatusSchema)), unobserved: z.readonly(z.array(RcUnobservedSessionSchema)) });
 
 /** The pending read's answer shape. */
 export const RcPendingOutputSchema = z.strictObject({

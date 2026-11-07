@@ -11,11 +11,11 @@ import type { DoctorReport } from "../doctorReport";
 import { LIFECYCLE_AND_CODEX_TEST_DEPS } from "./lifecycleCodexTestDeps";
 import { createDoorApiNodeHandler } from "./controlApi";
 import { createDoorEventHub, rcFanoutOnDoorHub } from "./eventHub";
-import { withRegisteredSessionFacts } from "./rcSessionRegistry";
 import { createRcSessionTracker, RC_IDLE_EXPIRY_MS, RC_PENDING_PER_SESSION_MAX, type RcSessionTracker } from "./rcSessions";
 import type { RcAnswerDecision } from "./rcWrites";
 import type { RcStreamEvent } from "./rcSchemas";
 import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog } from "./rcEventLog";
+import { TEST_READ_WORKER_STATUS, UNOBSERVED_TEST_SESSION_ID, testStatusClock, testStatusResolver } from "./rcStatusTestWorld";
 import { createRcEventFanout } from "./rcStream";
 import type { FrontDoorStatus } from "./status";
 import { buildLayoutPaths } from "../paths";
@@ -162,13 +162,13 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
 
   beforeAll(async () => {
     configRoot = fs.mkdtempSync(nodePath.join(os.tmpdir(), "agent-shim-openapi-config-"));
-    tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS });
+    tracker = createRcSessionTracker({ now: testStatusClock, idleMs: RC_IDLE_EXPIRY_MS });
     seedSession(tracker, SESSION_ID);
     const surface = createDoorApiNodeHandler({
       expectedToken: CONTROL_TOKEN,
       paths: buildLayoutPaths(configRoot),
       list: tracker.list,
-      statusOf: (sessionId?: string) => withRegisteredSessionFacts(tracker.statusOf(sessionId), new Map([[SESSION_ID, { pid: 4_001, localSessionId: "11111111-1111-4111-8111-111111111111", cwd: "/repo", name: "fix the thing", identity: "work" }]])),
+      statusOf: testStatusResolver(tracker, new Map([[SESSION_ID, { pid: 4_001, localSessionId: "11111111-1111-4111-8111-111111111111", cwd: "/repo", name: "fix the thing", identity: "work" }]])),
       pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
       inject: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS }),
       answer: async (_session, _request, decision) => {
@@ -355,7 +355,11 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
   it("decodes query parameters and keeps the named-session refusal rule", async () => {
     const named = await call("GET", `/rest/rc/status?session=${SESSION_ID}`);
     expect(named.status).toBe(HTTP_STATUS.ok);
-    expect(JSON.parse(named.text)).toMatchObject({ statuses: [{ id: SESSION_ID, pid: 4_001, cwd: "/repo", name: "fix the thing", identity: "work" }] });
+    expect(JSON.parse(named.text)).toMatchObject({ statuses: [{ id: SESSION_ID, pid: 4_001, cwd: "/repo", name: "fix the thing", identity: "work", workerState: { value: TEST_READ_WORKER_STATUS, source: "read" } }], unobserved: [] });
+    // A registered session the door holds no record of is answered with its unobserved entry, not refused.
+    const unobserved = await call("GET", `/rest/rc/status?session=${UNOBSERVED_TEST_SESSION_ID}`);
+    expect(unobserved.status).toBe(HTTP_STATUS.ok);
+    expect(JSON.parse(unobserved.text)).toMatchObject({ statuses: [], unobserved: [{ id: UNOBSERVED_TEST_SESSION_ID, workerState: { value: TEST_READ_WORKER_STATUS, source: "read" } }] });
     const unknown = await call("GET", "/rest/rc/status?session=cse_00000000-0000-4000-8000-0000000000ff");
     expect(unknown.status).toBe(HTTP_STATUS.notFound);
     expect(unknown.text).toContain("has not observed Remote Control session");

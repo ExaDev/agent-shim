@@ -8,7 +8,7 @@ import { rcObservingResolver } from "./commands";
 import { createCredentialCustody } from "./custody";
 import { NO_ROUTING_SETTING } from "../headroom/routingSetting";
 import { createHeadroomDecision } from "./headroomDecision";
-import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, type RcSessionStatus } from "./rcSessions";
+import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, type RcTrackedSessionStatus } from "./rcSessions";
 import { createRoutedResponse, serveRouted, type PipelineDeps, type PipelineRequest, type ResponseBodyObserver, type ResponseObserver, type RouteResolution, type RoutedResponseEvent } from "./pipeline";
 import { HEADROOM_FLAG_HEADER, IDENTITY_HEADER, PROVIDER_HEADER, SESSION_HEADER, type FrontDoorRoute, type RoutedRequest, type RoutedResponse  } from "./route";
 
@@ -572,7 +572,7 @@ describe("a session that wants headroom, served through the Remote Control obser
 describe("a Remote Control call that carries no identity header, served through the observing resolver", () => {
   const SESSION = "cse_00000000-0000-4000-8000-000000000002";
 
-  async function statusAfter(admitted: string | undefined, headers: Readonly<Record<string, string>>): Promise<RcSessionStatus | undefined> {
+  async function statusAfter(admitted: string | undefined, headers: Readonly<Record<string, string>>): Promise<RcTrackedSessionStatus | undefined> {
     const tracker = createRcSessionTracker({ now: () => 0, idleMs: RC_IDLE_EXPIRY_MS });
     const route = recordingRoute();
     const { deps: base } = deps({ ok: true, route });

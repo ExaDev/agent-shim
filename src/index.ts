@@ -76,16 +76,20 @@ export {
   type RcExchangeObserver,
   type RcObservedRequest,
   type RcPendingRequestSummary,
+  RC_WORKER_STATE_SOURCES,
   type RcSessionStatus,
   type RcSessionSummary,
   type RcSessionTracker,
   type RcSessionTrackerDeps,
+  type RcTrackedSessionStatus,
   type RcWorkerFact,
+  type RcWorkerStateFact,
+  type RcWorkerStateSource,
 } from "./frontdoor/rcSessions";
 export type { RcPendingQuestion, RcQuestionOption, RcQuestionSelection } from "./frontdoor/rcQuestions";
+export { createRcStatusResolver, type RcStatusDeps, type RcStatusReport, type RcStatusResolver, type RcUnobservedSession } from "./frontdoor/rcStatus";
 export {
   createRcSessionRegistryReader,
-  rcStatusWithRegistry,
   withRegisteredSessionFacts,
   type RcRegisteredSession,
   type RcRegistryIdentity,
@@ -96,6 +100,8 @@ export {
   RC_CONTEXT_USAGE_DETAILS,
   RC_PERMISSION_MODES,
   RC_READ_FILE_ENCODINGS,
+  RC_WORKER_READ_ANSWER_EXCERPT_CHARS,
+  RC_WORKER_READ_TIMEOUT_MS,
   answerRcControlRequest,
   authenticateRcSessionMcpServer,
   buildRcControlRequestPayload,
@@ -126,7 +132,9 @@ export {
   isRcPermissionMode,
   isRcReadFileEncoding,
   rcEventWriteResultFromAnswer,
+  perSessionRcEventDial,
   readRcSessionFile,
+  readRcWorkerState,
   reconnectRcSessionMcpServer,
   sendRcKeepAlive,
   setRcSessionModel,
@@ -146,6 +154,8 @@ export {
   type RcPermissionMode,
   type RcReadFileEncoding,
   type RcReadFileOptions,
+  type RcWorkerReadDeps,
+  type RcWorkerStateReadResult,
   type RcWriteHeaders,
 } from "./frontdoor/rcWrites";
 export { createRcCredentialStore, type RcCredentialStore } from "./frontdoor/rcCredentialStore";
@@ -352,6 +362,7 @@ export {
   createRcStreamHub,
   createSseParser,
   parseRcStreamEnvelope,
+  perSessionRcStreamDial,
   type RcEventFanout,
   type RcPresenceAnswer,
   type RcStreamAnswer,

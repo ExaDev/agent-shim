@@ -76,17 +76,16 @@ import { createRcCredentialStore } from "./rcCredentialStore";
 import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog } from "./rcEventLog";
 import { createRcLiveUsage } from "./rcLiveUsage";
 import { createRcClientPage } from "./rcClientPage";
-import { createRcSelfHostSurface, rcSelfHostFromEnv } from "./rcSelfHost";
+import { createRcSelfHostSurface, rcSelfHostFromEnv, rcSelfHostedChoiceOf } from "./rcSelfHost";
 import { readRcSelfHostRecord } from "./rcSelfHostMint";
 import { realRcWebFetch, rcWebFetchAllowsPrivateFromEnv } from "./rcWebFetch";
-import { realRcSessionRegistryFs } from "./rcSessionRegistryFs";
-import { createRcSessionRegistryReader, rcRegistryIdentitiesOf, rcStatusWithRegistry } from "./rcSessionRegistry";
 import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, isRcSessionExchange, observingRoutedRoute } from "./rcSessions";
 import { targetRefs } from "../models/targets";
-import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
+import { answerRcControlRequest, authenticateRcSessionMcpServer, perSessionRcEventDial, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
+import { createDoorRcStatus } from "./doorRcStatus";
 import { createDoorRcSessionCommands } from "./doorSessionCommands";
 import { createRcClaudeCodeVersions, rcSelfHostEventDial, selfHostSurfaceUnboundReason } from "./rcSelfHostCommands";
-import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
+import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, perSessionRcStreamDial, type RcStreamHub } from "./rcStream";
 import type { RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
 import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_COOLDOWN_CAP_MS, DOOR_RESPAWN_DELAY_ENV, DOOR_RESPAWN_GENERATION_ENV, DOOR_RESPAWN_MAX_GENERATIONS, DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startNextRespawnGeneration, startThreadWatchdog, type RespawnChainParams } from "./watchdog";
@@ -258,12 +257,6 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     usagePublisher.publish(event);
   }, usageEventNames.nameOf);
   const quotaExpiring = createQuotaExpiringPublisher(doorEvents, { seed: listUsageSnapshots(realFarmFs, paths.usageSnapshotsDir), now: () => Date.now(), nameOf: usageEventNames.nameOf });
-  // The status read every Remote Control surface serves: the tracker's observations (the identity as its id, turned into the identity's name here) plus what the Claude Code session registry says (name, process id, working directory), searched across every identity's registry on each read so an identity added after the door started is covered.
-  const rcStatusOf = rcStatusWithRegistry(
-    rcTracker.statusOf,
-    createRcSessionRegistryReader({ fs: realRcSessionRegistryFs, identities: () => rcRegistryIdentitiesOf(paths), isRunning: realIsProcessAlive }),
-    usageEventNames.nameOf,
-  );
   // The door health publisher, fed by the supervisor's own transitions.
   const doorHealth = createDoorHealthPublisher(doorEvents, () => Date.now(), process.pid);
   // The live quota state, the backbone's first door-native consumer: subscribed to the rc source before any stream can publish, so every rate_limit_event the held client stream files becomes the door's latest per-session rate-limit observation, the state the control plane's `usage.live` read serves beside its snapshot readers.
@@ -280,7 +273,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     sequenceNumOf: rcTracker.sequenceNumOf,
     storedSequenceNumOf: rcCredentialStore.readCursor,
     saveSequenceNum: rcCredentialStore.writeCursor,
-    dial: rcSelfHost ? lateRcStreamDial(rcSelfHostDialTarget) : realRcStreamDial(),
+    // Chosen per call: a session the door's own self-hosted service owns (it holds it, or the credential is the one it minted) attaches to it through the door's own surface, and any other attaches to the real service.
+    dial: rcSelfHostSurface === undefined ? realRcStreamDial() : perSessionRcStreamDial(rcSelfHostedChoiceOf(rcSelfHostSurface), lateRcStreamDial(rcSelfHostDialTarget), realRcStreamDial()),
     fanout: rcFanout,
     newClientId: randomUUID,
     backoffMs: RC_STREAM_BACKOFF_MS,
@@ -529,9 +523,12 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     startProviderListener: async (source) => {
       const authority = loadCa();
       // The write operations the control routes and the typed API both carry out: the door itself dials the real API host over its interception-proof agent, using the observed credential, which is why the CLI never dials the API directly. A confirmed write advances the session's sequence cursor through the tracker, so a stream resume continues after the door's own events too. In the self-hosted mode the dial's target is resolved per call so it names the door's own surface once that has bound.
-      const rcDial = rcSelfHost ? lateRcEventDial(rcSelfHostDialTarget) : realRcEventDial();
+      // Chosen per call, as the stream's is: the door's own surface for a session its self-hosted service owns, the real API host for any other.
+      const rcDial = rcSelfHostSurface === undefined ? realRcEventDial() : perSessionRcEventDial(rcSelfHostedChoiceOf(rcSelfHostSurface), lateRcEventDial(rcSelfHostDialTarget), realRcEventDial());
       const rcInject = async (sessionId: string, text: string) =>
         await injectRcUserMessage({ credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial, newUuid: randomUUID }, sessionId, text);
+      // The status the control routes and the typed API serve: see `createDoorRcStatus`.
+      const rcStatusOf = createDoorRcStatus({ paths, tracker: rcTracker, credentialStore: rcCredentialStore, dial: rcDial, selfHostSurface: rcSelfHostSurface, identityNameOf: usageEventNames.nameOf });
       const rcAnswer = async (sessionId: string, requestId: string, decision: RcAnswerDecision) =>
         await answerRcControlRequest({ credentialOf: rcTracker.credentialOf, pendingOf: (id) => rcTracker.pendingOf(id), completePending: rcTracker.completePending, pendingToolInputOf: rcTracker.pendingToolInputOf, claimPending: rcTracker.claimPending, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial }, sessionId, requestId, decision);
       const rcControlRequestDeps = { credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial, newUuid: randomUUID };

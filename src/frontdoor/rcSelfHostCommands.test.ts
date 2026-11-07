@@ -57,6 +57,7 @@ function makeWorld(answer: readonly RcStreamEvent[] = [], injectResult?: RcEvent
       return await Promise.resolve({ status: 200, body: JSON.stringify({ results: [{ sequence_num: String(COMMAND_SEQUENCE) }] }) });
     },
     writeTeleportEvents: async () => await Promise.reject(new Error("unused")),
+    readWorker: async () => await Promise.reject(new Error("unused")),
   });
   const deps: RcSelfHostCommandDeps = {
     fanout,

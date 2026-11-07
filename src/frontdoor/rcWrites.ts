@@ -1,5 +1,5 @@
 import { HTTP_STATUS } from "../codex/http";
-import { isSuccessful, type RcPendingRequestSummary } from "./rcSessions";
+import { MS_PER_SECOND, isSuccessful, type RcPendingRequestSummary } from "./rcSessions";
 import { resolveRcQuestionAnswers, type RcQuestionSelection } from "./rcQuestions";
 
 /**
@@ -50,6 +50,25 @@ export interface RcEventDial {
    * Posts one write to the session's teleport-events path instead of its events path: the write half of the channel the CLI only ever reads (`GET /teleport-events`, the teleport-to-local hydration's page source, verified in the 2.1.289 bundle, which contains no POST sender for it at all). The door's own client half is the one sender this surface has, so this method exists for `teleportRcSession` alone.
    */
   readonly writeTeleportEvents: (sessionId: string, headers: Readonly<Record<string, string>>, body: string) => Promise<RcDialAnswer>;
+  /** Reads the session's worker record: `GET /v1/code/sessions/{id}/worker`, the one read this dial makes, over the same interception-proof agent as the writes (see `readRcWorkerState`). The signal tears the request down wherever it is when the read's deadline passes. */
+  readonly readWorker: (sessionId: string, headers: Readonly<Record<string, string>>, signal: AbortSignal) => Promise<RcDialAnswer>;
+}
+
+/**
+ * Whether a call belongs to the door's own self-hosted Remote Control service rather than the real one, decided from the session and the headers the call would carry (`RcSelfHostSurface.ownsSession`). The headers matter because the credential says whose a session is even when the service holds nothing of it any longer.
+ */
+export type RcSelfHostedChoice = (sessionId: string, headers: Readonly<Record<string, string>>) => boolean;
+
+/**
+ * A dial that chooses its backend per call: the door's own self-hosted Remote Control service for a session that is its (one created against the door itself, with no Anthropic login, or one carrying the credential the service minted), and the real service for every other session (one created against claude.ai). One door serves both kinds at once, so a door in self-hosted mode still reaches a claude.ai session's real service, and never sends a credential the self-hosted service would accept to claude.ai.
+ */
+export function perSessionRcEventDial(isSelfHosted: RcSelfHostedChoice, selfHosted: RcEventDial, service: RcEventDial): RcEventDial {
+  const dialOf = (sessionId: string, headers: Readonly<Record<string, string>>): RcEventDial => (isSelfHosted(sessionId, headers) ? selfHosted : service);
+  return {
+    writeEvents: async (sessionId, headers, body) => await dialOf(sessionId, headers).writeEvents(sessionId, headers, body),
+    writeTeleportEvents: async (sessionId, headers, body) => await dialOf(sessionId, headers).writeTeleportEvents(sessionId, headers, body),
+    readWorker: async (sessionId, headers, signal) => await dialOf(sessionId, headers).readWorker(sessionId, headers, signal),
+  };
 }
 
 /**
@@ -88,11 +107,16 @@ function sequenceNumsOf(body: string): readonly number[] | undefined {
   return sequenceNums.length === 0 ? undefined : sequenceNums;
 }
 
+/** The message every client-half call answers a 401 with: the observed bearer is the cause, and the session's own client renews it. */
+function staleBearerMessage(body: string): string {
+  return `the API refused the observed Authorization bearer for this session (HTTP 401): the bearer went stale after the door last saw the session's traffic. The session's own client refreshes it on its next call, which the door will observe, so retry once Remote Control has been active again. API answer: ${body}`;
+}
+
 /** Maps one dial answer to the write result: an accepted write yields its sequence numbers; anything else yields a verbose message, with the 401 case naming the stale observed bearer as the cause. */
 export function rcEventWriteResultFromAnswer(answer: RcDialAnswer): RcEventWriteResult {
   if (!isSuccessful(answer.status)) {
     if (answer.status === HTTP_STATUS.unauthorized) {
-      return { ok: false, message: `the API refused the observed Authorization bearer for this session (HTTP 401): the bearer went stale after the door last saw the session's traffic. The session's own client refreshes it on its next call, which the door will observe, so retry once Remote Control has been active again. API answer: ${answer.body}` };
+      return { ok: false, message: staleBearerMessage(answer.body) };
     }
     return { ok: false, message: `the API answered HTTP ${String(answer.status)} to the injected event: ${answer.body}` };
   }
@@ -119,7 +143,7 @@ export interface RcInjectDeps {
 }
 
 /** The failure every client-half write returns when the tracker holds no OAuth-kind bearer for the session: only worker calls were observed, and the worker JWT they carry does not authorise the client half. */
-export function noOAuthCredentialResult(sessionId: string): RcEventWriteResult {
+export function noOAuthCredentialResult(sessionId: string): { readonly ok: false; readonly message: string } {
   return { ok: false, message: `no claude.ai OAuth bearer has been observed for session ${sessionId}: only worker calls crossed this door, and the worker JWT they carry is answered 401 on the client half. Reconnect Remote Control through this door and the create's own bearer will be observed` };
 }
 
@@ -128,9 +152,9 @@ export function rcSessionNotObservedMessage(sessionId: string): string {
   return `the front door has not observed Remote Control session ${sessionId}: it may never have passed through this door, or it ended or expired (an entry lives only a bounded idle period past its last observed traffic)`;
 }
 
-/** The headers every client-half write sends, from the observed credential: the observed values replayed verbatim. The authorization is present by construction, since every caller guards on it (the write refuses to go out unauthenticated rather than surface as a confusing 401). */
-export function rcWriteHeaders(credential: RcObservedCredential): Record<string, string> {
-  const headers: Record<string, string> = { "content-type": "application/json" };
+/** The headers every client-half call sends, from the observed credential: the observed values replayed verbatim. The authorization is present by construction, since every caller guards on it (a call refuses to go out unauthenticated rather than surface as a confusing 401). */
+function rcClientHeaders(credential: RcObservedCredential): Record<string, string> {
+  const headers: Record<string, string> = {};
   if (credential.authorization !== undefined) {
     headers.authorization = credential.authorization;
   }
@@ -141,6 +165,11 @@ export function rcWriteHeaders(credential: RcObservedCredential): Record<string,
     headers["anthropic-client-platform"] = credential.anthropicClientPlatform;
   }
   return headers;
+}
+
+/** The headers a client-half write sends: the client-half headers plus the JSON content type its body carries. */
+export function rcWriteHeaders(credential: RcObservedCredential): Record<string, string> {
+  return { "content-type": "application/json", ...rcClientHeaders(credential) };
 }
 
 /**
@@ -603,4 +632,99 @@ export async function teleportRcSession(deps: RcControlRequestDeps, sessionId: s
  */
 export function buildRcMarkReadBody(eventId: string | undefined): Record<string, unknown> {
   return eventId === undefined ? {} : { event_id: eventId };
+}
+
+/**
+ * The deadline of one worker-state read. Every status surface (the CLI, the REST and RPC procedures, the MCP tool, and the web client, which polls) awaits the reads of the sessions it reports, so a read the API host never answers would hold every one of those answers open with it. A worker record is one small JSON answer, so the deadline only has to cover a fresh TLS handshake over a slow link; it is a chosen bound, not a derived one, and must stay well below `RC_IDLE_EXPIRY_MS`, the span a settled failed read is held for, so a read that timed out is abandoned long before its hold would have lapsed.
+ */
+export const RC_WORKER_READ_TIMEOUT_MS = 5_000;
+
+/**
+ * The most of an API answer's body a worker-state read's failure message quotes. The message is carried in every status answer the read's session appears in (and the web client polls them), so an error page of any size must not be copied into each; a service error document names its cause within its first few hundred characters.
+ */
+export const RC_WORKER_READ_ANSWER_EXCERPT_CHARS = 500;
+
+/** An answer body cut to `RC_WORKER_READ_ANSWER_EXCERPT_CHARS`, with how much was left out. */
+function answerExcerpt(body: string): string {
+  return body.length <= RC_WORKER_READ_ANSWER_EXCERPT_CHARS ? body : `${body.slice(0, RC_WORKER_READ_ANSWER_EXCERPT_CHARS)}... (${String(body.length - RC_WORKER_READ_ANSWER_EXCERPT_CHARS)} more characters)`;
+}
+
+/** What one worker-state read produced: the state string the service named, or a verbose failure message ready to show a user. */
+export type RcWorkerStateReadResult = { readonly ok: true; readonly workerStatus: string } | { readonly ok: false; readonly message: string };
+
+/** Reads `worker.worker_status` out of an accepted worker-record answer (`{worker{session_id, worker_epoch, worker_status, external_metadata}}`, `docs/claude-code-service-contracts.md`), or undefined when the answer does not name one. */
+function workerStatusOf(body: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null || !("worker" in parsed)) {
+    return undefined;
+  }
+  const worker: unknown = parsed.worker;
+  if (typeof worker !== "object" || worker === null || !("worker_status" in worker)) {
+    return undefined;
+  }
+  const workerStatus: unknown = worker.worker_status;
+  return typeof workerStatus === "string" && workerStatus !== "" ? workerStatus : undefined;
+}
+
+/** The failure a worker-state read reports when the API host did not answer within its deadline. */
+function workerReadTimedOut(sessionId: string): RcWorkerStateReadResult {
+  return { ok: false, message: `the API host did not answer the worker state read of session ${sessionId} within ${String(RC_WORKER_READ_TIMEOUT_MS / MS_PER_SECOND)} s, so the read was abandoned` };
+}
+
+/** Everything one worker-state read needs, injected so the decision logic runs against fakes in unit tests. */
+export interface RcWorkerReadDeps {
+  /** Reads the observed credential for a session: the tracker's accessor, in production. */
+  readonly credentialOf: (sessionId: string) => RcObservedCredential | undefined;
+  /** The dial to the real API host. */
+  readonly dial: RcEventDial;
+}
+
+/**
+ * Reads one observed session's worker state from the service: `GET /v1/code/sessions/{id}/worker`, authenticated by the observed bearer and carrying the observed protocol headers over the door's interception-proof dial, like every client-half write. This is how a session whose last state change predates the door (or whose record expired and was recreated by a heartbeat) still gets a state: the request body that would have named it never crossed the door. A dial that cannot reach the API host, one that does not answer within `RC_WORKER_READ_TIMEOUT_MS` (its request is aborted, and the read settles at the deadline even when a dial ignores the signal), a refused or failed answer, and an answer naming no `worker.worker_status` are reported as a verbose failure, never as an empty state.
+ */
+export async function readRcWorkerState(deps: RcWorkerReadDeps, sessionId: string): Promise<RcWorkerStateReadResult> {
+  const credential = deps.credentialOf(sessionId);
+  if (credential === undefined) {
+    return { ok: false, message: rcSessionNotObservedMessage(sessionId) };
+  }
+  if (credential.authorization === undefined) {
+    return noOAuthCredentialResult(sessionId);
+  }
+  const controller = new AbortController();
+  let deadline: NodeJS.Timeout | undefined;
+  const timedOut = new Promise<"timed out">((resolve) => {
+    deadline = setTimeout(() => {
+      controller.abort();
+      resolve("timed out");
+    }, RC_WORKER_READ_TIMEOUT_MS);
+  });
+  let answer: RcDialAnswer | "timed out";
+  try {
+    answer = await Promise.race([deps.dial.readWorker(sessionId, rcClientHeaders(credential), controller.signal), timedOut]);
+  } catch (error) {
+    return controller.signal.aborted
+      ? workerReadTimedOut(sessionId)
+      : { ok: false, message: `the door could not reach the API host to read the worker state of session ${sessionId}: ${error instanceof Error ? error.message : String(error)}` };
+  } finally {
+    clearTimeout(deadline);
+  }
+  if (answer === "timed out") {
+    return workerReadTimedOut(sessionId);
+  }
+  if (answer.status === HTTP_STATUS.unauthorized) {
+    return { ok: false, message: staleBearerMessage(answerExcerpt(answer.body)) };
+  }
+  if (!isSuccessful(answer.status)) {
+    return { ok: false, message: `the API answered HTTP ${String(answer.status)} to the worker state read of session ${sessionId}: ${answerExcerpt(answer.body)}` };
+  }
+  const workerStatus = workerStatusOf(answer.body);
+  if (workerStatus === undefined) {
+    return { ok: false, message: `the API answered the worker state read of session ${sessionId} without a worker.worker_status: ${answerExcerpt(answer.body)}` };
+  }
+  return { ok: true, workerStatus };
 }

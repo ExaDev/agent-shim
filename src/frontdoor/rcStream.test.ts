@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
 import { createRcSessionTracker, type RcSessionTracker } from "./rcSessions";
-import { createRcEventFanout, createRcStreamHub, createSseParser, parseRcStreamEnvelope, type RcPresenceAnswer, type RcStreamAnswer, type RcStreamDial, type SseParsedEvent } from "./rcStream";
+import { createRcEventFanout, createRcStreamHub, createSseParser, parseRcStreamEnvelope, perSessionRcStreamDial, type RcPresenceAnswer, type RcStreamAnswer, type RcStreamDial, type SseParsedEvent } from "./rcStream";
 
 /** A made-up session id of the protocol's shape. */
 const SESSION_ID = "cse_00000000-0000-4000-8000-000000000001";
@@ -657,5 +657,39 @@ describe("the client read stream attachment", () => {
     await tick();
     expect(scripted.presenceCalls[scripted.presenceCalls.length - 1]).toEqual({ sessionId: SESSION_ID, headers: { accept: "text/event-stream", authorization: CREATE_BEARER }, clientId: "door-client-id", clear: true });
     expect(scripted.presenceCalls.filter((call) => call.clear)).toHaveLength(1);
+  });
+});
+
+describe("the per-session choice of stream dial", () => {
+  it("attaches a session the self-hosted service holds to the door's own surface, and every other session to the real service", async () => {
+    const calls: string[] = [];
+    const recording = (backend: string): RcStreamDial => ({
+      announcePresence: async (sessionId) => {
+        calls.push(`${backend} presence ${sessionId}`);
+        return await Promise.resolve({ status: HTTP_STATUS.ok, body: "{}" });
+      },
+      markRead: async (sessionId) => {
+        calls.push(`${backend} mark_read ${sessionId}`);
+        return await Promise.resolve({ status: HTTP_STATUS.ok, body: "{}" });
+      },
+      openStream: async (sessionId) => {
+        calls.push(`${backend} stream ${sessionId}`);
+        return await Promise.reject(new Error("not opened in this test"));
+      },
+    });
+    const selfHostedId = "cse_00000000-0000-4000-8000-0000000000a1";
+    const serviceId = "cse_00000000-0000-4000-8000-0000000000a2";
+    const dial = perSessionRcStreamDial((id) => id === selfHostedId, recording("self-hosted"), recording("service"));
+    await dial.announcePresence(selfHostedId, {}, "client", false);
+    await dial.markRead(serviceId, {}, undefined);
+    await expect(dial.openStream(serviceId, {}, undefined, new AbortController().signal)).rejects.toThrow("not opened");
+    await expect(dial.openStream(selfHostedId, {}, undefined, new AbortController().signal)).rejects.toThrow("not opened");
+    expect(calls).toEqual([`self-hosted presence ${selfHostedId}`, `service mark_read ${serviceId}`, `service stream ${serviceId}`, `self-hosted stream ${selfHostedId}`]);
+    // A credential the service minted routes to it whichever session id it travels with: the service may have restarted, and the real host must never see the credential.
+    const byCredential = perSessionRcStreamDial((_id, headers) => headers.authorization === "Bearer local-minted", recording("self-hosted"), recording("service"));
+    calls.length = 0;
+    await byCredential.markRead(serviceId, { authorization: "Bearer local-minted" }, undefined);
+    await byCredential.markRead(serviceId, { authorization: "Bearer other" }, undefined);
+    expect(calls).toEqual([`self-hosted mark_read ${serviceId}`, `service mark_read ${serviceId}`]);
   });
 });

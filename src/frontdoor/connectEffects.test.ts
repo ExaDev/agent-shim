@@ -6,7 +6,7 @@ import * as net from "node:net";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { ExemptHttpAgent, realConnectEffects, SourcePortRange } from "./connectEffects";
+import { ExemptHttpAgent, lateRcEventDial, lateRcStreamDial, realConnectEffects, SourcePortRange } from "./connectEffects";
 import { HTTP_OK } from "./connectTestWorld";
 
 /** The name every dial in this file resolves: a documentation-reserved TLD, so nothing but this file's resolver stand-in can ever answer it, and a dial through the exempt agent takes the real-name path (reserved source port, DNS lookup) rather than the address-literal shortcut. */
@@ -306,5 +306,19 @@ describe("the exempt agents' reserved source-port rotation", () => {
       }
       await upstream.close();
     }
+  });
+});
+
+describe("the late-targeted Remote Control dials", () => {
+  it("refuse a call made before their target is bound instead of dialling the real API host", async () => {
+    const signal = new AbortController().signal;
+    const events = lateRcEventDial(() => undefined);
+    await expect(events.writeEvents("cse_x", {}, "{}")).rejects.toThrow("is not serving yet");
+    await expect(events.writeTeleportEvents("cse_x", {}, "{}")).rejects.toThrow("is not serving yet");
+    await expect(events.readWorker("cse_x", {}, signal)).rejects.toThrow("is not serving yet");
+    const stream = lateRcStreamDial(() => undefined);
+    await expect(stream.announcePresence("cse_x", {}, "client", false)).rejects.toThrow("is not serving yet");
+    await expect(stream.markRead("cse_x", {}, undefined)).rejects.toThrow("is not serving yet");
+    await expect(stream.openStream("cse_x", {}, undefined, signal)).rejects.toThrow("is not serving yet");
   });
 });
