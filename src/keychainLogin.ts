@@ -1,5 +1,6 @@
 import { CliError } from "./cliError";
 import type { RunPort } from "./launcher/ports";
+import type { AsyncRun } from "./replayRun";
 import { CUSTOM_OAUTH_URL_ENV, SECURE_STORAGE_CONFIG_DIR_ENV, claudeCodeKeychainService } from "./usage/signIn";
 import { KEYCHAIN_CACHE_SERVICE, KEYCHAIN_ITEM_NOT_FOUND_STATUS } from "./credentialCache";
 import { shellQuoted } from "./shellQuote";
@@ -115,6 +116,12 @@ export const KEEP_KEYCHAIN_LOGIN_DESCRIPTION =
 /** What a question to the Keychain needs: the runner of `security` and the platform, since only macOS has a Keychain. */
 export interface KeychainProbe {
   readonly run: RunPort;
+  readonly platform: NodeJS.Platform;
+}
+
+/** `KeychainProbe` for a caller that must not block its event loop: the same question through the asynchronous runner. */
+export interface AsyncKeychainProbe {
+  readonly runAsync: AsyncRun;
   readonly platform: NodeJS.Platform;
 }
 

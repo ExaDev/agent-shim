@@ -12,13 +12,13 @@ import { summariseCredential } from "../credential";
 import { mergeCredentialCache } from "../credentialCacheChange";
 import { addDirectoryRule, DirectoryRuleAlreadyExistsError, DirectoryRuleNotFoundError, listDirectoryRules, removeDirectoryRule, requireRuleSelector, updateDirectoryRule } from "../directoryRulesStore";
 import { addIdentity, IdentityAlreadyExistsError, IdentityNotFoundError, identityDirectory, identityIdOf, identityExists, readIdentity, removeIdentityWithLockHeld, REMOVED_STATE, loggedIdentityIds, requireIdentityAddable, requireIdentityNames, setAllowAmbientCredential, setDefaultConfigProfile, setIdentityLabel, setIdentityProvider, setIdentityAnchors, setIdentityCredential, useIdentity, type IdentityCredentialChange, identityNotFound } from "../identityStore";
-import { KeychainCacheDeleteError, KeychainLoginError, KeychainLookupError, leftoverWarnings, requireKeychainCacheDeleted, selfHostedLoginLeftover, type RemovedIdentity } from "../keychainLogin";
+import { KeychainCacheDeleteError, KeychainLoginError, KeychainLookupError, leftoverWarnings, requireKeychainCacheDeleted, selfHostedLoginLeftover, type AsyncKeychainProbe, type RemovedIdentity } from "../keychainLogin";
 import { acquireIdentityNamesLock, nonWaitingIdentityNamesLockPorts } from "../identityNamesLock";
 import { IdentityLockBusyError } from "../launcher/lock";
 import { poolNameOf } from "../launcher/identity";
 import type { FarmFs } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
-import { resolveWithAsyncRuns, type AsyncRun } from "../replayRun";
+import { resolveWithAsyncRuns } from "../replayRun";
 import { addPool, changePool, isPoolChange, PoolAlreadyExistsError, PoolNotFoundError, readPools, removePool, requirePool } from "../poolStore";
 import { addProvider, ProviderAlreadyExistsError, ProviderNotFoundError, providerExists, readProvider, removeProvider, requireProviderExists, updateProvider } from "../providersStore";
 import {
@@ -75,7 +75,7 @@ export interface ConfigApiDeps {
   /** The configuration tree the stores operate on. */
   readonly paths: LayoutPaths;
   /** How the door asks the macOS Keychain whether a login is already filed for a directory an identity is about to be created in: `security` run without blocking the event loop, and the platform, since only macOS has a Keychain. The door builds it with `doorKeychainProbe`. */
-  readonly keychain: { readonly runAsync: AsyncRun; readonly platform: NodeJS.Platform };
+  readonly keychain: AsyncKeychainProbe;
   /** The file reads `identity remove` makes of the directory it is about to delete (whether the self-hosted mint wrote into it). */
   readonly fs: Pick<FarmFs, "readFileUtf8">;
 }

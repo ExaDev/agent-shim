@@ -1,9 +1,8 @@
 import { CREDENTIAL_COMMAND_TIMEOUT_MS } from "./credential";
 import type { RunPort } from "./launcher/ports";
-import type { KeychainProbe } from "./keychainLogin";
+import type { AsyncKeychainProbe, KeychainProbe } from "./keychainLogin";
 import { realRunAsyncWithin, realRunPortWithin } from "./realPorts";
 import type { AsyncRun } from "./replayRun";
-import type { ConfigApiDeps } from "./frontdoor/configApi";
 
 /**
  * How the door asks the macOS Keychain whether a login is already filed for a directory: `security` run without blocking the event loop, stopped after `CREDENTIAL_COMMAND_TIMEOUT_MS`, and the platform, since only macOS has a Keychain.
@@ -12,7 +11,7 @@ import type { ConfigApiDeps } from "./frontdoor/configApi";
  *
  * `within` builds the runner for a bound, and is the real one except in a test that checks the bound.
  */
-export function doorKeychainProbe(platform: NodeJS.Platform, within: (timeoutMs: number) => AsyncRun = realRunAsyncWithin): ConfigApiDeps["keychain"] {
+export function doorKeychainProbe(platform: NodeJS.Platform, within: (timeoutMs: number) => AsyncRun = realRunAsyncWithin): AsyncKeychainProbe {
   return { runAsync: within(CREDENTIAL_COMMAND_TIMEOUT_MS), platform };
 }
 
