@@ -413,6 +413,28 @@ describe("the self-hosted Remote Control streams", () => {
     clientStream.close();
   });
 
+  it("stamps a client event with the writer's anthropic-client-platform as client_platform, the field the worker classifies a message's author by", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const { id, workerJwt } = await createSession(world);
+    const workerStream = new SseStream(world.port, `/v1/code/sessions/${id}/worker/events/stream`, { authorization: `Bearer ${workerJwt}` });
+    expect((await workerStream.response()).statusCode).toBe(HTTP_STATUS.ok);
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, DELIVERY_SETTLE_MS);
+    });
+
+    // The header outranks a value the payload states itself, as a server-side stamp does; a write without the header keeps the payload as written.
+    await call(world.port, "POST", `/v1/code/sessions/${id}/events`, { events: [{ payload: { type: "user", uuid: "web", client_platform: "claude_code_cli", message: { role: "user", content: "/compact" } } }] }, { authorization: `Bearer ${MINTED_OAUTH_TOKEN}`, "anthropic-client-platform": "web_claude_ai" });
+    await call(world.port, "POST", `/v1/code/sessions/${id}/events`, { events: [{ payload: { type: "user", uuid: "bare", message: { role: "user", content: "hello" } } }] }, { authorization: `Bearer ${MINTED_OAUTH_TOKEN}` });
+    await workerStream.waitForEvents(2);
+    const payloads = envelopesOf(workerStream).map((event) => event.envelope.payload as Record<string, unknown>);
+    expect(payloads.map((payload) => [payload.uuid, payload.client_platform])).toEqual([
+      ["web", "web_claude_ai"],
+      ["bare", undefined],
+    ]);
+    workerStream.close();
+  });
+
   it("resumes a reconnected stream after the named cursor, on both halves", async () => {
     const world = await makeWorld();
     worlds.push(world);
