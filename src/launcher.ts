@@ -358,7 +358,8 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean, onRecorded
     // The identity is reached on disk through its id, the directory it was created under, which a rename leaves alone: the farm, its lock and launch record, the usage snapshot, the login and the session's `CLAUDE_CONFIG_DIR` are all filed under it. There is a farm to manage only when an identity resolved and the caller did not name a configuration directory itself.
     const farmIdentity = configDirEscapeHatchApplies || identityDecision.name === undefined ? undefined : resolveIdentityId(paths.identitiesDir, identityDecision.name, fs);
     const farm = farmIdentity === undefined ? undefined : params.farm;
-    if (!readOnly && farmIdentity !== undefined && identityDecision.name !== undefined) {
+    // A pool relaunch under a supervisor prepares the launch again, with its member named: the first launch has already said it.
+    if (!readOnly && params.supervised?.member === undefined && farmIdentity !== undefined && identityDecision.name !== undefined) {
       warnOfSupersededConfigDir(log.warn, fs, identityDecision.supersededConfigDir, identityDecision.name, path.join(paths.identitiesDir, farmIdentity));
     }
 
