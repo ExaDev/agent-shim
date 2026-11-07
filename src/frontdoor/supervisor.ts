@@ -80,7 +80,7 @@ export interface FrontDoorSupervisorPorts {
    */
   readonly startDirectListener: (source: ListenSource) => Promise<FrontDoorListenerHandle>;
   /**
-   * Stops the Remote Control stream hub: persists every live attachment's sequence cursor synchronously, then frees the dials. Called exactly once on every exit the supervisor owns, after every listener has stopped accepting. A closing exit has every listener down by then; a drain still has responses settling, which is safe because the hub refuses to attach once it is closed (otherwise the reconcile after an observed exchange would re-attach a stream the close had just ended).
+   * Stops the Remote Control stream hub: persists every live attachment's sequence cursor synchronously, then frees the dials. It also closes the session tracker, which ends every session-events follower: a drain waits for every connection it carries, so a supervisor's open event stream would otherwise keep a retiring door alive for as long as the subscriber stayed connected. Called exactly once on every exit the supervisor owns, after every listener has stopped accepting. A closing exit has every listener down by then; a drain still has responses settling, which is safe because the hub refuses to attach once it is closed (otherwise the reconcile after an observed exchange would re-attach a stream the close had just ended).
    */
   readonly closeRcStreamHub: () => void;
   /**
