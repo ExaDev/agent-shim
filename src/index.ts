@@ -340,14 +340,11 @@ export {
   type RcSupervisedTarget,
 } from "./frontdoor/rcSessionCommands";
 export {
-  RC_PERSON_CLIENT_PLATFORM,
   createRcClaudeCodeVersions,
   parseRcGoalOutput,
   rcLocalCommandAnswerOf,
   rcManualCompactBoundaryOf,
-  runSelfHostedSlashCommand,
   type RcClaudeCodeVersions,
-  type RcPersonClientPlatform,
   type RcSelfHostCommand,
   type RcSelfHostCommandDeps,
 } from "./frontdoor/rcSelfHostCommands";

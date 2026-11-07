@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { RcStreamEvent } from "./rcSchemas";
 import type { RcDialTarget } from "./connectEffects";
-import { RC_PERSON_CLIENT_PLATFORM, createRcClaudeCodeVersions, parseRcGoalOutput, rcSelfHostEventDial, runSelfHostedSlashCommand, type RcSelfHostCommandDeps } from "./rcSelfHostCommands";
+import { createRcClaudeCodeVersions, parseRcGoalOutput, rcSelfHostEventDial, runSelfHostedSlashCommand, type RcSelfHostCommandDeps } from "./rcSelfHostCommands";
 import { createRcEventFanout } from "./rcStream";
 import type { RcEventDial, RcEventWriteResult } from "./rcWrites";
 
@@ -81,7 +81,7 @@ describe("slash commands on the door's own self-hosted surface", () => {
     const decoys = [localAnswer(COMMAND_SEQUENCE - 1, "goal", "", "No goal set"), streamEvent(COMMAND_SEQUENCE + 1, { type: "mark_read" }, "client"), localAnswer(COMMAND_SEQUENCE + 2, "goal", "", "Goal active: someone else's read (not yet evaluated)")];
     const world = makeWorld([...decoys, localAnswer(COMMAND_SEQUENCE + decoys.length, "goal", "tests pass", "Goal set: tests pass")]);
     expect(await runSelfHostedSlashCommand(world.deps, SESSION, { kind: "goal-set", condition: "tests pass" }, undefined, NEVER)).toEqual({ ok: true, report: { condition: "tests pass" } });
-    expect(world.written).toEqual([{ text: "/goal tests pass", platform: RC_PERSON_CLIENT_PLATFORM, host: SURFACE.host }]);
+    expect(world.written).toEqual([{ text: "/goal tests pass", platform: "web_claude_ai", host: SURFACE.host }]);
   });
 
   it("parses every goal line the verified version answers with, a multi-line condition included", () => {
