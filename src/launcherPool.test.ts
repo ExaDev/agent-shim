@@ -492,6 +492,16 @@ describe("runLauncher with a pool selector", () => {
       expect(plan.decision.pool).toEqual({ name: "main", reasons: ["resumed here by the supervising launcher after the previous member ran out of quota"] });
     });
 
+    it("says once that a pool named on the command line outranked an inherited CLAUDE_CONFIG_DIR, not again on each relaunch", () => {
+      const prepare = (supervised: SupervisedLaunch): readonly string[] => {
+        const log = fakeLog();
+        prepareLaunch({ paths, fs: fakeFs({}), proc: fakeProc({ CLAUDE_CONFIG_DIR: "/inherited" }, ["@pool:main", "--print"]), log, resolveClaudeBinary: () => discovered, farm: fakeFarm(createFakeFarmFs(WORK_SOON)), frontdoor: fakeFrontDoorPort(FRONTDOOR_PORT), pools: POOLS, supervised });
+        return log.warns;
+      };
+      expect(prepare({ sessionId: SESSION, conversation: "start" })).toHaveLength(1);
+      expect(prepare({ sessionId: SESSION, conversation: "resume", member: "personal", from: "work" })).toEqual([]);
+    });
+
     it("flags a relaunch after a limit with the member the session left", () => {
       const log = fakeLog();
       planOf(["@pool:main", "--continue"], { sessionId: SESSION, conversation: "resume", member: "personal", from: "work" }, log);
