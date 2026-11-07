@@ -9,7 +9,7 @@ import type { RcEventDial } from "./rcWrites";
 export const SESSION_ID = "cse_00000000-0000-4000-8000-000000000001";
 export const HEARTBEAT_PATH = `/v1/code/sessions/${SESSION_ID}/worker/heartbeat`;
 /** Where the fake clock starts, so the expected timestamps are the constants the tests name. */
-export const CLOCK_START_MS = 1_000;
+const CLOCK_START_MS = 1_000;
 /** One exchange driven through the tracker the way the door's adapters drive it: request facts, the request body's chunks and end, then the response head, body and end. */
 export function exchange(tracker: RcSessionTracker, request: { method: string; url: string; authorization?: string; headers?: Record<string, string>; requestBody?: string }): { readonly respond: (status: number, body?: string, headers?: Record<string, string>) => void } {
   const observed = tracker.observeExchange({
