@@ -111,7 +111,7 @@ interface RunResult {
 }
 
 /** Runs an external command and captures its output, injected so no test ever shells out for real. Not used by this phase's own modules yet — declared here so every later module (branch-conditioned `when` evaluation, `check.ts`'s Keychain lookup) shares one injectable shape rather than each inventing its own. */
-export interface RunOptions {
+interface RunOptions {
   /** The child's whole environment, replacing the parent's; a variable mapped to undefined is left out. Omitted: the child inherits this process's environment. */
   readonly env?: Readonly<Record<string, string | undefined>>;
   /** Kill the child after this many milliseconds. Omitted: it may run as long as it likes. */
