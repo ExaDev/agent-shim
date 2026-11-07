@@ -94,7 +94,7 @@ The self-hosted Remote Control mode (issue #207) removes the manual login from t
 ```sh
 # inside the container, against the rig's agent-shim home
 export AGENT_SHIM_HOME=/tmp/agent-shim-rig
-agent-shim frontdoor rc selfhost mint rig        # mint the local credential (never prints a token); on macOS it refuses while a Claude Code login is filed for the identity, naming the delete command
+agent-shim frontdoor rc selfhost mint rig        # mint the local credential (never prints a token); refuses while CLAUDE_SECURESTORAGE_CONFIG_DIR is set, and on macOS while CLAUDE_CODE_CUSTOM_OAUTH_URL is non-empty or a Claude Code login is filed for the identity (naming the delete command)
 ```
 
 then start the door with the mode on (`AGENT_SHIM_FRONTDOOR_RC_SELF_HOST=1` beside the transparent-surface and capture variables on the detached launch that starts it, or restart the door so they are read at start), relaunch the session (`agent-shim run @rig --track-usage --remote-control`), and switch Remote Control on in the session. Inference still routes exactly as it otherwise would (a provider of your own, or the real API when a real login exists; a minted credential alone does not make the real API answer `/v1/messages`), and every Remote Control exchange is served by the door: `frontdoor rc list` tracks the session, `frontdoor rc send` delivers a prompt, `frontdoor rc pending` and `rc answer` carry the approvals, and `frontdoor rc watch` streams both halves.
