@@ -46,20 +46,6 @@ const NUMBER_FIELDS = ["at", "sequence"].length;
 /** How many bytes one UTF-16 code unit occupies at most in a JavaScript string's storage, so a byte budget converts to string lengths without assuming one-byte text. */
 const BYTES_PER_CODE_UNIT = Uint16Array.BYTES_PER_ELEMENT;
 
-/** The longest `kind` and `reason` labels, read off the closed sets that define them. */
-const KIND_MAX_CHARS = Math.max(...["session-appeared", "session-ended", "worker-state", "pending-born", "pending-retired"].map((kind) => kind.length));
-
-/**
- * The most bytes one recorded event's fields occupy: its cursor, session, kind and two numbers, plus the largest kind-specific fields, which are a pending birth's request id, type and summary (a worker state's two labels and every reason are shorter). Object and property overhead is the engine's and grows with the field count, not with any value the protocol controls, so the bound is on what an observed value can make large.
- */
-export const RC_SESSION_EVENT_MAX_BYTES =
-  (RC_SESSION_EVENT_GENERATION_MAX_CHARS + ".".length + SEQUENCE_MAX_DIGITS + RC_SESSION_EVENT_TOKEN_MAX_CHARS + KIND_MAX_CHARS + RC_SESSION_EVENT_TOKEN_MAX_CHARS + RC_SESSION_EVENT_TOKEN_MAX_CHARS + RC_SESSION_EVENT_SUMMARY_MAX_CHARS) * BYTES_PER_CODE_UNIT + NUMBER_FIELDS * NUMBER_BYTES;
-
-/**
- * How many events the log retains before it evicts the oldest: as many of the largest possible events as its memory budget holds, which bounds the log's memory whatever mix of events fills it. The budget is the protocol's own documented cap on one event batch (`CONTROL_BODY_CAP_BYTES`), which the door already buffers in full for one control request: the supervision log is a digest of many such batches, so holding no more than one batch's worth keeps it within a bound the door already accepts.
- */
-export const RC_SESSION_EVENT_LOG_CAPACITY = Math.floor(CONTROL_BODY_CAP_BYTES / RC_SESSION_EVENT_MAX_BYTES);
-
 /** Why the tracker stopped describing a session: its liveness bound passed with no traffic, an accepted archive ended it by design, or the service closed it with a conflict header. */
 export const RC_SESSION_END_REASONS = ["expired", "archived", "conflict"] as const;
 
@@ -100,6 +86,20 @@ export const RcSessionTransitionSchema = z.discriminatedUnion("kind", [
 
 /** One transition as the tracker hands it to the log's sink. */
 export type RcSessionTransition = z.output<typeof RcSessionTransitionSchema>;
+
+/** The longest `kind` label, read off the transition schema's own literals so a kind added there is measured here. */
+const KIND_MAX_CHARS = Math.max(...RcSessionTransitionSchema.options.map((option) => option.shape.kind.value.length));
+
+/**
+ * The most bytes one recorded event's fields occupy: its cursor, session, kind and two numbers, plus the largest kind-specific fields, which are a pending birth's request id, type and summary (a worker state's two labels and every reason are shorter). Object and property overhead is the engine's and grows with the field count, not with any value the protocol controls, so the bound is on what an observed value can make large.
+ */
+export const RC_SESSION_EVENT_MAX_BYTES =
+  (RC_SESSION_EVENT_GENERATION_MAX_CHARS + ".".length + SEQUENCE_MAX_DIGITS + RC_SESSION_EVENT_TOKEN_MAX_CHARS + KIND_MAX_CHARS + RC_SESSION_EVENT_TOKEN_MAX_CHARS + RC_SESSION_EVENT_TOKEN_MAX_CHARS + RC_SESSION_EVENT_SUMMARY_MAX_CHARS) * BYTES_PER_CODE_UNIT + NUMBER_FIELDS * NUMBER_BYTES;
+
+/**
+ * How many events the log retains before it evicts the oldest: as many of the largest possible events as its memory budget holds, which bounds the log's memory whatever mix of events fills it. The budget is the protocol's own documented cap on one event batch (`CONTROL_BODY_CAP_BYTES`), which the door already buffers in full for one control request: the supervision log is a digest of many such batches, so holding no more than one batch's worth keeps it within a bound the door already accepts.
+ */
+export const RC_SESSION_EVENT_LOG_CAPACITY = Math.floor(CONTROL_BODY_CAP_BYTES / RC_SESSION_EVENT_MAX_BYTES);
 
 /** One recorded event: a transition with the cursor and sequence the log stamped on it. */
 export const RcSessionEventSchema = z.discriminatedUnion("kind", [
