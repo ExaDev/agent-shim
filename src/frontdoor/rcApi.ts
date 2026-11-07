@@ -12,7 +12,8 @@ import packageJson from "../../package.json";
 import { HTTP_STATUS } from "../codex/http";
 import { isLiveCapability } from "./capability";
 import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
-import type { RcPendingRequestSummary, RcSessionStatus, RcSessionSummary } from "./rcSessions";
+import type { RcPendingRequestSummary, RcSessionSummary } from "./rcSessions";
+import type { RcStatusResolver } from "./rcStatus";
 import { rcSessionNotObservedMessage, type RcAnswerDecision, type RcContextUsageDetail, type RcEventWriteResult, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
 import {
   RcAnswerInputSchema,
@@ -71,8 +72,8 @@ export interface RcApiDeps {
   readonly expectedToken: string;
   /** The observed sessions as the tracker lists them. */
   readonly list: () => readonly RcSessionSummary[];
-  /** The observed sessions as the tracker reports their status, filtered to one when named. */
-  readonly statusOf: (sessionId?: string) => readonly RcSessionStatus[];
+  /** The status report, filtered to one session when named: the tracked sessions, each with a worker state or the reason it has none, and the registered sessions the door holds no record of (`createRcStatusResolver`). */
+  readonly statusOf: RcStatusResolver;
   /** The control requests awaiting an answer, filtered to one session when named. */
   readonly pendingOf: (sessionId?: string) => readonly RcPendingRequestSummary[];
   /** The inject operation, already wired to the tracker and the door's API-host dial. */
@@ -177,13 +178,13 @@ export function createRcApiRouter(deps: RcApiDeps) {
         .meta(openapi({ method: "GET", path: "/rest/rc/status", summary: "Read session status, one session's when named", tags: [RC_API_TAG] }))
         .input(RcSessionQuerySchema)
         .output(RcStatusOutputSchema)
-        .handler(({ input }) => {
-          const statuses = deps.statusOf(input.session);
-          // A named session that is not tracked is refused rather than answered as empty, so a mistyped id never reads as "observed, nothing pending" (the bespoke route's own rule).
-          if (input.session !== undefined && !statuses.some((entry) => entry.id === input.session)) {
+        .handler(async ({ input }) => {
+          const report = await deps.statusOf(input.session);
+          // A named session that is neither tracked nor registered is refused rather than answered as empty, so a mistyped id never reads as "observed, nothing pending" (the bespoke route's own rule).
+          if (input.session !== undefined && report.statuses.length === 0 && report.unobserved.length === 0) {
             throw new ORPCError("NOT_FOUND", { message: rcSessionNotObservedMessage(input.session) });
           }
-          return { statuses };
+          return report;
         }),
       pending: authed
         .meta(openapi({ method: "GET", path: "/rest/rc/pending", summary: "Read the control requests awaiting an answer", tags: [RC_API_TAG] }))
@@ -191,7 +192,7 @@ export function createRcApiRouter(deps: RcApiDeps) {
         .output(RcPendingOutputSchema)
         .handler(({ input }) => {
           const pending = deps.pendingOf(input.session);
-          if (input.session !== undefined && deps.statusOf(input.session).length === 0) {
+          if (input.session !== undefined && !deps.list().some((entry) => entry.id === input.session)) {
             throw new ORPCError("NOT_FOUND", { message: rcSessionNotObservedMessage(input.session) });
           }
           return { pending };

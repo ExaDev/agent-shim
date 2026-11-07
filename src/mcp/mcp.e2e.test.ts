@@ -16,6 +16,7 @@ import { createDoorEventHub, rcFanoutOnDoorHub } from "../frontdoor/eventHub";
 import { RC_ORPC_PATH_PREFIX } from "../frontdoor/rcApi";
 import { createRcSessionTracker, RC_IDLE_EXPIRY_MS } from "../frontdoor/rcSessions";
 import { createRcEventFanout } from "../frontdoor/rcStream";
+import { TEST_READ_WORKER_STATUS, UNOBSERVED_TEST_SESSION_ID, testStatusResolver } from "../frontdoor/rcStatusTestWorld";
 import type { FrontDoorStatus } from "../frontdoor/status";
 import { createMcpServer, serveMcp, type McpServerPorts } from "./server";
 import { toolsFromOpenApiDocument, type McpPermissions } from "./tools";
@@ -60,7 +61,7 @@ describe("the MCP server over a real door handler", () => {
     const surface = createDoorApiNodeHandler({
       expectedToken: CONTROL_TOKEN,
       list: tracker.list,
-      statusOf: (sessionId?: string) => tracker.statusOf(sessionId),
+      statusOf: testStatusResolver(tracker),
       pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
       inject: async (_session: string, text: string) => {
         injected.push(text);
@@ -182,6 +183,13 @@ describe("the MCP server over a real door handler", () => {
     expect(names).not.toContain("rc_send");
     const status = await client.callTool({ name: "frontdoor_status", arguments: {} });
     expect(JSON.parse(textOf(status))).toMatchObject({ supervisorAlive: true, state: { port: 4100 } });
+    await client.close();
+  });
+
+  it("answers the Remote Control status tool with the unobserved registered sessions and their read worker state", async () => {
+    const client = await connect({ writes: false, remoteControl: false, history: false });
+    const status = await client.callTool({ name: "rc_status", arguments: {} });
+    expect(JSON.parse(textOf(status))).toMatchObject({ unobserved: [{ id: UNOBSERVED_TEST_SESSION_ID, reason: expect.stringContaining("none of its traffic has crossed the door") as unknown, workerState: { value: TEST_READ_WORKER_STATUS, source: "read" } }] });
     await client.close();
   });
 

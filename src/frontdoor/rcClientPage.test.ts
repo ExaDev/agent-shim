@@ -224,7 +224,7 @@ describe("the page's script against the door's protocol", () => {
     const api = createRcApiNodeHandler({
       expectedToken: CONTROL_TOKEN,
       list: tracker.list,
-      statusOf: (sessionId?: string) => tracker.statusOf(sessionId),
+      statusOf: async (sessionId?: string) => Promise.resolve({ statuses: tracker.statusOf(sessionId).map((status) => ({ ...status, workerStateUnavailable: undefined })), unobserved: [] }),
       pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
       inject: async (session, text) => {
         writes.push({ path: "inject", body: `${session}:${text}` });
@@ -281,7 +281,7 @@ describe("the page's script against the door's protocol", () => {
     const page = pageScript(fetch, CONTROL_TOKEN, `http://127.0.0.1:${String(port)}`);
 
     expect(await page.rpc("rc/list", {})).toEqual({ sessions: [] });
-    expect(await page.rpc("rc/status", {})).toEqual({ statuses: [] });
+    expect(await page.rpc("rc/status", {})).toEqual({ statuses: [], unobserved: [] });
     expect(await page.rpc("rc/pending", {})).toEqual({ pending: [] });
 
     expect(await page.rpc("rc/send", { session: "cse_page", text: "run the tests" })).toEqual({ session: "cse_page", sequenceNums: [SEND_SEQUENCE_NUM] });

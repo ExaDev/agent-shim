@@ -340,9 +340,22 @@ describe("the self-hosted Remote Control session family", () => {
     expect(state.status).toBe(HTTP_STATUS.ok);
     const read = await call(world.port, "GET", `/v1/code/sessions/${id}/worker`, undefined, { authorization: `Bearer ${workerJwt}` });
     expect(read.status).toBe(HTTP_STATUS.ok);
-    expect((JSON.parse(read.body) as { worker: { external_metadata: Record<string, unknown> } }).worker.external_metadata).toEqual({ task_summary: null });
+    // The worker record's documented shape, the state the worker reported included.
+    expect(JSON.parse(read.body)).toEqual({ worker: { session_id: id, worker_epoch: 1, worker_status: "running", external_metadata: { task_summary: null } } });
     const beat = await call(world.port, "POST", `/v1/code/sessions/${id}/worker/heartbeat`, { session_id: id, worker_epoch: 1, idle_seconds: 3 }, { authorization: `Bearer ${workerJwt}` });
     expect(beat.status).toBe(HTTP_STATUS.ok);
+  });
+
+  it("answers the door's status read of a session's worker state in process, without any request crossing the surface", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const { id, workerJwt } = await createSession(world);
+    expect(world.surface.readWorkerState(id)).toEqual({ ok: false, message: expect.stringContaining("its worker has not reported one") as unknown });
+    const read = await call(world.port, "GET", `/v1/code/sessions/${id}/worker`, undefined, { authorization: `Bearer ${workerJwt}` });
+    expect((JSON.parse(read.body) as { worker: { worker_status: unknown } }).worker.worker_status).toBeNull();
+    await call(world.port, "PUT", `/v1/code/sessions/${id}/worker`, { worker_status: "requires_action", worker_epoch: 1 }, { authorization: `Bearer ${workerJwt}` });
+    expect(world.surface.readWorkerState(id)).toEqual({ ok: true, workerStatus: "requires_action" });
+    expect(world.surface.readWorkerState("cse_00000000-0000-4000-8000-0000000000ff")).toEqual({ ok: false, message: expect.stringContaining("holds no session cse_00000000-0000-4000-8000-0000000000ff") as unknown });
   });
 
   it("answers a stale worker epoch with the protocol's own conflict status and header", async () => {

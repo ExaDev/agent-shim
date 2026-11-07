@@ -77,16 +77,24 @@ export {
   type RcExchangeObserver,
   type RcObservedRequest,
   type RcPendingRequestSummary,
+  RC_WORKER_STATE_SOURCES,
   type RcSessionStatus,
   type RcSessionSummary,
   type RcSessionTracker,
   type RcSessionTrackerDeps,
+  type RcTrackedSessionStatus,
   type RcWorkerFact,
+  type RcWorkerStateFact,
+  type RcWorkerStateSource,
 } from "./frontdoor/rcSessions";
+export { createRcStatusResolver, type RcStatusDeps, type RcStatusReport, type RcStatusResolver, type RcUnobservedSession } from "./frontdoor/rcStatus";
+export { CLAUDE_SESSION_REGISTRY_DIR, createRcRegistryReader, rcRegistryDirsOf, rcSessionIdOfBridgeId, readRcRegisteredSessions, type RcRegisteredSession, type RcRegistryDeps } from "./frontdoor/rcRegistry";
 export {
   RC_CONTEXT_USAGE_DETAILS,
   RC_PERMISSION_MODES,
   RC_READ_FILE_ENCODINGS,
+  RC_WORKER_READ_ANSWER_EXCERPT_CHARS,
+  RC_WORKER_READ_TIMEOUT_MS,
   answerRcControlRequest,
   authenticateRcSessionMcpServer,
   buildRcControlRequestPayload,
@@ -118,6 +126,7 @@ export {
   isRcReadFileEncoding,
   rcEventWriteResultFromAnswer,
   readRcSessionFile,
+  readRcWorkerState,
   reconnectRcSessionMcpServer,
   sendRcKeepAlive,
   setRcSessionModel,
@@ -137,6 +146,8 @@ export {
   type RcPermissionMode,
   type RcReadFileEncoding,
   type RcReadFileOptions,
+  type RcWorkerReadDeps,
+  type RcWorkerStateReadResult,
   type RcWriteHeaders,
 } from "./frontdoor/rcWrites";
 export { createRcCredentialStore, type RcCredentialStore } from "./frontdoor/rcCredentialStore";
