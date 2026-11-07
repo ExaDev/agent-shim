@@ -79,12 +79,10 @@ import { createRcClientPage } from "./rcClientPage";
 import { createRcSelfHostSurface, rcSelfHostFromEnv, rcSelfHostedChoiceOf } from "./rcSelfHost";
 import { readRcSelfHostRecord } from "./rcSelfHostMint";
 import { realRcWebFetch, rcWebFetchAllowsPrivateFromEnv } from "./rcWebFetch";
-import { realRcSessionRegistryFs } from "./rcSessionRegistryFs";
-import { createRcSessionRegistryReader, rcRegistryIdentitiesOf } from "./rcSessionRegistry";
 import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, isRcSessionExchange, observingRoutedRoute } from "./rcSessions";
 import { targetRefs } from "../models/targets";
-import { createRcStatusResolver } from "./rcStatus";
-import { answerRcControlRequest, authenticateRcSessionMcpServer, perSessionRcEventDial, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, readRcWorkerState, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
+import { answerRcControlRequest, authenticateRcSessionMcpServer, perSessionRcEventDial, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
+import { createDoorRcStatus } from "./doorRcStatus";
 import { createDoorRcSessionCommands } from "./doorSessionCommands";
 import { createRcClaudeCodeVersions, rcSelfHostEventDial, selfHostSurfaceUnboundReason } from "./rcSelfHostCommands";
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, perSessionRcStreamDial, type RcStreamHub } from "./rcStream";
@@ -529,22 +527,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       const rcDial = rcSelfHostSurface === undefined ? realRcEventDial() : perSessionRcEventDial(rcSelfHostedChoiceOf(rcSelfHostSurface), lateRcEventDial(rcSelfHostDialTarget), realRcEventDial());
       const rcInject = async (sessionId: string, text: string) =>
         await injectRcUserMessage({ credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial, newUuid: randomUUID }, sessionId, text);
-      // The status the control routes and the typed API serve: the tracker's, with the worker state of any session that has none read from the service on the same dial and credential as the writes, and every session registered on this machine (in the shared Claude home's registry or any identity's) that the tracker holds no record of.
-      const rcStatusOf = createRcStatusResolver({
-        statusOf: rcTracker.statusOf,
-        noteReadWorkerState: rcTracker.noteReadWorkerState,
-        credentialOf: rcTracker.credentialOf,
-        // What the Claude Code session registry says about each live Remote Control session (name, process id, working directory), searched across every identity's registry on each read so an identity added after the door started is covered: it enriches every tracked status and names the registered sessions the tracker holds no record of from the same read.
-        registry: createRcSessionRegistryReader({ fs: realRcSessionRegistryFs, identities: () => rcRegistryIdentitiesOf(paths), isRunning: realIsProcessAlive }),
-        identityNameOf: usageEventNames.nameOf,
-        persistedCredentialOf: rcCredentialStore.read,
-        // Chosen per session: a session the door's own self-hosted service owns (it holds it, or the credential is the one it minted) is read from it in process (a dial to the door's own surface would be observed as the session's traffic), and any other is read from the real service with its OAuth credential, which the per-session dial sends to the real API host.
-        backends: {
-          ...(rcSelfHostSurface === undefined ? {} : { selfHosted: { owns: rcSelfHostSurface.ownsSession, read: rcSelfHostSurface.readWorkerState } }),
-          service: async (sessionId, credentialOf) => await readRcWorkerState({ credentialOf, dial: rcDial }, sessionId),
-        },
-        now: () => Date.now(),
-      });
+      // The status the control routes and the typed API serve: see `createDoorRcStatus`.
+      const rcStatusOf = createDoorRcStatus({ paths, tracker: rcTracker, credentialStore: rcCredentialStore, dial: rcDial, selfHostSurface: rcSelfHostSurface, identityNameOf: usageEventNames.nameOf });
       const rcAnswer = async (sessionId: string, requestId: string, decision: RcAnswerDecision) =>
         await answerRcControlRequest({ credentialOf: rcTracker.credentialOf, pendingOf: (id) => rcTracker.pendingOf(id), completePending: rcTracker.completePending, pendingToolInputOf: rcTracker.pendingToolInputOf, claimPending: rcTracker.claimPending, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial }, sessionId, requestId, decision);
       const rcControlRequestDeps = { credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial, newUuid: randomUUID };
