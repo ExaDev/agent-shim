@@ -710,7 +710,7 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
   withExamples(
     selfhost
       .command("mint")
-      .description("Mint the local OAuth credential, account block and feature-cache seed one identity needs to activate Remote Control against the door's own served surface, and record the door-side copy the surface authenticates against. Refuses to replace a real claude.ai login unless --force. Never prints a token.")
+      .description("Mint the local OAuth credential, account block and feature-cache seed one identity needs to activate Remote Control against the door's own served surface, and record the door-side copy the surface authenticates against. Refuses to replace a real claude.ai login file unless --force, and on macOS refuses outright, whatever --force says, while a Claude Code login is filed in the Keychain for the identity's directory. Never prints a token.")
       .argument("<identity>", "The identity to mint into, as `agent-shim identity list` names it.")
       .option("--force", "Replace an existing OAuth credential file this door did not mint. On macOS it does not override the refusal of a Keychain login a session in the directory would read.")
       .option("--json", "Print the mint result as JSON.")

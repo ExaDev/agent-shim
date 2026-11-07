@@ -110,7 +110,7 @@ export function readRcSelfHostRecord(fs: Pick<FarmFs, "readFileUtf8">, frontdoor
 }
 
 /**
- * Mints the local credential for one identity and records the door's copy. Refuses, unless `force`, when the identity already holds an OAuth credential this door did not mint (a real claude.ai login): overwriting one silently would sign the identity out, and the mode's own contract is that no Anthropic credential is in play at all.
+ * Mints the local credential for one identity and records the door's copy. Refuses, unless `force`, when the identity already holds an OAuth credential this door did not mint (a real claude.ai login): overwriting one silently would sign the identity out, and the mode's own contract is that no Anthropic credential is in play at all. This writes the files only and never asks the Keychain: on macOS a login filed there for the directory is read ahead of the file written here, so a caller that mints for a real session uses `mintRcSelfHostLogin`, which refuses first.
  */
 export function mintRcSelfHostCredential(deps: RcSelfHostMintDeps): RcSelfHostMintResult {
   if (!isIdentityName(deps.identity)) {
