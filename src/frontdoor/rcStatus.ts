@@ -1,6 +1,6 @@
 import { RC_IDLE_EXPIRY_MS, type RcSessionStatus, type RcSessionTracker, type RcTrackedSessionStatus, type RcWorkerStateFact } from "./rcSessions";
 import { withIdentityNames, withRegisteredSessionFacts, type RcRegisteredSession } from "./rcSessionRegistry";
-import { readRcWorkerState, type RcEventDial, type RcObservedCredential, type RcWorkerStateReadResult } from "./rcWrites";
+import type { RcObservedCredential, RcWorkerStateReadResult } from "./rcWrites";
 
 /**
  * The Remote Control status read: the tracker's synchronous status, with the worker state of every session that has none filled in from the service, plus every session that registered with the Remote Control service on this machine but that the door holds no record of. A session's state is observed only when a worker state update crosses the door while its record exists, so a session whose last state change predates the door (or whose record expired and was recreated by a heartbeat) would otherwise report nothing until its next change, however long that is; and a session none of whose traffic has crossed the door within the tracker's idle bound has no record at all, so it would be missing from the status entirely. The service holds the state, so the door asks it, on the same dial and with the same credential as its client-half writes, and marks every answer as read rather than observed.
@@ -34,7 +34,7 @@ export interface RcStatusReport {
   readonly unobserved: readonly RcUnobservedSession[];
 }
 
-/** Everything the status read needs: the tracker's accessors, the registry read, the persisted credentials, the dial and a clock. */
+/** Everything the status read needs: the tracker's accessors, the registry read, the persisted credentials, the worker state read and a clock. */
 export interface RcStatusDeps {
   readonly statusOf: RcSessionTracker["statusOf"];
   readonly noteReadWorkerState: RcSessionTracker["noteReadWorkerState"];
@@ -46,8 +46,10 @@ export interface RcStatusDeps {
   readonly identityNameOf: (id: string) => string | undefined;
   /** The credential a door generation persisted for a session it observed (`RcCredentialStore.read`), the only credential the door can hold for a session it has no record of. */
   readonly persistedCredentialOf: (sessionId: string) => RcObservedCredential | undefined;
-  /** The dial to the real API host. */
-  readonly dial: RcEventDial;
+  /**
+   * Reads one session's worker state with the credential `credentialOf` holds for it. Against the real service this is `readRcWorkerState` over the door's dial; in self-hosted mode the door is the service, and the read asks the self-hosted surface in process (`RcSelfHostSurface.readWorkerState`), since a dial would loop back into the door's own transparent surface and be observed as client traffic.
+   */
+  readonly readWorkerState: (sessionId: string, credentialOf: (id: string) => RcObservedCredential | undefined) => Promise<RcWorkerStateReadResult>;
   /** The clock the reuse bound is measured on. */
   readonly now: () => number;
 }
@@ -98,7 +100,7 @@ export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
     if (previous !== undefined && previous.authorization === authorization && stands(previous, deps.now())) {
       return previous;
     }
-    const read: HeldRead = { authorization, requestedAt: deps.now(), result: readRcWorkerState({ credentialOf, dial: deps.dial }, sessionId), settledAt: undefined };
+    const read: HeldRead = { authorization, requestedAt: deps.now(), result: deps.readWorkerState(sessionId, credentialOf), settledAt: undefined };
     held.set(sessionId, read);
     void read.result.then(() => {
       read.settledAt = deps.now();

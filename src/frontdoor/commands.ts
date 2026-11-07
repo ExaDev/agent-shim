@@ -84,7 +84,7 @@ import { createRcSessionRegistryReader, rcRegistryIdentitiesOf } from "./rcSessi
 import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, isRcSessionExchange, observingRoutedRoute } from "./rcSessions";
 import { targetRefs } from "../models/targets";
 import { createRcStatusResolver } from "./rcStatus";
-import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
+import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, readRcWorkerState, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
 import { createDoorRcSessionCommands } from "./doorSessionCommands";
 import { createRcClaudeCodeVersions, rcSelfHostEventDial, selfHostSurfaceUnboundReason } from "./rcSelfHostCommands";
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
@@ -536,7 +536,11 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         registry: createRcSessionRegistryReader({ fs: realRcSessionRegistryFs, identities: () => rcRegistryIdentitiesOf(paths), isRunning: realIsProcessAlive }),
         identityNameOf: usageEventNames.nameOf,
         persistedCredentialOf: rcCredentialStore.read,
-        dial: rcDial,
+        // Self-hosted, the door is the service, so its surface answers in process; otherwise the read dials the API host like the writes.
+        readWorkerState:
+          rcSelfHostSurface === undefined
+            ? async (sessionId, credentialOf) => await readRcWorkerState({ credentialOf, dial: rcDial }, sessionId)
+            : async (sessionId) => await Promise.resolve(rcSelfHostSurface.readWorkerState(sessionId)),
         now: () => Date.now(),
       });
       const rcAnswer = async (sessionId: string, requestId: string, decision: RcAnswerDecision) =>

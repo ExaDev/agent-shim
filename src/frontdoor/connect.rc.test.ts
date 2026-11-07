@@ -14,7 +14,7 @@ import { createRcControlHandler, frontDoorRcControl, realRcControlTransport, typ
 import { createRcCredentialStore } from "./rcCredentialStore";
 import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog, type RcSessionEventLog } from "./rcEventLog";
 import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, type RcSessionTracker } from "./rcSessions";
-import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcEventDial, type RcEventWriteResult, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
+import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, readRcWorkerState, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcEventDial, type RcEventWriteResult, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
 import { createRcStatusResolver } from "./rcStatus";
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
 import type { RcStreamEvent } from "./rcSchemas";
@@ -239,7 +239,7 @@ describe("Remote Control observation and injection over the connect surface", ()
         await settle();
         expect(readTracker.statusOf(RC_TEST_SESSION_ID)[0]?.workerState).toBeUndefined();
 
-        const resolve = createRcStatusResolver({ statusOf: readTracker.statusOf, noteReadWorkerState: readTracker.noteReadWorkerState, credentialOf: readTracker.credentialOf, registry: () => new Map(), identityNameOf: () => undefined, persistedCredentialOf: () => undefined, dial: rcDial, now: () => Date.now() });
+        const resolve = createRcStatusResolver({ statusOf: readTracker.statusOf, noteReadWorkerState: readTracker.noteReadWorkerState, credentialOf: readTracker.credentialOf, registry: () => new Map(), identityNameOf: () => undefined, persistedCredentialOf: () => undefined, readWorkerState: async (sessionId, credentialOf) => await readRcWorkerState({ credentialOf, dial: rcDial }, sessionId), now: () => Date.now() });
         const {
           statuses: [status],
         } = await resolve(RC_TEST_SESSION_ID);

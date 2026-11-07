@@ -10,6 +10,7 @@ import { createRcSelfHostLocal, type RcSelfHostLocal } from "./rcSelfHostLocal";
 import { RC_WEB_FETCH_MAX_BYTES, type RcWebFetcher } from "./rcWebFetch";
 import type { FrontDoorRoute, RoutedRequest, RoutedResponse } from "./route";
 import type { RcStreamEnvelope } from "./rcSchemas";
+import type { RcWorkerStateReadResult } from "./rcWrites";
 
 /**
  * The self-hosted Remote Control service: the door serving, locally, the CCR surface it normally only observes (ExaDev/agent-shim#207). When the mode is on, a Claude Code session activates Remote Control against this surface and is controlled through it with no Anthropic credential anywhere: the door answers the session family itself instead of piping it to the real API host, so the `cse_` sessions, their sequence numbers, their worker and client streams and their event writes all live on this machine.
@@ -335,6 +336,10 @@ export interface RcSelfHostSurface {
   readonly local: RcSelfHostLocal;
   /** Stops the service's timers and retires every open stream. The sessions themselves are unreachable the moment the door drops them. */
   readonly close: () => void;
+  /**
+   * The worker state this service holds for one of its sessions, for the door's status read. In self-hosted mode the service is the door itself, so the read asks it in process rather than dialling the door's own transparent surface: that dial would be observed like any client's traffic (giving a dead session a fresh record and a fresh liveness on every status poll), and the surface's worker routes admit only the worker's own JWT, never the client credential the read carries.
+   */
+  readonly readWorkerState: (sessionId: string) => RcWorkerStateReadResult;
 }
 
 /** Creates the self-hosted Remote Control service. One per door process; everything it holds dies with it. */
@@ -628,7 +633,8 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
       }
 
       if (workerTail === "" && method === "GET") {
-        await answerJson(response, HTTP_STATUS.ok, { worker: { external_metadata: session.externalMetadata ?? null } });
+        // The worker record's documented shape (`{worker{session_id, worker_epoch, worker_status, external_metadata}}`, docs/claude-code-service-contracts.md), with a state the worker has not reported yet answered as null.
+        await answerJson(response, HTTP_STATUS.ok, { worker: { session_id: session.id, worker_epoch: RC_SELF_HOST_WORKER_EPOCH, worker_status: session.workerStatus ?? null, external_metadata: session.externalMetadata ?? null } });
         return;
       }
       if (workerTail === "" && method === "PUT") {
@@ -932,6 +938,16 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
   return {
     route,
     local,
+    readWorkerState: (sessionId) => {
+      const session = sessions.get(sessionId);
+      if (session === undefined) {
+        return { ok: false, message: `the self-hosted Remote Control service holds no session ${sessionId}: it was archived, or retired after ${String(RC_SELF_HOST_RETENTION_MS / MS_PER_SECOND)} s without traffic` };
+      }
+      if (session.workerStatus === undefined) {
+        return { ok: false, message: `the self-hosted Remote Control service holds no worker state for session ${sessionId}: its worker has not reported one since the session was created` };
+      }
+      return { ok: true, workerStatus: session.workerStatus };
+    },
     close: () => {
       clearInterval(timer);
       clearInterval(keepalive);

@@ -5,7 +5,7 @@ import { HTTP_STATUS } from "../codex/http";
 import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, type RcSessionTracker } from "./rcSessions";
 import type { RcRegisteredSession } from "./rcSessionRegistry";
 import { createRcStatusResolver, type RcStatusResolver } from "./rcStatus";
-import type { RcDialAnswer, RcEventDial, RcObservedCredential } from "./rcWrites";
+import { readRcWorkerState, type RcDialAnswer, type RcEventDial, type RcObservedCredential } from "./rcWrites";
 
 /** Made-up session ids of the protocol's shape. */
 const QUIET_SESSION_ID = "cse_00000000-0000-4000-8000-000000000001";
@@ -77,7 +77,7 @@ const resolverOf = (tracker: RcSessionTracker, dial: RcEventDial, world: Resolve
     registry: () => world.registered ?? new Map(),
     identityNameOf: (id) => world.identityNames?.[id],
     persistedCredentialOf: (sessionId) => world.persisted?.[sessionId],
-    dial,
+    readWorkerState: async (sessionId, credentialOf) => await readRcWorkerState({ credentialOf, dial }, sessionId),
     now: world.now ?? (() => CLOCK_START_MS),
   });
 
@@ -206,7 +206,7 @@ describe("the Remote Control status under concurrent callers", () => {
   it("shares one in-flight read among every caller asking about the same session", async () => {
     const tracker = trackerWith(QUIET_SESSION_ID);
     const { dial, reads, release } = gatedDial();
-    const resolve = resolverOf(tracker, dial, { registered: [registeredAs(OBSERVED_SESSION_ID)], persisted: { [OBSERVED_SESSION_ID]: persisted } });
+    const resolve = resolverOf(tracker, dial, { registered: new Map([registeredAs(OBSERVED_SESSION_ID)]), persisted: { [OBSERVED_SESSION_ID]: persisted } });
     const first = resolve();
     const second = resolve();
     const third = resolve(OBSERVED_SESSION_ID);
@@ -225,7 +225,7 @@ describe("the Remote Control status under concurrent callers", () => {
     const tracker = trackerWith();
     const { dial, reads, release } = gatedDial();
     let now = CLOCK_START_MS;
-    const resolve = resolverOf(tracker, dial, { registered: [registeredAs(OBSERVED_SESSION_ID)], persisted: { [OBSERVED_SESSION_ID]: persisted }, now: () => now });
+    const resolve = resolverOf(tracker, dial, { registered: new Map([registeredAs(OBSERVED_SESSION_ID)]), persisted: { [OBSERVED_SESSION_ID]: persisted }, now: () => now });
     const pending = resolve();
     await new Promise<void>((settled) => {
       setImmediate(settled);
