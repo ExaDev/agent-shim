@@ -41,8 +41,8 @@ import {
   RcWriteOutputSchema,
   type RcStreamEvent,
 } from "./rcSchemas";
-import { RcCompactInputSchema, RcCompactOutputSchema, RcGoalClearOutputSchema, RcGoalGetOutputSchema, RcGoalSessionInputSchema, RcGoalSetInputSchema, RcGoalSetOutputSchema } from "./rcSlashCommandSchemas";
-import type { RcCompactOptions, RcCompactReport, RcGoalClearReport, RcGoalReport, RcGoalSetReport, RcSlashCommandOptions, RcSlashCommandResult } from "./rcSlashCommands";
+import { RcCompactInputSchema, RcCompactOutputSchema, RcCompactWithInstructionsInputSchema, RcGoalClearOutputSchema, RcGoalGetOutputSchema, RcGoalSessionInputSchema, RcGoalSetInputSchema, RcGoalSetOutputSchema } from "./rcSlashCommandSchemas";
+import { RC_SESSION_COMMAND_MAX_WAIT_MS, type RcCompactOptions, type RcCompactReport, type RcGoalClearReport, type RcGoalReport, type RcGoalSetReport, type RcSessionCommandOptions, type RcSessionCommandResult } from "./rcSessionCommands";
 import type { RcEventFanout } from "./rcStream";
 import type { PrePipelineApi } from "./server";
 
@@ -109,14 +109,14 @@ export interface RcApiDeps {
   readonly mcpOAuthCallbackUrl: (sessionId: string, serverName: string, callbackUrl: string) => Promise<RcEventWriteResult>;
   /** The teleport operation, already wired to the tracker and the door's API-host dial. */
   readonly teleport: (sessionId: string, marker: string) => Promise<RcEventWriteResult>;
-  /** The goal read, already wired to the inject operation, the fan-out and the observed versions (`rcSlashCommands.ts`). */
-  readonly goalGet: (sessionId: string, options: RcSlashCommandOptions) => Promise<RcSlashCommandResult<RcGoalReport>>;
-  /** The goal set, wired the same way. */
-  readonly goalSet: (sessionId: string, condition: string, options: RcSlashCommandOptions) => Promise<RcSlashCommandResult<RcGoalSetReport>>;
-  /** The goal clear, wired the same way. */
-  readonly goalClear: (sessionId: string, options: RcSlashCommandOptions) => Promise<RcSlashCommandResult<RcGoalClearReport>>;
-  /** The compaction, wired the same way. */
-  readonly compact: (sessionId: string, options: RcCompactOptions) => Promise<RcSlashCommandResult<RcCompactReport>>;
+  /** The goal read (`rcSessionCommands.ts`), routed to the session's supervisor or the door's own self-hosted surface. */
+  readonly goalGet: (sessionId: string, options: RcSessionCommandOptions) => Promise<RcSessionCommandResult<RcGoalReport>>;
+  /** The goal set, routed the same way. */
+  readonly goalSet: (sessionId: string, condition: string, options: RcSessionCommandOptions) => Promise<RcSessionCommandResult<RcGoalSetReport>>;
+  /** The goal clear, routed the same way. */
+  readonly goalClear: (sessionId: string, options: RcSessionCommandOptions) => Promise<RcSessionCommandResult<RcGoalClearReport>>;
+  /** The compaction, routed the same way. */
+  readonly compact: (sessionId: string, options: RcCompactOptions) => Promise<RcSessionCommandResult<RcCompactReport>>;
   /** The client attachment's fan-out, whose events the subscription yields. */
   readonly fanout: RcEventFanout;
 }
@@ -157,6 +157,11 @@ export function doorApiAuth(expectedToken: string) {
 /** The one OpenAPI tag every Remote Control procedure carries, so the document groups the door's Remote Control surface as one section. */
 const RC_API_TAG = "remote-control";
 
+/**
+ * The OpenAPI tag of the Remote Control procedures that put a directive into another session as if its person had given it: a goal's condition (which Claude Code hands its model as a Stop-hook condition to work towards without asking) and a compaction's summary instructions. They need a grant of their own, narrower than the general Remote Control one, because the receiving session's model treats them as the user's intent where it would treat a peer's message as not.
+ */
+export const RC_DIRECTIVE_TAG = "remote-control-directives";
+
 /** Builds the typed API's router: one procedure per operation, every one behind the control-token middleware. */
 export function createRcApiRouter(deps: RcApiDeps) {
   const authed = doorApiAuth(deps.expectedToken);
@@ -177,14 +182,15 @@ export function createRcApiRouter(deps: RcApiDeps) {
     }
     return { request: result.requestId, sequenceNums: result.sequenceNums };
   };
-  // A goal or compaction verb that did not reach an outcome (an unverified version, an undelivered write, a refusal in the worker's own words, or no answer within the wait) becomes the same verbose message, carried as an oRPC error.
-  const commanded = <T>(sessionId: string, result: RcSlashCommandResult<T>): { readonly session: string; readonly sequenceNums: readonly number[] } & T => {
+  // A goal or compaction verb that did not reach an outcome (an unknown or unreachable session, an unverified version, a refusal in the session's own words, or no answer within the wait) becomes the same verbose message, carried as an oRPC error.
+  const commanded = <T>(sessionId: string, result: RcSessionCommandResult<T>): { readonly session: string } & T => {
     if (!result.ok) {
       throw new ORPCError("BAD_GATEWAY", { message: result.message });
     }
-    return { session: sessionId, sequenceNums: result.sequenceNums, ...result.report };
+    return { session: sessionId, ...result.report };
   };
-  const waitOf = (waitMs: number | undefined): RcSlashCommandOptions => (waitMs === undefined ? {} : { waitMs });
+  // The request's own signal travels into the verb, so a caller that disconnects stops the wait rather than leaving it to its bound.
+  const optionsOf = (waitMs: number | undefined, signal: AbortSignal | undefined): RcSessionCommandOptions => ({ ...(waitMs === undefined ? {} : { waitMs }), ...(signal === undefined ? {} : { signal }) });
   return {
     rc: {
       list: authed
@@ -298,25 +304,30 @@ export function createRcApiRouter(deps: RcApiDeps) {
         .output(RcWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, sequenceNums: delivered(input.session, await deps.teleport(input.session, input.marker)) })),
       goalGet: authed
-        .meta(openapi({ method: "POST", path: "/rest/rc/goal/get", summary: "Read a session's goal by running /goal", tags: [RC_API_TAG] }))
+        .meta(openapi({ method: "POST", path: "/rest/rc/goal/get", summary: "Read a session's goal", tags: [RC_API_TAG] }))
         .input(RcGoalSessionInputSchema)
         .output(RcGoalGetOutputSchema)
-        .handler(async ({ input }) => commanded(input.session, await deps.goalGet(input.session, waitOf(input.waitMs)))),
+        .handler(async ({ input, signal }) => commanded(input.session, await deps.goalGet(input.session, optionsOf(input.waitMs, signal)))),
       goalSet: authed
-        .meta(openapi({ method: "POST", path: "/rest/rc/goal/set", summary: "Set a session's goal by running /goal <condition>", tags: [RC_API_TAG] }))
+        .meta(openapi({ method: "POST", path: "/rest/rc/goal/set", summary: "Set a session's goal, a directive its model then works to", tags: [RC_DIRECTIVE_TAG] }))
         .input(RcGoalSetInputSchema)
         .output(RcGoalSetOutputSchema)
-        .handler(async ({ input }) => commanded(input.session, await deps.goalSet(input.session, input.condition, waitOf(input.waitMs)))),
+        .handler(async ({ input, signal }) => commanded(input.session, await deps.goalSet(input.session, input.condition, optionsOf(input.waitMs, signal)))),
       goalClear: authed
-        .meta(openapi({ method: "POST", path: "/rest/rc/goal/clear", summary: "Clear a session's goal by running /goal clear", tags: [RC_API_TAG] }))
+        .meta(openapi({ method: "POST", path: "/rest/rc/goal/clear", summary: "Clear a session's goal", tags: [RC_API_TAG] }))
         .input(RcGoalSessionInputSchema)
         .output(RcGoalClearOutputSchema)
-        .handler(async ({ input }) => commanded(input.session, await deps.goalClear(input.session, waitOf(input.waitMs)))),
+        .handler(async ({ input, signal }) => commanded(input.session, await deps.goalClear(input.session, optionsOf(input.waitMs, signal)))),
       compact: authed
-        .meta(openapi({ method: "POST", path: "/rest/rc/compact", summary: "Compact a session's conversation by running /compact", tags: [RC_API_TAG] }))
+        .meta(openapi({ method: "POST", path: "/rest/rc/compact", summary: "Compact a session's conversation", tags: [RC_API_TAG] }))
         .input(RcCompactInputSchema)
         .output(RcCompactOutputSchema)
-        .handler(async ({ input }) => commanded(input.session, await deps.compact(input.session, { ...waitOf(input.waitMs), ...(input.instructions === undefined ? {} : { instructions: input.instructions }) }))),
+        .handler(async ({ input, signal }) => commanded(input.session, await deps.compact(input.session, optionsOf(input.waitMs, signal)))),
+      compactWithInstructions: authed
+        .meta(openapi({ method: "POST", path: "/rest/rc/compact-with-instructions", summary: "Compact a session's conversation under summary instructions, a directive to its model", tags: [RC_DIRECTIVE_TAG] }))
+        .input(RcCompactWithInstructionsInputSchema)
+        .output(RcCompactOutputSchema)
+        .handler(async ({ input, signal }) => commanded(input.session, await deps.compact(input.session, { ...optionsOf(input.waitMs, signal), instructions: input.instructions }))),
       subscribe: authed
         .meta(openapi({ method: "GET", path: "/rest/rc/events", summary: "Stream a session's Remote Control events (SSE)", tags: [RC_API_TAG] }))
         .input(RcSessionQuerySchema)
@@ -419,8 +430,8 @@ export type RcApiClient = RouterClient<RcApiRouter>;
 
 /** Builds the link every client of the door's typed API dials through: the door's address under the mount prefix, the per-generation control token on every call, and TLS trusting only the CA the door's own state names. */
 export function frontDoorApiLink(port: number, ca: string, token: string) {
-  // One dispatcher for the link's lifetime, trusting only the door's CA, so a process merely holding the port cannot answer as the door (the same trust rule the bespoke transport applies).
-  const dispatcher = new Agent({ connect: { ca } });
+  // One dispatcher for the link's lifetime, trusting only the door's CA, so a process merely holding the port cannot answer as the door (the same trust rule the bespoke transport applies). Its wait for response headers is the longest wait a goal or compaction verb may take, because those procedures answer only once the session has (undici's own default, five minutes, would cut a longer compaction off while the door still waits for it).
+  const dispatcher = new Agent({ connect: { ca }, headersTimeout: RC_SESSION_COMMAND_MAX_WAIT_MS });
   return new RPCLink({
     origin: `https://127.0.0.1:${String(port)}`,
     url: RC_ORPC_PATH_PREFIX,

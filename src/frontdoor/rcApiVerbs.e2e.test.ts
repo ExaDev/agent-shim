@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { generateCa, LOOPBACK_LEAF_NAMES, mintLeaf, type CaMaterial } from "./connect";
 import { KEYGEN_TIMEOUT_MS } from "./connectTestWorld";
 import { createRcApiNodeHandler, frontDoorRcApiClient } from "./rcApi";
-import type { RcSlashCommandResult } from "./rcSlashCommands";
+import { RC_SESSION_COMMAND_MAX_WAIT_MS, type RcCompactOptions, type RcSessionCommandResult } from "./rcSessionCommands";
 import { createRcEventFanout } from "./rcStream";
 import type { RcEventWriteResult } from "./rcWrites";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
@@ -41,10 +41,12 @@ describe("the wider control-verb family on the door's typed API, end to end over
     return await Promise.resolve({ ok: true, sequenceNums: [...SEQUENCE_NUMS], requestId: MINTED_REQUEST_ID });
   };
 
+  /** The options a verb was handed, without the request's abort signal. */
+  const withoutSignal = (options: RcCompactOptions): Record<string, unknown> => ({ ...(options.waitMs === undefined ? {} : { waitMs: options.waitMs }), ...(options.instructions === undefined ? {} : { instructions: options.instructions }) });
   /** The same recording for the goal and compaction verbs, answering with the report each one is handed. */
-  const noteCommand = async <T>(op: string, args: readonly unknown[], report: T): Promise<RcSlashCommandResult<T>> => {
+  const noteCommand = async <T>(op: string, args: readonly unknown[], report: T): Promise<RcSessionCommandResult<T>> => {
     calls.push({ op, args });
-    return await Promise.resolve({ ok: true, sequenceNums: [...SEQUENCE_NUMS], report });
+    return await Promise.resolve({ ok: true, report });
   };
 
   beforeAll(async () => {
@@ -70,10 +72,11 @@ describe("the wider control-verb family on the door's typed API, end to end over
       mcpAuthenticate: async (session, serverName, redirectUri) => note("mcpAuthenticate", [session, serverName, redirectUri]),
       mcpOAuthCallbackUrl: async (session, serverName, callbackUrl) => note("mcpOAuthCallbackUrl", [session, serverName, callbackUrl]),
       teleport: async (session, marker) => note("teleport", [session, marker]),
-      goalGet: async (session, options) => noteCommand("goalGet", [session, options], { goal: { condition: "the build is green", iterations: 2, lastCheck: "one test still fails" } }),
-      goalSet: async (session, condition, options) => noteCommand("goalSet", [session, condition, options], { condition }),
-      goalClear: async (session, options) => noteCommand("goalClear", [session, options], { cleared: null }),
-      compact: async (session, options) => noteCommand("compact", [session, options], { trigger: "manual", preTokens: COMPACT_PRE_TOKENS, postTokens: COMPACT_POST_TOKENS }),
+      // The options are recorded without their abort signal, which every request carries and no assertion can name.
+      goalGet: async (session, options) => noteCommand("goalGet", [session, withoutSignal(options)], { route: "supervised" as const, goal: { condition: "the build is green", iterations: 2, lastCheck: "one test still fails" } }),
+      goalSet: async (session, condition, options) => noteCommand("goalSet", [session, condition, withoutSignal(options)], { route: "self-hosted" as const, condition, superseded: "the docs are updated" }),
+      goalClear: async (session, options) => noteCommand("goalClear", [session, withoutSignal(options)], { route: "supervised" as const, cleared: null }),
+      compact: async (session, options) => noteCommand("compact", [session, withoutSignal(options), options.signal instanceof AbortSignal], { route: "supervised" as const, trigger: "plugin", preTokens: COMPACT_PRE_TOKENS, postTokens: COMPACT_POST_TOKENS }),
       fanout: createRcEventFanout(),
     });
     const server = createFrontDoorServer(
@@ -126,18 +129,21 @@ describe("the wider control-verb family on the door's typed API, end to end over
     ]);
   });
 
-  it("serves the goal and compaction verbs, each answer carrying the worker's report beside the command's sequence numbers", async () => {
+  it("serves the goal and compaction verbs, each answer carrying the session's report and the route that served it, with the request's signal handed through and the wait bounded", async () => {
     const api = frontDoorRcApiClient(port, ca.certPem, CONTROL_TOKEN);
     const before = calls.length;
-    expect(await api.rc.goalGet({ session: SESSION_ID })).toEqual({ session: SESSION_ID, sequenceNums: SEQUENCE_NUMS, goal: { condition: "the build is green", iterations: 2, lastCheck: "one test still fails" } });
-    expect(await api.rc.goalSet({ session: SESSION_ID, condition: "the build is green", waitMs: COMMAND_WAIT_MS })).toEqual({ session: SESSION_ID, sequenceNums: SEQUENCE_NUMS, condition: "the build is green" });
-    expect(await api.rc.goalClear({ session: SESSION_ID })).toEqual({ session: SESSION_ID, sequenceNums: SEQUENCE_NUMS, cleared: null });
-    expect(await api.rc.compact({ session: SESSION_ID, instructions: "keep the decisions" })).toEqual({ session: SESSION_ID, sequenceNums: SEQUENCE_NUMS, trigger: "manual", preTokens: COMPACT_PRE_TOKENS, postTokens: COMPACT_POST_TOKENS });
+    expect(await api.rc.goalGet({ session: SESSION_ID })).toEqual({ session: SESSION_ID, route: "supervised", goal: { condition: "the build is green", iterations: 2, lastCheck: "one test still fails" } });
+    expect(await api.rc.goalSet({ session: SESSION_ID, condition: "the build is green", waitMs: COMMAND_WAIT_MS })).toEqual({ session: SESSION_ID, route: "self-hosted", condition: "the build is green", superseded: "the docs are updated" });
+    expect(await api.rc.goalClear({ session: SESSION_ID })).toEqual({ session: SESSION_ID, route: "supervised", cleared: null });
+    expect(await api.rc.compact({ session: SESSION_ID })).toEqual({ session: SESSION_ID, route: "supervised", trigger: "plugin", preTokens: COMPACT_PRE_TOKENS, postTokens: COMPACT_POST_TOKENS });
+    await api.rc.compactWithInstructions({ session: SESSION_ID, instructions: "keep the decisions" });
+    await expect(api.rc.goalSet({ session: SESSION_ID, condition: "x", waitMs: RC_SESSION_COMMAND_MAX_WAIT_MS + 1 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
     expect(calls.slice(before)).toEqual([
       { op: "goalGet", args: [SESSION_ID, {}] },
       { op: "goalSet", args: [SESSION_ID, "the build is green", { waitMs: COMMAND_WAIT_MS }] },
       { op: "goalClear", args: [SESSION_ID, {}] },
-      { op: "compact", args: [SESSION_ID, { instructions: "keep the decisions" }] },
+      { op: "compact", args: [SESSION_ID, {}, true] },
+      { op: "compact", args: [SESSION_ID, { instructions: "keep the decisions" }, true] },
     ]);
   });
 

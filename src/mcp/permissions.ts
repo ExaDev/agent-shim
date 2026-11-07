@@ -17,13 +17,15 @@ const StoredMcpPermissionsSchema = z.strictObject({
   remoteControl: z.boolean(),
   // Absent from a file written before the grant existed, which meant not allowed.
   history: z.boolean().default(false),
+  // Absent from a file written before the grant existed, which meant not allowed.
+  directives: z.boolean().default(false),
 });
 
 /** The file's mode: readable and writable by its owner alone, so no other user can raise what an agent may do. */
 const OWNER_ONLY_MODE = 0o600;
 
 /** What no permission file means: reads only. */
-const NONE: McpPermissions = { writes: false, remoteControl: false, history: false };
+const NONE: McpPermissions = { writes: false, remoteControl: false, history: false, directives: false };
 
 /** Reads the stored permissions: none granted when the file does not exist. A file that exists but is not valid throws `ConfigValidationError` (it fails its schema) or `ConfigFileNotJsonError` (it is not JSON), so a damaged file fails the request loudly instead of silently granting or denying. */
 export function readStoredMcpPermissions(paths: LayoutPaths): McpPermissions {
@@ -32,13 +34,13 @@ export function readStoredMcpPermissions(paths: LayoutPaths): McpPermissions {
 
 /** Writes the stored permissions atomically and owner-only, so no other user can raise them. */
 export function writeStoredMcpPermissions(paths: LayoutPaths, permissions: McpPermissions): void {
-  writeJsonAtomic(paths.mcpPermissionsFile, { writes: permissions.writes, remoteControl: permissions.remoteControl, history: permissions.history });
+  writeJsonAtomic(paths.mcpPermissionsFile, { writes: permissions.writes, remoteControl: permissions.remoteControl, history: permissions.history, directives: permissions.directives });
   fs.chmodSync(paths.mcpPermissionsFile, OWNER_ONLY_MODE);
 }
 
 /** The permissions in force: what the startup flags grant plus what the file grants. */
 export function effectiveMcpPermissions(flags: McpPermissions, stored: McpPermissions): McpPermissions {
-  return { writes: flags.writes || stored.writes, remoteControl: flags.remoteControl || stored.remoteControl, history: flags.history || stored.history };
+  return { writes: flags.writes || stored.writes, remoteControl: flags.remoteControl || stored.remoteControl, history: flags.history || stored.history, directives: flags.directives || stored.directives };
 }
 
 /**

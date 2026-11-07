@@ -84,10 +84,10 @@ describe("the MCP server over a real door handler", () => {
       mcpAuthenticate: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" }),
       mcpOAuthCallbackUrl: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" }),
       teleport: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS }),
-      goalGet: async () => await Promise.resolve({ ok: true as const, sequenceNums: WRITE_SEQUENCE_NUMS, report: { goal: null } }),
-      goalSet: async (_session: string, condition: string) => await Promise.resolve({ ok: true as const, sequenceNums: WRITE_SEQUENCE_NUMS, report: { condition } }),
-      goalClear: async () => await Promise.resolve({ ok: true as const, sequenceNums: WRITE_SEQUENCE_NUMS, report: { cleared: null } }),
-      compact: async () => await Promise.resolve({ ok: true as const, sequenceNums: WRITE_SEQUENCE_NUMS, report: { trigger: "manual", preTokens: 2, postTokens: 1 } }),
+      goalGet: async () => await Promise.resolve({ ok: true as const, report: { route: "supervised" as const, goal: null } }),
+      goalSet: async (_session: string, condition: string) => await Promise.resolve({ ok: true as const, report: { route: "supervised" as const, condition, superseded: null } }),
+      goalClear: async () => await Promise.resolve({ ok: true as const, report: { route: "supervised" as const, cleared: null } }),
+      compact: async () => await Promise.resolve({ ok: true as const, report: { route: "supervised" as const, trigger: "plugin" } }),
       fanout: rcFanoutOnDoorHub(createRcEventFanout(), events),
       sessionEvents,
       usageSnapshots: () => [],
@@ -182,7 +182,7 @@ describe("the MCP server over a real door handler", () => {
   }
 
   it("lists the door's reads as tools and answers a call from the door's own output", async () => {
-    const client = await connect({ writes: false, remoteControl: false, history: false });
+    const client = await connect({ writes: false, remoteControl: false, history: false, directives: false });
     const { tools } = await client.listTools();
     const names = tools.map((tool) => tool.name);
     expect(names).toContain("frontdoor_status");
@@ -205,7 +205,7 @@ describe("the MCP server over a real door handler", () => {
   });
 
   it("returns a refusal as an error result naming its code, not as a protocol failure", async () => {
-    const client = await connect({ writes: false, remoteControl: false, history: false });
+    const client = await connect({ writes: false, remoteControl: false, history: false, directives: false });
     const refused = await client.callTool({ name: "usage_effectiveWindow", arguments: { identity: "nobody" } });
     expect(refused.isError).toBe(true);
     expect(textOf(refused)).toContain("NOT_FOUND");
@@ -213,10 +213,10 @@ describe("the MCP server over a real door handler", () => {
   });
 
   it("exposes a Remote Control write only when its opt-in is given, and the call reaches the door's operation", async () => {
-    const withoutOptIn = await connect({ writes: true, remoteControl: false, history: false });
+    const withoutOptIn = await connect({ writes: true, remoteControl: false, history: false, directives: false });
     expect((await withoutOptIn.listTools()).tools.map((tool) => tool.name)).not.toContain("rc_send");
     await withoutOptIn.close();
-    const client = await connect({ writes: false, remoteControl: true, history: false });
+    const client = await connect({ writes: false, remoteControl: true, history: false, directives: false });
     const sent = await client.callTool({ name: "rc_send", arguments: { session: SESSION_ID, text: "hello" } });
     expect(sent.isError).not.toBe(true);
     expect(JSON.parse(textOf(sent))).toMatchObject({ session: SESSION_ID, sequenceNums: WRITE_SEQUENCE_NUMS });
@@ -224,17 +224,34 @@ describe("the MCP server over a real door handler", () => {
     await client.close();
   });
 
+  it("exposes a goal set and an instructed compaction only under the directives grant, which the Remote Control grant does not imply", async () => {
+    const remoteOnly = await connect({ writes: true, remoteControl: true, history: false, directives: false });
+    const remoteTools = (await remoteOnly.listTools()).tools.map((tool) => tool.name);
+    expect(remoteTools).toEqual(expect.arrayContaining(["rc_goalGet", "rc_goalClear", "rc_compact"]));
+    expect(remoteTools).not.toContain("rc_goalSet");
+    expect(remoteTools).not.toContain("rc_compactWithInstructions");
+    await remoteOnly.close();
+    const directives = await connect({ writes: false, remoteControl: false, history: false, directives: true });
+    const directiveTools = (await directives.listTools()).tools.map((tool) => tool.name);
+    expect(directiveTools).toEqual(expect.arrayContaining(["rc_goalSet", "rc_compactWithInstructions"]));
+    expect(directiveTools).not.toContain("rc_goalClear");
+    const set = await directives.callTool({ name: "rc_goalSet", arguments: { session: SESSION_ID, condition: "the build is green" } });
+    expect(set.isError).not.toBe(true);
+    expect(JSON.parse(textOf(set))).toMatchObject({ session: SESSION_ID, condition: "the build is green", superseded: null });
+    await directives.close();
+  });
+
   it("follows a change of permissions on the next request, in both directions, without a new server", async () => {
-    let granted: McpPermissions = { writes: false, remoteControl: false, history: false };
+    let granted: McpPermissions = { writes: false, remoteControl: false, history: false, directives: false };
     const client = await connect(() => granted);
     expect((await client.listTools()).tools.map((tool) => tool.name)).not.toContain("rc_send");
 
-    granted = { writes: false, remoteControl: true, history: false };
+    granted = { writes: false, remoteControl: true, history: false, directives: false };
     expect((await client.listTools()).tools.map((tool) => tool.name)).toContain("rc_send");
     const sent = await client.callTool({ name: "rc_send", arguments: { session: SESSION_ID, text: "now allowed" } });
     expect(sent.isError).not.toBe(true);
 
-    granted = { writes: false, remoteControl: false, history: false };
+    granted = { writes: false, remoteControl: false, history: false, directives: false };
     expect((await client.listTools()).tools.map((tool) => tool.name)).not.toContain("rc_send");
     const refused = await client.callTool({ name: "rc_send", arguments: { session: SESSION_ID, text: "no longer allowed" } });
     expect(refused.isError).toBe(true);
@@ -246,7 +263,7 @@ describe("the MCP server over a real door handler", () => {
   it("tells a connected client its tool list changed when the command announces it", async () => {
     let announce: (() => void) | undefined;
     const client = await connect(
-      { writes: false, remoteControl: false, history: false },
+      { writes: false, remoteControl: false, history: false, directives: false },
       {
         whileConnected: (announceToolListChanged) => {
           announce = announceToolListChanged;
@@ -271,7 +288,7 @@ describe("the MCP server over a real door handler", () => {
       release = resolve;
     });
     let stopped = false;
-    const served = serveMcp(createMcpServer({ name: "agent-shim", version: "0.0.0-test" }, portsFor(() => ({ writes: false, remoteControl: false, history: false }))), serverSide, {
+    const served = serveMcp(createMcpServer({ name: "agent-shim", version: "0.0.0-test" }, portsFor(() => ({ writes: false, remoteControl: false, history: false, directives: false }))), serverSide, {
       whileConnected: () => () => {
         stopped = true;
       },
@@ -289,7 +306,7 @@ describe("the MCP server over a real door handler", () => {
   });
 
   it("refuses an unknown tool as an error result", async () => {
-    const client = await connect({ writes: false, remoteControl: false, history: false });
+    const client = await connect({ writes: false, remoteControl: false, history: false, directives: false });
     const missing = await client.callTool({ name: "nothing_here", arguments: {} });
     expect(missing.isError).toBe(true);
     await client.close();

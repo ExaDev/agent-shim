@@ -5,7 +5,8 @@ import type { LayoutPaths } from "../paths";
 import { FIVE_HOUR_WINDOW_MS } from "../usage/pick";
 import { readUsageLog, readUsageSnapshot } from "../usage/read";
 import { decideCompaction } from "./compaction";
-import { COMPACT_TIMEOUT_MS, type CompactionResult, type CompactRequest } from "./realCompact";
+import { COMPACT_TIMEOUT_MS } from "./compactTimeout";
+import type { CompactionResult, CompactRequest } from "./realCompact";
 import { liveSupervised, readSessionState, stateDirOf, superviseDirOf, writeSessionState, type SessionState, type SupervisedSession } from "./registry";
 import type { CompactionDeps } from "./supervise";
 

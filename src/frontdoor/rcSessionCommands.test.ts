@@ -1,0 +1,205 @@
+import { describe, expect, it } from "vitest";
+
+import type { CompactionResult } from "../supervise/realCompact";
+import type { RcSelfHostCommandDeps } from "./rcSelfHostCommands";
+import { RC_GOAL_CONDITION_MAX_CHARS, RC_SESSION_COMMAND_VERIFIED_VERSIONS, createRcSessionCommands, type RcSessionCommandDeps, type RcSupervisedTarget } from "./rcSessionCommands";
+import { createRcEventFanout } from "./rcStream";
+
+const SESSION = "cse_00000000-0000-4000-8000-000000000000";
+const TRANSCRIPT = "/transcripts/conversation.jsonl";
+
+/** The supervised sessions a world whose session no supervisor owns holds: none. */
+const NO_SUPERVISORS = new Map<string, RcSupervisedTarget>();
+
+/** Finds no supervisor. */
+async function noSupervisor(sessionId: string): Promise<RcSupervisedTarget | undefined> {
+  return await Promise.resolve(NO_SUPERVISORS.get(sessionId));
+}
+
+/** The files a world whose route never reaches a transcript holds: none. */
+const NO_FILES = new Map<string, string>();
+
+/** Reads no file. */
+function noFile(file: string): string | undefined {
+  return NO_FILES.get(file);
+}
+
+/** A version both routes were verified on, read from the module so the tests follow the list rather than restate it. */
+const VERIFIED_VERSION = RC_SESSION_COMMAND_VERIFIED_VERSIONS[0] ?? "";
+
+/** One `goal_status` row in the shape the 2.1.319 CLI writes. */
+function goalRow(attachment: Record<string, unknown>): string {
+  return JSON.stringify({ type: "attachment", attachment: { type: "goal_status", ...attachment } });
+}
+
+/** A supervised session whose plugin edits an in-memory transcript the way the real CLI does: a set writes a sentinel row, a clear a met sentinel. */
+function supervisedWorld(options: Readonly<{ version?: string; transcript?: string[]; compact?: CompactionResult }> = {}) {
+  const transcript = options.transcript ?? [];
+  const ran: string[] = [];
+  const instructed: (string | undefined)[] = [];
+  const target: RcSupervisedTarget = {
+    conversationId: "conversation",
+    transcriptPath: TRANSCRIPT,
+    version: "version" in options ? options.version : VERIFIED_VERSION,
+    compact: async (_signal, instructions) => {
+      instructed.push(instructions);
+      return await Promise.resolve(options.compact ?? { kind: "compacted", beforeTokens: 900, afterTokens: 120 });
+    },
+    runGoal: async (args) => {
+      ran.push(args);
+      const active = transcript.filter((line) => line.includes("sentinel")).at(-1);
+      if (args === "clear") {
+        const condition = active === undefined ? "" : String((JSON.parse(active) as { attachment: { condition: unknown } }).attachment.condition);
+        transcript.push(goalRow({ met: true, sentinel: true, condition }));
+      } else {
+        transcript.push(goalRow({ met: false, sentinel: true, condition: args }));
+      }
+      await Promise.resolve();
+    },
+  };
+  const deps: RcSessionCommandDeps = {
+    supervisedOf: async () => await Promise.resolve(target),
+    readFile: (file) => (file === TRANSCRIPT ? transcript.join("\n") : undefined),
+    selfHost: undefined,
+    isObserved: () => true,
+  };
+  return { deps, ran, instructed, transcript };
+}
+
+/** A self-hosted session with no supervisor, whose inject records what it was asked and whose worker answers nothing. */
+function selfHostedWorld(version: string | undefined) {
+  const written: string[] = [];
+  const selfHost: RcSelfHostCommandDeps = {
+    inject: async (_sessionId, text) => {
+      written.push(text);
+      return await Promise.resolve({ ok: false, message: "the self-hosted surface refused the write" });
+    },
+    fanout: createRcEventFanout(),
+    versionOf: () => version,
+    setTimer: () => () => undefined,
+    defaultWaitMs: 1,
+  };
+  const deps: RcSessionCommandDeps = { supervisedOf: noSupervisor, readFile: noFile, selfHost, isObserved: () => true };
+  return { deps, written };
+}
+
+describe("goal and compaction control over Remote Control, by route", () => {
+  it("reads a supervised session's goal from its transcript without running anything in it", async () => {
+    const world = supervisedWorld({ transcript: [goalRow({ met: false, sentinel: true, condition: "tests pass" }), goalRow({ met: false, condition: "tests pass", reason: "two fail" })] });
+    const commands = createRcSessionCommands(world.deps);
+    expect(await commands.goalGet(SESSION)).toEqual({ ok: true, report: { route: "supervised", goal: { condition: "tests pass", iterations: 1, lastCheck: "two fail" } } });
+    expect(world.ran).toEqual([]);
+  });
+
+  it("sets a supervised session's goal through its plugin, naming the goal it replaced and confirming it from the transcript", async () => {
+    const world = supervisedWorld({ transcript: [goalRow({ met: false, sentinel: true, condition: "docs are updated" })] });
+    const commands = createRcSessionCommands(world.deps);
+    expect(await commands.goalSet(SESSION, "  tests pass ")).toEqual({ ok: true, report: { route: "supervised", condition: "tests pass", superseded: "docs are updated" } });
+    expect(world.ran).toEqual(["tests pass"]);
+  });
+
+  it("clears a supervised session's goal, and clears nothing when it has none", async () => {
+    const world = supervisedWorld({ transcript: [goalRow({ met: false, sentinel: true, condition: "tests pass" })] });
+    const commands = createRcSessionCommands(world.deps);
+    expect(await commands.goalClear(SESSION)).toEqual({ ok: true, report: { route: "supervised", cleared: "tests pass" } });
+    expect(await commands.goalClear(SESSION)).toEqual({ ok: true, report: { route: "supervised", cleared: null } });
+    expect(world.ran).toEqual(["clear"]);
+  });
+
+  it("compacts a supervised session through its plugin, with instructions when given, and reports a refusal in the session's words", async () => {
+    const world = supervisedWorld();
+    const commands = createRcSessionCommands(world.deps);
+    expect(await commands.compact(SESSION, { instructions: " keep the plan " })).toEqual({ ok: true, report: { route: "supervised", trigger: "plugin", preTokens: 900, postTokens: 120 } });
+    expect(await commands.compact(SESSION, { instructions: "  " })).toMatchObject({ ok: true });
+    expect(world.instructed).toEqual(["keep the plan", undefined]);
+    const refused = await createRcSessionCommands(supervisedWorld({ compact: { kind: "unchanged", reason: "Not enough messages to compact." } }).deps).compact(SESSION);
+    expect(refused).toEqual({ ok: false, message: `session ${SESSION} was not compacted: Not enough messages to compact.` });
+  });
+
+  it("refuses a supervised session on an unverified version or whose plugin has not loaded, naming the version, before acting", async () => {
+    const unverified = supervisedWorld({ version: "2.0.1" });
+    const result = await createRcSessionCommands(unverified.deps).goalSet(SESSION, "tests pass");
+    expect(result.ok ? "" : result.message).toContain("runs Claude Code 2.0.1");
+    expect(result.ok ? "" : result.message).toContain(VERIFIED_VERSION);
+    const unloaded = supervisedWorld({ version: undefined });
+    const unknown = await createRcSessionCommands(unloaded.deps).compact(SESSION);
+    expect(unknown.ok ? "" : unknown.message).toContain("control plugin has not loaded");
+    expect([...unverified.ran, ...unloaded.instructed]).toEqual([]);
+  });
+
+  it("refuses unsent a goal condition that is empty, a clear word, or longer than /goal accepts", async () => {
+    const world = supervisedWorld();
+    const commands = createRcSessionCommands(world.deps);
+    for (const condition of ["   ", "Stop", "x".repeat(RC_GOAL_CONDITION_MAX_CHARS + 1)]) {
+      expect((await commands.goalSet(SESSION, condition)).ok).toBe(false);
+    }
+    expect(world.ran).toEqual([]);
+  });
+
+  it("runs one session's verbs one at a time, in the order they were asked", async () => {
+    const order: string[] = [];
+    let release: (() => void) | undefined;
+    const world = supervisedWorld();
+    const commands = createRcSessionCommands({
+      ...world.deps,
+      supervisedOf: async () => {
+        const target = await world.deps.supervisedOf(SESSION);
+        if (target === undefined) throw new Error("no target");
+        return {
+          ...target,
+          compact: async () => {
+            order.push("compact started");
+            await new Promise<void>((resolve) => {
+              release = resolve;
+            });
+            order.push("compact ended");
+            return { kind: "compacted" as const };
+          },
+          runGoal: async (args, signal) => {
+            order.push("goal ran");
+            await target.runGoal(args, signal);
+          },
+        };
+      },
+    });
+    const compacting = commands.compact(SESSION);
+    const setting = commands.goalSet(SESSION, "tests pass");
+    await new Promise((resolve) => {
+      setImmediate(resolve);
+    });
+    expect(order).toEqual(["compact started"]);
+    release?.();
+    await Promise.all([compacting, setting]);
+    expect(order).toEqual(["compact started", "compact ended", "goal ran"]);
+  });
+
+  it("takes the self-hosted route only for a session no supervisor owns, gated on the worker's own reported version", async () => {
+    const unknown = selfHostedWorld(undefined);
+    const refused = await createRcSessionCommands(unknown.deps).goalGet(SESSION);
+    expect(refused.ok ? "" : refused.message).toContain("has not reported its Claude Code version");
+    expect(unknown.written).toEqual([]);
+    const verified = selfHostedWorld(VERIFIED_VERSION);
+    const delivered = await createRcSessionCommands(verified.deps).goalClear(SESSION);
+    expect(delivered).toEqual({ ok: false, message: "the self-hosted surface refused the write" });
+    expect(verified.written).toEqual(["/goal clear"]);
+  });
+
+  it("refuses a session neither route reaches with the reason, and an unknown one as unknown", async () => {
+    const deps: RcSessionCommandDeps = { supervisedOf: noSupervisor, readFile: noFile, selfHost: undefined, isObserved: (id) => id === SESSION };
+    const commands = createRcSessionCommands(deps);
+    const unsupported = await commands.compact(SESSION);
+    expect(unsupported.ok ? "" : unsupported.message).toContain("not launched under an agent-shim supervisor");
+    expect(unsupported.ok ? "" : unsupported.message).toContain("treats any other writer as a peer");
+    const missing = await commands.goalGet("cse_missing");
+    expect(missing.ok ? "" : missing.message).toBe("the front door has not observed Remote Control session cse_missing");
+  });
+
+  it("does not start a verb whose request was already aborted", async () => {
+    const world = supervisedWorld();
+    const controller = new AbortController();
+    controller.abort();
+    const result = await createRcSessionCommands(world.deps).goalSet(SESSION, "tests pass", { signal: controller.signal });
+    expect(result.ok ? "" : result.message).toContain("aborted before it ran");
+    expect(world.ran).toEqual([]);
+  });
+});

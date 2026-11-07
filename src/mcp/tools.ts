@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { READ_ONLY_OPERATION_EXTENSION, SESSION_HISTORY_TAG } from "../frontdoor/rcApi";
+import { RC_DIRECTIVE_TAG, READ_ONLY_OPERATION_EXTENSION, SESSION_HISTORY_TAG } from "../frontdoor/rcApi";
 
 /**
  * The subset of an OpenAPI operation the MCP adapter reads. The door's own generator produces the document, so this is validated rather than trusted: a document that stops matching surfaces as a refusal naming the field, not as a silently empty tool list.
@@ -50,6 +50,8 @@ export interface McpPermissions {
   readonly remoteControl: boolean;
   /** Expose the reads of session history, which span every identity the machine has and carry descriptions, task contents and project names. */
   readonly history: boolean;
+  /** Expose the Remote Control writes that put a directive into another session as its user's intent (a goal's condition, a compaction's summary instructions): narrower than `remoteControl`, which never includes them. */
+  readonly directives: boolean;
 }
 
 const HTTP_METHODS = ["get", "post", "put", "patch", "delete"] as const;
@@ -78,6 +80,9 @@ function isStream(operation: z.infer<typeof OperationSchema>): boolean {
 function permitted(tag: string | undefined, readOnly: boolean, permissions: McpPermissions): boolean {
   if (tag === SESSION_HISTORY_TAG) {
     return permissions.history;
+  }
+  if (tag === RC_DIRECTIVE_TAG) {
+    return permissions.directives;
   }
   if (readOnly) {
     return true;
