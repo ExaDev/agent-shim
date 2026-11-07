@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { RcSessionEvent } from "./rcEventLog";
-import { RcSessionEventsStreamEndedError, formatRcSessionEvent, printRcSessionEvents } from "./rcEventsCommand";
+import { RcSessionEventsStreamEndedError, formatRcSessionEvent, lastCursorOf, printRcSessionEvents } from "./rcEventsCommand";
 
 /** A made-up cursor and session of the production shapes. */
 const CURSOR = "00000000-0000-4000-8000-0000000000aa.7";
@@ -54,5 +54,14 @@ describe("frontdoor rc events printing", () => {
     );
     expect(failure).toBeInstanceOf(RcSessionEventsStreamEndedError);
     expect(failure instanceof RcSessionEventsStreamEndedError ? [failure.lastCursor, failure.cause] : []).toEqual([event(1).cursor, dropped]);
+  });
+});
+
+describe("frontdoor rc events resume cursor on leaving", () => {
+  it("names the last event printed when the stream had begun, and the starting cursor when it had not", () => {
+    const left = new DOMException("left", "AbortError");
+    expect(lastCursorOf(new RcSessionEventsStreamEndedError(left, `${CURSOR}9`), CURSOR)).toBe(`${CURSOR}9`);
+    expect(lastCursorOf(left, CURSOR)).toBe(CURSOR);
+    expect(lastCursorOf(left, undefined)).toBeUndefined();
   });
 });

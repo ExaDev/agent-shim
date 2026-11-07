@@ -71,6 +71,11 @@ export async function printRcSessionEvents(events: Readonly<AsyncIterable<RcSess
   return last;
 }
 
+/** The cursor to resume after once a stream stopped with `error`: the last event printed when the stream had begun, otherwise the cursor the verb started after. */
+export function lastCursorOf(error: unknown, since: string | undefined): string | undefined {
+  return error instanceof RcSessionEventsStreamEndedError ? error.lastCursor : since;
+}
+
 /** How a stream's end is reported: where to resume after the last event printed. */
 function resumeHint(lastCursor: string | undefined): string {
   return lastCursor === undefined ? "no event was printed; follow afresh, or resume after the head `frontdoor rc events` names" : `resume with --since ${lastCursor}`;
@@ -82,7 +87,7 @@ export function registerRcEventsCommand(rc: Command, paths: LayoutPaths): void {
     rc
       .command("events")
       .description(
-        "Follow every observed Remote Control session at once: each session appearing or ending, each worker state change (idle, running, requires_action), and each pending control request's birth and retirement, every line tagged with its session and the cursor a later --since resumes after. A cursor the door no longer holds (evicted, or from a previous door) fails naming the head to resume after once `frontdoor rc status` has restated the present. It does not reconnect: when the stream ends or fails (a door restart above all, whose new generation would refuse the cursor anyway), it names the last cursor printed. Read-only, until Ctrl-C leaves.",
+        "Follow every observed Remote Control session at once: each session appearing or ending, each worker state change (idle, running, requires_action), and each pending control request's birth and retirement, every line tagged with its session and the cursor a later --since resumes after. A cursor the door no longer holds (evicted, or from a previous door) fails naming the head to resume after once `frontdoor rc status` has restated the present. It does not reconnect: when the stream ends or fails (a door restart above all, whose new generation would refuse the cursor anyway), or Ctrl-C leaves it, it names the last cursor printed. Read-only, until Ctrl-C leaves.",
       )
       .argument("[session]", "One cse_ session id, to follow that session alone; every observed session when omitted.")
       .option("--all", "Follow every observed session: the explicit spelling of omitting the session.")
@@ -108,6 +113,8 @@ export function registerRcEventsCommand(rc: Command, paths: LayoutPaths): void {
           console.error(`agent-shim: the event stream ended; ${resumeHint(last)}`);
         } catch (error) {
           if (leave.signal.aborted) {
+            // Leaving with Ctrl-C is the ordinary way out, so it says where to resume exactly as an ending stream does.
+            console.error(`agent-shim: left the event stream; ${resumeHint(lastCursorOf(error, options.since))}`);
             return;
           }
           const cause = error instanceof RcSessionEventsStreamEndedError ? error.cause : error;
