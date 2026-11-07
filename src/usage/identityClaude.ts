@@ -5,9 +5,6 @@ import { realIsProcessAlive, realRunAsync, type DaemonSpawner } from "../realPor
 import { recordRuns, type AsyncRun } from "../replayRun";
 import { nonWaitingIdentityNamesLockPorts } from "../identityNamesLock";
 
-/** The environment variable that makes a launch skip identity resolution, which would point a headless run at the wrong account. */
-const CONFIG_DIR_VARIABLE = "CLAUDE_CONFIG_DIR";
-
 /** The environment as the SDK's `env` option takes it: defined values only. */
 function definedEnvironment(env: Readonly<Record<string, string | undefined>>): Record<string, string> {
   return Object.fromEntries(Object.entries(env).flatMap(([name, value]) => (value === undefined ? [] : [[name, value]])));
@@ -47,7 +44,7 @@ export interface IdentityClaudeRun {
  */
 export async function withIdentityClaude<T>(params: Readonly<IdentityClaudeParams>, identity: string, flags: readonly string[], use: (run: IdentityClaudeRun) => Promise<T>): Promise<T> {
   const refusals: string[] = [];
-  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => name !== CONFIG_DIR_VARIABLE));
+  const env = { ...process.env };
   const argv = [...identityLaunchArgv(identity, flags)];
   // The launcher's decision asks for commands (a git branch, a Keychain probe) that spawn synchronously, and this runs inside the front door when the door refreshes usage: the read-only resolution of the same launch is started until every command it asks for has been run without blocking, and the launch below is planned over those answers.
   const run = await recordRuns((replay) => resolveClaudeLaunch({ argv, cwd: params.cwd, env: definedEnvironment(env), paths: params.paths }, replay), params.runAsync ?? realRunAsync);

@@ -36,4 +36,16 @@ describe("unattended identity launches", () => {
     await withIdentityClaude({ paths: buildLayoutPaths("/unused"), cwd: "/", timeoutMs: 1000, spawnDaemon: () => 0 }, "work", [], async () => { await Promise.resolve(); });
     expect(mocks.prepare.mock.calls.at(-1)?.[0]).toMatchObject({ farm: { runtime: { lock: { maxAttempts: 1 } } } });
   });
+
+  it("hands the launcher the inherited environment untouched, since an identity named on its command line outranks an inherited CLAUDE_CONFIG_DIR", async () => {
+    mocks.wiring.mockImplementation((_paths, options: unknown) => options);
+    mocks.prepare.mockReturnValue({ bin: "claude", env: {}, release: () => undefined });
+    vi.stubEnv("CLAUDE_CONFIG_DIR", "/inherited/from/a/session");
+    try {
+      await withIdentityClaude({ paths: buildLayoutPaths("/unused"), cwd: "/", timeoutMs: 1000, spawnDaemon: () => 0 }, "work", [], async () => { await Promise.resolve(); });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(mocks.prepare.mock.calls.at(-1)?.[0]).toMatchObject({ proc: { argv: ["@work", "--no-provider"], env: { CLAUDE_CONFIG_DIR: "/inherited/from/a/session" } } });
+  });
 });
