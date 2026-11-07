@@ -29,6 +29,7 @@ import { readFrontDoorCodexRecord, readFrontDoorState } from "./frontdoor/state"
 import { catalogueBindingPath, catalogueCachePath, parseCatalogueCache, type CatalogueModel } from "./providerCatalogue";
 import { listProviderNames, loadProvider } from "./providersStore";
 import type { ModelsConfig, Provider } from "./config/schema";
+import { memberProviderResolver } from "./launcher/memberProvider";
 import { resolvePoolLaunch } from "./launcher/pool";
 import { resumedContextTokens } from "./usage/resumeContext";
 import { IdentityLockBusyError } from "./launcher/lock";
@@ -140,6 +141,8 @@ export interface LaunchPoolDecision {
   readonly name: string;
   /** Every reason the ranking gave for the chosen member, in the ranking's order. */
   readonly reasons: readonly string[];
+  /** The provider the ranking read for the chosen member, when the launch spends one in place of the member's Claude account: the member's quota was judged on that provider's slice of its usage, not on the Claude account's. Absent when the pick was ranked on the Claude account. */
+  readonly provider?: string;
   /** The member a resumed conversation left, and why the ranking could not keep it. */
   readonly movedOff?: { readonly identity: string; readonly reason: string };
 }
@@ -212,6 +215,7 @@ function pickFromPool(
   params: PrepareLaunchParams,
   parsedArgv: ParsedLauncherArgv,
   readOnly: boolean,
+  providerSelections: { readonly env: Readonly<Record<string, string | undefined>>; readonly cliOverride: CliOverride | undefined },
 ): { readonly identityDecision: IdentityDecision; readonly poolPick?: LaunchPoolDecision; readonly poolRanking?: readonly Candidate[]; readonly lastRanAs?: LastRanAs } {
   const { paths, fs, proc, log } = params;
   if (decided.pool === undefined) {
@@ -228,6 +232,18 @@ function pickFromPool(
     return proc.exit(1);
   }
   const resumeContextTokens = resumedContextTokens(farmRuntime.fs, { claudeHome: farmRuntime.claudeHome, cwd: farmRuntime.cwd, passthrough: parsedArgv.rest });
+  // The provider is decided before the member is picked, since it decides whose quota the ranking reads. It is resolved for each member the way the launch will resolve it for the one it runs as, from the same flag, cascade and profile precedence, and reads no credential.
+  const cliFlagConfigProfile = params.cliFlagConfigProfile ?? parsedArgv.configProfile;
+  const providerOf = memberProviderResolver({
+    paths,
+    fs,
+    env: providerSelections.env,
+    cliProvider: parsedArgv.provider,
+    ...(cliFlagConfigProfile === undefined ? {} : { cliFlagConfigProfile }),
+    ...(params.directoryRuleConfigProfile === undefined ? {} : { directoryRuleConfigProfile: params.directoryRuleConfigProfile }),
+    ...(params.globalDefaultConfigProfile === undefined ? {} : { globalDefaultConfigProfile: params.globalDefaultConfigProfile }),
+    loadCascade: (baseConfigProfile) => farmRuntime.loadCascade(baseConfigProfile, providerSelections.cliOverride),
+  });
   const resolution = resolvePoolLaunch({
     poolName: decided.pool,
     selectedVia: decided.source,
@@ -239,6 +255,7 @@ function pickFromPool(
     now: farmRuntime.now,
     sleep: farmRuntime.lock.sleep,
     passthrough: parsedArgv.rest,
+    providerOf,
     ...(resumeContextTokens === undefined ? {} : { resumeContextTokens }),
     // A read-only decision never sleeps for a refused pool and never records its pick, so asking what a launch would pick leaves the next real launch's keep-warm preference as it was.
     wait: !readOnly && parsedArgv.wait === true,
@@ -251,7 +268,7 @@ function pickFromPool(
   }
   return {
     identityDecision: { ...decided, name: resolution.identity },
-    poolPick: { name: decided.pool, reasons: resolution.reasons, ...(resolution.movedOff === undefined ? {} : { movedOff: resolution.movedOff }) },
+    poolPick: { name: decided.pool, reasons: resolution.reasons, ...(resolution.provider === undefined ? {} : { provider: resolution.provider }), ...(resolution.movedOff === undefined ? {} : { movedOff: resolution.movedOff }) },
     poolRanking: resolution.candidates,
     ...(resolution.lastRanAs === undefined ? {} : { lastRanAs: { identity: resolution.lastRanAs.identity, agoMs: farmRuntime.now() - Date.parse(resolution.lastRanAs.at) } }),
   };
@@ -352,7 +369,7 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean, onRecorded
   });
 
   // A pool selector is resolved to one member here, ahead of everything that reads the identity: farm recovery, loading, the credential and the resync all work on the chosen name exactly as if it had been typed.
-  const { identityDecision, poolPick, poolRanking, lastRanAs } = pickFromPool(decidedIdentity, params, parsedArgv, readOnly);
+  const { identityDecision, poolPick, poolRanking, lastRanAs } = pickFromPool(decidedIdentity, params, parsedArgv, readOnly, { env, cliOverride });
 
   const lockFarm = !readOnly && !configDirEscapeHatchApplies && identityDecision.name !== undefined ? params.farm : undefined;
   const lockPorts = params.namesLock ?? (lockFarm === undefined ? realIdentityNamesLockPorts : { fs: lockFarm.fs, nowMs: lockFarm.now, ...lockFarm.lock });

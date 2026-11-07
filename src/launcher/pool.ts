@@ -3,7 +3,7 @@ import { identityIdResolver } from "./identity";
 import type { LayoutPaths } from "../paths";
 import type { Candidate, StickyPick } from "../usage/pick";
 import { formatAge } from "../usage/preflight";
-import { PoolGraphError, rankPoolGraph, readStickyPick, recordStickyPick, type PoolPickFs } from "../usage/poolPick";
+import { PoolGraphError, rankPoolGraph, readStickyPick, recordStickyPick, type PoolPickFs, type ProviderOf } from "../usage/poolPick";
 import type { FarmFs, FsPort, LogPort } from "./ports";
 
 /** The flags that continue or resume an earlier conversation, which belongs on the account it started on. */
@@ -34,6 +34,8 @@ export interface ResolvePoolParams {
   readonly resumeContextTokens?: number;
   /** The context tokens already moving onto each member, by identity, for a pick made while other sessions are being placed: the pick must leave room for them. */
   readonly committedContextTokens?: Readonly<Record<string, number>>;
+  /** The provider a launch of each member routes through, so the ranking reads that provider's quota in place of the member's Claude account's. Absent for a pick that spends the Claude account of every member, as a supervisor's move does. */
+  readonly providerOf?: ProviderOf;
   /** Sleep until the earliest member returns, instead of refusing, when every member is refused. */
   readonly wait: boolean;
   /** Whether the chosen member is recorded as this directory's last pick. A caller that only reports what a launch would pick passes false, so the report leaves the next launch's keep-warm preference as it was. */
@@ -54,6 +56,8 @@ export type PoolResolution =
       readonly candidates: readonly Candidate[];
       /** The member a resumed conversation left, and why the ranking could not keep it. */
       readonly movedOff?: { readonly identity: string; readonly reason: string };
+      /** The provider the ranking read for the chosen member, when its launch spends one in place of its Claude account. */
+      readonly provider?: string;
       /** The pick this directory's record held before this one replaced it: who it last ran as, and when. Absent when the directory had no record. */
       readonly lastRanAs?: StickyPick;
     }
@@ -68,7 +72,7 @@ export function isResuming(passthrough: readonly string[]): boolean {
 /**
  * Picks the identity a launch of pool `poolName` runs as.
  *
- * The pool is ranked with everything it nests, each pool under its own preference. Members without an `identity.json` are skipped with a warning, since a pool may outlive an identity it names; a nested member naming an undefined pool or a cycle (config edited since it was written) refuses the launch. When every remaining member is refused right now the launch is refused, naming the earliest return, unless `wait` is set, which sleeps until then and ranks again; `wait` also holds a pick that would only continue on extra usage because its plan ran out, until that plan window resets, and a pick projected to run dry before its window resets while a refused member returns sooner, until that member returns. The chosen member is recorded as this directory's last pick so the next launch here keeps its warm prompt cache.
+ * The pool is ranked with everything it nests, each pool under its own preference, each member on the quota of the provider its launch spends (`providerOf`) or else of its Claude account. Members without an `identity.json` are skipped with a warning, since a pool may outlive an identity it names; a nested member naming an undefined pool or a cycle (config edited since it was written) refuses the launch. When every remaining member is refused right now the launch is refused, naming the earliest return, unless `wait` is set, which sleeps until then and ranks again; `wait` also holds a pick that would only continue on extra usage because its plan ran out, until that plan window resets, and a pick projected to run dry before its window resets while a refused member returns sooner, until that member returns. The chosen member is recorded as this directory's last pick so the next launch here keeps its warm prompt cache.
  */
 export function resolvePoolLaunch(params: ResolvePoolParams): PoolResolution {
   const { poolName, log } = params;
@@ -97,6 +101,7 @@ export function resolvePoolLaunch(params: ResolvePoolParams): PoolResolution {
         resuming,
         ...(params.resumeContextTokens === undefined ? {} : { resumeContextTokens: params.resumeContextTokens }),
         ...(params.committedContextTokens === undefined ? {} : { committedContextTokens: params.committedContextTokens }),
+        ...(params.providerOf === undefined ? {} : { providerOf: params.providerOf }),
         identityIdOf: identityIdResolver(params.paths.identitiesDir, params.fs),
         ...(stickyRead.sticky === undefined ? {} : { sticky: stickyRead.sticky }),
       });
@@ -142,6 +147,7 @@ export function resolvePoolLaunch(params: ResolvePoolParams): PoolResolution {
         explanation: `pool ${poolName}: ${move}${pick.reasons.slice(0, REASONS_LOGGED).join("; ")}`,
         reasons: pick.reasons,
         candidates: graph.ranking.candidates,
+        ...(pick.provider === undefined ? {} : { provider: pick.provider }),
         ...(movedOff === undefined ? {} : { movedOff }),
         ...(stickyRead.sticky === undefined ? {} : { lastRanAs: stickyRead.sticky }),
       };

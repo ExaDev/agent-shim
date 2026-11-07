@@ -26,6 +26,8 @@ export const LaunchResolveInputSchema = z
 const LaunchPoolDecisionSchema = z.strictObject({
   name: z.string(),
   reasons: z.readonly(z.array(z.string())),
+  /** The provider the ranking read for the chosen member, when the launch spends one in place of the member's Claude account. */
+  provider: z.string().optional(),
   movedOff: z.strictObject({ identity: z.string(), reason: z.string() }).optional(),
 });
 

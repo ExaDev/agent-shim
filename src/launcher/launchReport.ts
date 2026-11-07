@@ -52,10 +52,13 @@ interface DecisionFacts {
   readonly limitRelaunchFrom: string | undefined;
 }
 
-/** What the pool row says beside the pool's name: the pick's decisive reason, the first the ranking gave. The ranking's other reasons are scoring caveats, left to `agent-shim pool pick`; a resumed conversation's move off a member has its own `moved` row. */
+/** What the pool row says beside the pool's name: the pick's decisive reason, the first the ranking gave, and the provider the ranking read when the launch spends one in place of the member's Claude account. The ranking's other reasons are scoring caveats, left to `agent-shim pool pick`; a resumed conversation's move off a member has its own `moved` row. */
 function poolDetail(pool: LaunchPoolDecision): Pick<ReportRow, "detail"> {
   const [reason] = pool.reasons;
-  return reason === undefined ? {} : { detail: reason };
+  if (reason === undefined) {
+    return {};
+  }
+  return { detail: pool.provider === undefined ? reason : `${reason} (ranked on provider ${pool.provider})` };
 }
 
 /** The lines that explain a pool pick: every member in rank order with its class and score, the one picked marked, and the facts behind each, in the words `pool pick` uses. */
