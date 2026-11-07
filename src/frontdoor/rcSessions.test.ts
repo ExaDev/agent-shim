@@ -10,7 +10,6 @@ import { createRcCredentialStore } from "./rcCredentialStore";
 import type { FrontDoorRoute, RoutedRequest, RoutedResponse } from "./route";
 import {
   RC_IDLE_EXPIRY_MS,
-  RC_PENDING_DEADLINE_MS,
   RC_PENDING_SUMMARY_EXCERPT_CHARS,
   RC_REQUEST_PARSE_CAP_BYTES,
   createRcSessionTracker,
@@ -248,7 +247,7 @@ describe("the Remote Control pending-request lifecycle", () => {
     expect(tracker.pendingOf().map((request) => request.requestId)).toEqual([OTHER_REQUEST_ID]);
   });
 
-  it("expires a pending request once the protocol's permission deadline has passed, and holds one inside it", () => {
+  it("holds a pending request for as long as its session stays live, since the worker waits on it until it is answered or withdrawn", () => {
     const { tracker, advance } = trackerWithClock();
     exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer b" }).respond(HTTP_STATUS.ok);
     exchange(tracker, {
@@ -257,12 +256,63 @@ describe("the Remote Control pending-request lifecycle", () => {
       authorization: "Bearer b",
       requestBody: workerEventsBody({ type: "control_request", request_id: REQUEST_ID, request: { subtype: "can_use_tool", tool_name: "Bash", input: { command: "pnpm test" } } }),
     }).respond(HTTP_STATUS.ok);
-    // The deadline is far inside the session's own idle bound, so it is the request that expires, not the entry.
-    advance(RC_PENDING_DEADLINE_MS - 1);
+    // Several heartbeat intervals pass with the session's heartbeats arriving: the worker is still waiting (observed live: an answer written a minute after the request was asked continued the session), so the request is still listed.
+    const heartbeatLater = (): void => {
+      advance(HEARTBEAT_INTERVAL_MS);
+      exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer b" }).respond(HTTP_STATUS.ok);
+    };
+    heartbeatLater();
+    heartbeatLater();
+    heartbeatLater();
     expect(tracker.pendingOf().map((request) => request.requestId)).toEqual([REQUEST_ID]);
-    advance(1);
+    // A session the protocol itself has given up on takes its requests with it.
+    advance(RC_IDLE_EXPIRY_MS);
     expect(tracker.pendingOf()).toEqual([]);
-    expect(tracker.list().map((session) => session.id)).toEqual([SESSION_ID]);
+  });
+
+  it("retires a pending request when the worker withdraws it with a control_cancel_request, from the client read stream or from a worker event write", () => {
+    const { tracker } = trackerWithClock();
+    exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer b" }).respond(HTTP_STATUS.ok);
+    exchange(tracker, {
+      method: "POST",
+      url: WORKER_EVENTS_PATH,
+      authorization: "Bearer b",
+      requestBody: workerEventsBody(
+        { type: "control_request", request_id: REQUEST_ID, request: { subtype: "can_use_tool", tool_name: "Bash", input: {} } },
+        { type: "control_request", request_id: OTHER_REQUEST_ID, request: { subtype: "can_use_tool", tool_name: "Write", input: {} } },
+      ),
+    }).respond(HTTP_STATUS.ok);
+    // The worker withdraws a request it resolved itself (answered or dismissed in its own terminal) with this payload, observed live on the stream right after its own control_response.
+    tracker.fileStreamEvent(SESSION_ID, { event_id: "e1", sequence_num: 1, event_type: "control_cancel_request", source: "worker", payload: { type: "control_cancel_request", request_id: REQUEST_ID }, created_at: "2026-01-01T00:00:00Z" });
+    expect(tracker.pendingOf().map((request) => request.requestId)).toEqual([OTHER_REQUEST_ID]);
+    exchange(tracker, { method: "POST", url: WORKER_EVENTS_PATH, authorization: "Bearer b", requestBody: workerEventsBody({ type: "control_cancel_request", request_id: OTHER_REQUEST_ID }) }).respond(HTTP_STATUS.ok);
+    expect(tracker.pendingOf()).toEqual([]);
+  });
+
+  it("ignores a control_cancel_request on the stream from anyone but the worker, since only the worker's own withdrawal ends its wait", () => {
+    const { tracker } = trackerWithClock();
+    exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer b" }).respond(HTTP_STATUS.ok);
+    tracker.fileStreamEvent(SESSION_ID, { event_id: "e1", sequence_num: 1, event_type: "control_request", source: "worker", payload: { type: "control_request", request_id: REQUEST_ID, request: { subtype: "can_use_tool", tool_name: "Bash", input: {} } }, created_at: "2026-01-01T00:00:00Z" });
+    tracker.fileStreamEvent(SESSION_ID, { event_id: "e2", sequence_num: 2, event_type: "control_cancel_request", source: "client", payload: { type: "control_cancel_request", request_id: REQUEST_ID }, created_at: "2026-01-01T00:00:00Z" });
+    expect(tracker.pendingOf().map((request) => request.requestId)).toEqual([REQUEST_ID]);
+  });
+
+  it("retires the requests observed before a worker registration that reports the worker no longer waiting, and keeps one observed after that registration began", () => {
+    const { tracker, advance } = trackerWithClock();
+    const workerPath = `/v1/code/sessions/${SESSION_ID}/worker`;
+    exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer b" }).respond(HTTP_STATUS.ok);
+    tracker.fileStreamEvent(SESSION_ID, { event_id: "e1", sequence_num: 1, event_type: "control_request", source: "worker", payload: { type: "control_request", request_id: REQUEST_ID, request: { subtype: "can_use_tool", tool_name: "Bash", input: {} } }, created_at: "2026-01-01T00:00:00Z" });
+    // A registration still naming `requires_action` leaves the wait in place.
+    advance(1);
+    exchange(tracker, { method: "PUT", url: workerPath, authorization: "Bearer b", requestBody: JSON.stringify({ worker_status: "requires_action", worker_epoch: 1 }) }).respond(HTTP_STATUS.ok);
+    expect(tracker.pendingOf().map((request) => request.requestId)).toEqual([REQUEST_ID]);
+    // A registration naming another state began after the first request was observed, and a second request arrives while it is in flight: the worker sent the state before it asked the second, so only the first is retired.
+    advance(1);
+    const running = exchange(tracker, { method: "PUT", url: workerPath, authorization: "Bearer b", requestBody: JSON.stringify({ worker_status: "running", worker_epoch: 1 }) });
+    advance(1);
+    tracker.fileStreamEvent(SESSION_ID, { event_id: "e2", sequence_num: 2, event_type: "control_request", source: "worker", payload: { type: "control_request", request_id: OTHER_REQUEST_ID, request: { subtype: "can_use_tool", tool_name: "Write", input: {} } }, created_at: "2026-01-01T00:00:00Z" });
+    running.respond(HTTP_STATUS.ok);
+    expect(tracker.pendingOf().map((request) => request.requestId)).toEqual([OTHER_REQUEST_ID]);
   });
 
   it("records nothing from a request body past the parse cap, and the exchange still succeeds", () => {

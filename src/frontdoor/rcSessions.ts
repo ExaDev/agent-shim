@@ -51,10 +51,8 @@ const CONFLICT_REASON_HEADER = "x-ccr-conflict-reason";
 /** The client read stream's envelope source that names the worker (the CLI's half) as an event's emitter: the source a stream-borne `control_request` must carry to be a request the door can answer. */
 const RC_STREAM_WORKER_SOURCE = "worker";
 
-/**
- * How long a control request stays answerable once observed. The protocol's own permission round-trip is documented at roughly 10 to 14 seconds end to end, so the ceiling of that window is the exact bound after which the worker has already given up waiting: answering later would write a `control_response` nothing is waiting for. A request exactly at the bound is already too late, which is why expiry is `>=` and not `>`.
- */
-export const RC_PENDING_DEADLINE_MS = 14_000;
+/** The worker state a registration names while the worker waits on a control request; any other state means nothing it asked before that registration is still waiting. */
+const RC_WORKER_REQUIRES_ACTION = "requires_action";
 
 /**
  * How much of one request body the tracker ever holds while parsing it. The protocol's own batch cap is 10 MiB, but that bound exists to admit bulk transcript events the tracker has no use for; what it reads out of a body (the control requests, the heartbeat's idle, the worker's state) is one control exchange's worth of JSON, the same notion of "a full exchange's body" the capture's per-exchange budget (`STREAM_LOG_CAP_BYTES`, 256 KiB) was sized for, so one budget serves both here. A body past it is skipped, never failed: the exchange flows on untouched and simply records nothing.
@@ -86,7 +84,7 @@ interface RcSessionRecord {
   anthropicVersion: string | undefined;
   /** The most recent `anthropic-client-platform` value observed on this session's calls. */
   anthropicClientPlatform: string | undefined;
-  /** The session's control requests awaiting an answer, keyed by the id a `control_response` must echo. An entry lives exactly until it is answered or its deadline passes. */
+  /** The session's control requests awaiting an answer, keyed by the id a `control_response` must echo. An entry lives exactly as long as the worker waits on it: until a `control_response` answers it, the worker withdraws it with a `control_cancel_request`, a worker registration reports the worker no longer waiting, or the session itself expires. The worker sets no deadline of its own (observed live: an approval and a question each answered a minute after they were asked continued the session). */
   readonly pending: Map<string, RcPendingRequestRecord>;
   /** The worker state the latest worker registration named, with when that exchange was observed. */
   workerState: RcWorkerFact<string> | undefined;
@@ -184,7 +182,7 @@ export interface RcSessionTracker {
   readonly list: () => readonly RcSessionSummary[];
   /** Every live entry as the status surface reports it, with the same sweeping and order as `list`, filtered to one session when named. */
   readonly statusOf: (sessionId?: string) => readonly RcSessionStatus[];
-  /** Every control request awaiting an answer, deadline-expired ones dropped first, oldest-observed first, filtered to one session when named. */
+  /** Every control request awaiting an answer, idle sessions expired first, oldest-observed first, filtered to one session when named. */
   readonly pendingOf: (sessionId?: string) => readonly RcPendingRequestSummary[];
   /** The observed credential and protocol headers for one session, the client-half writes' accessor: present only while the session is tracked, and never surfaced anywhere a summary, log or capture goes. */
   readonly credentialOf: (sessionId: string) => RcObservedCredential | undefined;
@@ -193,7 +191,7 @@ export interface RcSessionTracker {
   /** The session's sequence cursor: the highest number the door has seen, from the client read stream's envelopes or from its own confirmed writes; undefined while neither has been seen. */
   readonly sequenceNumOf: (sessionId: string) => number | undefined;
   /**
-   * Files one client read stream envelope: advances the session's sequence cursor, and treats the payload exactly as an observed event-batch body's would be treated, which is how an approval reaches the pending list from the stream (the live finding behind the client attachment: the CLI routes `control_request`s only toward attached clients, so the stream, not the worker's own writes, is where a `can_use_tool` the door must answer becomes visible). A `control_request` whose envelope names the worker as its source births a pending entry; a `control_response` retires the request it answers, whoever answered it.
+   * Files one client read stream envelope: advances the session's sequence cursor, and treats the payload exactly as an observed event-batch body's would be treated, which is how an approval reaches the pending list from the stream (the live finding behind the client attachment: the CLI routes `control_request`s only toward attached clients, so the stream, not the worker's own writes, is where a `can_use_tool` the door must answer becomes visible). A `control_request` whose envelope names the worker as its source births a pending entry; a `control_response` retires the request it answers, whoever answered it; and a `control_cancel_request` from the worker retires the request it withdraws.
    */
   readonly fileStreamEvent: (sessionId: string, event: RcStreamEnvelope) => void;
   /** The live background tasks and subagents the observed events described, for one session or every tracked one, each carrying the session that reported it and when it was last observed. */
@@ -320,6 +318,15 @@ function pendingOfControlRequestPayload(payload: Record<string, unknown>): { rea
   return { requestId, type, summary };
 }
 
+/** The request id one worker `control_cancel_request` payload withdraws: the worker's own retraction of a request it resolved itself (answered or dismissed in its terminal), sent right after its own `control_response`. */
+function withdrawnRequestIdsOfControlCancelPayload(payload: Record<string, unknown>): readonly string[] {
+  if (payload.type !== "control_cancel_request") {
+    return [];
+  }
+  const id = nonEmptyString(payload, "request_id");
+  return id === undefined ? [] : [id];
+}
+
 /**
  * The request ids one `control_response` payload answers: the `request_id` inside the SDK response envelope, with the payload's own `request_id` and `uuid` as fallbacks for the same reason the request side takes them.
  */
@@ -336,7 +343,7 @@ function answeredRequestIdsOfControlResponsePayload(payload: Record<string, unkn
 interface RcRequestBodyFacts {
   /** Control requests awaiting an answer, from a worker event batch. */
   readonly controlRequests: readonly Omit<RcPendingRequestRecord, "sessionId" | "observedAt">[];
-  /** Request ids a client-half event write answered, which retire their pending entries. */
+  /** Request ids an event write answered or withdrew, which retire their pending entries. */
   readonly answeredRequestIds: readonly string[];
   /** The idle a heartbeat carried. */
   readonly idleSeconds: number | undefined;
@@ -367,7 +374,7 @@ function parseRcRequestBody(kind: RcRequestBodyKind, body: string): RcRequestBod
       controlRequests.push({ requestId: pending.requestId, type: pending.type, summary: pending.summary });
       continue;
     }
-    answeredRequestIds.push(...answeredRequestIdsOfControlResponsePayload(payload));
+    answeredRequestIds.push(...answeredRequestIdsOfControlResponsePayload(payload), ...(kind === "worker-events" ? withdrawnRequestIdsOfControlCancelPayload(payload) : []));
   }
   return { controlRequests, answeredRequestIds, idleSeconds: undefined, workerStatus: undefined, payloads };
 }
@@ -378,20 +385,11 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
   const expire = (id: string): void => {
     entries.delete(id);
   };
-  const expirePendings = (entry: RcSessionRecord, now: number): void => {
-    for (const [requestId, pending] of entry.pending) {
-      if (now - pending.observedAt >= RC_PENDING_DEADLINE_MS) {
-        entry.pending.delete(requestId);
-      }
-    }
-  };
   const sweep = (): void => {
     for (const [id, entry] of entries) {
       if (deps.now() - entry.lastSeenAt >= deps.idleMs) {
         expire(id);
-        continue;
       }
-      expirePendings(entry, deps.now());
     }
   };
   // The sweep only bounds memory between reads: every read accessor sweeps first, so what it returns is always exact however long the timer waits.
@@ -417,6 +415,8 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
       return undefined;
     }
     const tail = pathnameOf(request.url).slice(RC_SESSIONS_PATH_PREFIX.length);
+    // When this exchange began, which is when the worker sent it: a worker registration naming a state other than `requires_action` speaks for the requests the worker had asked by then, never for one observed after.
+    const startedAt = deps.now();
     const facts = {
       oauthAuthorization: oauthAuthorizationOf(request.headers),
       anthropicVersion: singleHeader(request.headers, "anthropic-version"),
@@ -512,6 +512,14 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
       }
       if (factsOfBody.workerStatus !== undefined) {
         entryNow.workerState = { value: factsOfBody.workerStatus, observedAt: now };
+        if (factsOfBody.workerStatus !== RC_WORKER_REQUIRES_ACTION) {
+          // The worker reports `requires_action` whenever it waits on a request, so a registration naming any other state means it waits on nothing it had asked when it sent this one: those requests were resolved on a path the door may not have seen (an answer that crossed only the real service, or a withdrawal the stream dropped).
+          for (const [requestId, pending] of entryNow.pending) {
+            if (pending.observedAt < startedAt) {
+              entryNow.pending.delete(requestId);
+            }
+          }
+        }
       }
     };
 
@@ -625,6 +633,12 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
       }
       for (const requestId of answeredRequestIdsOfControlResponsePayload(event.payload)) {
         entry.pending.delete(requestId);
+      }
+      // The worker's withdrawal of a request it resolved itself; a client cannot withdraw the worker's request, so only the worker's own counts.
+      if (event.source === RC_STREAM_WORKER_SOURCE) {
+        for (const requestId of withdrawnRequestIdsOfControlCancelPayload(event.payload)) {
+          entry.pending.delete(requestId);
+        }
       }
     },
     liveTasksOf: (sessionId) => {
