@@ -596,8 +596,8 @@ describe.skipIf(process.platform === "win32")("realRunningAmong", () => {
   });
 
   it("leaves out a process that has exited but not been reaped", async () => {
-    // The child forks a grandchild and waits for it to exit without reaping it (WNOWAIT), so the grandchild is a zombie before its pid is printed and stays one for as long as the child lives.
-    const parent = spawn("python3", ["-c", "import os, time\nchild = os.fork()\nif child == 0:\n    os._exit(0)\nos.waitid(os.P_PID, child, os.WEXITED | os.WNOWAIT)\nprint(child, flush=True)\ntime.sleep(30)"], { stdio: ["ignore", "pipe", "inherit"] });
+    // Observe the grandchild as a zombie without reaping it, so the fixture works where Python does not expose waitid, including macOS.
+    const parent = spawn("python3", ["-c", "import os, subprocess, time\nchild = os.fork()\nif child == 0:\n    os._exit(0)\nwhile not subprocess.check_output(['ps', '-o', 'stat=', '-p', str(child)]).strip().startswith(b'Z'):\n    time.sleep(0.01)\nprint(child, flush=True)\ntime.sleep(30)"], { stdio: ["ignore", "pipe", "inherit"] });
     try {
       const zombie = await new Promise<number>((resolve) => {
         parent.stdout.once("data", (chunk: Buffer) => {

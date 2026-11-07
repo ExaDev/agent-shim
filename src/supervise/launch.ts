@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { rmSync } from "node:fs";
 import path from "node:path";
 
 import type { Pool } from "../config/schema";
@@ -15,6 +16,8 @@ import { contextTokensOfTranscript, latestConversationId } from "../usage/resume
 import { createCompactionDeps } from "./compactionDeps";
 import { quotaHitOf } from "./limit";
 import { currentConversation, hooksPending } from "./hookGuard";
+import { compactInSession, nativeCompactionReady } from "./nativeCompact";
+import { stageNativeCompactionPlugin, withNativeCompactionPlugin } from "./nativeCompactionPlugin";
 import { markHooksSettings } from "./marks";
 import { createIdentityMover, createMover } from "./move";
 import { createRealCompactor } from "./realCompact";
@@ -77,8 +80,9 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
   const markSettings = markHooksSettings(selfInvocation([]), paths.root, pool, first.sessionId);
   const settingsArgs = [...params.extraFlags, ...params.passthrough];
   const settings = hasSettingsArgument(settingsArgs) ? combineCallerSettings(settingsArgs, markSettings, (name) => farm.fs.readFileUtf8(path.resolve(farm.cwd, name))) : undefined;
-  if (policy?.compactBeforeLimit === true) {
-      compaction = createCompactionDeps({
+  const plugin = policy?.compactBeforeLimit === true ? stageNativeCompactionPlugin() : undefined;
+  if (policy?.compactBeforeLimit === true && plugin !== undefined) {
+      const baseCompaction = createCompactionDeps({
         paths,
         fs: realFarmFs,
         pool,
@@ -97,6 +101,7 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
         },
         compact: createRealCompactor({ paths, spawnDaemon: params.spawnDaemon }),
       });
+      compaction = { ...baseCompaction, live: { ready: () => nativeCompactionReady(plugin), compact: async (conversationId, signal) => await compactInSession(plugin, conversationId, signal) } };
   }
   const mover = createMover({
     paths,
@@ -134,11 +139,17 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
       pool,
       cwd: farm.cwd,
       pid: farm.lock.pid,
-      prepare: params.prepare,
+      prepare: (nextLaunch) => {
+        const plan = params.prepare(nextLaunch);
+        if (plugin === undefined) return plan;
+        rmSync(plugin.ready, { force: true });
+        return { ...plan, args: withNativeCompactionPlugin(plan.args, plugin.directory) };
+      },
       spawn: realSupervisedSpawnPort,
       signals: realSignalPort,
       timer: realTimerPort,
       watchChanges: (identity, onChange) => {
+        const stopPlugin = plugin === undefined ? undefined : realWatchExistingDirectory(plugin.directory, (filename) => filename === "ready.json", "the compaction plugin", log)(onChange);
         const stopSnapshot = realWatchDirectory(paths.usageSnapshotsDir, (filename) => filename === `${identity}.json`, `${identity}'s usage`, log)(onChange);
         let watchedDir: string | undefined;
         let stopTranscripts: (() => void) | undefined;
@@ -172,7 +183,9 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
           onChange();
         });
         watchTranscript();
+        if (plugin !== undefined && nativeCompactionReady(plugin)) queueMicrotask(onChange);
         return () => {
+          stopPlugin?.();
           stopSnapshot();
           stopState();
           stopTranscripts?.();
@@ -223,5 +236,6 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
     );
   } finally {
     staged?.release();
+    plugin?.release();
   }
 }
