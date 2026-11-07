@@ -3,7 +3,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { COMPACT_TIMEOUT_MS } from "../supervise/compactTimeout";
 import type { CompactionResult } from "../supervise/realCompact";
 import { RESULT_POLL_MS } from "../supervise/sessionControl";
-import { activeGoalOfTranscript, type TranscriptGoal } from "../supervise/sessionGoal";
+import type { TranscriptGoal } from "../supervise/sessionGoal";
 import { runSelfHostedSlashCommand, type RcSelfHostCommandDeps } from "./rcSelfHostCommands";
 
 /**
@@ -100,8 +100,8 @@ export interface RcSupervisedTarget {
 export interface RcSessionCommandDeps {
   /** The supervised launch a `cse_` session belongs to; undefined when no live supervisor owns it, or when it does but its control plugin is not recorded; a refusal when the door cannot tell which launch it is (two live launches claim it). */
   readonly supervisedOf: (sessionId: string) => Promise<RcSupervisedTarget | { readonly refused: string } | undefined>;
-  /** Reads one file's text, undefined when it does not exist. */
-  readonly readFile: (path: string) => string | undefined;
+  /** The goal a transcript leaves active, read incrementally without blocking (`transcriptFollower.ts`); undefined when the file does not exist. */
+  readonly goalOf: (path: string) => Promise<RcGoal | null | undefined>;
   /** The door's own surface, present only when the door serves Remote Control itself: the one place it writes a command as a person's app. */
   readonly selfHost: RcSelfHostCommandDeps | undefined;
   /** Whether the door observes the session at all, so a mistyped id is refused as unknown rather than as unsupported. */
@@ -199,12 +199,12 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
     });
 
   /** The supervised session's goal as its transcript records it now. */
-  const transcriptGoal = (sessionId: string, target: RcSupervisedTarget): RcSessionCommandResult<RcGoal | null> => {
-    const text = target.transcriptPath === undefined ? undefined : deps.readFile(target.transcriptPath);
-    if (text === undefined) {
+  const transcriptGoal = async (sessionId: string, target: RcSupervisedTarget): Promise<RcSessionCommandResult<RcGoal | null>> => {
+    const goal = target.transcriptPath === undefined ? undefined : await deps.goalOf(target.transcriptPath);
+    if (goal === undefined) {
       return { ok: false, message: `session ${sessionId}'s supervisor has not recorded its transcript yet, which is where its goal is read from; retry once it has finished a turn` };
     }
-    return { ok: true, report: activeGoalOfTranscript(text) };
+    return { ok: true, report: goal };
   };
 
   /**
@@ -212,7 +212,7 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
    */
   const settledGoal = async (sessionId: string, target: RcSupervisedTarget, signal: AbortSignal, holds: (goal: RcGoal | null) => boolean): Promise<RcSessionCommandResult<RcGoal | null>> => {
     for (;;) {
-      const read = transcriptGoal(sessionId, target);
+      const read = await transcriptGoal(sessionId, target);
       if (!read.ok || holds(read.report) || signal.aborted) {
         return read;
       }
@@ -227,7 +227,7 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
     goalGet: async (sessionId: string, options: RcSessionCommandOptions = {}): Promise<RcSessionCommandResult<RcGoalReport>> =>
       await onRoute<RcGoalReport>(sessionId, options, {
         supervised: async (target) => {
-          const read = transcriptGoal(sessionId, target);
+          const read = await transcriptGoal(sessionId, target);
           return await Promise.resolve(read.ok ? { ok: true as const, report: { route: "supervised" as const, goal: read.report } } : read);
         },
         selfHosted: async (selfHost, signal) => {
@@ -255,7 +255,7 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
       }
       return await onRoute<RcGoalSetReport>(sessionId, options, {
         supervised: async (target, signal, waitMs) => {
-          const before = transcriptGoal(sessionId, target);
+          const before = await transcriptGoal(sessionId, target);
           if (!before.ok) {
             return before;
           }
@@ -281,7 +281,7 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
     goalClear: async (sessionId: string, options: RcSessionCommandOptions = {}): Promise<RcSessionCommandResult<RcGoalClearReport>> =>
       await onRoute<RcGoalClearReport>(sessionId, options, {
         supervised: async (target, signal, waitMs) => {
-          const before = transcriptGoal(sessionId, target);
+          const before = await transcriptGoal(sessionId, target);
           if (!before.ok) {
             return before;
           }

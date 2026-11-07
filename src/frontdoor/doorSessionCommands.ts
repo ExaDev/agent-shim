@@ -1,7 +1,8 @@
 import { realFarmFs, realRunningAmong } from "../realPorts";
 import type { LayoutPaths } from "../paths";
 import { COMPACT_TIMEOUT_MS } from "../supervise/compactTimeout";
-import { supervisedSessionOfBridge, type BridgeIdCache } from "../supervise/registry";
+import { supervisedSessionOfBridge } from "../supervise/registry";
+import { createTranscriptFollower, realTranscriptReadPort } from "../supervise/transcriptFollower";
 import { compactInSession, runGoalInSession, sessionControlVersion } from "../supervise/sessionControl";
 import { sessionControlPluginPaths } from "../supervise/sessionControlPlugin";
 import type { RcClaudeCodeVersions, RcPersonWriteDeps } from "./rcSelfHostCommands";
@@ -31,11 +32,11 @@ export interface DoorRcSessionCommandsDeps {
  */
 export function createDoorRcSessionCommands(deps: DoorRcSessionCommandsDeps): RcSessionCommands {
   const { selfHost } = deps;
-  // Each supervised transcript's latest bridge id, kept across verbs so a call rereads only the transcripts that grew since the last one.
-  const bridgeIds: BridgeIdCache = new Map();
+  // Every supervised transcript's facts, kept across verbs and read asynchronously, so a call reads only what each transcript gained since the last one.
+  const follower = createTranscriptFollower(realTranscriptReadPort);
   return createRcSessionCommands({
     supervisedOf: async (sessionId) => {
-      const lookup = await supervisedSessionOfBridge(realFarmFs, deps.paths, sessionId, realRunningAmong, bridgeIds);
+      const lookup = await supervisedSessionOfBridge(realFarmFs, deps.paths, sessionId, realRunningAmong, follower);
       if (lookup.kind === "ambiguous") {
         return { refused: `more than one live supervised launch records Remote Control session ${sessionId} as its current bridge session (${lookup.sessionIds.join(", ")}), as a resumed or forked conversation can, so the door does not guess which one to act on` };
       }
@@ -53,7 +54,7 @@ export function createDoorRcSessionCommands(deps: DoorRcSessionCommandsDeps): Rc
         runGoal: async (args, signal, waitMs) => await runGoalInSession(plugin, conversationId, args, { signal, expiresInMs: waitMs }),
       };
     },
-    readFile: (file) => realFarmFs.readFileUtf8(file),
+    goalOf: async (file) => (await follower.factsOf(file))?.goal,
     isObserved: deps.isTracked,
     selfHost:
       selfHost === undefined

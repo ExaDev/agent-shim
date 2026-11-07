@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { CompactionResult } from "../supervise/realCompact";
+import { activeGoalOfTranscript } from "../supervise/sessionGoal";
 import { rcSelfHostEventDial, type RcSelfHostCommandDeps } from "./rcSelfHostCommands";
 import { RC_GOAL_CONDITION_MAX_CHARS, RC_SESSION_COMMAND_VERIFIED_VERSIONS, createRcSessionCommands, type RcSessionCommandDeps, type RcSupervisedTarget } from "./rcSessionCommands";
 import { createRcEventFanout } from "./rcStream";
@@ -20,11 +21,11 @@ async function noSupervisor(sessionId: string): Promise<RcSupervisedTarget | { r
 }
 
 /** The files a world whose route never reaches a transcript holds: none. */
-const NO_FILES = new Map<string, string>();
+const NO_FILES = new Map<string, null>();
 
-/** Reads no file. */
-function noFile(file: string): string | undefined {
-  return NO_FILES.get(file);
+/** Reads no transcript. */
+async function noFile(file: string): Promise<null | undefined> {
+  return await Promise.resolve(NO_FILES.get(file));
 }
 
 /** A version both routes were verified on, read from the module so the tests follow the list rather than restate it. */
@@ -62,7 +63,7 @@ function supervisedWorld(options: Readonly<{ version?: string; transcript?: stri
   };
   const deps: RcSessionCommandDeps = {
     supervisedOf: async () => await Promise.resolve(target),
-    readFile: (file) => (file === TRANSCRIPT ? transcript.join("\n") : undefined),
+    goalOf: async (file) => await Promise.resolve(file === TRANSCRIPT ? activeGoalOfTranscript(transcript.join("\n")) : undefined),
     selfHost: undefined,
     isObserved: () => true,
   };
@@ -88,7 +89,7 @@ function selfHostedWorld(version: string | undefined, unavailable?: string, acce
     setTimer: () => () => undefined,
     defaultWaitMs: 1,
   };
-  const deps: RcSessionCommandDeps = { supervisedOf: noSupervisor, readFile: noFile, selfHost, isObserved: () => true };
+  const deps: RcSessionCommandDeps = { supervisedOf: noSupervisor, goalOf: noFile, selfHost, isObserved: () => true };
   return { deps, written };
 }
 
@@ -201,7 +202,7 @@ describe("goal and compaction control over Remote Control, by route", () => {
   });
 
   it("refuses a session neither route reaches with the reason, and an unknown one as unknown", async () => {
-    const deps: RcSessionCommandDeps = { supervisedOf: noSupervisor, readFile: noFile, selfHost: undefined, isObserved: (id) => id === SESSION };
+    const deps: RcSessionCommandDeps = { supervisedOf: noSupervisor, goalOf: noFile, selfHost: undefined, isObserved: (id) => id === SESSION };
     const commands = createRcSessionCommands(deps);
     const unsupported = await commands.compact(SESSION);
     expect(unsupported.ok ? "" : unsupported.message).toContain("not launched under an agent-shim supervisor");
@@ -278,7 +279,7 @@ describe("goal and compaction control over Remote Control, by route", () => {
   });
 
   it("refuses with the reason when the door cannot tell which supervised launch the session is", async () => {
-    const deps: RcSessionCommandDeps = { supervisedOf: async () => await Promise.resolve({ refused: "two launches claim it" }), readFile: noFile, selfHost: undefined, isObserved: () => true };
+    const deps: RcSessionCommandDeps = { supervisedOf: async () => await Promise.resolve({ refused: "two launches claim it" }), goalOf: noFile, selfHost: undefined, isObserved: () => true };
     expect(await createRcSessionCommands(deps).goalGet(SESSION)).toEqual({ ok: false, message: "two launches claim it" });
   });
 
