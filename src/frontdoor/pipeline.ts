@@ -352,6 +352,7 @@ export async function serveRouted(incoming: PipelineRequest, deps: PipelineDeps)
   const viaHeadroom = wantsHeadroom && resolution.route.headroomEligible && deps.headroom !== undefined;
   const response = createRoutedResponse(request.response, { deps, session: identified.session, route: resolution.route.name, request: { ...observed, viaHeadroom }, servedPath: pathOf(resolution.request?.url ?? request.url), servedModel });
   try {
+    resolution.route.observeDispatch?.(routed);
     if (viaHeadroom) {
       // The ordering the whole design turns on: headroom first, on the Anthropic-shaped request, then the route (a translator receives what headroom compressed). A route that opts out, or a listener that serves routes directly, falls through to serving.
       await applyHeadroomHop(resolution.request ?? routed, response, resolution.route.headroomUpstream, deps.headroom, (facts) => {
