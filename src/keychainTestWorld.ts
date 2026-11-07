@@ -191,4 +191,3 @@ export function createFakeKeychain(): FakeKeychain {
 
 /** The environment every self-hosted mint test runs under: a fixed, empty one, so no test reads or mutates the real `process.env`. */
 export const TEST_CLAUDE_LOGIN = { env: {} } as const;
-

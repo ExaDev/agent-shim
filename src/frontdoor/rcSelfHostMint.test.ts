@@ -191,4 +191,3 @@ describe("the mint's marker contents", () => {
     expect(["/a", "/b", "/c", "/d"].map((dir) => isSelfHostMinted(fs, dir))).toEqual([false, false, false, true]);
   });
 });
-

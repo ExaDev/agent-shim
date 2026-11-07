@@ -355,4 +355,3 @@ export function selfHostedLoginLeftover(keychain: KeychainProbe, selfHostedDir: 
 export function leftoverWarnings(note: string | undefined): readonly string[] {
   return note === undefined ? [] : [note];
 }
-

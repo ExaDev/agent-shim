@@ -480,23 +480,23 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
         await confirmRemoval(deps, options.yes, `identity "${name}", its directory ${identityDirectory(paths, id)}, and ${REMOVED_STATE}`);
         const warnings: string[] = [];
         withIdentityNamesLock(paths, realIdentityNamesLockPorts, () => {
-        // Read before the directory goes: the removal leaves every Claude Code login item, and for an identity the self-hosted mint wrote into, a leftover one is named afterwards.
-        const configDir = identityDirectory(paths, id);
-        const selfHosted = isSelfHostMinted(renamePorts.fs, configDir);
-        const removed = removeIdentityWithLockHeld(paths, name, realIdentityNamesLockPorts);
-        // The Keychain store holds a cached credential the store function cannot reach; forgetting it keeps a later identity given the same id from reading it.
-        if (renamePorts.credentialCache.platform === "darwin") {
-          // The identity is removed by now, so a delete that fails says so beside the command that deletes the entry left behind.
-          try {
-            renamePorts.credentialCache.port.remove("keychain", identityCacheKey(removed));
-          } catch (error: unknown) {
-            if (error instanceof KeychainCacheDeleteError) {
-              throw error.afterRemoving(name);
+          // Read before the directory goes: the removal leaves every Claude Code login item, and for an identity the self-hosted mint wrote into, a leftover one is named afterwards.
+          const configDir = identityDirectory(paths, id);
+          const selfHosted = isSelfHostMinted(renamePorts.fs, configDir);
+          const removed = removeIdentityWithLockHeld(paths, name, realIdentityNamesLockPorts);
+          // The Keychain store holds a cached credential the store function cannot reach; forgetting it keeps a later identity given the same id from reading it.
+          if (renamePorts.credentialCache.platform === "darwin") {
+            // The identity is removed by now, so a delete that fails says so beside the command that deletes the entry left behind.
+            try {
+              renamePorts.credentialCache.port.remove("keychain", identityCacheKey(removed));
+            } catch (error: unknown) {
+              if (error instanceof KeychainCacheDeleteError) {
+                throw error.afterRemoving(name);
+              }
+              throw error;
             }
-            throw error;
           }
-        }
-        warnings.push(...leftoverWarnings(selfHostedLoginLeftover({ run: renamePorts.run, platform: renamePorts.platform }, selfHosted ? configDir : undefined)));
+          warnings.push(...leftoverWarnings(selfHostedLoginLeftover({ run: renamePorts.run, platform: renamePorts.platform }, selfHosted ? configDir : undefined)));
         });
         reportMutation(options.json, { action: "removed", kind: "identity", name, ...(warnings.length === 0 ? {} : { warnings }) }, () => {
           console.log(`Removed identity "${name}".`);

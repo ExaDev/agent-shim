@@ -95,4 +95,3 @@ describe("Claude Code's Keychain login derivation", () => {
     expect(claudeCodeKeychainService(decomposed)).toBe(claudeCodeKeychainService(composed));
   });
 });
-

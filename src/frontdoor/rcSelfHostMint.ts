@@ -196,4 +196,3 @@ export function mintRcSelfHostLogin(deps: RcSelfHostGuardedMintDeps): RcSelfHost
   }
   return mintRcSelfHostCredential(deps);
 }
-
