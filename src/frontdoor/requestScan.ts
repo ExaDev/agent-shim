@@ -1,4 +1,5 @@
 import { PassThrough } from "node:stream";
+import { StringDecoder } from "node:string_decoder";
 
 import type { RoutedRequest } from "./route";
 
@@ -47,6 +48,8 @@ export async function scanRequestHead(request: RoutedRequest, wholeBody = false)
   const head: Buffer[] = [];
   let seen = 0;
   let text = "";
+  // A multi-byte character can be split across two chunks; the decoder holds the leading bytes until the rest arrive, where decoding each chunk alone would turn both halves into replacement characters and a rewrite from `text` would corrupt the body.
+  const decoder = new StringDecoder("utf8");
   let decided = false;
   let ended = false;
   let error: Error | undefined;
@@ -87,7 +90,7 @@ export async function scanRequestHead(request: RoutedRequest, wholeBody = false)
       }
       head.push(chunk);
       seen += chunk.length;
-      text += chunk.toString("utf8");
+      text += decoder.write(chunk);
       if (!wholeBody && (modelIn() !== undefined || seen >= REQUEST_SCAN_CAP_BYTES)) {
         decided = true;
         settle();
@@ -95,6 +98,7 @@ export async function scanRequestHead(request: RoutedRequest, wholeBody = false)
     });
     body.on("end", () => {
       ended = true;
+      text += decoder.end();
       // A body that ends before the scan found the model field settles with whatever it read: the facts are what they are, and the replay must end for the route to finish.
       if (!decided) {
         decided = true;
