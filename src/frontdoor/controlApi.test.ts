@@ -48,6 +48,7 @@ function baseCheckParams(overrides: Partial<RunCheckParams> = {}): RunCheckParam
     cwd: `${FAKE_HOME}/work`,
     home: FAKE_HOME,
     claudeHome: FAKE_CLAUDE_HOME,
+    configDirEscapeHatch: false,
     env: {},
     nowMs: FAKE_NOW_MS,
     farmFs: createFakeFarmFs({ [`${FAKE_CLAUDE_HOME}/skills/commit/SKILL.md`]: "content", [`${FAKE_CLAUDE_HOME}/.credentials.json`]: "secret" }),
