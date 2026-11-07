@@ -11,7 +11,7 @@ import type { RcWebFetchOutcome, RcWebFetcher } from "./rcWebFetch";
  */
 
 /** Where the fake clock starts: any fixed epoch instant, far enough from zero that a computed ISO date never surprises. */
-export const CLOCK_START_MS = 1_000_000;
+const CLOCK_START_MS = 1_000_000;
 
 /** The width of a UUID's final hyphen-separated group, so minted test ids carry the shape the protocol validates. */
 const UUID_TAIL_WIDTH = 12;
@@ -23,7 +23,7 @@ export const REFRESH_TOKEN = "selfhost-refresh";
 export const RECORD: RcSelfHostCredentialRecord = { accessToken: MINTED_OAUTH_TOKEN, refreshToken: REFRESH_TOKEN, organizationUuid: "11111111-1111-4111-8111-111111111111", accountUuid: "22222222-2222-4222-8222-222222222222" };
 
 /** A controllable clock, so retention and resume windows are reached without waiting. */
-export class FakeClock {
+class FakeClock {
   private nowMs = CLOCK_START_MS;
   readonly now = (): number => this.nowMs;
   advance(ms: number): void {
