@@ -423,14 +423,21 @@ describe("the self-hosted Remote Control streams", () => {
       setTimeout(resolve, DELIVERY_SETTLE_MS);
     });
 
-    // The header outranks a value the payload states itself, as a server-side stamp does; a write without the header keeps the payload as written.
-    await call(world.port, "POST", `/v1/code/sessions/${id}/events`, { events: [{ payload: { type: "user", uuid: "web", client_platform: "claude_code_cli", message: { role: "user", content: "/compact" } } }] }, { authorization: `Bearer ${MINTED_OAUTH_TOKEN}`, "anthropic-client-platform": "web_claude_ai" });
-    await call(world.port, "POST", `/v1/code/sessions/${id}/events`, { events: [{ payload: { type: "user", uuid: "bare", message: { role: "user", content: "hello" } } }] }, { authorization: `Bearer ${MINTED_OAUTH_TOKEN}` });
-    await workerStream.waitForEvents(2);
+    // The header outranks a value the payload states itself, as a server-side stamp does; a payload's own claim with no header is dropped, so a writer cannot name a platform by writing it into the event.
+    const writes: readonly { readonly payload: Record<string, unknown>; readonly headers: Readonly<Record<string, string>> }[] = [
+      { payload: { type: "user", uuid: "web", client_platform: "claude_code_cli", message: { role: "user", content: "/compact" } }, headers: { "anthropic-client-platform": "web_claude_ai" } },
+      { payload: { type: "user", uuid: "bare", message: { role: "user", content: "hello" } }, headers: {} },
+      { payload: { type: "user", uuid: "claimed", client_platform: "web_claude_ai", message: { role: "user", content: "/goal clear" } }, headers: {} },
+    ];
+    for (const write of writes) {
+      await call(world.port, "POST", `/v1/code/sessions/${id}/events`, { events: [{ payload: write.payload }] }, { authorization: `Bearer ${MINTED_OAUTH_TOKEN}`, ...write.headers });
+    }
+    await workerStream.waitForEvents(writes.length);
     const payloads = envelopesOf(workerStream).map((event) => event.envelope.payload as Record<string, unknown>);
-    expect(payloads.map((payload) => [payload.uuid, payload.client_platform])).toEqual([
-      ["web", "web_claude_ai"],
-      ["bare", undefined],
+    expect(payloads.map((payload) => [payload.uuid, "client_platform" in payload, payload.client_platform])).toEqual([
+      ["web", true, "web_claude_ai"],
+      ["bare", false, undefined],
+      ["claimed", false, undefined],
     ]);
     workerStream.close();
   });

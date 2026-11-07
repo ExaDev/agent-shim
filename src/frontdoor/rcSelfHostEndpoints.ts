@@ -38,11 +38,12 @@ export const RC_SOURCE_CLIENT = "client";
 const CLIENT_PLATFORM_HEADER = "anthropic-client-platform";
 
 /**
- * One client event's payload as the served surface files it: the writer's `anthropic-client-platform` header stamped on as `client_platform`, the enrichment the real service was observed making (a live capture's client user event carried `client_platform` equal to the writing client's header although its payload named none). The worker classifies who wrote an inbound message by exactly this field (the 2.1.319 bridge treats `ios`, `android`, `web_claude_ai` and `desktop_app` as a person and demotes anything else to a peer message, which reaches the model as text and never runs as a slash command), so a surface that dropped it would make every client's message a peer's. The header outranks a value the payload states itself, as a server-side stamp does; a write that sends no header keeps its payload as written.
+ * One client event's payload as the served surface files it: `client_platform` is the writer's `anthropic-client-platform` header and nothing else, as the real service sets it (the 2.1.319 CLI's own schema describes the field as injected server-side by the ingress from the request header, and a live capture's client event carried it although the payload the writer sent named none). The worker classifies who wrote an inbound message by exactly this field (the 2.1.319 bridge treats `ios`, `android`, `web_claude_ai` and `desktop_app` as a person and demotes anything else to a peer message, which reaches the model as text and never runs as a slash command), so a value the payload states itself is dropped rather than trusted, and a write that sends no header files an event with no platform.
  */
 export function withClientPlatform(payload: Record<string, unknown>, headers: Readonly<IncomingHttpHeaders>): Record<string, unknown> {
+  const rest = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== "client_platform"));
   const platform = headers[CLIENT_PLATFORM_HEADER];
-  return typeof platform === "string" && platform !== "" ? { ...payload, client_platform: platform } : payload;
+  return typeof platform === "string" && platform !== "" ? { ...rest, client_platform: platform } : rest;
 }
 
 /** The guard every parsed-body narrowing goes through, per the codebase's `unknown` discipline. */
