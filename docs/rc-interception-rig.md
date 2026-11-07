@@ -87,6 +87,22 @@ agent-shim run @rig --track-usage
 
 Complete the browser login the session opens (on any machine with a browser). In proxy mode captured frames accumulate in `/tmp/agent-shim-rc-capture/logs/frontdoor-capture.jsonl` inside the container; in door mode the door's capture (already on) records to `/tmp/agent-shim-rig/logs/frontdoor-capture.jsonl`. Websocket frames in either file decode offline with `scripts/decode-stream-capture.mts`. Both captures can contain credential material: read them, then delete them, and never commit them.
 
+## The isolated self-hosted lab (this machine, no container)
+
+`scripts/rc-self-host-lab.mts` brings up the self-hosted proof below on the machine it runs on, with nothing shared with the operator's own setup: a real Claude Code CLI with `--remote-control`, launched through this checkout's `dist/cli.cjs` against a throwaway `AGENT_SHIM_HOME` inside the lab directory, served by that home's own door in self-hosted mode, with `scripts/rc-mock-provider.mts` (on a free loopback port, holding a lab-only random credential) as its only provider, all in a tmux server on the lab's own socket. It needs the checkout built (`node scripts/build.mts --bundle-only`), tmux, and a CLI the launcher resolves.
+
+```sh
+node scripts/rc-self-host-lab.mts up --dir <lab-dir>      # <lab-dir> must not exist; keep it out of /tmp
+node scripts/rc-self-host-lab.mts check --dir <lab-dir>   # the leak check alone, any time
+node scripts/rc-self-host-lab.mts down --dir <lab-dir>    # leak check, stop everything, delete <lab-dir> (--keep keeps it)
+```
+
+`up` waits for Remote Control to come up (accepting the folder-trust prompt), then prints the door URL (the provider listener, over TLS, where the typed API and the web client are served), the door's CA, the control-token path, the Remote Control session id, the capture and CLI debug-log paths, the tmux attach command, and the environment prefix that points `agent-shim frontdoor rc ...` at the lab's door; then it runs the leak check.
+
+Every lab process starts from a minimal environment (`HOME`, `PATH`, the user and shell, the locale, `TMPDIR`) plus the lab's own `AGENT_SHIM_HOME`, so no `CLAUDE_CONFIG_DIR`, proxy or credential of the operator's reaches it, and the CLI pane's command also starts `env -u CLAUDE_CONFIG_DIR`. The launch that starts the lab's door carries `AGENT_SHIM_FRONTDOOR_RC_SELF_HOST=1`, `AGENT_SHIM_TRANSPARENT_SURFACE` (a free port), `AGENT_SHIM_FRONTDOOR_CAPTURE=1` and `AGENT_SHIM_CATEGORY_OVERRIDE=all=false`.
+
+The leak check reads the lab door's capture and exits 1 naming every request forwarded to an intercepted host's real upstream, every tapped or relayed stream, and every blind tunnel to a host outside the intercept set. `--allow-tunnel <host>` (repeatable) exempts one host's blind tunnels, for a CLI start-up dial the operator has decided to accept; forwarded traffic to an intercepted host is never exempt, since it carries the session's credential. On a door without self-hosted isolation (issue #731) the check fails by design: the start-up calls are forwarded. Claude Code 2.1.319 also opens blind tunnels at start to `downloads.claude.ai`, `raw.githubusercontent.com`, `api.github.com` and `cafe.github.com` (its updater and plugin marketplace), which the door does not intercept and which carry no session credential; the check reports them as leaks until the door refuses them for a self-hosted session, and a run that accepts them names each with `--allow-tunnel`.
+
 ## The self-hosted proof (no login at all)
 
 The self-hosted Remote Control mode (issue #207) removes the manual login from the proof entirely: the door serves the CCR surface itself, so a session activates Remote Control against the door with no Anthropic credential anywhere. On a door-mode rig:
