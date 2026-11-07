@@ -345,8 +345,6 @@ export {
   rcLocalCommandAnswerOf,
   rcManualCompactBoundaryOf,
   type RcClaudeCodeVersions,
-  type RcSelfHostCommand,
-  type RcSelfHostCommandDeps,
 } from "./frontdoor/rcSelfHostCommands";
 export {
   RC_STREAM_BACKOFF_MS,
