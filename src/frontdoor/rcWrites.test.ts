@@ -262,7 +262,7 @@ describe("the control_response payload and answerRcControlRequest over an inject
   it("answers with the observed bearer and protocol headers, and retires the request once the write is confirmed", async () => {
     const { tracker } = trackerWithPending();
     const { dial, dialled } = dialRecording();
-    const result = await answerRcControlRequest({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, dial }, SESSION_ID, REQUEST_ID, { approve: true, message: undefined });
+    const result = await answerRcControlRequest({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, pendingToolInputOf: tracker.pendingToolInputOf, dial }, SESSION_ID, REQUEST_ID, { approve: true, message: undefined });
     expect(result).toEqual({ ok: true, sequenceNums: [SECOND_SEQUENCE_NUM] });
     expect(dialled).toEqual([
       {
@@ -277,7 +277,7 @@ describe("the control_response payload and answerRcControlRequest over an inject
   it("refuses an unobserved session, an unknown request, and a dial failure, each verbosely and without throwing", async () => {
     const { tracker } = trackerWithPending();
     const { dial } = dialRecording();
-    const deps = { credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id: string) => tracker.pendingOf(id), completePending: tracker.completePending, dial };
+    const deps = { credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id: string) => tracker.pendingOf(id), completePending: tracker.completePending, pendingToolInputOf: tracker.pendingToolInputOf, dial };
     const unknownSession = await answerRcControlRequest(deps, "cse_00000000-0000-4000-8000-0000000000ff", REQUEST_ID, { approve: true, message: undefined });
     expect(unknownSession.ok).toBe(false);
     if (!unknownSession.ok) {
@@ -298,6 +298,73 @@ describe("the control_response payload and answerRcControlRequest over an inject
     }
     // A failed write leaves the request pending: only a confirmed delivery retires it.
     expect(tracker.pendingOf().map((request) => request.requestId)).toEqual([REQUEST_ID]);
+  });
+
+  describe("answering a pending question", () => {
+    const QUESTION_ID = "req_00000000-0000-4000-8000-00000000000q";
+    /** The AskUserQuestion input the rig session asked with, kept verbatim so the answer is proven to carry it back. */
+    const QUESTION_INPUT = {
+      questions: [
+        { question: "Which database?", header: "Database", multiSelect: false, options: [{ label: "Postgres", description: "relational" }, { label: "SQLite", description: "embedded" }] },
+        { question: "Which checks?", header: "Checks", multiSelect: true, options: [{ label: "lint", description: "style" }, { label: "test", description: "suite" }] },
+      ],
+    };
+    const trackerWithQuestion = (): RcSessionTracker => {
+      const { tracker } = trackerWithPending();
+      exchange(tracker, {
+        method: "POST",
+        url: `/v1/code/sessions/${SESSION_ID}/worker/events`,
+        authorization: "Bearer sk-ant-oat",
+        requestBody: JSON.stringify({ worker_epoch: 1, events: [{ payload: { type: "control_request", request_id: QUESTION_ID, request: { subtype: "can_use_tool", tool_name: "AskUserQuestion", input: QUESTION_INPUT } } }] }),
+      }).respond(HTTP_STATUS.ok);
+      return tracker;
+    };
+    const depsOf = (tracker: RcSessionTracker, dial: RcEventDial): Parameters<typeof answerRcControlRequest>[0] => ({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, pendingToolInputOf: tracker.pendingToolInputOf, dial });
+
+    it("lists the question's text, header, selection kind and options on the pending entry", () => {
+      const question = trackerWithQuestion().pendingOf().find((request) => request.requestId === QUESTION_ID);
+      expect(question?.questions).toEqual(QUESTION_INPUT.questions);
+    });
+
+    it("writes an allow carrying the asked input plus the answers, the shape the CLI continued on in the rig, and retires the question", async () => {
+      const tracker = trackerWithQuestion();
+      const { dial, dialled } = dialRecording();
+      const result = await answerRcControlRequest(depsOf(tracker, dial), SESSION_ID, QUESTION_ID, { approve: true, message: undefined, choices: [["SQLite"], [1, "test"]] });
+      expect(result).toEqual({ ok: true, sequenceNums: [SECOND_SEQUENCE_NUM] });
+      expect(JSON.parse(dialled[0]?.body ?? "")).toEqual({
+        events: [{ payload: { type: "control_response", response: { subtype: "success", request_id: QUESTION_ID, response: { behavior: "allow", updatedInput: { ...QUESTION_INPUT, answers: { "Which database?": "SQLite", "Which checks?": "lint, test" } } } } } }],
+      });
+      expect(tracker.pendingOf().map((request) => request.requestId)).toEqual([REQUEST_ID]);
+    });
+
+    it("dismisses a question with a plain denial", async () => {
+      const tracker = trackerWithQuestion();
+      const { dial, dialled } = dialRecording();
+      expect((await answerRcControlRequest(depsOf(tracker, dial), SESSION_ID, QUESTION_ID, { approve: false, message: "not now" })).ok).toBe(true);
+      expect(dialled[0]?.body).toBe(JSON.stringify(buildRcEventWriteBody(buildRcControlResponsePayload(QUESTION_ID, { approve: false, message: "not now" }))));
+    });
+
+    it("refuses, without writing, an approval of a question with no choices, choices that do not fit its options, choices with a denial, and choices for an approval request", async () => {
+      const tracker = trackerWithQuestion();
+      const { dial, dialled } = dialRecording();
+      const deps = depsOf(tracker, dial);
+      const refusals = [
+        await answerRcControlRequest(deps, SESSION_ID, QUESTION_ID, { approve: true, message: undefined }),
+        await answerRcControlRequest(deps, SESSION_ID, QUESTION_ID, { approve: true, message: undefined, choices: [["MySQL"], ["lint"]] }),
+        await answerRcControlRequest(deps, SESSION_ID, QUESTION_ID, { approve: true, message: undefined, choices: [["SQLite", "Postgres"], ["lint"]] }),
+        await answerRcControlRequest(deps, SESSION_ID, QUESTION_ID, { approve: false, message: undefined, choices: [["SQLite"], ["lint"]] }),
+        await answerRcControlRequest(deps, SESSION_ID, REQUEST_ID, { approve: true, message: undefined, choices: [["SQLite"]] }),
+      ];
+      expect(refusals.map((refusal) => (refusal.ok ? "delivered" : refusal.message))).toEqual([
+        expect.stringContaining("is a question"),
+        expect.stringContaining('no option labelled "MySQL"'),
+        expect.stringContaining("takes one option"),
+        expect.stringContaining("a denial dismisses the question"),
+        expect.stringContaining("is not a question"),
+      ]);
+      expect(dialled).toEqual([]);
+      expect(tracker.pendingOf()).toHaveLength(2);
+    });
   });
 });
 

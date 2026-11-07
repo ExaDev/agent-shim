@@ -221,16 +221,18 @@ function renderPending(pending) {
   for (var i = 0; i < pending.length; i++) {
     var request = pending[i];
     var card = el('div', 'card');
-    card.appendChild(el('div', null, request.type + '  ' + (request.summary === '' ? shortId(request.requestId) : request.summary)));
+    var isQuestion = Array.isArray(request.questions);
+    card.appendChild(el('div', null, isQuestion ? 'question' : request.type + '  ' + (request.summary === '' ? shortId(request.requestId) : request.summary)));
     card.appendChild(el('div', 'dim', shortId(request.sessionId) + '  ' + shortId(request.requestId) + '  observed ' + new Date(request.observedAt).toLocaleTimeString()));
+    var pickers = isQuestion ? renderQuestions(card, request) : null;
     var row = el('div', 'row');
     var denial = el('input');
     denial.type = 'text';
-    denial.placeholder = 'denial message (optional)';
-    var approve = el('button', null, 'Approve');
-    var deny = el('button', 'secondary', 'Deny');
-    approve.addEventListener('click', answerRequest(request, true, denial));
-    deny.addEventListener('click', answerRequest(request, false, denial));
+    denial.placeholder = isQuestion ? 'dismissal message (optional)' : 'denial message (optional)';
+    var approve = el('button', null, isQuestion ? 'Answer' : 'Approve');
+    var deny = el('button', 'secondary', isQuestion ? 'Dismiss' : 'Deny');
+    approve.addEventListener('click', answerRequest(request, true, denial, pickers));
+    deny.addEventListener('click', answerRequest(request, false, denial, null));
     row.appendChild(denial);
     row.appendChild(approve);
     row.appendChild(deny);
@@ -239,12 +241,45 @@ function renderPending(pending) {
   }
 }
 
-function answerRequest(request, approve, denialInput) {
+// Draws each question of a pending question request with one input per option (radio buttons for a single-select question, checkboxes for a multi-select one), and returns a reader of the chosen labels, one list per question in order, which the answer sends as its choices.
+function renderQuestions(card, request) {
+  var groups = [];
+  for (var q = 0; q < request.questions.length; q++) {
+    var question = request.questions[q];
+    var block = el('div', 'question');
+    block.appendChild(el('div', null, (question.header === undefined ? '' : '[' + question.header + '] ') + question.question + (question.multiSelect ? '  (choose one or more)' : '')));
+    var inputs = [];
+    for (var o = 0; o < question.options.length; o++) {
+      var option = question.options[o];
+      var label = el('label', 'option');
+      var box = el('input');
+      box.type = question.multiSelect ? 'checkbox' : 'radio';
+      box.name = request.requestId + '-' + String(q);
+      box.value = option.label;
+      label.appendChild(box);
+      label.appendChild(document.createTextNode(' ' + option.label + (option.description === undefined ? '' : ': ' + option.description)));
+      block.appendChild(label);
+      inputs.push(box);
+    }
+    groups.push(inputs);
+    card.appendChild(block);
+  }
+  return function () {
+    return groups.map(function (inputs) { return inputs.filter(function (box) { return box.checked; }).map(function (box) { return box.value; }); });
+  };
+}
+
+function answerRequest(request, approve, denialInput, pickers) {
   return function () {
     var input = { session: request.sessionId, request: request.requestId, approve: approve };
     if (!approve && denialInput.value !== '') { input.text = denialInput.value; }
+    if (approve && pickers !== null) {
+      var choices = pickers();
+      if (choices.some(function (chosen) { return chosen.length === 0; })) { window.alert('choose an option for every question'); return; }
+      input.choices = choices;
+    }
     rpc('rc/answer', input).then(function () {
-      renderEvent({ source: 'page', sequence: 0, payload: { note: (approve ? 'approved' : 'denied') + ' ' + request.requestId } }, 0);
+      renderEvent({ source: 'page', sequence: 0, payload: { note: (pickers !== null ? 'answered' : approve ? 'approved' : 'denied') + ' ' + request.requestId } }, 0);
       refreshPending();
     }, function (error) { window.alert('answer failed: ' + error.message); });
   };
@@ -450,6 +485,8 @@ export const RC_CLIENT_PAGE_HTML = `<!doctype html>
   .row { display: flex; gap: 8px; margin: 6px 0; align-items: center; }
   .card { border: 1px solid #3d6ea5; border-radius: 4px; padding: 8px; margin: 6px 0; background: #17222e; }
   .card .dim { color: #8b98a5; }
+  .card .question { margin: 6px 0; }
+  .card .option { display: block; margin-left: 12px; }
   #token-form { max-width: 480px; margin: 48px auto; }
   #token-form p { color: #8b98a5; }
   .hidden { display: none !important; }

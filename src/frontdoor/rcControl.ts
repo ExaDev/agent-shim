@@ -4,6 +4,7 @@ import * as https from "node:https";
 import { HTTP_STATUS } from "../codex/http";
 import { isLiveCapability } from "./capability";
 import type { RcPendingRequestSummary, RcSessionStatus, RcSessionSummary } from "./rcSessions";
+import { RcPendingRequestSummarySchema, RcQuestionChoicesSchema } from "./rcSchemas";
 import { RC_CONTEXT_USAGE_DETAILS, RC_PERMISSION_MODES, RC_READ_FILE_ENCODINGS, isRcContextUsageDetail, isRcPermissionMode, isRcReadFileEncoding, rcSessionNotObservedMessage, type RcAnswerDecision, type RcContextUsageDetail, type RcEventWriteResult, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
 
 /** The SDK's own permission modes as one readable list, so a body refused for a bad mode names exactly what is permitted. */
@@ -355,12 +356,21 @@ export function createRcControlHandler(deps: RcControlHandlerDeps): (request: In
           return;
         }
         const text = "text" in parsed && typeof parsed.text === "string" ? parsed.text : undefined;
+        const choices = "choices" in parsed ? RcQuestionChoicesSchema.safeParse(parsed.choices) : undefined;
+        if (choices !== undefined && !choices.success) {
+          answerJson(response, HTTP_STATUS.badRequest, { error: "choices must be one non-empty list per question of selections, each an option label, a one-based option number or {\"text\": ...}" } satisfies ControlErrorBody);
+          return;
+        }
+        if (choices !== undefined && !parsed.approve) {
+          answerJson(response, HTTP_STATUS.badRequest, { error: "choices answer a question, so they come with approve: true; a denial dismisses the question" } satisfies ControlErrorBody);
+          return;
+        }
         // The protocol's allow result has no text field, so an approval with a message would silently drop it; refuse the combination rather than lose the caller's words.
         if (parsed.approve && text !== undefined && text !== "") {
           answerJson(response, HTTP_STATUS.badRequest, { error: "an approval carries no text (the protocol's allow result has no message field); text is the denial message" } satisfies ControlErrorBody);
           return;
         }
-        const result = await deps.answer(parsed.session, parsed.request, { approve: parsed.approve, message: parsed.approve ? undefined : text });
+        const result = await deps.answer(parsed.session, parsed.request, { approve: parsed.approve, message: parsed.approve ? undefined : text, ...(choices === undefined ? {} : { choices: choices.data }) });
         if (result.ok) {
           answerJson(response, HTTP_STATUS.ok, { session: parsed.session, request: parsed.request, sequenceNums: result.sequenceNums });
           return;
@@ -518,13 +528,7 @@ function isRcSessionStatus(value: unknown): value is RcSessionStatus {
 
 /** Whether one value is a pending control request as this surface defines it, narrowed field by field rather than asserted. */
 function isRcPendingRequestSummary(value: unknown): value is RcPendingRequestSummary {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-  if (!("sessionId" in value) || !("requestId" in value) || !("type" in value) || !("summary" in value) || !("observedAt" in value)) {
-    return false;
-  }
-  return typeof value.sessionId === "string" && typeof value.requestId === "string" && typeof value.type === "string" && typeof value.summary === "string" && typeof value.observedAt === "number";
+  return RcPendingRequestSummarySchema.safeParse(value).success;
 }
 
 /** Parses a JSON body's `sequenceNums` array, narrowed element by element, or undefined when the body names none. */
@@ -713,7 +717,7 @@ export function frontDoorRcControl(transport: RcControlTransport, token: string)
     answerRequest: async (sessionId, requestId, decision) =>
       await writeOf(
         `${CONTROL_PATH_PREFIX}/answer`,
-        JSON.stringify({ session: sessionId, request: requestId, approve: decision.approve, ...(decision.approve || decision.message === undefined ? {} : { text: decision.message }) }),
+        JSON.stringify({ session: sessionId, request: requestId, approve: decision.approve, ...(decision.approve || decision.message === undefined ? {} : { text: decision.message }), ...(decision.choices === undefined ? {} : { choices: decision.choices }) }),
         (status, message) => `answering control request ${requestId} on ${sessionId} failed (HTTP ${String(status)}): ${message}`,
       ),
     interruptSession: async (sessionId) =>

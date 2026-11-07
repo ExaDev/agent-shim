@@ -227,11 +227,11 @@ export function createRcApiRouter(deps: RcApiDeps) {
         .output(RcWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, sequenceNums: delivered(input.session, await deps.inject(input.session, input.text)) })),
       answer: authed
-        .meta(openapi({ method: "POST", path: "/rest/rc/answer", summary: "Answer one pending control request", tags: [RC_API_TAG] }))
+        .meta(openapi({ method: "POST", path: "/rest/rc/answer", summary: "Answer one pending control request: approve or deny it, or choose the options of a pending question", tags: [RC_API_TAG] }))
         .input(RcAnswerInputSchema)
         .output(RcAnswerOutputSchema)
         .handler(async ({ input }) => {
-          const decision: RcAnswerDecision = { approve: input.approve, message: input.approve || input.text === undefined ? undefined : input.text };
+          const decision: RcAnswerDecision = { approve: input.approve, message: input.approve || input.text === undefined ? undefined : input.text, ...(input.choices === undefined ? {} : { choices: input.choices }) };
           return { session: input.session, request: input.request, sequenceNums: delivered(input.session, await deps.answer(input.session, input.request, decision)) };
         }),
       interrupt: authed
