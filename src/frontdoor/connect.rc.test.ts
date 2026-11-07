@@ -104,6 +104,10 @@ function controlRequestOperations(tracker: RcSessionTracker, dial: RcEventDial, 
     mcpAuthenticate: async (sessionId: string, serverName: string, redirectUri: string) => await authenticateRcSessionMcpServer(deps, sessionId, serverName, redirectUri),
     mcpOAuthCallbackUrl: async (sessionId: string, serverName: string, callbackUrl: string) => await submitRcSessionMcpOAuthCallbackUrl(deps, sessionId, serverName, callbackUrl),
     teleport: async (sessionId: string, marker: string) => await teleportRcSession(deps, sessionId, marker),
+    goalGet: async () => await Promise.resolve({ ok: false as const, message: "unexercised" }),
+    goalSet: async () => await Promise.resolve({ ok: false as const, message: "unexercised" }),
+    goalClear: async () => await Promise.resolve({ ok: false as const, message: "unexercised" }),
+    compact: async () => await Promise.resolve({ ok: false as const, message: "unexercised" }),
   };
 }
 

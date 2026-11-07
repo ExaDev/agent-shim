@@ -23,6 +23,9 @@ const MS_PER_SECOND = 1_000;
 /** A write the tests never expect to reach the real dial: the page's interrupt and steering calls resolve through it. */
 const unexercised = async (): Promise<RcEventWriteResult> => await Promise.resolve({ ok: false, message: "this test drives no Remote Control write" });
 
+/** The same stand-in for the goal and compaction verbs, whose results carry a report rather than a write. */
+const unexercisedCommand = async (): Promise<{ readonly ok: false; readonly message: string }> => await Promise.resolve({ ok: false, message: "this test drives no Remote Control command" });
+
 /** One parsed SSE frame, exactly as the page's parser returns it. */
 interface SseFrame {
   readonly event: string;
@@ -248,6 +251,10 @@ describe("the page's script against the door's protocol", () => {
       mcpAuthenticate: unexercised,
       mcpOAuthCallbackUrl: unexercised,
       teleport: unexercised,
+      goalGet: unexercisedCommand,
+      goalSet: unexercisedCommand,
+      goalClear: unexercisedCommand,
+      compact: unexercisedCommand,
       fanout: { publish: () => undefined, subscribe: () => () => undefined },
     });
     const server = http.createServer((request, response) => {

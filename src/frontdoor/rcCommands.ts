@@ -12,6 +12,7 @@ import { frontDoorRcControl, realRcControlTransport, type FrontDoorRcControl } f
 import { rcRateLimitInfoOf } from "./rcLiveUsage";
 import type { RcRateLimitInfo } from "./rcSchemas";
 import { mintRcSelfHostCredential, type RcSelfHostMintResult } from "./rcSelfHostMint";
+import { RC_GOAL_CLEAR_WORDS, RC_SLASH_COMMAND_DEFAULT_WAIT_MS, RC_SLASH_COMMAND_VERIFIED_VERSIONS } from "./rcSlashCommands";
 import { RC_PENDING_SUMMARY_EXCERPT_CHARS, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
 import { RC_CONTEXT_USAGE_DETAILS, RC_PERMISSION_MODES, RC_READ_FILE_ENCODINGS, isRcContextUsageDetail, isRcPermissionMode, isRcReadFileEncoding, type RcEventWriteResult } from "./rcWrites";
 import type { RcStreamEvent } from "./rcSchemas";
@@ -488,6 +489,100 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
         reportControlWrite(`teleported a marker into the session`, options.session, await frontDoorRcControlFromState(realFarmFs, paths).teleport(options.session, options.marker), options.json, { marker: options.marker });
       }),
     ['agent-shim frontdoor rc teleport --session cse_00000000-0000-4000-8000-000000000000 --marker "__ULTRAPAN_TELEPORT_LOCAL__"'],
+  );
+
+  /** Reads `--wait-ms`, the wait bound every goal and compaction verb accepts, refusing anything but a positive whole number of milliseconds. */
+  const waitMsOf = (waitMs: string | undefined): { readonly waitMs?: number } => {
+    if (waitMs === undefined) {
+      return {};
+    }
+    if (!/^[1-9][0-9]*$/.test(waitMs)) {
+      throw new UsageError(`--wait-ms must be a positive whole number of milliseconds, not "${waitMs}"`);
+    }
+    return { waitMs: Number(waitMs) };
+  };
+  const waitOption = `How long to wait for the worker's answer, in milliseconds (default ${String(RC_SLASH_COMMAND_DEFAULT_WAIT_MS)}).`;
+  const versions = RC_SLASH_COMMAND_VERIFIED_VERSIONS.join(", ");
+
+  const goal = withExamples(
+    rc
+      .command("goal")
+      .description(`Read, set or clear one observed session's /goal by running the command in it as a person typing it into a claude.ai client would, and print the worker's answer. Verified on Claude Code ${versions}; a session on any other version is refused.`),
+    ["agent-shim frontdoor rc goal get --session cse_00000000-0000-4000-8000-000000000000"],
+  );
+
+  withExamples(
+    goal
+      .command("get")
+      .description("Run /goal with no argument and print the active goal's condition, how many turns the goal check has evaluated it on and its last reason, or that there is none.")
+      .requiredOption("--session <id>", "The cse_ session id, as `frontdoor rc list` shows it.")
+      .option("--wait-ms <ms>", waitOption)
+      .option("--json", "Print the answer as JSON.")
+      .action(async (options: Readonly<{ session: string; waitMs?: string; json?: boolean }>) => {
+        const answer = await frontDoorRcApiFromState(realFarmFs, paths).rc.goalGet({ session: options.session, ...waitMsOf(options.waitMs) });
+        if (options.json === true) {
+          printJson(answer);
+          return;
+        }
+        console.log(answer.goal === null ? `no goal set on ${answer.session}` : `goal on ${answer.session}: ${answer.goal.condition} (${answer.goal.iterations === 0 ? "not yet evaluated" : `evaluated on ${String(answer.goal.iterations)} turn${answer.goal.iterations === 1 ? "" : "s"}`})${answer.goal.lastCheck === undefined ? "" : `\nlast check: ${answer.goal.lastCheck}`}`);
+      }),
+    ["agent-shim frontdoor rc goal get --session cse_00000000-0000-4000-8000-000000000000 --json"],
+  );
+
+  withExamples(
+    goal
+      .command("set")
+      .description("Run /goal <condition>, so the session's goal check keeps it working until the condition holds, and print the condition the worker confirmed.")
+      .requiredOption("--session <id>", "The cse_ session id, as `frontdoor rc list` shows it.")
+      .requiredOption("--condition <text>", `The goal's condition; not one of the words /goal reads as a clear (${RC_GOAL_CLEAR_WORDS.join(", ")}).`)
+      .option("--wait-ms <ms>", waitOption)
+      .option("--json", "Print the answer as JSON.")
+      .action(async (options: Readonly<{ session: string; condition: string; waitMs?: string; json?: boolean }>) => {
+        const answer = await frontDoorRcApiFromState(realFarmFs, paths).rc.goalSet({ session: options.session, condition: options.condition, ...waitMsOf(options.waitMs) });
+        if (options.json === true) {
+          printJson(answer);
+          return;
+        }
+        console.log(`goal set on ${answer.session}: ${answer.condition}`);
+      }),
+    ['agent-shim frontdoor rc goal set --session cse_00000000-0000-4000-8000-000000000000 --condition "the test suite passes"'],
+  );
+
+  withExamples(
+    goal
+      .command("clear")
+      .description("Run /goal clear and print the condition it cleared, or that there was none.")
+      .requiredOption("--session <id>", "The cse_ session id, as `frontdoor rc list` shows it.")
+      .option("--wait-ms <ms>", waitOption)
+      .option("--json", "Print the answer as JSON.")
+      .action(async (options: Readonly<{ session: string; waitMs?: string; json?: boolean }>) => {
+        const answer = await frontDoorRcApiFromState(realFarmFs, paths).rc.goalClear({ session: options.session, ...waitMsOf(options.waitMs) });
+        if (options.json === true) {
+          printJson(answer);
+          return;
+        }
+        console.log(answer.cleared === null ? `no goal was set on ${answer.session}` : `goal cleared on ${answer.session}: ${answer.cleared}`);
+      }),
+    ["agent-shim frontdoor rc goal clear --session cse_00000000-0000-4000-8000-000000000000"],
+  );
+
+  withExamples(
+    rc
+      .command("compact")
+      .description(`Compact one observed session's conversation by running /compact in it as a person would, and wait for the worker to report the outcome: the token counts before and after, or its reason for not compacting. Verified on Claude Code ${versions}; a session on any other version is refused.`)
+      .requiredOption("--session <id>", "The cse_ session id, as `frontdoor rc list` shows it.")
+      .option("--instructions <text>", "Custom summarisation instructions, passed to /compact as its argument.")
+      .option("--wait-ms <ms>", waitOption)
+      .option("--json", "Print the answer as JSON.")
+      .action(async (options: Readonly<{ session: string; instructions?: string; waitMs?: string; json?: boolean }>) => {
+        const answer = await frontDoorRcApiFromState(realFarmFs, paths).rc.compact({ session: options.session, ...(options.instructions === undefined ? {} : { instructions: options.instructions }), ...waitMsOf(options.waitMs) });
+        if (options.json === true) {
+          printJson(answer);
+          return;
+        }
+        console.log(`compacted ${answer.session} (${answer.trigger}): ${String(answer.preTokens)} tokens before, ${String(answer.postTokens)} after`);
+      }),
+    ['agent-shim frontdoor rc compact --session cse_00000000-0000-4000-8000-000000000000 --instructions "keep the open decisions"'],
   );
 
   withExamples(

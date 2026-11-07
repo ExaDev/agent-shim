@@ -174,6 +174,20 @@ describe("injectRcUserMessage over an injected dial", () => {
     ]);
   });
 
+  it("replaces the observed client platform with a named one, the header the worker reads a message's author from", async () => {
+    const { tracker } = trackerWithClock();
+    exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer sk-ant-oat", headers: { "anthropic-version": "2023-06-01", "anthropic-client-platform": "claude_code_cli" } }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
+    const platforms: (string | undefined)[] = [];
+    const dial = dialOf(async (_sessionId, headers) => {
+      platforms.push(headers["anthropic-client-platform"]);
+      return await Promise.resolve({ status: HTTP_STATUS.ok, body: JSON.stringify({ results: [{ sequence_num: SECOND_SEQUENCE_NUM }] }) });
+    });
+    const deps = { credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial, newUuid: () => "uuid-5" };
+    await injectRcUserMessage(deps, SESSION_ID, "/compact", "web_claude_ai");
+    await injectRcUserMessage(deps, SESSION_ID, "hello");
+    expect(platforms).toEqual(["web_claude_ai", "claude_code_cli"]);
+  });
+
   it("refuses a write verbosely when only worker calls were observed, since the worker JWT does not authorise the client half", async () => {
     const { tracker } = trackerWithClock();
     exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer eyJhbGciOiJFUzI1NiJ9.worker.jwt" }).respond(HTTP_STATUS.ok);

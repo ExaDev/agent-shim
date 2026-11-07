@@ -143,9 +143,9 @@ function rcWriteHeaders(credential: RcObservedCredential): Record<string, string
 }
 
 /**
- * Injects one user-message prompt into an observed session: the documented client-half write, `POST /v1/code/sessions/{id}/events`, authenticated by the observed bearer and carrying the observed protocol headers. The result is the sequence numbers the real service assigned, or a verbose failure. A dial that cannot reach the API host is reported rather than thrown, so a caller with no exception handling still shows the user exactly what failed.
+ * Injects one user-message prompt into an observed session: the documented client-half write, `POST /v1/code/sessions/{id}/events`, authenticated by the observed bearer and carrying the observed protocol headers. `clientPlatform`, when named, replaces the observed `anthropic-client-platform` value: the service stamps that header onto the event as its `client_platform`, which is how the worker decides whether a person or a peer wrote the message (only a person's slash command runs), so the observed CLI value delivers the prompt as a peer's and the goal and compaction verbs name a person's app instead. The result is the sequence numbers the real service assigned, or a verbose failure. A dial that cannot reach the API host is reported rather than thrown, so a caller with no exception handling still shows the user exactly what failed.
  */
-export async function injectRcUserMessage(deps: RcInjectDeps, sessionId: string, text: string): Promise<RcEventWriteResult> {
+export async function injectRcUserMessage(deps: RcInjectDeps, sessionId: string, text: string, clientPlatform?: string): Promise<RcEventWriteResult> {
   const credential = deps.credentialOf(sessionId);
   if (credential === undefined) {
     return { ok: false, message: rcSessionNotObservedMessage(sessionId) };
@@ -156,7 +156,7 @@ export async function injectRcUserMessage(deps: RcInjectDeps, sessionId: string,
   const body = JSON.stringify(buildRcEventWriteBody(buildRcUserMessagePayload(deps.newUuid(), sessionId, text)));
   let answer: RcDialAnswer;
   try {
-    answer = await deps.dial.writeEvents(sessionId, rcWriteHeaders(credential), body);
+    answer = await deps.dial.writeEvents(sessionId, clientPlatform === undefined ? rcWriteHeaders(credential) : rcWriteHeaders({ ...credential, anthropicClientPlatform: clientPlatform }), body);
   } catch (error) {
     return { ok: false, message: `the door could not reach the API host to inject into session ${sessionId}: ${error instanceof Error ? error.message : String(error)}` };
   }
