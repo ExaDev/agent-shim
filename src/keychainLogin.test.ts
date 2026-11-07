@@ -271,7 +271,7 @@ describe("the self-hosted mint's Keychain checks, which refuse and never delete"
   });
 
   it("refuses outright on every platform, naming the variable and no item to delete, while CLAUDE_CODE_CUSTOM_OAUTH_URL is set, because it renames the account block's file and the Keychain item", () => {
-    for (const platform of ["darwin", "linux"] as const) {
+    for (const platform of ["darwin", "linux", "win32"] as const) {
       const keychain = createFakeKeychain();
       keychain.seed("Claude Code-custom-oauth-credentials-00000000", "alex", "a-made-up-login");
       const mint = () => {
@@ -289,6 +289,7 @@ describe("the self-hosted mint's Keychain checks, which refuse and never delete"
     const keychain = createFakeKeychain();
     requireNoClaudeCodeLoginForMint(darwin(keychain), LAB_DIR, "lab", { env: { CLAUDE_CODE_CUSTOM_OAUTH_URL: "" } });
     requireNoClaudeCodeLoginForMint({ run: keychain.run, platform: "linux" }, LAB_DIR, "lab", { env: { CLAUDE_CODE_CUSTOM_OAUTH_URL: "" } });
+    requireNoClaudeCodeLoginForMint({ run: keychain.run, platform: "win32" }, LAB_DIR, "lab", { env: { CLAUDE_CODE_CUSTOM_OAUTH_URL: "" } });
     expect(keychain.calls.map((call) => call.args)).toEqual([["find-generic-password", "-s", LAB_SERVICE]]);
   });
 
