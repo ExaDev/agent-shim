@@ -412,6 +412,7 @@ describe("library surface", () => {
       "realCodexAppServerPort",
       "realConnectCertStore",
       "realConnectEffects",
+      "realMemberProviderResolver",
       "realRcControlTransport",
       "realRcEventDial",
       "realRcStreamDial",
