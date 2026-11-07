@@ -73,7 +73,7 @@ export const RC_REQUEST_ID_MAX_CHARS = 128;
 /**
  * How many retired request ids one session remembers. A retired id is kept so a late duplicate of its `control_request` (a stream replay after the door's own answer) is not re-listed; the window is the pending cap twice over, enough to cover every request that could have been waiting at once plus the same again in flight, and the oldest tombstone is forgotten first.
  */
-const RC_RETIRED_TOMBSTONES_MAX = 2 * RC_PENDING_PER_SESSION_MAX;
+export const RC_RETIRED_TOMBSTONES_MAX = 2 * RC_PENDING_PER_SESSION_MAX;
 
 /**
  * How much of one request body the tracker ever holds while parsing it. The protocol's own batch cap is 10 MiB, but that bound exists to admit bulk transcript events the tracker has no use for; what it reads out of a body (the control requests, the heartbeat's idle, the worker's state) is one control exchange's worth of JSON, the same notion of "a full exchange's body" the capture's per-exchange budget (`STREAM_LOG_CAP_BYTES`, 256 KiB) was sized for, so one budget serves both here. A body past it is skipped, never failed: the exchange flows on untouched and simply records nothing.
@@ -107,8 +107,8 @@ interface RcSessionRecord {
   anthropicClientPlatform: string | undefined;
   /** The session's control requests awaiting an answer, keyed by the id a `control_response` must echo. An entry lives exactly as long as the worker waits on it: until a `control_response` answers it, the worker withdraws it with a `control_cancel_request`, an accepted registration names `idle` or a new worker epoch, or the session itself expires. The worker sets no deadline of its own, so time alone never retires an entry. */
   readonly pending: Map<string, RcPendingRequestRecord>;
-  /** The control requests that stopped awaiting an answer, keyed by id, with when they retired, oldest first and bounded by `RC_RETIRED_TOMBSTONES_MAX`. The same request crosses the door on the worker's event write and again on the client read stream, and a stream replay can repeat it later still; remembering the retirement is what stops a later copy from birthing a request already answered, since no deadline bounds when that copy can arrive. */
-  readonly retired: Map<string, number>;
+  /** The ids of the control requests that stopped awaiting an answer (and of requests the door counted as dropped), in the order they were remembered, oldest first, bounded by `RC_RETIRED_TOMBSTONES_MAX`. The same request crosses the door on the worker's event write and again on the client read stream, and a stream replay can repeat it later still; remembering the id is what stops a later copy from birthing a request already answered, since no deadline bounds when that copy can arrive. */
+  readonly retired: Set<string>;
   /** The worker state the latest worker registration named, with when that exchange was observed. */
   workerState: RcWorkerFact<string> | undefined;
   /** The idle the latest heartbeat carried, with when that exchange was observed. */
@@ -509,9 +509,11 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
   const entries = new Map<string, RcSessionRecord>();
   /** Remembers one request id as no longer to be listed, forgetting the oldest remembered id once the window is full, so the record stays bounded however long the session lives. */
   const rememberRetired = (entry: RcSessionRecord, requestId: string): void => {
-    entry.retired.set(requestId, deps.now());
+    // A Set keeps insertion order, so the first id is the oldest remembered; re-remembering an id moves it to the newest end.
+    entry.retired.delete(requestId);
+    entry.retired.add(requestId);
     if (entry.retired.size > RC_RETIRED_TOMBSTONES_MAX) {
-      const [oldest] = entry.retired.keys();
+      const [oldest] = entry.retired;
       if (oldest !== undefined) {
         entry.retired.delete(oldest);
       }
@@ -574,7 +576,7 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
 
   /** Begins describing one session. Only for an id the tracker does not hold: an entry is never replaced, so a session appears once and every appearance is matched by one ending. */
   const birth = (id: string, facts: Readonly<{ oauthAuthorization: string | undefined; anthropicVersion: string | undefined; anthropicClientPlatform: string | undefined; identity: string | undefined }>): RcSessionRecord => {
-    const record: RcSessionRecord = { id, createdAt: deps.now(), lastSeenAt: deps.now(), ...facts, pending: new Map(), retired: new Map(), workerState: undefined, workerIdleSeconds: undefined, model: undefined, cwd: undefined, sequenceNum: undefined, liveTasks: new Map(), workerEpoch: undefined, droppedPending: 0, answering: new Set() };
+    const record: RcSessionRecord = { id, createdAt: deps.now(), lastSeenAt: deps.now(), ...facts, pending: new Map(), retired: new Set(), workerState: undefined, workerIdleSeconds: undefined, model: undefined, cwd: undefined, sequenceNum: undefined, liveTasks: new Map(), workerEpoch: undefined, droppedPending: 0, answering: new Set() };
     entries.set(id, record);
     deps.onTransition?.({ kind: "session-appeared", session: id, at: record.createdAt });
     return record;
