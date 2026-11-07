@@ -4,6 +4,9 @@ import { HTTP_STATUS } from "../codex/http";
 
 import {
   RC_SESSION_EVENT_LOG_CAPACITY,
+  RC_SESSION_EVENT_MAX_BYTES,
+  RC_SESSION_EVENT_SUMMARY_MAX_CHARS,
+  RC_SESSION_EVENT_TOKEN_MAX_CHARS,
   RcSessionEventCursorExpiredError,
   RcSessionEventSchema,
   createRcSessionEventLog,
@@ -12,7 +15,8 @@ import {
   type RcSessionEventLog,
   type RcSessionTransition,
 } from "./rcEventLog";
-import { RC_IDLE_EXPIRY_MS, RC_PENDING_DEADLINE_MS, RC_PENDING_SUMMARY_EXCERPT_CHARS, RC_REQUEST_PARSE_CAP_BYTES, createRcSessionTracker, type RcSessionTracker } from "./rcSessions";
+import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
+import { RC_IDLE_EXPIRY_MS, RC_PENDING_DEADLINE_MS, RC_REQUEST_PARSE_CAP_BYTES, createRcSessionTracker, type RcSessionTracker } from "./rcSessions";
 
 /** A made-up door generation id of the production shape. */
 const GENERATION = "00000000-0000-4000-8000-0000000000aa";
@@ -58,8 +62,36 @@ async function settle(): Promise<void> {
 }
 
 describe("the session event log", () => {
-  it("derives its retention bound from the tracker's parse budget and summary excerpt budget", () => {
-    expect(RC_SESSION_EVENT_LOG_CAPACITY).toBe(Math.floor(RC_REQUEST_PARSE_CAP_BYTES / RC_PENDING_SUMMARY_EXCERPT_CHARS));
+  it("holds every retained event's fields to their caps, so a log full of worst-case events stays within its memory budget", () => {
+    const log = createRcSessionEventLog({ generation: GENERATION, capacity: RC_SESSION_EVENT_LOG_CAPACITY });
+    // Every observed value far past any cap: the tracker's own parse budget is what bounds a value before it reaches the log.
+    const huge = (letter: string): string => letter.repeat(RC_REQUEST_PARSE_CAP_BYTES);
+    const overflow = 2;
+    for (let at = 0; at < RC_SESSION_EVENT_LOG_CAPACITY + overflow; at += 1) {
+      log.append({ kind: "pending-born", session: huge("s"), requestId: huge("r"), type: huge("t"), summary: huge("x"), at });
+    }
+    log.append({ kind: "worker-state", session: huge("s"), state: huge("w"), previous: huge("p"), at: 0 });
+    const read = log.read({});
+    if (read.status !== "ok") {
+      throw new Error("expected the retained window to be readable");
+    }
+    expect(read.events).toHaveLength(RC_SESSION_EVENT_LOG_CAPACITY);
+    /** The storage one event's values occupy, at the widest per-unit cost a string can have. */
+    const sizeOf = (event: RcSessionEvent): number =>
+      Object.values(event).reduce<number>((total, value) => total + (typeof value === "string" ? value.length * Uint16Array.BYTES_PER_ELEMENT : Float64Array.BYTES_PER_ELEMENT), 0);
+    for (const event of read.events) {
+      expect(sizeOf(event)).toBeLessThanOrEqual(RC_SESSION_EVENT_MAX_BYTES);
+      expect(event.session.length).toBeLessThanOrEqual(RC_SESSION_EVENT_TOKEN_MAX_CHARS);
+      expect(event.session.endsWith("...")).toBe(true);
+    }
+    const born = read.events.find((event) => event.kind === "pending-born");
+    expect(born?.kind === "pending-born" ? born.summary.length : undefined).toBe(RC_SESSION_EVENT_SUMMARY_MAX_CHARS);
+    const retained = read.events.reduce((total, event) => total + sizeOf(event), 0);
+    expect(retained).toBeLessThanOrEqual(CONTROL_BODY_CAP_BYTES);
+  });
+
+  it("refuses a generation id longer than a UUID", () => {
+    expect(() => createRcSessionEventLog({ generation: `${GENERATION}0`, capacity: ROOMY_CAPACITY })).toThrow(/at most/);
   });
 
   it("stamps each transition with a cursor and a sequence that rises by one, in append order, across sessions", () => {

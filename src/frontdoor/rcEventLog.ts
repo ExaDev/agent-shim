@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { RC_PENDING_SUMMARY_EXCERPT_CHARS, RC_REQUEST_PARSE_CAP_BYTES } from "./rcSessions";
+import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
+import { RC_PENDING_SUMMARY_EXCERPT_CHARS } from "./rcSessions";
 
 /**
  * The door-level supervision log of the Remote Control sessions it observes: one ordered, bounded, in-memory record of the moments a supervisor of many sessions acts on (a session appearing or ending, its worker state changing, a control request awaiting an answer being born or retired), each tagged with its session and stamped with a monotonic cursor, so one subscription follows every session at once and a reconnecting subscriber resumes exactly after the last event it saw.
@@ -11,9 +12,46 @@ import { RC_PENDING_SUMMARY_EXCERPT_CHARS, RC_REQUEST_PARSE_CAP_BYTES } from "./
  */
 
 /**
- * How many events the log retains before it evicts the oldest. Derived, not chosen: the log's memory budget is the tracker's own bound on one exchange's worth of parsed JSON (`RC_REQUEST_PARSE_CAP_BYTES`), the budget this surface already deems a reasonable amount of protocol state to hold for one purpose, and the event whose size dominates the log is a pending birth, whose summary is held to the excerpt budget (`RC_PENDING_SUMMARY_EXCERPT_CHARS`). The quotient is therefore the number of the largest events that budget holds, which bounds the log's memory whatever mix of events fills it.
+ * The longest id or label one event field holds, in UTF-16 code units: the session id, the request id, a request's type and a worker state. A session id already names a file in the credential store, so the filesystem's component limit is the ceiling it can reach in practice, and the other protocol tokens are ids and enum-like labels of the same order. A longer value is no protocol token, so it is stored cut to this length with the cut marker rather than retained whole.
  */
-export const RC_SESSION_EVENT_LOG_CAPACITY = Math.floor(RC_REQUEST_PARSE_CAP_BYTES / RC_PENDING_SUMMARY_EXCERPT_CHARS);
+export const RC_SESSION_EVENT_TOKEN_MAX_CHARS = 255;
+
+/** What marks a field the log stored cut. */
+const CUT_MARKER = "...";
+
+/**
+ * The longest summary a pending birth holds: the tool name (a token), the space after it, and the tracker's input excerpt with its own cut marker (`RC_PENDING_SUMMARY_EXCERPT_CHARS`), which is the summary's whole shape.
+ */
+export const RC_SESSION_EVENT_SUMMARY_MAX_CHARS = RC_SESSION_EVENT_TOKEN_MAX_CHARS + " ".length + RC_PENDING_SUMMARY_EXCERPT_CHARS + CUT_MARKER.length;
+
+/** The longest door generation id a cursor names: the text form of a v4 UUID, which is what the door mints. */
+const RC_SESSION_EVENT_GENERATION_MAX_CHARS = "00000000-0000-4000-8000-000000000000".length;
+
+/** The most digits a sequence can have: every sequence is a safe integer. */
+const SEQUENCE_MAX_DIGITS = String(Number.MAX_SAFE_INTEGER).length;
+
+/** How many bytes one stored number occupies: an IEEE 754 double. */
+const NUMBER_BYTES = Float64Array.BYTES_PER_ELEMENT;
+
+/** The number fields every event carries: `at` and `sequence`. */
+const NUMBER_FIELDS = ["at", "sequence"].length;
+
+/** How many bytes one UTF-16 code unit occupies at most in a JavaScript string's storage, so a byte budget converts to string lengths without assuming one-byte text. */
+const BYTES_PER_CODE_UNIT = Uint16Array.BYTES_PER_ELEMENT;
+
+/** The longest `kind` and `reason` labels, read off the closed sets that define them. */
+const KIND_MAX_CHARS = Math.max(...["session-appeared", "session-ended", "worker-state", "pending-born", "pending-retired"].map((kind) => kind.length));
+
+/**
+ * The most bytes one recorded event's fields occupy: its cursor, session, kind and two numbers, plus the largest kind-specific fields, which are a pending birth's request id, type and summary (a worker state's two labels and every reason are shorter). Object and property overhead is the engine's and grows with the field count, not with any value the protocol controls, so the bound is on what an observed value can make large.
+ */
+export const RC_SESSION_EVENT_MAX_BYTES =
+  (RC_SESSION_EVENT_GENERATION_MAX_CHARS + ".".length + SEQUENCE_MAX_DIGITS + RC_SESSION_EVENT_TOKEN_MAX_CHARS + KIND_MAX_CHARS + RC_SESSION_EVENT_TOKEN_MAX_CHARS + RC_SESSION_EVENT_TOKEN_MAX_CHARS + RC_SESSION_EVENT_SUMMARY_MAX_CHARS) * BYTES_PER_CODE_UNIT + NUMBER_FIELDS * NUMBER_BYTES;
+
+/**
+ * How many events the log retains before it evicts the oldest: as many of the largest possible events as its memory budget holds, which bounds the log's memory whatever mix of events fills it. The budget is the protocol's own documented cap on one event batch (`CONTROL_BODY_CAP_BYTES`), which the door already buffers in full for one control request: the supervision log is a digest of many such batches, so holding no more than one batch's worth keeps it within a bound the door already accepts.
+ */
+export const RC_SESSION_EVENT_LOG_CAPACITY = Math.floor(CONTROL_BODY_CAP_BYTES / RC_SESSION_EVENT_MAX_BYTES);
 
 /** Why the tracker stopped describing a session: its liveness bound passed with no traffic, an accepted archive ended it by design, or the service closed it with a conflict header. */
 export const RC_SESSION_END_REASONS = ["expired", "archived", "conflict"] as const;
@@ -139,10 +177,33 @@ function parseCursor(cursor: string): { readonly generation: string; readonly se
   return { generation: cursor.slice(0, at), sequence: Number(digits) };
 }
 
-/** Creates the log. One per door process; everything it holds dies with it. */
+/** One stored text field, cut to its cap with the cut marker when it is longer. */
+function bounded(text: string, maxChars: number): string {
+  return text.length <= maxChars ? text : `${text.slice(0, maxChars - CUT_MARKER.length)}${CUT_MARKER}`;
+}
+
+/** One transition with every text field an observed value controls held to its cap, so no event the log retains is larger than `RC_SESSION_EVENT_MAX_BYTES`. */
+function boundedTransition(transition: RcSessionTransition): RcSessionTransition {
+  const session = bounded(transition.session, RC_SESSION_EVENT_TOKEN_MAX_CHARS);
+  if (transition.kind === "worker-state") {
+    return { ...transition, session, state: bounded(transition.state, RC_SESSION_EVENT_TOKEN_MAX_CHARS), ...(transition.previous === undefined ? {} : { previous: bounded(transition.previous, RC_SESSION_EVENT_TOKEN_MAX_CHARS) }) };
+  }
+  if (transition.kind === "pending-born") {
+    return { ...transition, session, requestId: bounded(transition.requestId, RC_SESSION_EVENT_TOKEN_MAX_CHARS), type: bounded(transition.type, RC_SESSION_EVENT_TOKEN_MAX_CHARS), summary: bounded(transition.summary, RC_SESSION_EVENT_SUMMARY_MAX_CHARS) };
+  }
+  if (transition.kind === "pending-retired") {
+    return { ...transition, session, requestId: bounded(transition.requestId, RC_SESSION_EVENT_TOKEN_MAX_CHARS) };
+  }
+  return { ...transition, session };
+}
+
+/** Creates the log. One per door process; everything it holds dies with it. Throws when the generation id is longer than a UUID or contains the cursor separator, since either would make a cursor ambiguous or unbounded. */
 export function createRcSessionEventLog(deps: RcSessionEventLogDeps): RcSessionEventLog {
   if (deps.generation.includes(CURSOR_SEPARATOR)) {
     throw new Error(`a door generation id must not contain "${CURSOR_SEPARATOR}", which separates a cursor's generation from its sequence`);
+  }
+  if (deps.generation.length > RC_SESSION_EVENT_GENERATION_MAX_CHARS) {
+    throw new Error(`a door generation id must be at most ${String(RC_SESSION_EVENT_GENERATION_MAX_CHARS)} characters, a UUID's length`);
   }
   /** The retained events, oldest first; `events[0].sequence` is the oldest a resume can still continue after, less one. */
   const events: RcSessionEvent[] = [];
@@ -154,7 +215,7 @@ export function createRcSessionEventLog(deps: RcSessionEventLogDeps): RcSessionE
   return {
     append: (transition) => {
       lastSequence += 1;
-      events.push({ ...transition, cursor: cursorOf(deps.generation, lastSequence), sequence: lastSequence });
+      events.push({ ...boundedTransition(transition), cursor: cursorOf(deps.generation, lastSequence), sequence: lastSequence });
       if (events.length > deps.capacity) {
         events.splice(0, events.length - deps.capacity);
       }
