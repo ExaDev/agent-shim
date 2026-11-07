@@ -493,17 +493,20 @@ function parseRcRequestBody(kind: RcRequestBodyKind, body: string): RcRequestBod
 /** Creates the tracker. One per door process; everything it holds dies with it. */
 export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTracker {
   const entries = new Map<string, RcSessionRecord>();
+  /** Remembers one request id as no longer to be listed, forgetting the oldest remembered id once the window is full, so the record stays bounded however long the session lives. */
+  const rememberRetired = (entry: RcSessionRecord, requestId: string): void => {
+    entry.retired.set(requestId, deps.now());
+    if (entry.retired.size > RC_RETIRED_TOMBSTONES_MAX) {
+      const [oldest] = entry.retired.keys();
+      if (oldest !== undefined) {
+        entry.retired.delete(oldest);
+      }
+    }
+  };
   /** Retires one pending request, telling the sink only when it was still pending, so a request answered twice (on the stream and on the worker's own write) retires once. */
   const retirePending = (entry: RcSessionRecord, requestId: string, reason: RcPendingRetireReason): void => {
     if (entry.pending.delete(requestId)) {
-      entry.retired.set(requestId, deps.now());
-      // The oldest remembered retirement is forgotten first once the window is full, so the record stays bounded however long the session lives.
-      if (entry.retired.size > RC_RETIRED_TOMBSTONES_MAX) {
-        const [oldest] = entry.retired.keys();
-        if (oldest !== undefined) {
-          entry.retired.delete(oldest);
-        }
-      }
+      rememberRetired(entry, requestId);
       deps.onTransition?.({ kind: "pending-retired", session: entry.id, requestId, reason, at: deps.now() });
     }
   };
@@ -520,7 +523,13 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
       return;
     }
     if (request.requestId.length > RC_REQUEST_ID_MAX_CHARS || entry.pending.size >= RC_PENDING_PER_SESSION_MAX) {
-      entry.droppedPending += 1;
+      // Counted once: the id is remembered as retired, so a replay of the same request does not count it again. An id past the length cap is not remembered, since holding it is what the cap refuses.
+      if (!entry.retired.has(request.requestId)) {
+        entry.droppedPending += 1;
+        if (request.requestId.length <= RC_REQUEST_ID_MAX_CHARS) {
+          rememberRetired(entry, request.requestId);
+        }
+      }
       return;
     }
     entry.pending.set(request.requestId, { sessionId: entry.id, ...request, observedAt: now });

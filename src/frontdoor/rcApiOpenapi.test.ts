@@ -12,7 +12,7 @@ import { LIFECYCLE_AND_CODEX_TEST_DEPS } from "./lifecycleCodexTestDeps";
 import { createDoorApiNodeHandler } from "./controlApi";
 import { createDoorEventHub, rcFanoutOnDoorHub } from "./eventHub";
 import { withRegisteredSessionFacts } from "./rcSessionRegistry";
-import { createRcSessionTracker, RC_IDLE_EXPIRY_MS, type RcSessionTracker } from "./rcSessions";
+import { createRcSessionTracker, RC_IDLE_EXPIRY_MS, RC_PENDING_PER_SESSION_MAX, type RcSessionTracker } from "./rcSessions";
 import type { RcStreamEvent } from "./rcSchemas";
 import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog } from "./rcEventLog";
 import { createRcEventFanout } from "./rcStream";
@@ -154,10 +154,12 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
   /** The fan-out the subscribe route reads, wrapped on a door hub exactly as the door wires it, so the SSE test publishes the way the held stream does. */
   const doorEvents = createDoorEventHub();
   const fanout = rcFanoutOnDoorHub(createRcEventFanout(), doorEvents);
+  /** The door's tracker, hoisted so a case can file the requests the pending route then lists. */
+  let tracker: RcSessionTracker;
 
   beforeAll(async () => {
     configRoot = fs.mkdtempSync(nodePath.join(os.tmpdir(), "agent-shim-openapi-config-"));
-    const tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS });
+    tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS });
     seedSession(tracker, SESSION_ID);
     const surface = createDoorApiNodeHandler({
       expectedToken: CONTROL_TOKEN,
@@ -295,6 +297,24 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
     const sent = await call("POST", "/rest/rc/send", { session: SESSION_ID, text: "hello" });
     expect(sent.status).toBe(HTTP_STATUS.ok);
     expect(JSON.parse(sent.text)).toEqual({ session: SESSION_ID, sequenceNums: WRITE_SEQUENCE_NUMS });
+  });
+
+  it("names over REST each session whose requests the door did not list, with the count", async () => {
+    const crowded = "cse_00000000-0000-4000-8000-0000000000cc";
+    seedSession(tracker, crowded);
+    for (let index = 0; index <= RC_PENDING_PER_SESSION_MAX; index += 1) {
+      tracker.fileStreamEvent(crowded, { event_type: "control_request", sequence_num: index, source: "worker", payload: { type: "control_request", request_id: `req-${String(index)}`, request: { subtype: "can_use_tool", tool_name: "Bash", input: {} } } });
+    }
+    const listed = await call("GET", `/rest/rc/pending?session=${crowded}`);
+    expect(listed.status).toBe(HTTP_STATUS.ok);
+    const body: unknown = JSON.parse(listed.text);
+    expect(body).toMatchObject({ dropped: [{ sessionId: crowded, count: 1 }] });
+    const quiet: unknown = JSON.parse((await call("GET", `/rest/rc/pending?session=${SESSION_ID}`)).text);
+    expect(quiet).toEqual({ pending: [] });
+    // The crowded session archives, so the cases after this one see the one session they were written against.
+    const archive = tracker.observeExchange({ method: "POST", url: `/v1/code/sessions/${crowded}/archive`, headers: { authorization: "Bearer b" } });
+    archive?.onResponse(HTTP_STATUS.ok, {});
+    archive?.onEnd();
   });
 
   it("decodes query parameters and keeps the named-session refusal rule", async () => {

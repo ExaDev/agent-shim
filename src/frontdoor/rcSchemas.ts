@@ -266,7 +266,11 @@ export const RcListOutputSchema = z.strictObject({ sessions: z.readonly(z.array(
 export const RcStatusOutputSchema = z.strictObject({ statuses: z.readonly(z.array(RcSessionStatusSchema)) });
 
 /** The pending read's answer shape. */
-export const RcPendingOutputSchema = z.strictObject({ pending: z.readonly(z.array(RcPendingRequestSummarySchema)) });
+export const RcPendingOutputSchema = z.strictObject({
+  pending: z.readonly(z.array(RcPendingRequestSummarySchema)),
+  /** The sessions that had requests the door did not list (past the per-session cap, or with an id the protocol does not mint), each with how many: a question the caller expects may be among them. Absent when none did. */
+  dropped: z.readonly(z.array(z.strictObject({ sessionId: z.string(), count: z.int().positive() }))).optional(),
+});
 
 /** The write operations' answer shape: the session the write went to and the sequence numbers the real service assigned. */
 export const RcWriteOutputSchema = z.strictObject({

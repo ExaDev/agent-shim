@@ -9,7 +9,7 @@ import { buildLayoutPaths } from "../paths";
 import { FAKE_UID, createFakeFarmFs, fakeSocketTrust } from "../test-helpers";
 import { RC_IDLE_EXPIRY_MS, RC_PENDING_SUMMARY_EXCERPT_CHARS, createRcSessionTracker } from "./rcSessions";
 import type { FrontDoorRoute, RoutedRequest } from "./route";
-import { formatRcPendingList, formatRcRateLimitInfo, parseRcChoiceFlags, formatRcSelfHostMint, formatRcSessionList, formatRcSessionStatus, formatRcStreamEvent, frontDoorRcApiFromState, frontDoorRcControlFromState } from "./rcCommands";
+import { formatRcDroppedPending, formatRcPendingList, formatRcRateLimitInfo, parseRcChoiceFlags, formatRcSelfHostMint, formatRcSessionList, formatRcSessionStatus, formatRcStreamEvent, frontDoorRcApiFromState, frontDoorRcControlFromState } from "./rcCommands";
 import { rcObservingResolver, realStatOwnExecutable } from "./commands";
 import { collectFrontDoorStatus, formatFrontDoorStatus } from "./status";
 import { markFrontDoorDraining, writeFrontDoorDirectRecord, writeFrontDoorSession, writeFrontDoorState } from "./state";
@@ -219,6 +219,11 @@ describe("frontdoor rc", () => {
       "     1) lint",
       "     2) test",
     ]);
+  });
+
+  it("names each session whose requests the door did not list, with the count", () => {
+    expect(formatRcDroppedPending([])).toEqual([]);
+    expect(formatRcDroppedPending([{ sessionId: "cse_1", count: 2 }])[0]).toMatch(/^cse_1 {2}2 request\(s\) not listed: past the per-session cap of \d+/);
   });
 
   it("parses --choose and --other into one list of selections per question, numbers as option numbers and other text as labels", () => {

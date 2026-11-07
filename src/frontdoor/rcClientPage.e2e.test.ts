@@ -86,7 +86,7 @@ interface PageSandbox {
   /** The page's own view state; a case drawing the pending list sets the nodes it draws into. */
   ui: unknown;
   /** The page's pending-list drawing, driven with what the door's own `rc/pending` returned. */
-  renderPending: (pending: unknown) => void;
+  renderPending: (pending: unknown, dropped: unknown) => void;
   rpc: (path: string, input: Readonly<Record<string, unknown>> | undefined) => Promise<unknown>;
   parseSseFrames: (buffer: string) => { readonly frames: readonly SseFrame[]; readonly rest: string };
   sequenceGap: (tracker: Readonly<Record<string, number>>, event: Readonly<DoorEventLike>) => number;
@@ -465,11 +465,11 @@ describe("the door's web client page and its API calls over the door's own TLS",
     const listed = await page.rpc("rc/pending", {});
     expect(listed).toEqual({ pending: [expect.objectContaining({ requestId: "req_q", questions })] });
     const pendingOf = (value: unknown): unknown => (typeof value === "object" && value !== null && "pending" in value ? value.pending : []);
-    page.renderPending(pendingOf(listed));
+    page.renderPending(pendingOf(listed), []);
     const sqlite = dom.find((node) => node.tag === "input" && node.value === "SQLite");
     sqlite.checked = true;
     // The 4 s poll lists the same request again; the pick made in between must survive it.
-    page.renderPending(pendingOf(await page.rpc("rc/pending", {})));
+    page.renderPending(pendingOf(await page.rpc("rc/pending", {})), []);
     expect(dom.find((node) => node.tag === "input" && node.value === "SQLite").checked).toBe(true);
 
     dom.find((node) => node.tag === "input" && node.value === "lint").checked = true;

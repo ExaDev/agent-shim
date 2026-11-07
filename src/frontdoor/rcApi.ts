@@ -216,10 +216,12 @@ export function createRcApiRouter(deps: RcApiDeps) {
         .output(RcPendingOutputSchema)
         .handler(({ input }) => {
           const pending = deps.pendingOf(input.session);
-          if (input.session !== undefined && deps.statusOf(input.session).length === 0) {
+          const statuses = deps.statusOf(input.session);
+          if (input.session !== undefined && statuses.length === 0) {
             throw new ORPCError("NOT_FOUND", { message: rcSessionNotObservedMessage(input.session) });
           }
-          return { pending };
+          const dropped = statuses.flatMap((status) => (status.pendingDropped === undefined ? [] : [{ sessionId: status.id, count: status.pendingDropped }]));
+          return { pending, ...(dropped.length === 0 ? {} : { dropped }) };
         }),
       send: authed
         .meta(openapi({ method: "POST", path: "/rest/rc/send", summary: "Send one message into a session", tags: [RC_API_TAG] }))
