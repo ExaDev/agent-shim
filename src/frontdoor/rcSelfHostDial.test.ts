@@ -3,13 +3,15 @@ import { describe, expect, it } from "vitest";
 import type { RcDialTarget } from "./connectEffects";
 import { rcSelfHostEventDial, rcSelfHostStreamDial, rcSelfHostedDials, selfHostSurfaceUnboundReason, type RcSelfHostDialSource } from "./rcSelfHostDial";
 import type { RcPresenceAnswer, RcStreamDial } from "./rcStream";
-import { RcDialRefusal, answerRcControlRequest, injectRcUserMessage, interruptRcSession, type RcEventDial } from "./rcWrites";
+import { RcDialRefusal, answerRcControlRequest, endRcSession, injectRcUserMessage, interruptRcSession, setRcSessionModel, teleportRcSession, type RcControlRequestDeps, type RcEventDial, type RcObservedCredential } from "./rcWrites";
 
 const SESSION = "cse_00000000-0000-4000-8000-000000000000";
 const REASON = "AGENT_SHIM_TRANSPARENT_SURFACE is not set, so the door has no surface of its own to reach";
 const LOOPBACK: RcDialTarget = { host: "127.0.0.1", port: 47_592, servername: "api.anthropic.com" };
 const HEADERS = { authorization: "Bearer sk-ant-oat" };
 const ANSWERED = { status: 200, body: "{}" };
+/** An accepting service's answer to a write: the sequence number it assigned. */
+const NUMBERED = { status: 200, body: JSON.stringify({ results: [{ sequence_num: "1" }] }) };
 const PRESENCE: RcPresenceAnswer = { status: 200, body: "{}" };
 
 /** The targets a dial the door builds must never reach: the real API host first, then every other address that is not a loopback literal. */
@@ -186,12 +188,23 @@ describe("the self-hosted mode's per-session dials", () => {
     const realSent: string[] = [];
     const source: RcSelfHostDialSource = { resolve, unboundReason: () => REASON };
     const real = {
-      event: { writeEvents: async (sessionId: string) => { realSent.push(`events:${sessionId}`); return await Promise.resolve(ANSWERED); }, writeTeleportEvents: async (sessionId: string) => { realSent.push(`teleport:${sessionId}`); return await Promise.resolve(ANSWERED); } } satisfies RcEventDial,
+      event: { writeEvents: async (sessionId: string) => { realSent.push(`events:${sessionId}`); return await Promise.resolve(NUMBERED); }, writeTeleportEvents: async (sessionId: string) => { realSent.push(`teleport:${sessionId}`); return await Promise.resolve(NUMBERED); } } satisfies RcEventDial,
       stream: { announcePresence: async (sessionId: string) => { realSent.push(`presence:${sessionId}`); return await Promise.resolve(PRESENCE); }, markRead: async (sessionId: string) => { realSent.push(`mark-read:${sessionId}`); return await Promise.resolve(PRESENCE); }, openStream: async (sessionId: string) => { realSent.push(`stream:${sessionId}`); return await Promise.resolve({ status: 200, chunks: NO_CHUNKS }); } } satisfies RcStreamDial,
     };
     const surface = { ownsSession: (sessionId: string, authorization: string | undefined) => sessionId === OWNED || authorization === OWNED_CREDENTIAL };
     const credentials = new Map([[OWNED, { authorization: OWNED_CREDENTIAL, anthropicVersion: undefined, anthropicClientPlatform: undefined }]]);
-    return { realSent, dials: rcSelfHostedDials(surface, source, (id) => credentials.get(id), real) };
+    const selfHostedBuilt: RcDialTarget[] = [];
+    const makers = {
+      event: (target: RcDialTarget): RcEventDial => {
+        selfHostedBuilt.push(target);
+        return { writeEvents: async () => await Promise.resolve(ANSWERED), writeTeleportEvents: async () => await Promise.resolve(ANSWERED) };
+      },
+      stream: (target: RcDialTarget): RcStreamDial => {
+        selfHostedBuilt.push(target);
+        return real.stream;
+      },
+    };
+    return { realSent, selfHostedBuilt, dials: rcSelfHostedDials(surface, source, (id) => credentials.get(id), real, makers) };
   }
 
   it("never offer an owned session to the real service, refusing while the surface is unbound, and still reach a native session's real service", async () => {
@@ -212,5 +225,54 @@ describe("the self-hosted mode's per-session dials", () => {
     const world = makeComposedWorld(() => LOOPBACK);
     expect(world.dials.owns(OWNED)).toBe(true);
     expect(world.dials.owns(NATIVE)).toBe(false);
+  });
+  it("never lets a verb reach a dial without an observed OAuth credential, whichever backend the session would choose", async () => {
+    const withoutOAuth: readonly (RcObservedCredential | undefined)[] = [undefined, { authorization: undefined, anthropicVersion: undefined, anthropicClientPlatform: "claude_code_cli" }];
+    for (const surface of [() => undefined, () => LOOPBACK]) {
+      for (const credential of withoutOAuth) {
+        for (const session of [OWNED, NATIVE]) {
+          const world = makeComposedWorld(surface);
+          const deps: RcControlRequestDeps = { credentialOf: () => credential, noteSequenceNums: () => undefined, dial: world.dials.event, newUuid: () => "00000000-0000-4000-8000-000000000001" };
+          const results = [
+            await injectRcUserMessage(deps, session, "hello"),
+            await interruptRcSession(deps, session),
+            await setRcSessionModel(deps, session, "model"),
+            await endRcSession(deps, session, undefined),
+            await teleportRcSession(deps, session, "marker"),
+            await answerRcControlRequest({ ...deps, pendingOf: () => [{ sessionId: session, requestId: "req_1", type: "can_use_tool", summary: "Bash", observedAt: 0 }], completePending: () => undefined }, session, "req_1", { approve: true, message: undefined }),
+          ];
+          for (const result of results) {
+            expect(result.ok).toBe(false);
+          }
+          expect(world.realSent).toEqual([]);
+          expect(world.selfHostedBuilt).toEqual([]);
+        }
+      }
+    }
+  });
+
+  it("sends a native session's verbs to the real service and refuses an owned session's while the surface is unbound, never dialling a non-loopback host for it", async () => {
+    const signal = new AbortController().signal;
+    const unbound = makeComposedWorld(() => undefined);
+    const native: RcObservedCredential = { authorization: "Bearer native", anthropicVersion: undefined, anthropicClientPlatform: "claude_code_cli" };
+    const owned: RcObservedCredential = { authorization: OWNED_CREDENTIAL, anthropicVersion: undefined, anthropicClientPlatform: "claude_code_cli" };
+    const verbsOf = (credential: RcObservedCredential): RcControlRequestDeps => ({ credentialOf: () => credential, noteSequenceNums: () => undefined, dial: unbound.dials.event, newUuid: () => "00000000-0000-4000-8000-000000000001" });
+    const nativeResult = await interruptRcSession(verbsOf(native), NATIVE);
+    expect(nativeResult.ok).toBe(true);
+    await unbound.dials.stream.openStream(NATIVE, { authorization: "Bearer native" }, undefined, signal);
+    expect(unbound.realSent).toEqual([`events:${NATIVE}`, `stream:${NATIVE}`]);
+    unbound.realSent.length = 0;
+    const ownedResult = await interruptRcSession(verbsOf(owned), OWNED);
+    expect(ownedResult.ok ? "" : ownedResult.message).toMatch(/^the door refused to /);
+    expect(ownedResult.ok ? "" : ownedResult.message).toContain(REASON);
+    expect(unbound.realSent).toEqual([]);
+    expect(unbound.selfHostedBuilt).toEqual([]);
+    for (const host of NOT_THIS_MACHINE) {
+      const elsewhere = makeComposedWorld(() => ({ ...LOOPBACK, host }));
+      const refused = await interruptRcSession({ ...verbsOf(owned), dial: elsewhere.dials.event }, OWNED);
+      expect(refused.ok ? "" : refused.message).toMatch(/^the door refused to /);
+      expect(elsewhere.realSent).toEqual([]);
+      expect(elsewhere.selfHostedBuilt).toEqual([]);
+    }
   });
 });
