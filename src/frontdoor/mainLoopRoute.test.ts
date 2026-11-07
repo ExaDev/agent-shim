@@ -1,6 +1,5 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
@@ -95,13 +94,39 @@ function unusedCodexPorts(): Omit<CodexRoutePorts, "loadProvider"> {
   );
 }
 
+/**
+ * `resolve` with the Anthropic route replaced by a stand-in: that route is the real API, so a request the door would send there is answered 502 here instead, and its class handed to `reached`, so no test ever leaves the machine and each can assert what reached Anthropic.
+ */
+function standingInForAnthropic(resolve: (request: RoutedRequest) => Promise<RouteResolution>, reached: (requestClass: string) => void): (request: RoutedRequest) => Promise<RouteResolution> {
+  return async (request) => {
+    const resolution = await resolve(request);
+    if (!resolution.ok || resolution.route.name !== "anthropic") {
+      return resolution;
+    }
+    return {
+      ok: true,
+      route: {
+        name: "anthropic",
+        headroomEligible: false,
+        headroomUpstream: undefined,
+        serve: async (served, response) => {
+          reached(served.headers["x-claude-code-request-class"]?.toString() ?? "(no class)");
+          response.start(HTTP_STATUS.badGateway, { "content-type": "application/json" });
+          await response.write(JSON.stringify({ type: "error", error: { type: "api_error", message: "the test's stand-in for the Anthropic route" } }));
+          response.end();
+        },
+      },
+    };
+  };
+}
+
 interface World {
   readonly url: string;
   readonly upstream: { readonly seen: UpstreamSeen[] };
   readonly codexCalls: readonly { readonly init: { readonly body?: string } }[];
   readonly records: UsageRecord[];
-  /** The door's resolver itself, for requests whose route must be chosen but never served: the Anthropic route is the real API. */
-  readonly resolve: ReturnType<typeof createProviderRouteResolver>;
+  /** The class of each request that reached the stand-in for the Anthropic route. */
+  readonly toAnthropic: string[];
   readonly close: () => Promise<void>;
 }
 
@@ -123,6 +148,7 @@ async function startWorld(record: MainLoopRouteRecord = createMainLoopRouteRecor
     credentials: fakeAsyncCredentials(),
   });
   const records: UsageRecord[] = [];
+  const toAnthropic: string[] = [];
   const usage = createUsageMiddleware({
     record: (entry) => {
       records.push(entry);
@@ -135,12 +161,14 @@ async function startWorld(record: MainLoopRouteRecord = createMainLoopRouteRecor
   });
   const server = createFrontDoorServer(
     async (pipelineRequest) => {
-      await serveRouted(pipelineRequest, { resolveRoute: resolve, canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [usage], admit: admitLaunchToken(LAUNCH_TOKEN), now: () => 0, log: () => undefined });
+      await serveRouted(pipelineRequest, { resolveRoute: standingInForAnthropic(resolve, (requestClass) => {
+          toAnthropic.push(requestClass);
+        }), canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [usage], admit: admitLaunchToken(LAUNCH_TOKEN), now: () => 0, log: () => undefined });
     },
     () => undefined,
   );
   const handle = await listenFrontDoor(server);
-  return { url: `http://127.0.0.1:${String(handle.port)}`, upstream, codexCalls: codexFetch.calls, records, resolve, close: handle.close };
+  return { url: `http://127.0.0.1:${String(handle.port)}`, upstream, codexCalls: codexFetch.calls, records, toAnthropic, close: handle.close };
 }
 
 /** Sends one Messages request as a launch's child would: its capability, its session id, and, when given, the class Claude Code states and a launch provider. */
@@ -157,18 +185,6 @@ async function send(world: World, options: { readonly model: string; readonly se
     body: JSON.stringify({ model: options.model, stream: false, max_tokens: 16, messages: [{ role: "user", content: "hi" }] }),
   });
   return { status: response.status, text: await response.text() };
-}
-
-/** One request as the pipeline hands the resolver a provider-less session's Messages call of class `requestClass`. */
-function routed(model: string, requestClass: string): RoutedRequest {
-  return {
-    method: "POST",
-    url: "/v1/messages",
-    headers: { "content-type": "application/json", "x-claude-code-request-class": requestClass },
-    body: Readable.from([Buffer.from(JSON.stringify({ model, max_tokens: 16, messages: [{ role: "user", content: "hi" }] }))]),
-    signal: new AbortController().signal,
-    session: { identity: undefined, sessionId: "s-1", provider: undefined, headroom: false, projectId: undefined },
-  };
 }
 
 /** The model the codex translator sent its backend on its `index`th call. */
@@ -194,24 +210,22 @@ describe("a provider-less session's helper requests follow its main loop", () =>
       expect((await send(world, { model: HAIKU_NAME, requestClass: "compaction" })).status).toBe(HTTP_STATUS.ok);
       expect(codexModel(world, 1)).toBe(CODEX_DEFAULT_TIER_MODELS.haiku);
       expect(world.upstream.seen).toHaveLength(2);
+      expect(world.toAnthropic).toEqual([]);
     } finally {
       await world.close();
     }
   });
 
   it("sends the helpers back to the Anthropic route once the main loop returns there", async () => {
-    const record = createMainLoopRouteRecord({ holdsSession: () => true });
-    const world = await startWorld(record);
+    const world = await startWorld();
     try {
       await send(world, { model: "z/glm-5.3", requestClass: "main" });
-      expect(record.routeOf("s-1")).toEqual({ kind: "provider", provider: "z" });
-      // The Anthropic route is the real API, which a test must not reach: these requests are resolved, never served.
-      const main = await world.resolve(routed("claude-opus-5-5", "main"));
-      expect(main.ok && main.route.name).toBe("anthropic");
-      expect(record.routeOf("s-1")).toEqual({ kind: "anthropic" });
-      const helper = await world.resolve(routed(HAIKU_NAME, "auxiliary"));
-      expect(helper.ok && helper.route.name).toBe("anthropic");
-      expect(helper.ok && helper.request?.url).not.toContain("/providers/");
+      await send(world, { model: HAIKU_NAME, requestClass: "auxiliary" });
+      // `/model` back to a Claude model: the main loop is on Anthropic again, and the helper after it follows.
+      await send(world, { model: "claude-opus-5-5", requestClass: "main" });
+      await send(world, { model: HAIKU_NAME, requestClass: "auxiliary" });
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-5.3", Z_HAIKU_MODEL]);
+      expect(world.toAnthropic).toEqual(["main", "auxiliary"]);
     } finally {
       await world.close();
     }
@@ -227,6 +241,7 @@ describe("a provider-less session's helper requests follow its main loop", () =>
       expect(helper.text).toContain("no main-loop request from this session");
       expect(world.upstream.seen).toEqual([]);
       expect(world.codexCalls).toEqual([]);
+      expect(world.toAnthropic).toEqual([]);
     } finally {
       await world.close();
     }
@@ -337,28 +352,10 @@ describe("a native session on antigravity/auto", () => {
       env: {},
       credentials: fakeAsyncCredentials(),
     });
-    // The Anthropic route is the real API: a request the door would send there is answered here instead, and counted, so the test never leaves the machine.
     const toAnthropic: string[] = [];
-    const guarded = async (request: RoutedRequest): Promise<RouteResolution> => {
-      const resolution = await resolveRoute(request);
-      if (!resolution.ok || resolution.route.name !== "anthropic") {
-        return resolution;
-      }
-      return {
-        ok: true,
-        route: {
-          name: "anthropic",
-          headroomEligible: false,
-          headroomUpstream: undefined,
-          serve: async (served, response) => {
-            toAnthropic.push(served.headers["x-claude-code-request-class"]?.toString() ?? "(no class)");
-            response.start(HTTP_STATUS.badGateway, { "content-type": "application/json" });
-            await response.write(JSON.stringify({ type: "error", error: { type: "api_error", message: "the test's stand-in for the Anthropic route" } }));
-            response.end();
-          },
-        },
-      };
-    };
+    const guarded = standingInForAnthropic(resolveRoute, (requestClass) => {
+      toAnthropic.push(requestClass);
+    });
     const server = createFrontDoorServer(
       async (pipelineRequest) => {
         await serveRouted(pipelineRequest, { resolveRoute: guarded, canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [], admit: admitLaunchToken(LAUNCH_TOKEN), now: () => 0, log: () => undefined });
