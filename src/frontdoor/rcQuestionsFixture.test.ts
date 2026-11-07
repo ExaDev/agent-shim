@@ -4,7 +4,7 @@ import { HTTP_STATUS } from "../codex/http";
 import fixture from "./fixtures/rc-question-2.1.319.json";
 import { RC_IDLE_EXPIRY_MS, createRcSessionTracker } from "./rcSessions";
 import { RcStreamEnvelopeSchema } from "./rcSchemas";
-import { buildRcControlResponsePayload } from "./rcWrites";
+import { answerRcControlRequest, type RcEventDial } from "./rcWrites";
 
 /**
  * The question exchange captured from a real Claude Code 2.1.319 session (see the fixture's own `source`): what the CLI sends when its agent asks a question, the answer it accepted and continued on, and the sequence it emits when the question is dismissed in its terminal. The tracker and the answer builder are checked against those bytes, not against shapes written by hand.
@@ -57,13 +57,25 @@ describe("the captured 2.1.319 question exchange", () => {
     expect(tracker.pendingOf().map((pending) => pending.requestId)).toEqual([requestId]);
   });
 
-  it("builds exactly the answer the CLI accepted, from the asked input and the chosen labels", () => {
+  it("builds exactly the answer the CLI accepted, resolving the chosen labels against the captured questions", async () => {
     const { tracker } = trackerWithSession();
     tracker.fileStreamEvent(SESSION_ID, question);
-    const accepted = fixture.answer.payload.response.response;
-    const input = tracker.pendingToolInputOf(SESSION_ID, requestId);
-    expect(input).toBeDefined();
-    expect(buildRcControlResponsePayload(requestId, { approve: true, message: undefined }, { ...input, answers: accepted.updatedInput.answers })).toEqual({ type: "control_response", response: { subtype: "success", request_id: requestId, response: accepted } });
+    const written: string[] = [];
+    const dial: RcEventDial = {
+      writeEvents: async (_sessionId, _headers, body) => {
+        written.push(body);
+        return await Promise.resolve({ status: HTTP_STATUS.ok, body: JSON.stringify({ results: [{ sequence_num: 1 }] }) });
+      },
+      writeTeleportEvents: async () => await Promise.reject(new Error("the answer path never teleports")),
+    };
+    const credentialOf = () => ({ authorization: "Bearer sk-ant-oat", anthropicVersion: undefined, anthropicClientPlatform: undefined });
+    // The choices the live session was answered with, resolved by the door's own path, not the fixture's answers fed back in.
+    const result = await answerRcControlRequest({ credentialOf, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, pendingToolInputOf: tracker.pendingToolInputOf, claimPending: tracker.claimPending, noteSequenceNums: tracker.noteSequenceNums, dial }, SESSION_ID, requestId, { approve: true, message: undefined, choices: [["SQLite"], ["lint", "test"]] });
+    expect(result.ok).toBe(true);
+    const [body] = written;
+    // The service stamps its own receipt time onto the event it relays, so the comparison is with the payload the client wrote: its type and response.
+    const { type, response } = fixture.answer.payload;
+    expect(body === undefined ? undefined : JSON.parse(body)).toEqual({ events: [{ payload: { type, response } }] });
   });
 
   it("retires the question on the captured dismissal: the worker's own deny, then its control_cancel_request", () => {
