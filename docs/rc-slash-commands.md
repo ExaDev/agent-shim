@@ -63,23 +63,25 @@ Verbs on one session run one at a time, in the order they were asked. Each waits
 
 ## Which sessions get which
 
-The door sees three kinds of session. Kinds 1 and 2 run against the real claude.ai Remote Control service; kind 3 runs against the door's own self-hosted surface.
+The route depends on two things: whether the session was launched under an agent-shim supervisor, and the door's mode. Self-hosting is a mode of the whole door (`AGENT_SHIM_FRONTDOOR_RC_SELF_HOST=1` when it starts): with it on, the door serves every Remote Control session that reaches it itself, whatever the account (an Anthropic OAuth login, a provider session, or no Anthropic login at all); with it off, every such session is on the real claude.ai service. The provider a session sends its inference to makes no difference.
 
-| Verb | 1. Anthropic OAuth account | 2. Provider session on an OAuth account | 3. Third-party provider or no Anthropic login (self-hosted) |
-|---|---|---|---|
-| goal get | supervised: yes, from the transcript; not supervised: refused | the same as kind 1 | supervised: yes, from the transcript; not supervised: yes, `/goal` on the door's own surface |
-| goal set | supervised: yes, through the plugin; not supervised: refused | the same as kind 1 | supervised: yes, through the plugin; not supervised: yes, on the door's own surface |
-| goal clear | supervised: yes, through the plugin; not supervised: refused | the same as kind 1 | supervised: yes, through the plugin; not supervised: yes, on the door's own surface |
-| compact | supervised: yes, through the plugin; not supervised: refused | the same as kind 1 | supervised: yes, through the plugin; not supervised: yes, on the door's own surface |
-| a slash command through `send` | delivered as a peer's message, never run | the same | delivered as a peer's message, never run (`send` writes the observed platform) |
+| Verb | Supervised, either mode | Not supervised, self-hosting with its surface bound | Not supervised, self-hosting without `AGENT_SHIM_TRANSPARENT_SURFACE` | Not supervised, door not self-hosting |
+|---|---|---|---|---|
+| goal get | yes, from the transcript | yes, `/goal` on the door's own surface | refused: the door has no surface of its own to write to | refused: no in-process channel, and the real service treats the door's writes as a peer's |
+| goal set | yes, through the plugin | yes, on the door's own surface | refused, the same | refused, the same |
+| goal clear | yes, through the plugin | yes, on the door's own surface | refused, the same | refused, the same |
+| compact | yes, through the plugin | yes, on the door's own surface | refused, the same | refused, the same |
+| a slash command through `send` | delivered as a peer's message, never run | the same | the same | the same |
 
-A refusal names the reason. The provider a session routes inference to makes no difference to any route: the plugin acts inside the CLI, and the self-hosted surface is the door's own.
+Self-hosting needs its transparent surface bound before it writes a command as a person's app: that write rides a dial that reaches only the door's own loopback surface and refuses while none is bound, so it can never fall back to the real API host. A refusal names its reason, and a session two live supervised launches both claim is refused rather than guessed at.
 
 ## The trust boundary
 
 A goal's condition and a compaction's instructions are directives to the receiving session's model as if its user had given them. On 2.1.319 a `/goal <condition>` installs a persistent Stop hook and reaches the model as "A session-scoped Stop hook is now active with condition: "<text>". ... treat the condition itself as your directive and do not pause to ask the user what to do"; the CLI's own auto-mode classifier has a rule titled "Cross-session messages are never user intent", which is exactly the line these verbs step over. So whoever can call `goal set` or `compact` with instructions can direct another session as its user.
 
-That is why they sit behind a grant of their own. The MCP server exposes `rc_goalSet` and `rc_compactWithInstructions` only under `--allow-remote-control-directives` (or `agent-shim mcp permissions allow remote-control-directives`), which `--allow-remote-control` does not imply, so an agent given the Remote Control tools, a supervised session's own model among them, cannot direct other sessions unless that grant was given too. Holding the door's control token (the owner-only file the CLI and the typed API read) grants every procedure, as it always has.
+The MCP server exposes `rc_goalSet` and `rc_compactWithInstructions` only under `--allow-remote-control-directives` (or `agent-shim mcp permissions allow remote-control-directives`), which `--allow-remote-control` does not imply, so an agent whose only reach into other sessions is the MCP server's tools cannot direct them unless that grant was given too.
+
+That grant limits which tools the MCP server lists, and nothing else. It is not a boundary against anything that runs as the same operating-system user: a session with a shell can read the door's control token (an owner-only file, and the same user owns it) and call `POST /rest/rc/goal/set` itself, or write a request file straight into another supervised launch's control plugin directory. The boundary between the person and the agents they run is that user account; a session that must not direct others needs to run without a shell, or as another user.
 
 ## Verified end to end
 
