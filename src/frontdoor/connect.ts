@@ -9,7 +9,7 @@ import type { ConnectCapture, PassthroughObserver } from "./capture";
 import { pumpTapSession } from "./tap";
 import { CONNECT_PROXY_REALM, capabilityFromProxyAuthorization } from "./capability";
 import type { ListenSource } from "./handover";
-import { AUTH_HEADER } from "./route";
+import { AUTH_HEADER, SELF_HOSTED_HEADER } from "./route";
 import { MAX_TCP_PORT } from "./state";
 import { FRONTDOOR_POLL_MS } from "./supervisor";
 
@@ -413,7 +413,7 @@ export interface ConnectServerHandle {
 }
 
 /**
- * A surface the connect layer consults before it routes or pipes anything: the door's self-hosted Remote Control answers (see `rcSelfHost.ts`). Which sessions it owns is decided once per terminated session, before the session is chosen and never from a request's headers: a CONNECT tunnel by the launch whose capability it presented (`ownsLaunch`), and a redirected connection, which carries no capability, by the process holding its other end (`ownsPeer`), failing closed when that process cannot be read. An owned session is served by a session set that parses every intercept host as HTTP (the tap hosts included, since the surface answers their traffic itself and the tap protects only traffic that is forwarded): its requests go to `serve` first, its upgrades and blind tunnels are refused, and nothing it sends reaches a real host except what the routed pipeline serves. Every other session is served by the ordinary set, exactly as with no surface at all, tap hosts tapped. Absent, every request keeps exactly the behaviour it has today.
+ * A surface the connect layer consults before it routes or pipes anything: the door's self-hosted Remote Control answers (see `rcSelfHost.ts`). Which sessions it owns is decided once per terminated session, before the session is chosen and never from a request's headers: a CONNECT tunnel by the launch whose capability it presented (`ownsLaunch`), and a redirected connection, which carries no capability, by the process holding its other end (`ownsPeer`), failing closed when that process cannot be read. An owned session is served by a session set that parses every intercept host as HTTP (the tap hosts included, since the surface answers their traffic itself and the tap protects only traffic that is forwarded): its requests go to `serve` first, its upgrades and blind tunnels are refused, a request nothing serves is answered 404 rather than forwarded, and what it routes is stamped as the surface's so the resolver never rides it on the pass-through to the real API; the only thing it sends that leaves the machine is a provider session's inference, to its provider's own endpoint. Every other session is served by the ordinary set, exactly as with no surface at all, tap hosts tapped. Absent, every request keeps exactly the behaviour it has today.
  */
 export interface ConnectLocalSurface {
   /** Serves one request of a session the surface owns (the connect surface consults it for no other); resolves false when the request is for the routed pipeline, so routing continues unchanged. */
@@ -429,6 +429,7 @@ export interface ConnectLocalSurface {
 /** The statuses the surface answers one request on a terminated session with when it neither serves nor forwards it. */
 const REQUEST_STATUS = {
   badRequest: 400,
+  notFound: 404,
   internalServerError: 500,
 } as const;
 
@@ -530,7 +531,15 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
         if (tunnelToken !== undefined && request.headers[AUTH_HEADER] === undefined) {
           request.headers[AUTH_HEADER] = tunnelToken;
         }
+        // Ownership reaches the pipeline as a fact of the session, never of what the request says: the stamp is set for the local surface's sessions and cleared for every other, so a copy a client sent is replaced either way.
+        request.headers[SELF_HOSTED_HEADER] = ownedBySurface(request.socket) ? "1" : undefined;
         config.serveRouted(request, response);
+        return;
+      }
+      if (ownedBySurface(request.socket)) {
+        // The local surface answers every path it does not leave to the pipeline, so a request that reaches this point was declined by it and is not the pipeline's: an owned session's request is never forwarded, whatever the surface answered.
+        request.resume();
+        answerAndClose(response, REQUEST_STATUS.notFound);
         return;
       }
       effects.forwardHttp(config.upstreamFor(host), request, response, config.capture?.observePassthrough(request));

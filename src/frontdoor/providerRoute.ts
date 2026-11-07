@@ -278,6 +278,10 @@ export function createProviderRouteResolver(deps: {
       if (deps.rcSelfHostRoute !== undefined && isRcSessionFamilyPath(path)) {
         return { ok: true, route: deps.rcSelfHostRoute };
       }
+      if (request.session.selfHosted === true) {
+        // The pass-through below is the real API: a self-hosted session's request that is neither the Remote Control family nor a provider's inference has no route, however it came to be routed.
+        return { ok: false, status: HTTP_STATUS.notFound, message: `a self-hosted Remote Control session's request is never passed to the real API: ${path}` };
+      }
       return path.startsWith("/v1/") ? { ok: true, route: oauthRoute } : { ok: false, status: HTTP_STATUS.notFound, message: `no such endpoint: ${path}` };
     }
     const { provider } = scoped;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { HEADROOM_FLAG_HEADER, IDENTITY_HEADER, INTERNAL_HEADER_NAMES, PROJECT_ID_HEADER, PROVIDER_HEADER, SESSION_HEADER, identifyRequest, parseProviderPath, withCanonicalProviderTarget } from "./route";
+import { HEADROOM_FLAG_HEADER, IDENTITY_HEADER, INTERNAL_HEADER_NAMES, PROJECT_ID_HEADER, PROVIDER_HEADER, SELF_HOSTED_HEADER, SESSION_HEADER, identifyRequest, parseProviderPath, withCanonicalProviderTarget } from "./route";
 
 describe("identifyRequest", () => {
   it("splits the session out of the headers and removes exactly the internal ones", () => {
@@ -33,8 +33,15 @@ describe("identifyRequest", () => {
     expect(identified.session).toEqual({ identity: undefined, sessionId: undefined, provider: undefined, headroom: false, projectId: undefined });
   });
 
+  it("reads the connect surface's ownership stamp as a self-hosted session, and a session without it as one that is not", () => {
+    expect(identifyRequest({ [SELF_HOSTED_HEADER]: "1" }).session.selfHosted).toBe(true);
+    expect(identifyRequest({ [SELF_HOSTED_HEADER]: "0" }).session).not.toHaveProperty("selfHosted");
+    expect(identifyRequest({}).session).not.toHaveProperty("selfHosted");
+    expect(identifyRequest({ [SELF_HOSTED_HEADER]: "1" }).forwardableHeaders).not.toHaveProperty(SELF_HOSTED_HEADER);
+  });
+
   it("names exactly the internal headers, so a new one cannot be added without widening the strip", () => {
-    expect(INTERNAL_HEADER_NAMES).toEqual(["x-agent-shim-identity", "x-agent-shim-session", "x-agent-shim-headroom", "x-agent-shim-auth", "x-agent-shim-provider", "x-agent-shim-hop", "x-agent-shim-hop-id", "x-headroom-project-id", "x-headroom-session-id", "x-headroom-base-url"]);
+    expect(INTERNAL_HEADER_NAMES).toEqual(["x-agent-shim-identity", "x-agent-shim-session", "x-agent-shim-headroom", "x-agent-shim-auth", "x-agent-shim-provider", "x-agent-shim-hop", "x-agent-shim-hop-id", "x-agent-shim-self-hosted", "x-headroom-project-id", "x-headroom-session-id", "x-headroom-base-url"]);
   });
 });
 

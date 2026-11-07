@@ -12,6 +12,9 @@ const HTTP_BAD_REQUEST = 400;
 const HTTP_INTERNAL_SERVER_ERROR = 500;
 /** The status the surface stand-in answers its own requests with: one nothing else in the world answers, so a local answer cannot be mistaken for a routed one. */
 const HTTP_LOCAL_ANSWER = 299;
+const HTTP_NOT_FOUND = 404;
+/** The header the surface stamps on a request of a session its local surface owns, and the one a client could send to claim it. */
+const OWNED_STAMP = "x-agent-shim-self-hosted";
 
 let ca: CaMaterial;
 let upstreamCa: CaMaterial;
@@ -29,6 +32,19 @@ async function statusOf(connectPort: number, target: string): Promise<string> {
   return answered.statusLine;
 }
 
+/** One request with extra header lines on a fresh tunnel, and the status line it was answered with. */
+async function statusWithHeaders(connectPort: number, target: string, headers: readonly string[]): Promise<string> {
+  const secure = await connectThroughProxy(connectPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+  const answered = await requestOn(secure, `GET ${target} HTTP/1.1\r\nHost: ${CONNECT_INTERCEPT_HOST}\r\n${headers.map((line) => `${line}\r\n`).join("")}Connection: close\r\n\r\n`);
+  secure.destroy();
+  return answered.statusLine;
+}
+
+/** A local surface that owns every launch or none and declines every request, so whatever happens to a request is the connect surface's own decision. */
+function decliningSurface(owns: boolean): NonNullable<Parameters<typeof makeTlsWorld>[2]>["localSurface"] {
+  return { ownsLaunch: () => owns, ownsPeer: async () => await Promise.resolve(owns), mintGeneration: () => "fixed", serve: async () => await Promise.resolve(false) };
+}
+
 describe("requests the connect surface cannot decide or serve", () => {
   it(
     "refuses a target the URL parser cannot read with a 400, forwarding nothing, and keeps serving",
@@ -36,7 +52,7 @@ describe("requests the connect surface cannot decide or serve", () => {
       const world = makeTlsWorld(ca, upstreamCa);
       const { connectPort, close } = await world.start();
       try {
-        for (const target of ["http://x:99999/v1/", "http://%zz/v1/x", "http://[::1/v1/x"]) {
+        for (const target of ["http://x:99999/v1/", "http://%zz/v1/x", "http://[::1/v1/x", "//v1/x", "//api.anthropic.com/v1/messages"]) {
           expect(await statusOf(connectPort, target), target).toContain(String(HTTP_BAD_REQUEST));
         }
         expect(world.routedRequests).toEqual([]);
@@ -122,6 +138,42 @@ describe("requests the connect surface cannot decide or serve", () => {
       } finally {
         await close();
         await world.stop();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
+    "never forwards a request an owned session's surface declines, and stamps what it routes as the surface's, dropping a copy the client sent",
+    async () => {
+      const owned = makeTlsWorld(ca, upstreamCa, { localSurface: decliningSurface(true) });
+      const { connectPort, close } = await owned.start();
+      try {
+        expect(await statusOf(connectPort, "/api/claude_code_grove")).toContain(String(HTTP_NOT_FOUND));
+        expect(owned.upstreamRequests).toEqual([]);
+        expect(await statusWithHeaders(connectPort, "/v1/messages", [`${OWNED_STAMP}: 0`])).toContain(String(HTTP_OK));
+        expect(owned.routedRequests.map((routed) => routed.headers[OWNED_STAMP])).toEqual(["1"]);
+      } finally {
+        await close();
+        await owned.stop();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
+    "forwards a session the surface does not own as it always did, and lets no client claim ownership by sending the stamp",
+    async () => {
+      const native = makeTlsWorld(ca, upstreamCa, { localSurface: decliningSurface(false) });
+      const { connectPort, close } = await native.start();
+      try {
+        expect(await statusWithHeaders(connectPort, "/v1/messages", [`${OWNED_STAMP}: 1`])).toContain(String(HTTP_OK));
+        expect(native.routedRequests.map((routed) => routed.headers[OWNED_STAMP])).toEqual([undefined]);
+        await statusOf(connectPort, "/api/claude_code_grove");
+        expect(native.upstreamRequests.map((forwarded) => forwarded.url)).toEqual(["/api/claude_code_grove"]);
+      } finally {
+        await close();
+        await native.stop();
       }
     },
     KEYGEN_TIMEOUT_MS,

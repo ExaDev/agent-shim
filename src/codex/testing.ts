@@ -1,6 +1,7 @@
 import type { CodexLogin } from "../config/schema";
 import type { CodexAuthStore, CodexCredentials } from "./auth";
 import { HTTP_STATUS } from "./http";
+import type { CodexRoutePorts } from "./route";
 import type { CodexUpstreamPorts } from "./upstream";
 import type { UpstreamFetch, UpstreamRequestInit, UpstreamResponse } from "./upstreamPort";
 
@@ -129,4 +130,17 @@ export function parseAnthropicSse(text: string): { readonly event: string; reado
       const data: unknown = JSON.parse(lines.find((line) => line.startsWith("data: "))?.slice("data: ".length) ?? "null");
       return { event, data };
     });
+}
+
+/** The ports the codex route is mounted with in a test that never reaches the codex route itself: the same upstream for every login, whose fetch fails the test if anything calls it. */
+export function unreachedCodexRoutePorts(): Omit<CodexRoutePorts, "loadProvider"> {
+  const fetch = recordingFetch(() => {
+    throw new Error("this test never answers an upstream call");
+  });
+  return {
+    upstreams: sameUpstreamForEveryLogin({ fetch: fetch.fetch, auth: fakeAuth(), timers: { after: () => () => undefined }, randomId: () => "random" }),
+    writeUsageSnapshot: () => undefined,
+    now: () => 0,
+    log: () => undefined,
+  };
 }

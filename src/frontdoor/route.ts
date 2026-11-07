@@ -17,6 +17,7 @@ export const INTERNAL_HEADER_NAMES = [
   "x-agent-shim-provider",
   "x-agent-shim-hop",
   "x-agent-shim-hop-id",
+  "x-agent-shim-self-hosted",
   "x-headroom-project-id",
   HEADROOM_SESSION_HEADER,
   "x-headroom-base-url",
@@ -30,6 +31,11 @@ export const SESSION_HEADER = "x-agent-shim-session";
 
 /** Names the provider a launch selected, set by the launcher and stripped at the door: the door, not the child, decides where that session's inference goes (see `createProviderRouteResolver`). The headroom hop re-sets it on its own request, exactly as it does the project identity, so the direct listener can resolve the provider after the path-based forms of identification have been reduced to a bare API path. */
 export const PROVIDER_HEADER = "x-agent-shim-provider";
+
+/**
+ * Stamped by the connect surface, never by a client, on a request of a session its local surface owns (the self-hosted Remote Control mode's): the routed pipeline learns from it that the request must never be passed to the real API. The surface removes any copy a client sent before it decides, and the identity step strips it like every internal header, so it reaches no upstream.
+ */
+export const SELF_HOSTED_HEADER = "x-agent-shim-self-hosted";
 
 /** Set to `1` when the launch resolved headroom on, so the front door knows this session's requests must take the headroom hop; stripped at the door. */
 export const HEADROOM_FLAG_HEADER = "x-agent-shim-headroom";
@@ -77,6 +83,8 @@ export interface SessionIdentity {
   readonly headroom: boolean;
   /** The project identity headroom scopes memory to, re-set on the headroom hop and sent nowhere else. */
   readonly projectId: string | undefined;
+  /** True when the connect surface stamped the request as a self-hosted session's (see `SELF_HOSTED_HEADER`); absent otherwise. */
+  readonly selfHosted?: true;
 }
 
 /** The outcome of the pipeline's first step: what the session is, and the headers that may actually leave the machine. */
@@ -127,6 +135,7 @@ export function identifyRequest(headers: Readonly<IncomingHttpHeaders>): Identif
       provider: internalHeaderValue(headers, PROVIDER_HEADER),
       headroom: internalHeaderValue(headers, HEADROOM_FLAG_HEADER) === "1",
       projectId: internalHeaderValue(headers, PROJECT_ID_HEADER),
+      ...(internalHeaderValue(headers, SELF_HOSTED_HEADER) === "1" ? { selfHosted: true as const } : {}),
     },
     forwardableHeaders: forwardable,
   };
