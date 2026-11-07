@@ -34,6 +34,17 @@ export const RC_SOURCE_WORKER = "worker";
 /** The source string the protocol's envelopes carry for a client's events at large, the source a receipt with no named client rides. */
 export const RC_SOURCE_CLIENT = "client";
 
+/** The request header a client names its own app with, the value the real service stamps onto that client's events. */
+const CLIENT_PLATFORM_HEADER = "anthropic-client-platform";
+
+/**
+ * One client event's payload as the served surface files it: the writer's `anthropic-client-platform` header stamped on as `client_platform`, the enrichment the real service was observed making (a live capture's client user event carried `client_platform` equal to the writing client's header although its payload named none). The worker classifies who wrote an inbound message by exactly this field (the 2.1.319 bridge treats `ios`, `android`, `web_claude_ai` and `desktop_app` as a person and demotes anything else to a peer message, which reaches the model as text and never runs as a slash command), so a surface that dropped it would make every client's message a peer's. The header outranks a value the payload states itself, as a server-side stamp does; a write that sends no header keeps its payload as written.
+ */
+export function withClientPlatform(payload: Record<string, unknown>, headers: Readonly<IncomingHttpHeaders>): Record<string, unknown> {
+  const platform = headers[CLIENT_PLATFORM_HEADER];
+  return typeof platform === "string" && platform !== "" ? { ...payload, client_platform: platform } : payload;
+}
+
 /** The guard every parsed-body narrowing goes through, per the codebase's `unknown` discipline. */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
