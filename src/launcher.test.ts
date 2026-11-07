@@ -134,7 +134,7 @@ describe("runLauncher", () => {
   });
 
   it("spawns with the already-set CLAUDE_CONFIG_DIR untouched once the guard passes under the escape hatch", () => {
-    const proc = fakeProc({ CLAUDE_CONFIG_DIR: "/somewhere/explicit" }, ["@work", "--print"]);
+    const proc = fakeProc({ CLAUDE_CONFIG_DIR: "/somewhere/explicit" }, ["--print"]);
     const log = fakeLog();
     const spawn = fakeSpawn();
 
@@ -785,7 +785,7 @@ describe("runLauncher farm resync", () => {
       paths,
       fs: fakeFs({}),
       spawn,
-      proc: fakeProc({ CLAUDE_CONFIG_DIR: "/somewhere/explicit" }, ["@work"]),
+      proc: fakeProc({ CLAUDE_CONFIG_DIR: "/somewhere/explicit", AGENT_SHIM_IDENTITY: "work" }, []),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
       farm: fakeFarm(fs),

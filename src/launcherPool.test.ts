@@ -218,11 +218,18 @@ describe("runLauncher with a pool selector", () => {
     expect(none.log.errors[0]).toContain("no member of pool");
   });
 
-  it("ignores the pool when CLAUDE_CONFIG_DIR is already set", () => {
-    const { code, spawn, log } = launch({ env: { CLAUDE_CONFIG_DIR: "/elsewhere" } });
+  it("ignores a pool the environment selects when CLAUDE_CONFIG_DIR is already set", () => {
+    const { code, spawn, log } = launch({ argv: ["--print"], env: { CLAUDE_CONFIG_DIR: "/elsewhere", AGENT_SHIM_IDENTITY: "pool:main" } });
     expect(code).toBe(0);
     expect(spawnedEnv(spawn).CLAUDE_CONFIG_DIR).toBe("/elsewhere");
     expect(log.infos.join("\n")).not.toContain("pool main");
+  });
+
+  it("picks a member for a pool named on the command line even when CLAUDE_CONFIG_DIR is already set", () => {
+    const { code, spawn, log } = launch({ env: { CLAUDE_CONFIG_DIR: "/elsewhere" } });
+    expect(code).toBe(0);
+    expect(spawnedEnv(spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/work`);
+    expect(log.warns.join("\n")).toContain("/elsewhere");
   });
 
   describe("when every member is refused", () => {
