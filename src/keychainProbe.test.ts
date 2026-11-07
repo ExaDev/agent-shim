@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { CREDENTIAL_COMMAND_TIMEOUT_MS } from "../credential";
-import type { AsyncRun } from "../replayRun";
-import type { RunPort } from "../launcher/ports";
+import { CREDENTIAL_COMMAND_TIMEOUT_MS } from "./credential";
+import type { AsyncRun } from "./replayRun";
+import type { RunPort } from "./launcher/ports";
 import { cliKeychainProbe, doorKeychainProbe } from "./keychainProbe";
 
 describe("doorKeychainProbe", () => {

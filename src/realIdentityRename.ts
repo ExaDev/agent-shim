@@ -7,7 +7,7 @@ import { liveLaunchesOn } from "./launcher/launchRecords";
 import type { LayoutPaths } from "./paths";
 import { realCredentialCacheEnv } from "./realCredentialCache";
 import { realFarmFs, realIsProcessRunning, realRunPort, realRunPortWithin, realSleepSync } from "./realPorts";
-import { cliKeychainProbe } from "./frontdoor/keychainProbe";
+import { cliKeychainProbe } from "./keychainProbe";
 import type { RunPort } from "./launcher/ports";
 import { sameDirectory } from "./sameDirectory";
 

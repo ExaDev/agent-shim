@@ -12,7 +12,7 @@ import type { LayoutPaths } from "../paths";
 import { realFarmFs, realRunPortWithin } from "../realPorts";
 import { readFrontDoorControlMaterial } from "./doorClient";
 import { frontDoorRcApiClient, type RcApiClient } from "./rcApi";
-import { cliKeychainProbe } from "./keychainProbe";
+import { cliKeychainProbe } from "../keychainProbe";
 import { frontDoorRcControl, realRcControlTransport, type FrontDoorRcControl } from "./rcControl";
 import { registerRcEventsCommand } from "./rcEventsCommand";
 import { rcRateLimitInfoOf } from "./rcLiveUsage";

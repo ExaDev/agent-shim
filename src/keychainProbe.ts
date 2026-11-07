@@ -1,9 +1,9 @@
-import { CREDENTIAL_COMMAND_TIMEOUT_MS } from "../credential";
-import type { RunPort } from "../launcher/ports";
-import type { KeychainProbe } from "../keychainLogin";
-import { realRunAsyncWithin, realRunPortWithin } from "../realPorts";
-import type { AsyncRun } from "../replayRun";
-import type { ConfigApiDeps } from "./configApi";
+import { CREDENTIAL_COMMAND_TIMEOUT_MS } from "./credential";
+import type { RunPort } from "./launcher/ports";
+import type { KeychainProbe } from "./keychainLogin";
+import { realRunAsyncWithin, realRunPortWithin } from "./realPorts";
+import type { AsyncRun } from "./replayRun";
+import type { ConfigApiDeps } from "./frontdoor/configApi";
 
 /**
  * How the door asks the macOS Keychain whether a login is already filed for a directory: `security` run without blocking the event loop, stopped after `CREDENTIAL_COMMAND_TIMEOUT_MS`, and the platform, since only macOS has a Keychain.

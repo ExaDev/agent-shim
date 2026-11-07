@@ -40,7 +40,7 @@ import { machineTimeZone } from "../usage/anchor";
 import { runWindowKeeper } from "../usage/windowKeeper";
 import { realAsyncCredentialCacheEnv } from "../realCredentialCache";
 import { createDoorPipelines } from "./assembly";
-import { doorKeychainProbe } from "./keychainProbe";
+import { doorKeychainProbe } from "../keychainProbe";
 import { appendDoorLog } from "./doorLog";
 import { handOverOnSignal, retireOnSignals, type DoorExitFacts } from "./replacement";
 import { createRoutingSettingReader } from "../headroom/routingSetting";
