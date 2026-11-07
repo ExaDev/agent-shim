@@ -694,6 +694,9 @@ export function frontDoorRcControl(transport: RcControlTransport, token: string)
     } catch {
       throw new Error(`${what}: the door's answer was not JSON: ${answer.body}`);
     }
+    if (typeof parsed === "object" && parsed !== null && "statuses" in parsed && Array.isArray(parsed.statuses) && !("unobserved" in parsed)) {
+      throw new Error(`${what}: the door answered with its sessions alone, as an older door than this command does; restart it with \`agent-shim frontdoor restart\` so it serves the whole status report: ${answer.body}`);
+    }
     if (typeof parsed !== "object" || parsed === null || !("statuses" in parsed) || !Array.isArray(parsed.statuses) || !("unobserved" in parsed) || !Array.isArray(parsed.unobserved)) {
       throw new Error(`${what}: the door's answer named no status report: ${answer.body}`);
     }

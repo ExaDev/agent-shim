@@ -425,10 +425,19 @@ describe("the control client", () => {
   it("refuses a status answer whose identification fields have the wrong type rather than passing them on", async () => {
     const started = await serve((_request, response) => {
       response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ statuses: [{ id: SESSION_ID, createdAt: 1, lastSeenAt: 2, pending: [], pid: "4001" }] }));
+      response.end(JSON.stringify({ statuses: [{ id: SESSION_ID, createdAt: 1, lastSeenAt: 2, pending: [], pid: "4001" }], unobserved: [] }));
     });
     running = started;
     await expect(frontDoorRcControl(plainTransport(started.port), TOKEN).statusOf()).rejects.toThrow("named no status report");
+  });
+
+  it("names the version skew when an older door answers the status with sessions alone, without the unobserved part", async () => {
+    const started = await serve((_request, response) => {
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ statuses: [{ id: SESSION_ID, createdAt: 1, lastSeenAt: 2, pending: [] }] }));
+    });
+    running = started;
+    await expect(frontDoorRcControl(plainTransport(started.port), TOKEN).statusOf()).rejects.toThrow("older door than this command");
   });
 
   it("lists sessions, reads status and pending, and delivers writes through the transport, surfacing the door's verbose failure message", async () => {
