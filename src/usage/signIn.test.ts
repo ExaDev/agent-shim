@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { FarmStat, RunPort } from "../launcher/ports";
-import { claudeCodeKeychainAccount, claudeCodeKeychainService, claudeCodeLoginService, decideSignIn, identitySignIn } from "./signIn";
+import { claudeCodeKeychainAccount, claudeCodeKeychainService, decideSignIn, identitySignIn } from "./signIn";
 
 const FARM_ROOT = "/state/identities/work";
 const FILE_STAT: FarmStat = { kind: "file", mtimeMs: 0, sizeBytes: 2 };
@@ -102,12 +102,6 @@ describe("Claude Code's Keychain login derivation", () => {
     const decomposed = "/example/cafe\u0301";
     expect(composed).not.toBe(decomposed);
     expect(claudeCodeKeychainService(decomposed)).toBe(claudeCodeKeychainService(composed));
-  });
-
-  it("names the service CLAUDE_SECURESTORAGE_CONFIG_DIR picks: its own hash when set, the bare prefix when set empty", () => {
-    expect(claudeCodeLoginService("/example/dir", {})).toBe(claudeCodeKeychainService("/example/dir"));
-    expect(claudeCodeLoginService("/example/dir", { CLAUDE_SECURESTORAGE_CONFIG_DIR: "/example/other" })).toBe(claudeCodeKeychainService("/example/other"));
-    expect(claudeCodeLoginService("/example/dir", { CLAUDE_SECURESTORAGE_CONFIG_DIR: "" })).toBe("Claude Code-credentials");
   });
 });
 

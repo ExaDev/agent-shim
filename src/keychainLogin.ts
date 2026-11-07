@@ -1,6 +1,6 @@
 import { CliError } from "./cliError";
 import type { RunPort } from "./launcher/ports";
-import { claudeCodeKeychainAccount, claudeCodeKeychainService, claudeCodeLoginService } from "./usage/signIn";
+import { SECURE_STORAGE_CONFIG_DIR_ENV, claudeCodeKeychainAccount, claudeCodeKeychainService } from "./usage/signIn";
 import { KEYCHAIN_CACHE_SERVICE, KEYCHAIN_ITEM_NOT_FOUND_STATUS } from "./credentialCache";
 import { shellQuoted } from "./shellQuote";
 
@@ -294,10 +294,10 @@ export interface ClaudeCodeLoginEnv {
 }
 
 /**
- * Whether the Keychain holds the Claude Code login a session for `configDir` would read, asked by attributes only (no password is read, so nothing prompts). The item is the one Claude Code itself would look up (`claudeCodeLoginService`, `claudeCodeKeychainAccount`), looked up both by service alone and by service and account, so an item filed under another account for the same service is found too. Throws `KeychainLookupError` when the Keychain could not be asked.
+ * Whether the Keychain holds the Claude Code login filed for `configDir`, asked by attributes only (no password is read, so nothing prompts). The item is the one Claude Code itself names for the directory (`claudeCodeKeychainService`, `claudeCodeKeychainAccount`), looked up both by service alone and by service and account, so an item filed under another account for the same service is found too. Throws `KeychainLookupError` when the Keychain could not be asked.
  */
 function claudeCodeLoginFound(run: RunPort, configDir: string, login: ClaudeCodeLoginEnv): { readonly service: string; readonly account: string | undefined } | undefined {
-  const service = claudeCodeLoginService(configDir, login.env);
+  const service = claudeCodeKeychainService(configDir);
   const byService = lookup(run, service);
   if (byService.found) {
     return { service, account: plainAccountOf(byService.attributes) };
@@ -314,9 +314,15 @@ function claudeCodeLoginFound(run: RunPort, configDir: string, login: ClaudeCode
 }
 
 /**
- * Refuses a self-hosted mint into `configDir` on macOS while the Keychain holds a Claude Code login a session there would read. Claude Code reads that item ahead of the `.credentials.json` the mint writes, so the session would sign in as that account instead of with the minted login. Nothing can tell a real login from a copy the CLI made of an earlier mint without reading the secret, which this never does, so every item is refused, the mint's own directory included, and nothing is ever deleted: the message names the exact command that deletes the item, for the person to run if they do not need it. `--force` does not override this. Off macOS the file is Claude Code's only store and nothing is asked. Throws `KeychainLookupError` when the Keychain could not be asked.
+ * Refuses a self-hosted mint into `configDir` whenever `CLAUDE_SECURESTORAGE_CONFIG_DIR` is set (on any platform), and on macOS while the Keychain holds the Claude Code login filed for the directory. Claude Code reads that item ahead of the `.credentials.json` the mint writes, so the session would sign in as that account instead of with the minted login. Nothing can tell a real login from a copy the CLI made of an earlier mint without reading the secret, which this never does, so every item is refused, the mint's own directory included, and nothing is ever deleted: the message names the exact command that deletes the item, for the person to run if they do not need it. `--force` does not override this. Off macOS the file is Claude Code's only store and nothing is asked. Throws `KeychainLookupError` when the Keychain could not be asked.
  */
 export function requireNoClaudeCodeLoginForMint(keychain: KeychainProbe, configDir: string, identity: string, login: ClaudeCodeLoginEnv): void {
+  // The variable moves Claude Code's whole credential store, the Keychain item's name and the plaintext fallback alike, to the directory it names (or to the default `~/.claude` when empty), on every platform (2.1.319's secure storage). A session that inherits it never reads the minted file, and which of its items a session would read is the session's environment's to decide, not this process's: so the mint refuses outright rather than guess, and names no item to delete.
+  if (login.env[SECURE_STORAGE_CONFIG_DIR_ENV] !== undefined) {
+    throw new KeychainLoginError(
+      `Cannot mint a self-hosted login into identity "${identity}": ${SECURE_STORAGE_CONFIG_DIR_ENV} is set, which moves Claude Code's credential store (its Keychain item and its .credentials.json) away from ${configDir}, so a session that inherits it would never read the minted login. Nothing was minted. Unset ${SECURE_STORAGE_CONFIG_DIR_ENV} here and in the environment the session is launched from, then mint again.`,
+    );
+  }
   if (keychain.platform !== "darwin") {
     return;
   }

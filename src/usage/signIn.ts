@@ -35,19 +35,10 @@ export function claudeCodeKeychainService(configDir: string): string {
   return `${KEYCHAIN_SERVICE_PREFIX}-${createHash("sha256").update(configDir.normalize("NFC")).digest("hex").slice(0, KEYCHAIN_SERVICE_HASH_DIGITS)}`;
 }
 
-/** The variable that overrides which directory Claude Code names its login item after, whatever `CLAUDE_CONFIG_DIR` says; set but empty, it names the bare prefix. */
-const SECURE_STORAGE_CONFIG_DIR_ENV = "CLAUDE_SECURESTORAGE_CONFIG_DIR";
-
 /**
- * The Keychain service a session in `configDir` reads its login from, under the environment `env` it inherits: `CLAUDE_SECURESTORAGE_CONFIG_DIR`, when set, names the directory instead (and, set but empty, the bare prefix with no hash), exactly as Claude Code 2.1.319's secure storage derives it; otherwise the directory's own service (`claudeCodeKeychainService`).
+ * The variable that moves Claude Code's whole credential store: when set, its Keychain item is named after the directory it names (the bare prefix when it is empty) and its plaintext fallback is that directory's `.credentials.json` (`~/.claude` when it is empty), whatever `CLAUDE_CONFIG_DIR` says (2.1.319's secure storage).
  */
-export function claudeCodeLoginService(configDir: string, env: Readonly<Record<string, string | undefined>>): string {
-  const override = env[SECURE_STORAGE_CONFIG_DIR_ENV];
-  if (override === undefined) {
-    return claudeCodeKeychainService(configDir);
-  }
-  return override === "" ? KEYCHAIN_SERVICE_PREFIX : claudeCodeKeychainService(override);
-}
+export const SECURE_STORAGE_CONFIG_DIR_ENV = "CLAUDE_SECURESTORAGE_CONFIG_DIR";
 
 /** The account name Claude Code files its login under when `USER` and the operating system give it none it accepts. */
 const FALLBACK_KEYCHAIN_ACCOUNT = "claude-code-user";

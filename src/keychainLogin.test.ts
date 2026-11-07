@@ -253,14 +253,30 @@ describe("the self-hosted mint's Keychain checks, which refuse and never delete"
     }).toThrow(KeychainLoginError);
   });
 
-  it("names the item a session would read under CLAUDE_SECURESTORAGE_CONFIG_DIR, not the directory's own", () => {
+  it("refuses outright, naming the variable and no item to delete, while CLAUDE_SECURESTORAGE_CONFIG_DIR is set, on every platform", () => {
+    for (const value of ["/example/secure-storage", ""]) {
+      for (const platform of ["darwin", "linux"] as const) {
+        const keychain = createFakeKeychain();
+        // The user's default login, which an empty override would point a session at: the refusal must not tell anyone to delete it.
+        keychain.seed("Claude Code-credentials", "alex", "a-made-up-default-login");
+        const login = { env: { USER: "alex", CLAUDE_SECURESTORAGE_CONFIG_DIR: value }, username: () => "alex" };
+        const mint = () => {
+          requireNoClaudeCodeLoginForMint({ run: keychain.run, platform }, LAB_DIR, "lab", login);
+        };
+        expect(mint).toThrow("CLAUDE_SECURESTORAGE_CONFIG_DIR is set");
+        expect(mint).toThrow("Nothing was minted");
+        expect(mint).not.toThrow("delete-generic-password");
+        expect(keychain.calls).toEqual([]);
+      }
+    }
+  });
+
+  it("checks the directory's own item when the variable is not set, even with the session's other environment present", () => {
     const keychain = createFakeKeychain();
-    const overridden = "/example/secure-storage";
-    keychain.seed(claudeCodeKeychainService(overridden), "alex", "a-made-up-login");
-    const login = { env: { USER: "alex", CLAUDE_SECURESTORAGE_CONFIG_DIR: overridden }, username: () => "alex" };
+    keychain.seed(LAB_SERVICE, "alex", "a-made-up-login");
     expect(() => {
-      requireNoClaudeCodeLoginForMint(darwin(keychain), LAB_DIR, "lab", login);
-    }).toThrow(claudeCodeKeychainService(overridden));
+      requireNoClaudeCodeLoginForMint(darwin(keychain), LAB_DIR, "lab", { env: { USER: "alex", CLAUDE_CONFIG_DIR: "/example/elsewhere" }, username: () => "alex" });
+    }).toThrow(LAB_SERVICE);
   });
 
   it("finds a login filed for a directory whose path is spelled decomposed, as Claude Code names it", () => {
