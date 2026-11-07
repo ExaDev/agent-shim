@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { formatRcSessionEvent } from "./rcEventsCommand";
+import type { RcSessionEvent } from "./rcEventLog";
+import { RcSessionEventsStreamEndedError, formatRcSessionEvent, printRcSessionEvents } from "./rcEventsCommand";
 
 /** A made-up cursor and session of the production shapes. */
 const CURSOR = "00000000-0000-4000-8000-0000000000aa.7";
@@ -18,5 +19,40 @@ describe("frontdoor rc events lines", () => {
     expect(formatRcSessionEvent({ ...base, kind: "worker-state", state: "idle", previous: "running" })).toBe(`${CURSOR}  ${AT_ISO}  ${SESSION}  worker-state  running -> idle`);
     expect(formatRcSessionEvent({ ...base, kind: "pending-born", requestId: "req_1", type: "can_use_tool", summary: "Bash {}" })).toBe(`${CURSOR}  ${AT_ISO}  ${SESSION}  pending-born  req_1 can_use_tool Bash {}`);
     expect(formatRcSessionEvent({ ...base, kind: "pending-retired", requestId: "req_1", reason: "answered" })).toBe(`${CURSOR}  ${AT_ISO}  ${SESSION}  pending-retired  req_1 answered`);
+  });
+});
+
+/** A stream of the given events, failing with `failure` after them when one is named. */
+async function* streamOf(events: readonly RcSessionEvent[], failure?: Error): AsyncGenerator<RcSessionEvent, void> {
+  for (const event of events) {
+    await Promise.resolve();
+    yield event;
+  }
+  if (failure !== undefined) {
+    throw failure;
+  }
+}
+
+describe("frontdoor rc events printing", () => {
+  const event = (sequence: number): RcSessionEvent => ({ kind: "session-appeared", cursor: `00000000-0000-4000-8000-0000000000aa.${String(sequence)}`, sequence, session: SESSION, at: AT });
+
+  it("resolves to the last cursor printed when the stream ends, and to the starting cursor when it printed nothing", async () => {
+    const lines: string[] = [];
+    const last = await printRcSessionEvents(streamOf([event(1), event(2)]), { json: true, since: undefined }, (line) => {
+      lines.push(line);
+    });
+    expect(last).toBe(event(2).cursor);
+    expect(lines.map((line) => JSON.parse(line) as unknown)).toEqual([event(1), event(2)]);
+    expect(await printRcSessionEvents(streamOf([]), { json: false, since: CURSOR }, () => undefined)).toBe(CURSOR);
+  });
+
+  it("carries the last cursor printed on a failure, with the failure as its cause", async () => {
+    const dropped = new Error("socket hang up");
+    const failure = await printRcSessionEvents(streamOf([event(1)], dropped), { json: false, since: undefined }, () => undefined).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(RcSessionEventsStreamEndedError);
+    expect(failure instanceof RcSessionEventsStreamEndedError ? [failure.lastCursor, failure.cause] : []).toEqual([event(1).cursor, dropped]);
   });
 });
