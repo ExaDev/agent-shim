@@ -13,6 +13,7 @@ import { createDoorApiNodeHandler } from "./controlApi";
 import { createDoorEventHub, rcFanoutOnDoorHub } from "./eventHub";
 import { withRegisteredSessionFacts } from "./rcSessionRegistry";
 import { createRcSessionTracker, RC_IDLE_EXPIRY_MS, RC_PENDING_PER_SESSION_MAX, type RcSessionTracker } from "./rcSessions";
+import type { RcAnswerDecision } from "./rcWrites";
 import type { RcStreamEvent } from "./rcSchemas";
 import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog } from "./rcEventLog";
 import { createRcEventFanout } from "./rcStream";
@@ -156,6 +157,8 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
   const fanout = rcFanoutOnDoorHub(createRcEventFanout(), doorEvents);
   /** The door's tracker, hoisted so a case can file the requests the pending route then lists. */
   let tracker: RcSessionTracker;
+  /** The decisions the answer operation received, so a case proves a question's choices arrive whole over REST. */
+  const answerDecisions: RcAnswerDecision[] = [];
 
   beforeAll(async () => {
     configRoot = fs.mkdtempSync(nodePath.join(os.tmpdir(), "agent-shim-openapi-config-"));
@@ -168,7 +171,10 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
       statusOf: (sessionId?: string) => withRegisteredSessionFacts(tracker.statusOf(sessionId), new Map([[SESSION_ID, { pid: 4_001, localSessionId: "11111111-1111-4111-8111-111111111111", cwd: "/repo", name: "fix the thing", identity: "work" }]])),
       pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
       inject: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS }),
-      answer: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" }),
+      answer: async (_session, _request, decision) => {
+        answerDecisions.push(decision);
+        return await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" });
+      },
       interrupt: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" }),
       setModel: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" }),
       setPermissionMode: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" }),
@@ -297,6 +303,35 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
     const sent = await call("POST", "/rest/rc/send", { session: SESSION_ID, text: "hello" });
     expect(sent.status).toBe(HTTP_STATUS.ok);
     expect(JSON.parse(sent.text)).toEqual({ session: SESSION_ID, sequenceNums: WRITE_SEQUENCE_NUMS });
+  });
+
+  it("lists a pending question's questions and options over REST, and carries an answer's choices to the operation", async () => {
+    const questions = [{ question: "Which database?", header: "Database", multiSelect: false, options: [{ label: "Postgres", description: "relational" }, { label: "SQLite" }] }];
+    tracker.fileStreamEvent(SESSION_ID, { event_type: "control_request", sequence_num: 1, source: "worker", payload: { type: "control_request", request_id: "req_q", request: { subtype: "can_use_tool", tool_name: "AskUserQuestion", input: { questions } } } });
+    const listed: unknown = JSON.parse((await call("GET", `/rest/rc/pending?session=${SESSION_ID}`)).text);
+    expect(listed).toMatchObject({ pending: [{ requestId: "req_q", questions }] });
+    const chosen = await call("POST", "/rest/rc/answer", { session: SESSION_ID, request: "req_q", approve: true, choices: [["SQLite", { text: "fmt" }]] });
+    expect(chosen.status).toBe(HTTP_STATUS.ok);
+    expect(answerDecisions.at(-1)).toEqual({ approve: true, message: undefined, choices: [["SQLite", { text: "fmt" }]] });
+    // The schema refuses what the operation never sees: choices with a denial, an empty selection list, a zero option number and blank free text.
+    for (const refusedBody of [
+      { session: SESSION_ID, request: "req_q", approve: false, choices: [["SQLite"]] },
+      { session: SESSION_ID, request: "req_q", approve: true, choices: [[]] },
+      { session: SESSION_ID, request: "req_q", approve: true, choices: [[0]] },
+      { session: SESSION_ID, request: "req_q", approve: true, choices: [[{ text: " " }]] },
+    ]) {
+      expect((await call("POST", "/rest/rc/answer", refusedBody)).status).toBe(HTTP_STATUS.badRequest);
+    }
+    tracker.completePending(SESSION_ID, "req_q");
+  });
+
+  it("describes the pending questions and the answer's choices in the OpenAPI document", async () => {
+    const doc: unknown = JSON.parse((await call("GET", "/openapi.json")).text);
+    const text = JSON.stringify(doc);
+    // The document is the MCP tools' source, so the fields a caller needs to list and answer a question must be in it by name.
+    expect(text).toContain('"choices"');
+    expect(text).toContain('"multiSelect"');
+    expect(text).toContain('"unanswerable"');
   });
 
   it("names over REST each session whose requests the door did not list, with the count", async () => {

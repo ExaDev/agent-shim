@@ -17,6 +17,7 @@ import { RC_ORPC_PATH_PREFIX } from "../frontdoor/rcApi";
 import { createRcSessionTracker, RC_IDLE_EXPIRY_MS } from "../frontdoor/rcSessions";
 import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog } from "../frontdoor/rcEventLog";
 import { createRcEventFanout } from "../frontdoor/rcStream";
+import type { RcAnswerDecision } from "../frontdoor/rcWrites";
 import type { FrontDoorStatus } from "../frontdoor/status";
 import { createMcpServer, serveMcp, type McpServerPorts } from "./server";
 import { toolsFromOpenApiDocument, type McpPermissions } from "./tools";
@@ -54,6 +55,8 @@ describe("the MCP server over a real door handler", () => {
   let origin: string;
   let close: () => Promise<void>;
   const injected: string[] = [];
+  /** The decisions the answer operation received, so the MCP case proves a question's choices arrive whole. */
+  const answerDecisions: RcAnswerDecision[] = [];
   /** The session event log the door's page read serves, appended to directly by the test that reads it through the tool. */
   const sessionEvents = createRcSessionEventLog({ generation: "00000000-0000-4000-8000-0000000000ee", capacity: RC_SESSION_EVENT_LOG_CAPACITY });
 
@@ -69,7 +72,10 @@ describe("the MCP server over a real door handler", () => {
         injected.push(text);
         return await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS });
       },
-      answer: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" }),
+      answer: async (_session: string, _request: string, decision: RcAnswerDecision) => {
+        answerDecisions.push(decision);
+        return await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" });
+      },
       interrupt: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" }),
       setModel: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" }),
       setPermissionMode: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" }),
@@ -241,6 +247,18 @@ describe("the MCP server over a real door handler", () => {
     expect(set.isError).not.toBe(true);
     expect(JSON.parse(textOf(set))).toMatchObject({ session: SESSION_ID, condition: "the build is green", superseded: null });
     await directives.close();
+  });
+
+  it("answers a question through the rc_answer tool, whose input schema carries the choices", async () => {
+    const client = await connect({ writes: false, remoteControl: true, history: false });
+    const tool = (await client.listTools()).tools.find((candidate) => candidate.name === "rc_answer");
+    expect(Object.keys(tool?.inputSchema.properties ?? {})).toContain("choices");
+    const result = await client.callTool({ name: "rc_answer", arguments: { session: SESSION_ID, request: "req_q", approve: true, choices: [["SQLite"], [1, { text: "fmt" }]] } });
+    expect(result.isError).not.toBe(true);
+    expect(answerDecisions.at(-1)).toEqual({ approve: true, message: undefined, choices: [["SQLite"], [1, { text: "fmt" }]] });
+    const blank = await client.callTool({ name: "rc_answer", arguments: { session: SESSION_ID, request: "req_q", approve: true, choices: [[{ text: "  " }]] } });
+    expect(blank.isError).toBe(true);
+    await client.close();
   });
 
   it("follows a change of permissions on the next request, in both directions, without a new server", async () => {
