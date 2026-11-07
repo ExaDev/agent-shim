@@ -393,6 +393,15 @@ describe("following the session event log", () => {
     await follower.return();
   });
 
+  it("delivers the events appended just before the log closed, then returns", async () => {
+    const log = createRcSessionEventLog({ generation: GENERATION, capacity: ROOMY_CAPACITY });
+    const follower = followRcSessionEvents(log, {});
+    log.append(appeared(SESSION_A, 1));
+    log.close();
+    expect((await eventOf(follower.next())).sequence).toBe(1);
+    expect(await follower.next()).toEqual({ value: undefined, done: true });
+  });
+
   it("returns once the log closes, waking a follower that waits", async () => {
     const { log, attached } = countedLog();
     const follower = followRcSessionEvents(log, {});
