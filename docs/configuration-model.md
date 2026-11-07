@@ -109,7 +109,7 @@ The default posture is "identities differ only in credentials": `knowledge`, `se
 
 One more boundary worth naming: an IDE extension's own UI-level preferences (VS Code's `globalStorage`, JetBrains' own per-IDE settings store) live outside `~/.claude` entirely and aren't affected by switching identities — only the functional IDE-connection state (the auth lock file under `ide/`, already in the `runtime` category above) actually relocates per identity. Don't expect a per-identity theme or editor toggle from an IDE extension; do expect the IDE↔Claude Code connection itself to isolate correctly.
 
-**Unclassified entries never disappear silently.** If Claude Code ever adds a new top-level file or directory this map doesn't recognise, the first time `agent-shim` sees it, it prompts interactively (via `agent-shim configure`) for a category, or "skip for now." The answer is written to a local overlay (`~/.agent-shim/categories.local.json`) so it's never asked again, and the shipped default map stays untouched. In a non-interactive context (a script, a CI run), an unanswered entry stays excluded and gets reported, rather than the tool guessing or blocking.
+**Unclassified entries never disappear silently.** When `agent-shim` finds a top-level file or directory the map does not recognise, it excludes the entry and reports it. Run `agent-shim configure` to choose a category or leave it unclassified; answers are written to the local overlay (`~/.agent-shim/categories.local.json`) without changing the shipped map. Cancelling the classification prompts writes no answers. An unanswered entry stays excluded and is reported again.
 
 ### Path-level overrides
 
