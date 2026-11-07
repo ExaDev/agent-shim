@@ -241,7 +241,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         credentialRecord: () => readRcSelfHostRecord(realFarmFs, paths.frontdoorDir),
         webFetch: realRcWebFetch({ allowPrivate: rcWebFetchAllowsPrivateFromEnv(process.env) }),
         // The one discriminator of the mode: a CONNECT tunnel is a self-hosted session's when its launch runs the minted identity, and every request, upgrade and blind tunnel of such a session is the mode's, whatever it presents.
-        ownsLaunch: createRcSelfHostLaunchCheck({ fs: realFarmFs, sessionsDir: paths.frontdoorSessionsDir, launchesDir: paths.launchesDir, identitiesDir: paths.identitiesDir, mintedRecord: () => readRcSelfHostRecord(realFarmFs, paths.frontdoorDir) }),
+        ownsLaunch: createRcSelfHostLaunchCheck({ fs: realFarmFs, sessionsDir: paths.frontdoorSessionsDir, launchesDir: paths.launchesDir, mintedRecord: () => readRcSelfHostRecord(realFarmFs, paths.frontdoorDir) }),
         log,
       })
     : undefined;
