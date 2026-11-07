@@ -189,6 +189,6 @@ export function createFakeKeychain(): FakeKeychain {
   };
 }
 
-/** The user every fake Keychain test files and looks up Claude Code's login under: a fixed environment and user, so no test reads or mutates the real `process.env` or the real user. */
-export const TEST_CLAUDE_LOGIN = { env: { USER: "alex" }, username: (): string => "alex" } as const;
+/** The environment every self-hosted mint test runs under: a fixed, empty one, so no test reads or mutates the real `process.env`. */
+export const TEST_CLAUDE_LOGIN = { env: {} } as const;
 

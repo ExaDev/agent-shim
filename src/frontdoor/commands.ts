@@ -643,7 +643,6 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
             ...controlDeps,
             ...lifecycleAndCodexDeps,
             keychain: doorKeychainProbe(process.platform),
-            claudeLogin: { env: process.env, username: () => os.userInfo().username },
             fs: realFarmFs,
             events: doorEvents,
           }),

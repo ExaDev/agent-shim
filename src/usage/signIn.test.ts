@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { FarmStat, RunPort } from "../launcher/ports";
-import { claudeCodeKeychainAccount, claudeCodeKeychainService, decideSignIn, identitySignIn } from "./signIn";
+import { claudeCodeKeychainService, decideSignIn, identitySignIn } from "./signIn";
 
 const FARM_ROOT = "/state/identities/work";
 const FILE_STAT: FarmStat = { kind: "file", mtimeMs: 0, sizeBytes: 2 };
@@ -88,15 +88,6 @@ describe("identitySignIn", () => {
 });
 
 describe("Claude Code's Keychain login derivation", () => {
-  it("names the account USER, else the operating system's name, else claude-code-user when the lookup throws or the name fails the pattern", () => {
-    expect(claudeCodeKeychainAccount({ USER: "alex" }, () => "other")).toBe("alex");
-    expect(claudeCodeKeychainAccount({ USER: "" }, () => "other")).toBe("other");
-    expect(claudeCodeKeychainAccount({}, () => {
-      throw new Error("no user");
-    })).toBe("claude-code-user");
-    expect(claudeCodeKeychainAccount({ USER: "alex smith" }, () => "other")).toBe("claude-code-user");
-  });
-
   it("hashes the directory path normalised to NFC, so a decomposed spelling names the item Claude Code files", () => {
     const composed = "/example/caf\u00e9";
     const decomposed = "/example/cafe\u0301";

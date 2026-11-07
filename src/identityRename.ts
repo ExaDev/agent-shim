@@ -10,7 +10,7 @@ import { renamedIdentity, type RenameOptions } from "./identityRenameTarget";
 import { identityTokenPath } from "./identityToken";
 import type { IdentitySessionProbe, SessionProcess } from "./identitySessions";
 import { describeUnfinishable, describeUnfinishedRename, discardJournalCommand, finishabilityOf, readRenameJournal, recordsNothingApplied, readRenameJournals, removeRenameJournal, renameJournalFile, unfinishedRenameFor, writeRenameJournal, type RenameFinishability, type RenameJournal } from "./identityRenameJournal";
-import { deleteKeychainLogin, keychainDeleteCommand, planKeychainLogin, readKeychainLogin, writeKeychainLogin, type ClaudeCodeLoginEnv, type KeychainLoginPlan } from "./keychainLogin";
+import { deleteKeychainLogin, keychainDeleteCommand, planKeychainLogin, readKeychainLogin, writeKeychainLogin, type KeychainLoginPlan } from "./keychainLogin";
 import { FARM_MANIFEST_FILENAME, manifestWithIdentity } from "./launcher/farm";
 import type { AcquireIdentityLockParams } from "./launcher/lock";
 import { holdLocks } from "./identityRenameLocks";
@@ -50,8 +50,6 @@ export interface IdentityRenamePorts {
   readonly launches: IdentityLaunchProbe;
   /** What taking a resync lock needs from the machine. */
   readonly lock: Pick<AcquireIdentityLockParams, "nowMs" | "pid" | "isRunning" | "sleep">;
-  /** The environment and user a Claude Code session here would derive its Keychain login item from (`identity remove` names a self-hosted identity's leftover item by them). */
-  readonly claudeLogin: ClaudeCodeLoginEnv;
 }
 
 /** What the rename needs to stop cleanly when the process is told to: a handler for the signals, and a way to let one that arrived during synchronous work be delivered. */

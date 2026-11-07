@@ -12,7 +12,7 @@ import { summariseCredential } from "../credential";
 import { mergeCredentialCache } from "../credentialCacheChange";
 import { addDirectoryRule, DirectoryRuleAlreadyExistsError, DirectoryRuleNotFoundError, listDirectoryRules, removeDirectoryRule, requireRuleSelector, updateDirectoryRule } from "../directoryRulesStore";
 import { addIdentity, IdentityAlreadyExistsError, IdentityNotFoundError, identityDirectory, identityIdOf, identityExists, readIdentity, removeIdentityWithLockHeld, REMOVED_STATE, loggedIdentityIds, requireIdentityAddable, requireIdentityNames, setAllowAmbientCredential, setDefaultConfigProfile, setIdentityLabel, setIdentityProvider, setIdentityAnchors, setIdentityCredential, useIdentity, type IdentityCredentialChange, identityNotFound } from "../identityStore";
-import { KeychainCacheDeleteError, KeychainLoginError, KeychainLookupError, leftoverWarnings, requireKeychainCacheDeleted, selfHostedLoginLeftover, type ClaudeCodeLoginEnv } from "../keychainLogin";
+import { KeychainCacheDeleteError, KeychainLoginError, KeychainLookupError, leftoverWarnings, requireKeychainCacheDeleted, selfHostedLoginLeftover } from "../keychainLogin";
 import { acquireIdentityNamesLock, nonWaitingIdentityNamesLockPorts } from "../identityNamesLock";
 import { IdentityLockBusyError } from "../launcher/lock";
 import { poolNameOf } from "../launcher/identity";
@@ -78,8 +78,6 @@ export interface ConfigApiDeps {
   readonly keychain: { readonly runAsync: AsyncRun; readonly platform: NodeJS.Platform };
   /** The file reads `identity remove` makes of the directory it is about to delete (whether the self-hosted mint wrote into it). */
   readonly fs: Pick<FarmFs, "readFileUtf8">;
-  /** The environment and user a Claude Code session would derive its Keychain login item from, for naming a self-hosted identity's leftover item. */
-  readonly claudeLogin: ClaudeCodeLoginEnv;
 }
 
 /** The OpenAPI tag the configuration procedures group under in the document. */
@@ -286,7 +284,7 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
                   requireKeychainCacheDeleted(owner, status, input.name);
                 });
               }
-              const warnings = leftoverWarnings(await guardedAsync(async () => await resolveWithAsyncRuns((run) => selfHostedLoginLeftover({ run, platform: deps.keychain.platform }, selfHostedDir, deps.claudeLogin), deps.keychain.runAsync)));
+              const warnings = leftoverWarnings(await guardedAsync(async () => await resolveWithAsyncRuns((run) => selfHostedLoginLeftover({ run, platform: deps.keychain.platform }, selfHostedDir), deps.keychain.runAsync)));
               return { action: "removed" as const, kind: "identity" as const, name: input.name, ...(warnings.length === 0 ? {} : { warnings: [...warnings] }) };
             } finally {
               lock.release();

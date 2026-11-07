@@ -14,7 +14,6 @@ import { createWorld, type World } from "./identityRenameTestWorld";
 import { addIdentity, identityIdOf, removeIdentity, requireIdentityAddable } from "./identityStore";
 import type { FarmFs } from "./launcher/ports";
 import { realFarmFs } from "./realPorts";
-import { TEST_CLAUDE_LOGIN } from "./keychainTestWorld";
 
 const TOKEN = "a-made-up-control-token";
 
@@ -97,7 +96,7 @@ describe("a rename of the name alone that was killed part way", () => {
 
   it("is refused through the door's config.identity.add as a conflict with the same message", async () => {
     await killedAfterReferences();
-    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths: world.paths, keychain: { runAsync: async () => await Promise.reject(new Error("no Keychain here")), platform: "linux" }, fs: realFarmFs, claudeLogin: TEST_CLAUDE_LOGIN }), {
+    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths: world.paths, keychain: { runAsync: async () => await Promise.reject(new Error("no Keychain here")), platform: "linux" }, fs: realFarmFs }), {
       context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
     }).config;
     const refusal: unknown = await api.identity.add({ name: "client" }).catch((error: unknown) => error);

@@ -1,6 +1,6 @@
 import { CliError } from "./cliError";
 import type { RunPort } from "./launcher/ports";
-import { SECURE_STORAGE_CONFIG_DIR_ENV, claudeCodeKeychainAccount, claudeCodeKeychainService } from "./usage/signIn";
+import { SECURE_STORAGE_CONFIG_DIR_ENV, claudeCodeKeychainService } from "./usage/signIn";
 import { KEYCHAIN_CACHE_SERVICE, KEYCHAIN_ITEM_NOT_FOUND_STATUS } from "./credentialCache";
 import { shellQuoted } from "./shellQuote";
 
@@ -285,32 +285,19 @@ export function deleteKeychainLogin(run: RunPort, service: string, account: stri
   }
 }
 
-/** The facts the self-hosted Keychain checks read about the session's environment, injected so tests never touch `process.env` or the real user. */
+/** What the self-hosted mint reads about the environment a session would inherit, injected so tests never touch `process.env`. */
 export interface ClaudeCodeLoginEnv {
-  /** The environment a session launched from here would inherit (`USER`, `CLAUDE_SECURESTORAGE_CONFIG_DIR`). */
+  /** The environment a session launched from here would inherit (`CLAUDE_SECURESTORAGE_CONFIG_DIR`). */
   readonly env: Readonly<Record<string, string | undefined>>;
-  /** The operating system's name for the user (`os.userInfo().username`), which may throw. */
-  readonly username: () => string;
 }
 
 /**
- * Whether the Keychain holds the Claude Code login filed for `configDir`, asked by attributes only (no password is read, so nothing prompts). The item is the one Claude Code itself names for the directory (`claudeCodeKeychainService`, `claudeCodeKeychainAccount`), looked up both by service alone and by service and account, so an item filed under another account for the same service is found too. Throws `KeychainLookupError` when the Keychain could not be asked.
+ * Whether the Keychain holds a Claude Code login filed for `configDir`, asked by attributes only (no password is read, so nothing prompts). The lookup is by the directory's service (`claudeCodeKeychainService`) alone, which matches an item under any account, the one a session reads included, so no account needs deriving. The account, when the listing gives a plain one, is returned so the delete command can name exactly that item. Throws `KeychainLookupError` when the Keychain could not be asked.
  */
-function claudeCodeLoginFound(run: RunPort, configDir: string, login: ClaudeCodeLoginEnv): { readonly service: string; readonly account: string | undefined } | undefined {
+function claudeCodeLoginFound(run: RunPort, configDir: string): { readonly service: string; readonly account: string | undefined } | undefined {
   const service = claudeCodeKeychainService(configDir);
-  const byService = lookup(run, service);
-  if (byService.found) {
-    return { service, account: plainAccountOf(byService.attributes) };
-  }
-  const account = claudeCodeKeychainAccount(login.env, login.username);
-  const result = run.run("security", ["find-generic-password", "-s", service, "-a", account]);
-  if (result.status === 0) {
-    return { service, account };
-  }
-  if (result.status === KEYCHAIN_ITEM_NOT_FOUND_STATUS) {
-    return undefined;
-  }
-  throw new KeychainLookupError(`Could not look up the Keychain item ${service}: security exited ${statusPhrase(result.status)}${describe(result.stderr)}.`);
+  const found = lookup(run, service);
+  return found.found ? { service, account: plainAccountOf(found.attributes) } : undefined;
 }
 
 /**
@@ -328,7 +315,7 @@ export function requireNoClaudeCodeLoginForMint(keychain: KeychainProbe, configD
   }
   let found: ReturnType<typeof claudeCodeLoginFound>;
   try {
-    found = claudeCodeLoginFound(keychain.run, configDir, login);
+    found = claudeCodeLoginFound(keychain.run, configDir);
   } catch (error) {
     if (error instanceof KeychainLookupError) {
       throw new KeychainLookupError(`${error.message} Nothing was minted into identity "${identity}".`);
@@ -346,13 +333,13 @@ export function requireNoClaudeCodeLoginForMint(keychain: KeychainProbe, configD
 /**
  * The note `identity remove` gives for an identity the self-hosted mint wrote into (`selfHostedDir` is its directory, undefined for any other identity) whose Claude Code login item is still in the Keychain, or undefined when there is nothing to say. The removal leaves the item, as it leaves every identity's (a login another identity, or a later `identity add --keep-keychain-login`, may still want); this only names it and the command that deletes it, since a minted login is the one kind with nothing to keep. Asked by attributes only, and only on macOS. It is asked after the identity is gone, so a Keychain that could not be asked is a note too, saying the identity was removed and the check could not be made, never a failure of a removal that has already happened.
  */
-export function selfHostedLoginLeftover(keychain: KeychainProbe, selfHostedDir: string | undefined, login: ClaudeCodeLoginEnv): string | undefined {
+export function selfHostedLoginLeftover(keychain: KeychainProbe, selfHostedDir: string | undefined): string | undefined {
   if (selfHostedDir === undefined || keychain.platform !== "darwin") {
     return undefined;
   }
   let found: ReturnType<typeof claudeCodeLoginFound>;
   try {
-    found = claudeCodeLoginFound(keychain.run, selfHostedDir, login);
+    found = claudeCodeLoginFound(keychain.run, selfHostedDir);
   } catch (error) {
     if (error instanceof KeychainLookupError) {
       return `The identity was removed, but the Keychain could not be checked for a Claude Code login a self-hosted mint may have left for its directory (service ${claudeCodeKeychainService(selfHostedDir)}): ${error.message}`;

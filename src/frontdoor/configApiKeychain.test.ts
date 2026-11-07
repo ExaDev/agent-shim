@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addIdentity, requireIdentityAddable, identityExists } from "../identityStore";
 import { nonWaitingIdentityNamesLockPorts, IdentityNamesLockBusyError } from "../identityNamesLock";
 import { KEYCHAIN_CACHE_SERVICE, KEYCHAIN_ITEM_NOT_FOUND_STATUS } from "../credentialCache";
-import { cacheEntryProbe, createFakeKeychain, type FakeKeychain, TEST_CLAUDE_LOGIN } from "../keychainTestWorld";
+import { cacheEntryProbe, createFakeKeychain, type FakeKeychain } from "../keychainTestWorld";
 import { buildLayoutPaths, type LayoutPaths } from "../paths";
 import type { AsyncRun } from "../replayRun";
 import { claudeCodeKeychainService } from "../usage/signIn";
@@ -54,7 +54,7 @@ describe("config.identity.add and a Keychain login left behind for the directory
   }
 
   function client(platform: NodeJS.Platform = "darwin", runAsync: AsyncRun = asynchronously()) {
-    return createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform }, fs: realFarmFs, claudeLogin: TEST_CLAUDE_LOGIN }), {
+    return createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform }, fs: realFarmFs }), {
       context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
     }).config;
   }
@@ -187,7 +187,7 @@ describe("config.identity.remove and the credential the Keychain store caches", 
       }
       return await Promise.resolve({ status: 0, stdout: "", stderr: "" });
     };
-    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" }, fs: realFarmFs, claudeLogin: TEST_CLAUDE_LOGIN }), {
+    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" }, fs: realFarmFs }), {
       context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
     }).config;
     await api.identity.remove({ name: "work", confirm: true });
@@ -203,7 +203,7 @@ describe("config.identity.remove and the credential the Keychain store caches", 
       asked.push(args);
       return await Promise.resolve({ status: 0, stdout: "", stderr: "" });
     };
-    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" }, fs: realFarmFs, claudeLogin: TEST_CLAUDE_LOGIN }), {
+    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" }, fs: realFarmFs }), {
       context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
     }).config;
     expect(await api.identity.remove({ name: "client", confirm: true })).toEqual({ action: "removed", kind: "identity", name: "client" });
@@ -215,7 +215,7 @@ describe("config.identity.remove and the credential the Keychain store caches", 
     fs.mkdirSync(path.join(paths.identitiesDir, "work"), { recursive: true });
     fs.writeFileSync(path.join(paths.identitiesDir, "work", "identity.json"), JSON.stringify({ name: "client", allowAmbientCredential: false }));
     const runAsync: AsyncRun = async () => await Promise.resolve({ status: LOCKED_KEYCHAIN_STATUS, stdout: "", stderr: "" });
-    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" }, fs: realFarmFs, claudeLogin: TEST_CLAUDE_LOGIN }), {
+    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" }, fs: realFarmFs }), {
       context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
     }).config;
     const failure: unknown = await api.identity.remove({ name: "client", confirm: true }).then(
@@ -236,7 +236,7 @@ describe("config.identity.remove and the credential the Keychain store caches", 
     const keychain = createFakeKeychain();
     keychain.seed(claudeCodeKeychainService(labDir), "alex", "a-made-up-real-login");
     const runAsync: AsyncRun = async (command, args) => await Promise.resolve(keychain.run.run(command, args));
-    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" }, fs: realFarmFs, claudeLogin: TEST_CLAUDE_LOGIN }), {
+    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" }, fs: realFarmFs }), {
       context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
     }).config;
     const removed = await api.identity.remove({ name: "lab", confirm: true });
@@ -252,7 +252,7 @@ describe("config.identity.remove and the credential the Keychain store caches", 
     writeRenameJournal(realFarmFs, renameJournalFile(paths.identityRenamesDir, "work", "client"), { version: 1, from: "work", to: "client", startedAt: "2026-10-30T10:00:00.000Z", pid: 1, steps: [{ description: "move identities/work to identities/client", started: false, done: false }] });
     fs.rmSync(path.join(paths.identitiesDir, "work"), { recursive: true, force: true });
     const runAsync: AsyncRun = async () => await Promise.resolve({ status: 0, stdout: "", stderr: "" });
-    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" }, fs: realFarmFs, claudeLogin: TEST_CLAUDE_LOGIN }), {
+    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" }, fs: realFarmFs }), {
       context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
     }).config;
     const failure: unknown = await api.identity.remove({ name: "client", confirm: true }).then(
@@ -267,7 +267,7 @@ describe("config.identity.remove and the credential the Keychain store caches", 
     addIdentity(paths, "lab");
     fs.writeFileSync(path.join(paths.identitiesDir, "lab", RC_SELF_HOST_MINT_MARKER), `${JSON.stringify({ mintedAt: "2026-01-01T00:00:00.000Z" })}\n`);
     const runAsync: AsyncRun = async (_command, args) => await Promise.resolve(args[0] === "find-generic-password" ? { status: LOCKED_KEYCHAIN_STATUS, stdout: "", stderr: "" } : { status: 0, stdout: "", stderr: "" });
-    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" }, fs: realFarmFs, claudeLogin: TEST_CLAUDE_LOGIN }), {
+    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" }, fs: realFarmFs }), {
       context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
     }).config;
     const removed = await api.identity.remove({ name: "lab", confirm: true });
@@ -280,7 +280,7 @@ describe("config.identity.remove and the credential the Keychain store caches", 
     addIdentity(paths, "lab");
     fs.writeFileSync(path.join(paths.identitiesDir, "lab", RC_SELF_HOST_MINT_MARKER), `${JSON.stringify({ mintedAt: "2026-01-01T00:00:00.000Z" })}\n`);
     const runAsync: AsyncRun = async () => await Promise.reject(new Error("off macOS nothing is asked of the Keychain"));
-    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "linux" }, fs: realFarmFs, claudeLogin: TEST_CLAUDE_LOGIN }), {
+    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "linux" }, fs: realFarmFs }), {
       context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
     }).config;
     expect(await api.identity.remove({ name: "lab", confirm: true })).toEqual({ action: "removed", kind: "identity", name: "lab" });

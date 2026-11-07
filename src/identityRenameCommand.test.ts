@@ -12,7 +12,7 @@ import type { IdentityRenamePorts } from "./identityRename";
 import { readRenameJournal, renameJournalFile, writeRenameJournal } from "./identityRenameJournal";
 import type { SessionProcess } from "./identitySessions";
 import { addIdentity, identityExists, identityIdOf, readActiveIdentity, useIdentity } from "./identityStore";
-import { TEST_CLAUDE_LOGIN, createFakeKeychain } from "./keychainTestWorld";
+import { createFakeKeychain } from "./keychainTestWorld";
 import { RC_SELF_HOST_MINT_MARKER } from "./frontdoor/rcSelfHostMint";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { buildProgram } from "./program";
@@ -99,7 +99,6 @@ describe("identity rename", () => {
         },
       },
       lock: { nowMs: () => NOW_MS, pid: OWN_PID, isRunning: () => true, sleep: () => undefined },
-      claudeLogin: TEST_CLAUDE_LOGIN,
     };
   }
 

@@ -5,7 +5,7 @@ import type { IdentityRenamePorts } from "./identityRename";
 import type { FarmFs } from "./launcher/ports";
 import { TOKEN_FILE_MODE } from "./identityToken";
 import type { CachedCredential, CredentialCachePort } from "./credentialCache";
-import { createFakeKeychain, type FakeKeychain , TEST_CLAUDE_LOGIN } from "./keychainTestWorld";
+import { createFakeKeychain, type FakeKeychain } from "./keychainTestWorld";
 import type { SessionProcess } from "./identitySessions";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { realpathOrSelf } from "./realIdentityRename";
@@ -163,7 +163,6 @@ export function createWorld(platform: NodeJS.Platform = "linux"): World {
         },
       },
       lock: { nowMs: () => NOW_MS, pid: OWN_PID, isRunning: () => true, sleep: () => undefined },
-      claudeLogin: TEST_CLAUDE_LOGIN,
       ...overrides,
     }),
     read: (relative) => fs.readFileSync(path.join(root, relative), "utf8"),

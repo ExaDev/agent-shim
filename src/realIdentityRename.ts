@@ -101,7 +101,6 @@ export function realIdentityRenamePorts(paths: LayoutPaths): IdentityRenamePorts
     home: os.homedir(),
     sameDirectory,
     realpath: realpathOrSelf,
-    claudeLogin: { env: process.env, username: () => os.userInfo().username },
     launches: realLaunchProbe(paths),
     signals: realSignals,
     sessions: createIdentitySessionProbe(process.platform, { run: realRunPort, uid: currentUid, ownPid: process.pid, procFs: realProcessTableFs, realpath: realpathOrSelf }),

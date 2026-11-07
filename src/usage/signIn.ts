@@ -29,7 +29,7 @@ const KEYCHAIN_SERVICE_PREFIX = "Claude Code-credentials";
 const KEYCHAIN_SERVICE_HASH_DIGITS = 8;
 
 /**
- * The Keychain service name Claude Code keeps the login of one configuration directory under: the prefix, then the first eight hex digits of the SHA-256 of the directory path as `CLAUDE_CONFIG_DIR` names it, normalised to Unicode NFC first (a macOS path is often spelled decomposed, and the hash of the raw bytes would name an item Claude Code never reads). The account on the item is the operating system user (`claudeCodeKeychainAccount`), so the directory is only recoverable through this name. Read from Claude Code's secure-storage module (2.1.319 normalises an overriding directory to NFC in the derivation itself; the configuration directory's own NFC normalisation was read in 2.1.309); not a documented contract.
+ * The Keychain service name Claude Code keeps the login of one configuration directory under: the prefix, then the first eight hex digits of the SHA-256 of the directory path as `CLAUDE_CONFIG_DIR` names it, normalised to Unicode NFC first (a macOS path is often spelled decomposed, and the hash of the raw bytes would name an item Claude Code never reads). The account on the item is the operating system user, so the directory is only recoverable through this name. Read from Claude Code's secure-storage module (2.1.319 normalises an overriding directory to NFC in the derivation itself; the configuration directory's own NFC normalisation was read in 2.1.309); not a documented contract.
  */
 export function claudeCodeKeychainService(configDir: string): string {
   return `${KEYCHAIN_SERVICE_PREFIX}-${createHash("sha256").update(configDir.normalize("NFC")).digest("hex").slice(0, KEYCHAIN_SERVICE_HASH_DIGITS)}`;
@@ -39,26 +39,6 @@ export function claudeCodeKeychainService(configDir: string): string {
  * The variable that moves Claude Code's whole credential store: when set, its Keychain item is named after the directory it names (the bare prefix when it is empty) and its plaintext fallback is that directory's `.credentials.json` (`~/.claude` when it is empty), whatever `CLAUDE_CONFIG_DIR` says (2.1.319's secure storage).
  */
 export const SECURE_STORAGE_CONFIG_DIR_ENV = "CLAUDE_SECURESTORAGE_CONFIG_DIR";
-
-/** The account name Claude Code files its login under when `USER` and the operating system give it none it accepts. */
-const FALLBACK_KEYCHAIN_ACCOUNT = "claude-code-user";
-
-/** The characters Claude Code accepts in an account name; anything else falls back to `FALLBACK_KEYCHAIN_ACCOUNT`. */
-const KEYCHAIN_ACCOUNT_PATTERN = /^[a-zA-Z0-9._-]+$/u;
-
-/**
- * The account Claude Code files its login item under, as its secure storage derives it (2.1.319): `USER`, else the operating system's name for the user; `claude-code-user` when looking the user up throws or the name has a character outside letters, digits, dot, underscore and hyphen.
- */
-export function claudeCodeKeychainAccount(env: Readonly<Record<string, string | undefined>>, username: () => string): string {
-  let name: string;
-  try {
-    const fromEnv = env.USER;
-    name = fromEnv !== undefined && fromEnv !== "" ? fromEnv : username();
-  } catch {
-    return FALLBACK_KEYCHAIN_ACCOUNT;
-  }
-  return KEYCHAIN_ACCOUNT_PATTERN.test(name) ? name : FALLBACK_KEYCHAIN_ACCOUNT;
-}
 
 /** Whether the Keychain holds Claude Code's login item for the configuration directory `configDir`. Without `-g` or `-w`, `security` prints the item's attributes only, so the secret is never requested and the item's access list never prompts. */
 export function keychainHasItem(run: RunPort, configDir: string): boolean {

@@ -1,4 +1,3 @@
-import os from "node:os";
 import { randomBytes, randomUUID } from "node:crypto";
 
 import { COMPACT_TIMEOUT_MS } from "../supervise/compactTimeout";
@@ -719,7 +718,7 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
         // On macOS a Keychain login a session in the directory would read wins over the minted file, so any is refused before anything is written; nothing is ever deleted.
         const result = mintRcSelfHostLogin({
           keychain: { run: realRunPort, platform: process.platform },
-          login: { env: process.env, username: () => os.userInfo().username },
+          login: { env: process.env },
           fs: realFarmFs,
           identitiesDir: paths.identitiesDir,
           frontdoorDir: paths.frontdoorDir,

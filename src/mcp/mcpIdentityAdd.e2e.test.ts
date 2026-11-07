@@ -11,7 +11,7 @@ import { mountRouterClient } from "../frontdoor/apiTestMount";
 import { createConfigApiRouter } from "../frontdoor/configApi";
 import { RC_ORPC_PATH_PREFIX } from "../frontdoor/rcApi";
 import { identityExists } from "../identityStore";
-import { cacheEntryProbe, createFakeKeychain, type FakeKeychain, TEST_CLAUDE_LOGIN } from "../keychainTestWorld";
+import { cacheEntryProbe, createFakeKeychain, type FakeKeychain } from "../keychainTestWorld";
 import { buildLayoutPaths, type LayoutPaths } from "../paths";
 import type { AsyncRun } from "../replayRun";
 import { claudeCodeKeychainService } from "../usage/signIn";
@@ -56,7 +56,7 @@ describe("the MCP tool that adds an identity, over the door's configuration rout
     keychain = createFakeKeychain();
     unanswering = false;
     const runAsync: AsyncRun = async (command, args) => await Promise.resolve(unanswering ? { status: null, stdout: "", stderr: "" } : keychain.run.run(command, args));
-    const mounted = await mountRouterClient(createConfigApiRouter({ expectedToken: CONTROL_TOKEN, paths, keychain: { runAsync, platform: "darwin" }, fs: realFarmFs, claudeLogin: TEST_CLAUDE_LOGIN }), CONTROL_TOKEN, CONTROL_TOKEN);
+    const mounted = await mountRouterClient(createConfigApiRouter({ expectedToken: CONTROL_TOKEN, paths, keychain: { runAsync, platform: "darwin" }, fs: realFarmFs }), CONTROL_TOKEN, CONTROL_TOKEN);
     origin = new URL(mounted.url).origin;
     close = mounted.close;
   });
