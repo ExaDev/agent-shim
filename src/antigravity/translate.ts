@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { withoutContextMarker as stripContextMarker } from "../models/identity";
+import { claudeTierOf } from "../models/tiers";
 import { selectMember, type SelectionCandidate } from "../selection/engine";
 
 /** Seconds per hour, to hand the engine a reset time in its own unit. */
@@ -143,7 +144,7 @@ function resolveName(requested: string, config: ResolvedAntigravityConfig): { re
   if (isBackendModelName(stripped)) {
     return { candidates: [stripped], tier: undefined };
   }
-  const tier = CLAUDE_TIERS.find((candidate) => lower.includes(candidate));
+  const tier = claudeTierOf(stripped);
   return tier === undefined ? { candidates: [config.defaultModel], tier: undefined } : { candidates: config.models[tier], tier };
 }
 
