@@ -4,6 +4,7 @@ import { applyAgentTaskEvent, type LiveTask, type LiveTaskBook } from "../agents
 import { HTTP_STATUS } from "../codex/http";
 import type { PassthroughObserver } from "./capture";
 import type { RcCredentialStore } from "./rcCredentialStore";
+import type { RcPendingRetireReason, RcSessionEndReason, RcSessionTransition } from "./rcEventLog";
 import type { RcStreamEnvelope } from "./rcSchemas";
 import type { FrontDoorRoute, RoutedResponse } from "./route";
 import type { RcObservedCredential } from "./rcWrites";
@@ -88,6 +89,8 @@ interface RcSessionRecord {
   anthropicClientPlatform: string | undefined;
   /** The session's control requests awaiting an answer, keyed by the id a `control_response` must echo. An entry lives exactly until it is answered or its deadline passes. */
   readonly pending: Map<string, RcPendingRequestRecord>;
+  /** The control requests that stopped awaiting an answer, keyed by id, with when they retired. The same request crosses the door on the worker's event write and again on the client read stream, so an answer can land between the two; remembering the retirement until the answer deadline has passed is what stops the later copy from birthing a request already answered. */
+  readonly retired: Map<string, number>;
   /** The worker state the latest worker registration named, with when that exchange was observed. */
   workerState: RcWorkerFact<string> | undefined;
   /** The idle the latest heartbeat carried, with when that exchange was observed. */
@@ -174,6 +177,10 @@ export interface RcSessionTrackerDeps {
    * Where the observed client credential outlives this process. The worker's recurring calls carry the worker JWT, so a door generation that starts after a session's create observes nothing that states the OAuth bearer until some client-half call crosses; the store is what lets that generation still attach (and write). Absent, the credential is in memory only, exactly as it was before the store existed.
    */
   readonly credentialStore?: RcCredentialStore;
+  /** Where each transition a supervisor acts on is handed as the tracker files the fact behind it (a session appearing or ending, its worker state changing, a pending request born or retired): the door's session event log (`rcEventLog.ts`). Absent, the tracker records the same facts and tells no one. */
+  readonly onTransition?: (transition: RcSessionTransition) => void;
+  /** Told when the tracker closes, so whatever its transitions feed stops waiting for more: the door's session event log ends its followers here. */
+  readonly onClose?: () => void;
 }
 
 /** The live record of observed Remote Control sessions. */
@@ -200,7 +207,7 @@ export interface RcSessionTracker {
   readonly liveTasksOf: (sessionId?: string) => readonly LiveTask[];
   /** Retires one pending control request as answered: what a successful answer write calls, so the request stops being listed the moment it is answered. */
   readonly completePending: (sessionId: string, requestId: string) => void;
-  /** Stops the idle sweep timer. The entries themselves are unreachable the moment the door drops them. */
+  /** Stops the idle sweep timer and tells the transition sink's owner (`onClose`) that no more transitions follow. The entries themselves are unreachable the moment the door drops them. */
   readonly close: () => void;
 }
 
@@ -375,32 +382,67 @@ function parseRcRequestBody(kind: RcRequestBodyKind, body: string): RcRequestBod
 /** Creates the tracker. One per door process; everything it holds dies with it. */
 export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTracker {
   const entries = new Map<string, RcSessionRecord>();
-  const expire = (id: string): void => {
+  /** Retires one pending request, telling the sink only when it was still pending, so a request answered twice (on the stream and on the worker's own write) retires once. */
+  const retirePending = (entry: RcSessionRecord, requestId: string, reason: RcPendingRetireReason): void => {
+    if (entry.pending.delete(requestId)) {
+      entry.retired.set(requestId, deps.now());
+      deps.onTransition?.({ kind: "pending-retired", session: entry.id, requestId, reason, at: deps.now() });
+    }
+  };
+  /** Files one pending request, telling the sink only of a request not already pending, since the same request is observed both on the worker's event write and on the client read stream. A request that already retired is not filed again: its second copy arriving after the answer is the same request, not a new one. */
+  const addPending = (entry: RcSessionRecord, pending: RcPendingRequestRecord): void => {
+    if (entry.retired.has(pending.requestId)) {
+      return;
+    }
+    const born = !entry.pending.has(pending.requestId);
+    entry.pending.set(pending.requestId, pending);
+    if (born) {
+      deps.onTransition?.({ kind: "pending-born", session: entry.id, requestId: pending.requestId, type: pending.type, summary: pending.summary, at: pending.observedAt });
+    }
+  };
+  const expire = (id: string, reason: RcSessionEndReason): void => {
+    const entry = entries.get(id);
+    if (entry === undefined) {
+      return;
+    }
+    // The session's outstanding requests retire before the session ends, so a follower holding a pending set never keeps one for a session it has been told is gone.
+    for (const requestId of [...entry.pending.keys()]) {
+      retirePending(entry, requestId, "session-ended");
+    }
     entries.delete(id);
+    deps.onTransition?.({ kind: "session-ended", session: id, reason, at: deps.now() });
   };
   const expirePendings = (entry: RcSessionRecord, now: number): void => {
     for (const [requestId, pending] of entry.pending) {
       if (now - pending.observedAt >= RC_PENDING_DEADLINE_MS) {
-        entry.pending.delete(requestId);
+        retirePending(entry, requestId, "expired");
+      }
+    }
+    // A retirement is remembered for one answer deadline: no copy of a request can still be in flight once a request observed at the retirement instant would itself have expired.
+    for (const [requestId, retiredAt] of entry.retired) {
+      if (now - retiredAt >= RC_PENDING_DEADLINE_MS) {
+        entry.retired.delete(requestId);
       }
     }
   };
   const sweep = (): void => {
     for (const [id, entry] of entries) {
       if (deps.now() - entry.lastSeenAt >= deps.idleMs) {
-        expire(id);
+        expire(id, "expired");
         continue;
       }
       expirePendings(entry, deps.now());
     }
   };
-  // The sweep only bounds memory between reads: every read accessor sweeps first, so what it returns is always exact however long the timer waits.
-  const timer = setInterval(sweep, deps.idleMs);
+  // Every read accessor sweeps first, so what it returns is always exact however long the timer waits; the timer is what bounds memory between reads and what tells the transition sink of an expiry nobody read. It runs at the shorter of the two deadlines it enforces, so a pending request's expiry reaches the sink within one answer deadline of happening rather than one session liveness bound.
+  const timer = setInterval(sweep, Math.min(deps.idleMs, RC_PENDING_DEADLINE_MS));
   timer.unref();
 
+  /** Begins describing one session. Only for an id the tracker does not hold: an entry is never replaced, so a session appears once and every appearance is matched by one ending. */
   const birth = (id: string, facts: Readonly<{ oauthAuthorization: string | undefined; anthropicVersion: string | undefined; anthropicClientPlatform: string | undefined }>): RcSessionRecord => {
-    const record: RcSessionRecord = { id, createdAt: deps.now(), lastSeenAt: deps.now(), ...facts, pending: new Map(), workerState: undefined, workerIdleSeconds: undefined, sequenceNum: undefined, liveTasks: new Map() };
+    const record: RcSessionRecord = { id, createdAt: deps.now(), lastSeenAt: deps.now(), ...facts, pending: new Map(), retired: new Map(), workerState: undefined, workerIdleSeconds: undefined, sequenceNum: undefined, liveTasks: new Map() };
     entries.set(id, record);
+    deps.onTransition?.({ kind: "session-appeared", session: id, at: record.createdAt });
     return record;
   };
 
@@ -409,6 +451,15 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
     if (entry.oauthAuthorization !== undefined) {
       deps.credentialStore?.write(entry.id, { authorization: entry.oauthAuthorization, anthropicVersion: entry.anthropicVersion, anthropicClientPlatform: entry.anthropicClientPlatform });
     }
+  };
+
+  /** Refreshes a tracked entry from one observed call: the protocol headers and the OAuth-kind bearer are latest-wins because the freshest observed value is the live one. A worker call's JWT is not an OAuth credential, so it refreshes the entry's liveness without touching the injection credential (a worker JWT replayed on the client half is answered 401). */
+  const refresh = (entry: RcSessionRecord, facts: Readonly<{ oauthAuthorization: string | undefined; anthropicVersion: string | undefined; anthropicClientPlatform: string | undefined }>): void => {
+    entry.lastSeenAt = deps.now();
+    entry.oauthAuthorization = facts.oauthAuthorization ?? entry.oauthAuthorization;
+    entry.anthropicVersion = facts.anthropicVersion ?? entry.anthropicVersion;
+    entry.anthropicClientPlatform = facts.anthropicClientPlatform ?? entry.anthropicClientPlatform;
+    persistCredential(entry);
   };
 
   const observeExchange = (request: RcObservedRequest): RcExchangeObserver | undefined => {
@@ -450,7 +501,13 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
           if (id === undefined) {
             return;
           }
-          persistCredential(birth(id, facts));
+          // A create answered for a session already tracked (its recurring calls crossed while the create's answer was still arriving) refreshes the entry, never replaces it, so its pending requests, worker state and appearance stand.
+          const existing = entries.get(id);
+          if (existing === undefined) {
+            persistCredential(birth(id, facts));
+            return;
+          }
+          refresh(existing, facts);
         },
       };
     }
@@ -459,13 +516,11 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
     if (id?.startsWith(RC_SESSION_ID_PREFIX) !== true) {
       return undefined;
     }
-    // Every recurring session call refreshes the entry: the protocol headers and the OAuth-kind bearer are latest-wins because the freshest observed value is the live one. A worker call's JWT is not an OAuth credential, so it refreshes the entry's liveness without touching the injection credential (a worker JWT replayed on the client half is answered 401).
-    const entry = entries.get(id) ?? birth(id, facts);
-    entry.lastSeenAt = deps.now();
-    entry.oauthAuthorization = facts.oauthAuthorization ?? entry.oauthAuthorization;
-    entry.anthropicVersion = facts.anthropicVersion ?? entry.anthropicVersion;
-    entry.anthropicClientPlatform = facts.anthropicClientPlatform ?? entry.anthropicClientPlatform;
-    persistCredential(entry);
+    // Every recurring call for a tracked session refreshes its entry at the request. A session the tracker does not hold yet is born only once the service accepts one of its calls (in `onResponse` below): a refused call (a mistyped or forged id answered 401 or 404, a worker still calling after its session was archived) says nothing is live there, and birthing on it would describe a session that does not exist.
+    const tracked = entries.get(id);
+    if (tracked !== undefined) {
+      refresh(tracked, facts);
+    }
 
     // The one request-body shape each of these exchanges reads; every other recurring call's request body carries nothing the tracker retains.
     const bodyKind: RcRequestBodyKind | undefined =
@@ -499,10 +554,10 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
       }
       const now = deps.now();
       for (const controlRequest of factsOfBody.controlRequests) {
-        entryNow.pending.set(controlRequest.requestId, { sessionId: id, ...controlRequest, observedAt: now });
+        addPending(entryNow, { sessionId: id, ...controlRequest, observedAt: now });
       }
       for (const requestId of factsOfBody.answeredRequestIds) {
-        entryNow.pending.delete(requestId);
+        retirePending(entryNow, requestId, "answered");
       }
       for (const payload of factsOfBody.payloads) {
         entryNow.liveTasks = applyAgentTaskEvent(entryNow.liveTasks, id, payload, now);
@@ -511,7 +566,12 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
         entryNow.workerIdleSeconds = { value: factsOfBody.idleSeconds, observedAt: now };
       }
       if (factsOfBody.workerStatus !== undefined) {
+        const previous = entryNow.workerState?.value;
         entryNow.workerState = { value: factsOfBody.workerStatus, observedAt: now };
+        // A re-registration naming the state the worker already had is not a transition.
+        if (previous !== factsOfBody.workerStatus) {
+          deps.onTransition?.({ kind: "worker-state", session: id, state: factsOfBody.workerStatus, ...(previous === undefined ? {} : { previous }), at: now });
+        }
       }
     };
 
@@ -541,10 +601,13 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
         // A conflict header closes the session whatever the status says, and an accepted archive ends it by design; either way the entry describes something that is no longer live, and its persisted credential must not outlive it.
         if (singleHeader(headers, CONFLICT_REASON_HEADER) !== undefined || (archiving && isSuccessful(status))) {
           deps.credentialStore?.remove(id);
-          expire(id);
+          expire(id, singleHeader(headers, CONFLICT_REASON_HEADER) === undefined ? "archived" : "conflict");
           return;
         }
         accepted = isSuccessful(status);
+        if (accepted && !entries.has(id)) {
+          persistCredential(birth(id, facts));
+        }
         file();
       },
       onBodyChunk: () => {
@@ -619,12 +682,12 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
       if (pending !== undefined) {
         // Only the worker emits control requests (the ground truth of the client half: the stream's `control_request` envelopes name the worker as their source), so a request from anyone else is not birthed.
         if (event.source === RC_STREAM_WORKER_SOURCE) {
-          entry.pending.set(pending.requestId, { sessionId, ...pending, observedAt: deps.now() });
+          addPending(entry, { sessionId, ...pending, observedAt: deps.now() });
         }
         return;
       }
       for (const requestId of answeredRequestIdsOfControlResponsePayload(event.payload)) {
-        entry.pending.delete(requestId);
+        retirePending(entry, requestId, "answered");
       }
     },
     liveTasksOf: (sessionId) => {
@@ -634,10 +697,14 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
         .flatMap((entry) => [...entry.liveTasks.values()].sort((left, right) => left.observedAt - right.observedAt || (left.taskId < right.taskId ? -1 : 1)));
     },
     completePending: (sessionId, requestId) => {
-      entries.get(sessionId)?.pending.delete(requestId);
+      const entry = entries.get(sessionId);
+      if (entry !== undefined) {
+        retirePending(entry, requestId, "answered");
+      }
     },
     close: () => {
       clearInterval(timer);
+      deps.onClose?.();
     },
   };
 }

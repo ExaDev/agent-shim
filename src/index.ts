@@ -243,6 +243,29 @@ export { LaunchResolveInputSchema, LaunchResolveOutputSchema } from "./frontdoor
 export { collectFrontDoorStatus, formatFrontDoorStatus, headroomSocketTarget, type FrontDoorSessionStatus, type FrontDoorStatus } from "./frontdoor/status";
 export { FrontDoorStateSchema } from "./frontdoor/state";
 export { createEventsApiRouter, type DoorEventsApiDeps } from "./frontdoor/eventsApi";
+export {
+  RC_PENDING_RETIRE_REASONS,
+  RC_SESSION_END_REASONS,
+  RC_SESSION_EVENT_LOG_CAPACITY,
+  RcSessionEventCursorExpiredError,
+  RcSessionEventSchema,
+  RcSessionEventsPageInputSchema,
+  RcSessionEventsReadInputSchema,
+  RcSessionEventsReadOutputSchema,
+  RcSessionEventsStreamInputSchema,
+  RcSessionTransitionSchema,
+  createRcSessionEventLog,
+  followRcSessionEvents,
+  type RcPendingRetireReason,
+  type RcSessionEndReason,
+  type RcSessionEvent,
+  type RcSessionEventLog,
+  type RcSessionEventLogDeps,
+  type RcSessionEventsRead,
+  type RcSessionEventsReadInput,
+  type RcSessionTransition,
+} from "./frontdoor/rcEventLog";
+export { createRcSessionEventsApiRouter, type RcSessionEventsApiDeps, type RcSessionEventsApiRouter } from "./frontdoor/rcEventLogApi";
 export { createLifecycleApiRouter, type LifecycleApiClient, type LifecycleApiDeps, type LifecycleApiRouter } from "./frontdoor/lifecycleApi";
 export { createCodexApiRouter, type CodexApiClient, type CodexApiDeps, type CodexApiRouter } from "./frontdoor/codexApi";
 export {
