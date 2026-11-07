@@ -583,6 +583,30 @@ describe("the self-hosted Remote Control mode end to end", () => {
     oauthSocket.destroy();
   }, TEST_TIMEOUT_MS);
 
+  it("reads a request target one way only: dot segments, a backslash and the absolute form reach the same answer as the plain path, and none is forwarded", async () => {
+    upstreamDials.length = 0;
+    const minted = { Authorization: `Bearer ${MINTED_OAUTH_TOKEN}` };
+    for (const target of ["/./v1/mcp_servers", "/a/../v1/mcp_servers", "/.%2e/v1/mcp_servers", "http://api.anthropic.com/v1/mcp_servers"]) {
+      const socket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+      const answered = await requestOn(socket, rawRequest("GET", target, minted));
+      socket.destroy();
+      expect(answered.statusLine, target).toContain(String(HTTP_STATUS.ok));
+      expect(JSON.parse(answered.body), target).toEqual({ data: [], next_page: null });
+    }
+    // A backslash target is refused by the HTTP parser itself or read as a slash; either way nothing is forwarded.
+    const backslash = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+    backslash.write(rawRequest("GET", "\\v1/mcp_servers", minted));
+    await new Promise<void>((resolve) => {
+      backslash.once("close", () => {
+        resolve();
+      });
+      backslash.once("data", () => {
+        backslash.destroy();
+      });
+    });
+    expect(upstreamDials).toEqual([]);
+  }, TEST_TIMEOUT_MS);
+
   it("answers every non-Remote-Control call a self-hosted session makes on this machine, forwarding none, while a native credential is still forwarded", async () => {
     upstreamDials.length = 0;
     const minted = { Authorization: `Bearer ${MINTED_OAUTH_TOKEN}`, "anthropic-beta": "oauth-2025-04-20" };
