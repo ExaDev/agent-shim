@@ -42,6 +42,7 @@ export const RcPendingRequestSummarySchema = z.strictObject({
   type: z.string(),
   summary: z.string(),
   questions: z.readonly(z.array(RcPendingQuestionSchema)).optional(),
+  oversized: z.literal(true).optional(),
   observedAt: z.number(),
 });
 
@@ -61,6 +62,7 @@ const RcSessionStatusSchema = z.strictObject({
   pid: z.number().optional(),
   /** The session's working directory, from its init event or the registry. */
   cwd: z.string().optional(),
+  pendingDropped: z.int().positive().optional(),
 });
 
 /** One event off the client read stream, exactly as the door forwards it to subscribers: the envelope the API host sent, with the fields the door itself relies on typed and the rest (the payload above all) carried verbatim for the consumer to narrow. */
