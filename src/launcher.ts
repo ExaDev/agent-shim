@@ -52,6 +52,7 @@ import { resolveClaudeVersion, type PinnedClaudeVersion } from "./launcher/claud
 import { runLaunchUpdateCheck, type UpdateLaunchPort } from "./update/launchHook";
 import { targetRefs } from "./models/targets";
 import { profileFilePath } from "./config/names";
+import { sameDirectory } from "./sameDirectory";
 
 /**
  * Everything the farm resync needs that the launcher itself has no way to produce: a real filesystem, a real clock, the working directory, and a way to load the cascade for it.
@@ -297,7 +298,17 @@ interface DecidedLaunch {
 }
 
 /**
- * Decides one launch, in order: the `CLAUDE_CONFIG_DIR` escape-hatch check, the identity and configuration-profile decision, the provider decision, the identity's own credential, the ambient-credential guard, the resolved launch flags, the pinned Claude Code version, binary discovery and the argument list.
+ * Says, on the launch's warning stream, that an identity named on the command line outranked the `CLAUDE_CONFIG_DIR` the launch inherited, so the child runs in the identity's directory and not the one a parent session exported. Silent when nothing was set aside, and when the inherited directory already is the identity's own, since nothing then differs from what the caller asked for.
+ */
+function warnOfSupersededConfigDir(warn: (message: string) => void, superseded: string | undefined, identity: string, identityDir: string): void {
+  if (superseded === undefined || path.resolve(superseded) === path.resolve(identityDir) || sameDirectory(superseded, identityDir)) {
+    return;
+  }
+  warn(`agent-shim: the identity named on the command line outranks the inherited CLAUDE_CONFIG_DIR ${superseded}; running as ${identity} in ${identityDir}`);
+}
+
+/**
+ * Decides one launch, in order: the identity decision (with the `CLAUDE_CONFIG_DIR` escape hatch it applies when no identity is named on the command line) and the configuration-profile decision, the provider decision, the identity's own credential, the ambient-credential guard, the resolved launch flags, the pinned Claude Code version, binary discovery and the argument list.
  *
  * With `readOnly` false this is the launch's own first half: a crashed farm swap is recovered before the identity is read, a pool pick is recorded and may wait for a refused pool, and the provider's and the identity's credentials are resolved, which may run a credential command or ask a keychain. With `readOnly` true nothing is written, started or resolved: the farm is left as it is, the pick is not recorded and never waits, and credentials are reported by their block only, so a caller asking what a launch would do changes nothing on the machine.
  *
@@ -314,7 +325,6 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean, onRecorded
     shareFlags: parsedArgv.shareFlags,
     hideFlags: parsedArgv.hideFlags,
   });
-  const configDirEscapeHatchApplies = env.CLAUDE_CONFIG_DIR !== undefined && env.CLAUDE_CONFIG_DIR !== "";
 
   const decidedIdentity = decideIdentity({
     env,
@@ -330,6 +340,9 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean, onRecorded
     },
   });
 
+  // The hatch applies only when the decision says so: an identity named on the command line outranks an inherited `CLAUDE_CONFIG_DIR`, so the variable alone does not make it apply.
+  const configDirEscapeHatchApplies = decidedIdentity.configDirEscapeHatch;
+
   // A pool selector is resolved to one member here, ahead of everything that reads the identity: farm recovery, loading, the credential and the resync all work on the chosen name exactly as if it had been typed.
   const { identityDecision, poolPick, poolRanking, lastRanAs } = pickFromPool(decidedIdentity, params, parsedArgv, readOnly);
 
@@ -340,6 +353,9 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean, onRecorded
     // The identity is reached on disk through its id, the directory it was created under, which a rename leaves alone: the farm, its lock and launch record, the usage snapshot, the login and the session's `CLAUDE_CONFIG_DIR` are all filed under it. There is a farm to manage only when an identity resolved and the caller did not name a configuration directory itself.
     const farmIdentity = configDirEscapeHatchApplies || identityDecision.name === undefined ? undefined : resolveIdentityId(paths.identitiesDir, identityDecision.name, fs);
     const farm = farmIdentity === undefined ? undefined : params.farm;
+    if (!readOnly && farmIdentity !== undefined && identityDecision.name !== undefined) {
+      warnOfSupersededConfigDir(log.warn, identityDecision.supersededConfigDir, identityDecision.name, path.join(paths.identitiesDir, farmIdentity));
+    }
 
     // Recovery runs before the identity is loaded, not merely before the farm is rebuilt: `identity.json` lives inside the farm root, so a crash between the swap's two renames leaves it in a superseded directory. Reading it first would launch with the identity's own configuration profile silently unset.
     if (!readOnly && farm !== undefined && farmIdentity !== undefined) {
@@ -661,11 +677,11 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
 /**
  * Prepares one `claude` launch, in order:
  *
- * `CLAUDE_CONFIG_DIR` escape-hatch check, then the identity/config-profile decision, the provider decision, the identity's own credential, the ambient-credential guard, the config-gated launch-time update check (fired after the decision line and never awaited; see `runLaunchUpdateCheck`), farm resync, version discovery, flag resolution (and, when headroom resolved on, daemon bring-up), the extra-flags split, and the final argument list and environment, returned as a `LaunchPlan` for the caller to spawn. It refuses through `params.proc.exit`, so a caller that is not a command line process passes a `proc` whose `exit` throws.
+ * The identity decision, whose `CLAUDE_CONFIG_DIR` escape hatch applies only when nothing on the command line names an identity, then the config-profile decision, the provider decision, the identity's own credential, the ambient-credential guard, the config-gated launch-time update check (fired after the decision line and never awaited; see `runLaunchUpdateCheck`), farm resync, version discovery, flag resolution (and, when headroom resolved on, daemon bring-up), the extra-flags split, and the final argument list and environment, returned as a `LaunchPlan` for the caller to spawn. It refuses through `params.proc.exit`, so a caller that is not a command line process passes a `proc` whose `exit` throws.
  *
  * A launch that resolves an identity with no `identity.json`, or a configuration profile with no file, is refused with exit 1 naming the missing name and how it was selected: silently proceeding would create a brand-new login for a mistyped `@name`, or launch with a whole cascade layer missing. On a terminal, `src/runClaude.ts` offers to create either before this runs.
  *
- * The farm resync is skipped when `CLAUDE_CONFIG_DIR` was already set (the escape hatch means the user has named a configuration directory explicitly, and agent-shim manages neither its contents nor its lifetime) and when no identity resolved at all (a bare launch against plain `~/.claude`, matching the legacy tool's own behaviour). In both cases there is no agent-shim-managed farm for a resync to act on.
+ * The farm resync is skipped when `CLAUDE_CONFIG_DIR` was already set and no identity was named on the command line (the escape hatch means the user has named a configuration directory explicitly, and agent-shim manages neither its contents nor its lifetime) and when no identity resolved at all (a bare launch against plain `~/.claude`, matching the legacy tool's own behaviour). In both cases there is no agent-shim-managed farm for a resync to act on.
  */
 function prepareRegisteredLaunch(params: PrepareLaunchParams, onRecorded: (remove: () => void) => void): LaunchPlan {
   const { paths, proc, log } = params;

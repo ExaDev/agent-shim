@@ -62,6 +62,8 @@ describe("resolveLaunchSelection", () => {
     expect(resolve({ AGENT_SHIM_IDENTITY: "personal" }).identity).toMatchObject({ name: "personal", source: "env" });
     expect(resolve({ AGENT_SHIM_IDENTITY: "personal" }, { identity: "work" }).identity).toMatchObject({ name: "work", source: "argv" });
     expect(resolve({ CLAUDE_CONFIG_DIR: "/elsewhere" }).identity).toMatchObject({ source: "config-dir-escape-hatch", configDirEscapeHatch: true });
+    expect(resolve({ CLAUDE_CONFIG_DIR: "/elsewhere", AGENT_SHIM_IDENTITY: "personal" }).identity).toMatchObject({ source: "config-dir-escape-hatch", configDirEscapeHatch: true });
+    expect(resolve({ CLAUDE_CONFIG_DIR: "/elsewhere" }, { identity: "work" }).identity).toMatchObject({ name: "work", source: "argv", configDirEscapeHatch: false, supersededConfigDir: "/elsewhere" });
     expect(resolve({}, { configProfile: "strict" }).configProfile).toMatchObject({ name: "strict", source: "cli-flag" });
   });
 

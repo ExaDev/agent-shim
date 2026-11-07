@@ -9,7 +9,7 @@ import type { FsPort } from "./ports";
 
 /** Which precedence rule produced an identity decision. */
 export const IDENTITY_DECISION_SOURCES = [
-  /** `CLAUDE_CONFIG_DIR` was already set: identity resolution is skipped entirely and the real binary uses whatever it already points to. */
+  /** `CLAUDE_CONFIG_DIR` was already set and nothing on the command line names an identity: identity resolution is skipped entirely and the real binary uses whatever it already points to. */
   "config-dir-escape-hatch",
   /** A leading `@name` argv[0] positional, or its explicit form `--identity <name>`. */
   "argv",
@@ -36,8 +36,10 @@ export interface IdentityDecision {
   /** The pool selected by a `pool:<name>` selector, when the launch named a pool instead of an identity. */
   readonly pool?: string;
   readonly source: IdentityDecisionSource;
-  /** True when `CLAUDE_CONFIG_DIR` was already set and every step below was skipped as a result. */
+  /** True when `CLAUDE_CONFIG_DIR` was already set, nothing on the command line named an identity, and every step below was skipped as a result. */
   readonly configDirEscapeHatch: boolean;
+  /** The inherited `CLAUDE_CONFIG_DIR` an identity named on the command line outranked. Present only for a decision whose `source` is `argv` taken while the variable was set; the launch gives the child the identity's own directory in its place and says so, unless that already is the directory. */
+  readonly supersededConfigDir?: string;
 }
 
 /** Reads the persisted active-identity file through `fs`: its trimmed content, or undefined when the file does not exist or is empty. */
@@ -72,19 +74,20 @@ const IDENTITY_SOURCE_LABELS: Readonly<Record<IdentityDecisionSource, string>> =
 };
 
 /** The decision for an identity or `pool:<name>` selector. The selector becomes a directory name under the agent-shim home, whatever supplied it (a command-line argument, the environment, a file), so one that is not an identity name or `pool:<name>` is refused here, naming where it came from, instead of reaching a path. */
-function selected(selector: string, source: IdentityDecisionSource): IdentityDecision {
+function selected(selector: string, source: IdentityDecisionSource, supersededConfigDir?: string): IdentityDecision {
   if (!IdentitySelectorSchema.safeParse(selector).success) {
     throw new UnsafeNameError(selector, "identity", `${FILE_NAME_RULE}, or be pool:<name> for a pool`, IDENTITY_SOURCE_LABELS[source]);
   }
   const pool = poolNameOf(selector);
-  return pool === undefined ? { name: selector, source, configDirEscapeHatch: false } : { pool, source, configDirEscapeHatch: false };
+  const superseded = supersededConfigDir === undefined ? {} : { supersededConfigDir };
+  return pool === undefined ? { name: selector, source, configDirEscapeHatch: false, ...superseded } : { pool, source, configDirEscapeHatch: false, ...superseded };
 }
 
 /**
  * Decides which identity applies to this launch, in precedence order:
  *
- * 1. If `CLAUDE_CONFIG_DIR` is already set, skip identity/cascade resolution entirely: a deliberate carry-forward of the legacy script's own "don't override an explicit launcher" escape hatch.
- * 2. A leading `@name` argv[0] positional, or `--identity <name>`.
+ * 1. A leading `@name` argv[0] positional, or `--identity <name>`. It outranks an inherited `CLAUDE_CONFIG_DIR`, which is ambient (a session agent-shim launched exports it to every child), while the command line is a deliberate choice for this launch; the decision then carries the directory it set aside as `supersededConfigDir`.
+ * 2. If `CLAUDE_CONFIG_DIR` is already set, skip identity/cascade resolution entirely: a deliberate carry-forward of the legacy script's own "don't override an explicit launcher" escape hatch. It sits above `AGENT_SHIM_IDENTITY`, since both come from the environment and naming a configuration directory is the more specific of the two.
  * 3. The `AGENT_SHIM_IDENTITY` environment variable.
  * 4. A directory-pinned identity from a directory rule.
  * 5. The persisted `~/.agent-shim/active-identity` file.
@@ -94,11 +97,12 @@ function selected(selector: string, source: IdentityDecisionSource): IdentityDec
  * An empty string counts as unset for `CLAUDE_CONFIG_DIR` and `AGENT_SHIM_IDENTITY`, consistent with how this project treats empty-string environment variables everywhere else (see `src/paths.ts` and the ambient-credential guard).
  */
 export function decideIdentity(params: DecideIdentityParams): IdentityDecision {
-  if (isNonEmpty(params.env.CLAUDE_CONFIG_DIR)) {
-    return { source: "config-dir-escape-hatch", configDirEscapeHatch: true };
-  }
+  const inheritedConfigDir = isNonEmpty(params.env.CLAUDE_CONFIG_DIR) ? params.env.CLAUDE_CONFIG_DIR : undefined;
   if (isNonEmpty(params.argv0Identity)) {
-    return selected(params.argv0Identity, "argv");
+    return selected(params.argv0Identity, "argv", inheritedConfigDir);
+  }
+  if (inheritedConfigDir !== undefined) {
+    return { source: "config-dir-escape-hatch", configDirEscapeHatch: true };
   }
   if (isNonEmpty(params.env.AGENT_SHIM_IDENTITY)) {
     return selected(params.env.AGENT_SHIM_IDENTITY, "env");
