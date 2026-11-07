@@ -10,8 +10,8 @@ import { createDoorEventHub } from "./eventHub";
 import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog } from "./rcEventLog";
 import type { RcLiveRateLimit } from "./rcSchemas";
 import { RC_CLIENT_PAGE_HTML, RC_CLIENT_PAGE_SCRIPT, RC_CLIENT_PATH, createRcClientPage } from "./rcClientPage";
-import { createRcSessionTracker, RC_IDLE_EXPIRY_MS } from "./rcSessions";
-import type { RcEventWriteResult } from "./rcWrites";
+import { createRcSessionTracker, RC_IDLE_EXPIRY_MS, type RcSessionTracker } from "./rcSessions";
+import type { RcAnswerDecision, RcEventWriteResult } from "./rcWrites";
 import { generateCa, LOOPBACK_LEAF_NAMES, mintLeaf, type CaMaterial } from "./connect";
 import { KEYGEN_TIMEOUT_MS } from "./connectTestWorld";
 import { createFrontDoorServer, listenFrontDoor, type PrePipelineApi } from "./server";
@@ -80,13 +80,103 @@ interface DoorEventLike {
  */
 interface PageSandbox {
   readonly fetch: (input: string, init?: RequestInit) => Promise<Response>;
-  readonly window: { readonly location: { readonly origin: string; readonly search: string } };
+  readonly window: { readonly location: { readonly origin: string; readonly search: string }; readonly alert: (message: string) => void };
+  /** The document the page draws into, present only when a case hands the page a stub one. */
+  readonly document?: StubDocument["document"];
+  /** The page's own view state; a case drawing the pending list sets the nodes it draws into. */
+  ui: unknown;
+  /** The page's pending-list drawing, driven with what the door's own `rc/pending` returned. */
+  renderPending: (pending: unknown) => void;
   rpc: (path: string, input: Readonly<Record<string, unknown>> | undefined) => Promise<unknown>;
   parseSseFrames: (buffer: string) => { readonly frames: readonly SseFrame[]; readonly rest: string };
   sequenceGap: (tracker: Readonly<Record<string, number>>, event: Readonly<DoorEventLike>) => number;
   /** The page's quota rendering of the live read's freshest observation. */
   quotaText: (latest: Readonly<{ observedAt: number; rateLimit: Readonly<Record<string, unknown>> }> | undefined) => string;
   token: string;
+}
+
+/** One node of the stub document: the few element properties the page's drawing reads and writes. */
+interface StubNode {
+  readonly tag: string;
+  className: string;
+  type: string;
+  name: string;
+  value: string;
+  placeholder: string;
+  checked: boolean;
+  readonly children: StubNode[];
+  textContent: string;
+  appendChild: (child: StubNode) => void;
+  addEventListener: (event: string, listener: () => void) => void;
+  click: () => void;
+}
+
+/** A stub document holding just enough of the DOM for the page's pending-list drawing, with lookups over everything drawn. */
+interface StubDocument {
+  readonly document: { readonly createElement: (tag: string) => StubNode; readonly createTextNode: (text: string) => StubNode; readonly getElementById: () => null };
+  readonly root: StubNode;
+  readonly node: (tag: string) => StubNode;
+  readonly find: (match: (node: StubNode) => boolean) => StubNode;
+  readonly findAll: (match: (node: StubNode) => boolean) => readonly StubNode[];
+  readonly alerts: string[];
+}
+
+function stubDocument(): StubDocument {
+  const node = (tag: string): StubNode => {
+    const listeners: (() => void)[] = [];
+    let text = "";
+    const created: StubNode = {
+      tag,
+      className: "",
+      type: "",
+      name: "",
+      value: "",
+      placeholder: "",
+      checked: false,
+      children: [],
+      // Setting the text replaces the children, as the DOM does: the redraw the pending list must not do while the same requests are listed.
+      get textContent() {
+        return text;
+      },
+      set textContent(value: string) {
+        text = value;
+        created.children.length = 0;
+      },
+      appendChild: (child) => {
+        created.children.push(child);
+      },
+      addEventListener: (_event, listener) => {
+        listeners.push(listener);
+      },
+      click: () => {
+        for (const listener of listeners) {
+          listener();
+        }
+      },
+    };
+    return created;
+  };
+  const root = node("div");
+  const walk = (from: StubNode): StubNode[] => [from, ...from.children.flatMap(walk)];
+  const findAll = (match: (candidate: StubNode) => boolean): StubNode[] => walk(root).filter(match);
+  return {
+    document: { createElement: node, createTextNode: (text) => {
+        const created = node("#text");
+        created.textContent = text;
+        return created;
+      }, getElementById: () => null },
+    root,
+    node,
+    find: (match) => {
+      const [first] = findAll(match);
+      if (first === undefined) {
+        throw new Error("the page drew no node the test looked for");
+      }
+      return first;
+    },
+    findAll,
+    alerts: [],
+  };
 }
 
 /** Fails naming the definition the script was expected to provide, so a missing one is loud rather than a silent pass. */
@@ -99,7 +189,9 @@ describe("the door's web client page and its API calls over the door's own TLS",
   let port: number;
   let close: (() => Promise<void>) | undefined;
   // The writes the page drives, recorded so the e2e proves the page's send and answer reach the door's operations.
-  const writes: { readonly kind: "inject" | "answer"; readonly detail: string }[] = [];
+  const writes: { readonly kind: "inject" | "answer"; readonly detail: string; readonly decision?: RcAnswerDecision }[] = [];
+  /** The door's tracker, hoisted so the question case can file a question the door then lists. */
+  let sessionTracker: RcSessionTracker;
   // The door's event backbone, hoisted so the stream case can publish on it and read the event back through the page's own parser.
   const doorEvents = createDoorEventHub();
   /** The live quota observation the mounted door's `usage/live` answers, mutable so the quota case can file one through the door's real read. */
@@ -110,19 +202,19 @@ describe("the door's web client page and its API calls over the door's own TLS",
   // The listener shape the door serves for its operator surfaces: the real server builder with the merged typed API and the page route as its pre-pipeline surfaces, TLS signed by a freshly generated CA, so the page's own GET through the token gate, its fetch calls and the SSE stream all run exactly as they do on a serving door.
   beforeAll(async () => {
     ca = generateCa(new Date());
-    const tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS });
+    sessionTracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS });
     const doorApi = createDoorApiNodeHandler({
       expectedToken: CONTROL_TOKEN,
       paths: buildLayoutPaths("/nonexistent/agent-shim-config-api-unexercised"),
-      list: tracker.list,
-      statusOf: (sessionId?: string) => tracker.statusOf(sessionId),
-      pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
+      list: sessionTracker.list,
+      statusOf: (sessionId?: string) => sessionTracker.statusOf(sessionId),
+      pendingOf: (sessionId?: string) => sessionTracker.pendingOf(sessionId),
       inject: async (session, text) => {
         writes.push({ kind: "inject", detail: `${session}:${text}` });
         return await Promise.resolve({ ok: true, sequenceNums: [SEND_SEQUENCE_NUM] });
       },
-      answer: async (session, request) => {
-        writes.push({ kind: "answer", detail: `${session}:${request}` });
+      answer: async (session, request, decision) => {
+        writes.push({ kind: "answer", detail: `${session}:${request}`, decision });
         return await Promise.resolve({ ok: true, sequenceNums: [ANSWER_SEQUENCE_NUM] });
       },
       interrupt: unexercised,
@@ -200,10 +292,13 @@ describe("the door's web client page and its API calls over the door's own TLS",
   };
 
   /** The shipped page script evaluated the way its unit suite evaluates it, with the door's real TLS as its origin and the generation's token presented. */
-  const pageScript = (): PageSandbox => {
+  const pageScript = (dom?: { readonly document: StubDocument["document"]; readonly alert: (message: string) => void }): PageSandbox => {
     const sandbox: PageSandbox & Record<string, unknown> = {
       fetch: pageFetch,
-      window: { location: { origin: `https://127.0.0.1:${String(port)}`, search: "" } },
+      window: { location: { origin: `https://127.0.0.1:${String(port)}`, search: "" }, alert: dom?.alert ?? ((message: string) => notDefined(`window.alert (${message})`)) },
+      ...(dom === undefined ? {} : { document: dom.document }),
+      ui: null,
+      renderPending: () => notDefined("renderPending"),
       rpc: () => notDefined("rpc"),
       parseSseFrames: () => notDefined("parseSseFrames"),
       sequenceGap: () => notDefined("sequenceGap"),
@@ -237,7 +332,7 @@ describe("the door's web client page and its API calls over the door's own TLS",
     expect(writes.at(-1)).toEqual({ kind: "inject", detail: "cse_page:run the tests" });
 
     expect(await page.rpc("rc/answer", { session: "cse_page", request: "req_page", approve: false, text: "not today" })).toEqual({ session: "cse_page", request: "req_page", sequenceNums: [ANSWER_SEQUENCE_NUM] });
-    expect(writes.at(-1)).toEqual({ kind: "answer", detail: "cse_page:req_page" });
+    expect(writes.at(-1)).toEqual({ kind: "answer", detail: "cse_page:req_page", decision: { approve: false, message: "not today" } });
 
     // The live quota read answers empty while no rate_limit_event has been filed, and the page's own header text states that plainly.
     expect(await page.rpc("usage/live", {})).toEqual({ sessions: [] });
@@ -348,5 +443,45 @@ describe("the door's web client page and its API calls over the door's own TLS",
       stop.abort();
       await reading;
     }
+  });
+  it("lists a pending question with its options, keeps a pick across the poll's redraw, and answers with the picked labels and typed text", async () => {
+    const session = "cse_00000000-0000-4000-8000-0000000000aa";
+    const observed = sessionTracker.observeExchange({ method: "POST", url: `/v1/code/sessions/${session}/worker/heartbeat`, headers: { authorization: "Bearer b" } });
+    observed?.onResponse(HTTP_STATUS.ok, {});
+    observed?.onEnd();
+    const questions = [
+      { question: "Which database?", header: "Database", multiSelect: false, options: [{ label: "Postgres", description: "relational" }, { label: "SQLite", description: "embedded" }] },
+      { question: "Which checks?", multiSelect: true, options: [{ label: "lint", description: "style" }, { label: "test", description: "suite" }] },
+    ];
+    sessionTracker.fileStreamEvent(session, { event_type: "control_request", sequence_num: 1, source: "worker", payload: { type: "control_request", request_id: "req_q", request: { subtype: "can_use_tool", tool_name: "AskUserQuestion", input: { questions } } } });
+
+    const dom = stubDocument();
+    const page = pageScript({ document: dom.document, alert: (message: string) => {
+        dom.alerts.push(message);
+      } });
+    page.ui = { pendingList: dom.root, eventList: dom.node("div"), selected: null, pendingKey: undefined };
+
+    // What the door lists is the questions themselves, through the typed API's real route.
+    const listed = await page.rpc("rc/pending", {});
+    expect(listed).toEqual({ pending: [expect.objectContaining({ requestId: "req_q", questions })] });
+    const pendingOf = (value: unknown): unknown => (typeof value === "object" && value !== null && "pending" in value ? value.pending : []);
+    page.renderPending(pendingOf(listed));
+    const sqlite = dom.find((node) => node.tag === "input" && node.value === "SQLite");
+    sqlite.checked = true;
+    // The 4 s poll lists the same request again; the pick made in between must survive it.
+    page.renderPending(pendingOf(await page.rpc("rc/pending", {})));
+    expect(dom.find((node) => node.tag === "input" && node.value === "SQLite").checked).toBe(true);
+
+    dom.find((node) => node.tag === "input" && node.value === "lint").checked = true;
+    const typed = dom.findAll((node) => node.tag === "input" && node.type === "text" && node.placeholder === "or add your own answer");
+    expect(typed).toHaveLength(1);
+    const [other] = typed;
+    if (other !== undefined) {
+      other.value = "fmt";
+    }
+    dom.find((node) => node.tag === "button" && node.textContent === "Answer").click();
+    await until(() => writes.some((write) => write.detail === `${session}:req_q`));
+    expect(writes.find((write) => write.detail === `${session}:req_q`)?.decision).toEqual({ approve: true, message: undefined, choices: [["SQLite"], ["lint", { text: "fmt" }]] });
+    expect(dom.alerts).toEqual([]);
   });
 });
