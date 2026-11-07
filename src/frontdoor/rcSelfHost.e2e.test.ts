@@ -15,6 +15,7 @@ import { CONNECT_INTERCEPT_HOST, CONNECT_INTERCEPT_HOSTS, CONNECT_TAP_HOSTS, cre
 import { lateRcEventDial, lateRcStreamDial, realConnectEffects, type RcDialTarget } from "./connectEffects";
 import { createProviderRouteResolver } from "./providerRoute";
 import { serveRouted } from "./pipeline";
+import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog, type RcSessionEventLog } from "./rcEventLog";
 import { observingRoutedRoute, createRcSessionTracker, type RcSessionTracker } from "./rcSessions";
 import { answerRcControlRequest, endRcSession, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, sendRcKeepAlive } from "./rcWrites";
 import { createRcSelfHostSurface, type RcSelfHostCredentialRecord } from "./rcSelfHost";
@@ -120,10 +121,15 @@ function rawRequest(method: string, path: string, headers: Readonly<Record<strin
 /** A stand-in for the echo server unmatched piped paths would reach; the e2e never sends one, and the pointer exists so a stray request fails loudly instead of dialling the network. */
 let echoPort = 0;
 
+/** The door generation the session event log stamps, a made-up UUID of the production shape. */
+const SESSION_EVENTS_GENERATION = "00000000-0000-4000-8000-0000000000f1";
+
 describe("the self-hosted Remote Control mode end to end", () => {
   let ca: CaMaterial;
   let surface: ReturnType<typeof createRcSelfHostSurface>;
   let tracker: RcSessionTracker;
+  /** The door's session event log, fed by the tracker exactly as the door wires it, so the all-sessions stream's view of a self-hosted session is asserted against the real assembly. */
+  let sessionEvents: RcSessionEventLog;
   let hub: RcStreamHub;
   let connectHandle: Awaited<ReturnType<typeof startConnectServer>>;
   let transparentPort: number;
@@ -153,7 +159,8 @@ describe("the self-hosted Remote Control mode end to end", () => {
       // The real production fetch dial, with the private-address refusal lifted because this world's fetch targets are loopback stand-ins the test itself starts.
       webFetch: realRcWebFetch({ allowPrivate: true }),
     });
-    tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: 45_000 });
+    sessionEvents = createRcSessionEventLog({ generation: SESSION_EVENTS_GENERATION, capacity: RC_SESSION_EVENT_LOG_CAPACITY });
+    tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: 45_000, onTransition: sessionEvents.append, onClose: sessionEvents.close });
     fanout = createRcEventFanout();
     /** The door's own client half dials the door's own transparent surface: the target is known only once the listener has bound, exactly the production wiring. */
     const resolveTarget = (): RcDialTarget | undefined => dialTarget;
@@ -321,7 +328,31 @@ describe("the self-hosted Remote Control mode end to end", () => {
     expect(((response?.envelope.payload as Record<string, unknown>).response as Record<string, unknown>).request_id).toBe("req-1");
     expect(tracker.pendingOf(sessionId).map((request) => request.requestId)).not.toContain("req-1");
 
+    // The all-sessions event stream sees the self-hosted session exactly as a session on the real service: the worker turning busy, then the session archived by its client.
+    const mid = sessionEvents.head();
+    const busySocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+    expect((await requestOn(busySocket, rawRequest("PUT", `/v1/code/sessions/${sessionId}/worker`, { Authorization: `Bearer ${bridge.worker_jwt}`, "Content-Type": "application/json" }, JSON.stringify({ worker_status: "running", worker_epoch: 1 })))).statusLine).toContain("200");
+    busySocket.destroy();
     workerStream.destroy();
+    const archiveSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+    expect((await requestOn(archiveSocket, rawRequest("POST", `/v1/code/sessions/${sessionId}/archive`, { Authorization: `Bearer ${MINTED_OAUTH_TOKEN}`, "Content-Type": "application/json" }, "{}"))).statusLine).toContain("200");
+    archiveSocket.destroy();
+    await waitUntil(() => !tracker.list().some((session) => session.id === sessionId));
+    const whole = sessionEvents.read({ session: sessionId });
+    if (whole.status !== "ok") {
+      throw new Error(whole.message);
+    }
+    expect(whole.events.map(({ kind, ...rest }) => ({ kind, ...("state" in rest ? { state: rest.state } : {}), ...("requestId" in rest ? { requestId: rest.requestId } : {}), ...("reason" in rest ? { reason: rest.reason } : {}) }))).toEqual([
+      { kind: "session-appeared" },
+      { kind: "worker-state", state: "idle" },
+      { kind: "pending-born", requestId: "req-1" },
+      { kind: "pending-retired", requestId: "req-1", reason: "answered" },
+      { kind: "worker-state", state: "running" },
+      { kind: "session-ended", reason: "archived" },
+    ]);
+    // A resume after the cursor read before the turn replays exactly what followed it.
+    const resumed = sessionEvents.read({ since: mid, session: sessionId });
+    expect(resumed.status === "ok" ? resumed.events.map((event) => event.kind) : []).toEqual(["worker-state", "session-ended"]);
   }, TEST_TIMEOUT_MS);
 
   it("delivers the wider control-verb family to the worker through the door's own surface, and the worker's answers flow back on the held client stream", async () => {
