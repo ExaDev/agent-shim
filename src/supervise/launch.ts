@@ -20,6 +20,7 @@ import { createCompactionDeps } from "./compactionDeps";
 import { quotaHitOf } from "./limit";
 import { createLifecycleRecorder } from "./lifecycle";
 import { currentConversation, hooksPending } from "./hookGuard";
+import { COMPACT_TIMEOUT_MS } from "./compactTimeout";
 import { compactInSession, sessionControlReady } from "./sessionControl";
 import { stageSessionControlPlugin, withSessionControlPlugin } from "./sessionControlPlugin";
 import { markHooksSettings } from "./marks";
@@ -117,7 +118,7 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
         },
         compact: createRealCompactor({ paths, spawnDaemon: params.spawnDaemon }),
       });
-      compaction = { ...baseCompaction, live: { ready: () => sessionControlReady(plugin), compact: async (conversationId, signal) => await compactInSession(plugin, conversationId, signal) } };
+      compaction = { ...baseCompaction, live: { ready: () => sessionControlReady(plugin), compact: async (conversationId, signal) => await compactInSession(plugin, conversationId, { signal, expiresInMs: COMPACT_TIMEOUT_MS }) } };
   }
   const mover = createMover({
     paths,
