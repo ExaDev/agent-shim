@@ -105,7 +105,7 @@ interface RcSessionRecord {
   anthropicVersion: string | undefined;
   /** The most recent `anthropic-client-platform` value observed on this session's calls. */
   anthropicClientPlatform: string | undefined;
-  /** The session's control requests awaiting an answer, keyed by the id a `control_response` must echo. An entry lives exactly as long as the worker waits on it: until a `control_response` answers it, the worker withdraws it with a `control_cancel_request`, an accepted registration names `idle` or a new worker epoch, or the session itself expires. The worker sets no deadline of its own (the captured fixture `fixtures/rc-question-2.1.319.json` holds a question answered well past the fourteen seconds once allowed, and the session continued). */
+  /** The session's control requests awaiting an answer, keyed by the id a `control_response` must echo. An entry lives exactly as long as the worker waits on it: until a `control_response` answers it, the worker withdraws it with a `control_cancel_request`, an accepted registration names `idle` or a new worker epoch, or the session itself expires. The worker sets no deadline of its own, so time alone never retires an entry. */
   readonly pending: Map<string, RcPendingRequestRecord>;
   /** The control requests that stopped awaiting an answer, keyed by id, with when they retired, oldest first and bounded by `RC_RETIRED_TOMBSTONES_MAX`. The same request crosses the door on the worker's event write and again on the client read stream, and a stream replay can repeat it later still; remembering the retirement is what stops a later copy from birthing a request already answered, since no deadline bounds when that copy can arrive. */
   readonly retired: Map<string, number>;
