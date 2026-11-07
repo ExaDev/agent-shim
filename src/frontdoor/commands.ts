@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
@@ -72,17 +72,14 @@ import { FRONTDOOR_START_TIMEOUT_MS } from "./ensure";
 import type { ListenSource, Predecessor } from "./handover";
 import { predecessorOfThisProcess, realHandOverListeners } from "./realHandover";
 import { realRestartFrontDoor } from "./realFrontDoorPort";
-import { MINTED_TOKEN_RANDOM_BYTES, registerRcCommand } from "./rcCommands";
+import { registerRcCommand } from "./rcCommands";
 import { createRcControlHandler } from "./rcControl";
 import { createRcCredentialStore } from "./rcCredentialStore";
 import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog } from "./rcEventLog";
 import { createRcLiveUsage } from "./rcLiveUsage";
 import { createRcClientPage } from "./rcClientPage";
-import { createRcSelfHostSurface, rcSelfHostFromEnv } from "./rcSelfHost";
-import { backfillRcSelfHostIdentity, readRcSelfHostRecord } from "./rcSelfHostMint";
-import { createRcSelfHostLaunchCheck } from "./rcSelfHostLaunches";
-import { parentTable, peerProcessOf } from "./peerProcess";
-import { realRcWebFetch, rcWebFetchAllowsPrivateFromEnv } from "./rcWebFetch";
+import { rcSelfHostFromEnv } from "./rcSelfHost";
+import { attributeRcSelfHostMint, createRealRcSelfHostSurface } from "./rcSelfHostWiring";
 import { realRcSessionRegistryFs } from "./rcSessionRegistryFs";
 import { createRcSessionRegistryReader, rcRegistryIdentitiesOf, rcStatusWithRegistry } from "./rcSessionRegistry";
 import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, isRcSessionExchange, observingRoutedRoute } from "./rcSessions";
@@ -236,23 +233,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     return selfHostDialTarget;
   };
 
-  // The mode's one discriminator: a CONNECT tunnel is a self-hosted session's when its launch runs the minted identity, and a redirected connection when the process holding its other end descends from such a launch; every request, upgrade and blind tunnel of such a session is the mode's, whatever it presents.
-  const rcSelfHostOwnership = rcSelfHost
-    ? createRcSelfHostLaunchCheck({ fs: realFarmFs, sessionsDir: paths.frontdoorSessionsDir, launchesDir: paths.launchesDir, identitiesDir: paths.identitiesDir, mintedRecord: () => readRcSelfHostRecord(realFarmFs, paths.frontdoorDir), peerProcessOf, parentTable, doorPid: process.pid })
-    : undefined;
-  // The served CCR surface itself: one per door process, in memory only. Its route rides the resolver below (so its exchanges are observed by the tracker exactly as the real host's are), and its local answers ride the connect surface's config.
-  const rcSelfHostSurface = rcSelfHostOwnership !== undefined
-    ? createRcSelfHostSurface({
-        now: () => Date.now(),
-        newUuid: randomUUID,
-        randomToken: () => randomBytes(MINTED_TOKEN_RANDOM_BYTES).toString("base64url"),
-        credentialRecord: () => readRcSelfHostRecord(realFarmFs, paths.frontdoorDir),
-        webFetch: realRcWebFetch({ allowPrivate: rcWebFetchAllowsPrivateFromEnv(process.env) }),
-        ownsLaunch: rcSelfHostOwnership.ownsLaunch,
-        ownsPeer: rcSelfHostOwnership.ownsPeer,
-        log,
-      })
-    : undefined;
+  // The served CCR surface itself, with the mode's one ownership discriminator: a CONNECT tunnel is a self-hosted session's when its launch runs the minted identity, and a redirected connection when the process holding its other end descends from such a launch.
+  const rcSelfHostSurface = rcSelfHost ? createRealRcSelfHostSurface(paths, process.pid, process.env, log) : undefined;
 
   // The Remote Control session record: one per door process, in memory only, fed by every resolved route's served exchanges. Wrapping the resolver (rather than any one listener) is what lets whichever pipeline serves a `/v1/code/sessions` exchange observe it, and the wrapper is inert for every path outside the Remote Control prefix. The client credential and the stream's sequence cursor are the two parts that must outlive the process (a session outlives any one door generation, only client-half calls state the OAuth bearer, and a generation that lost the cursor would re-read the stream from its head), so both are persisted per session in one owner-only file and read back by whichever generation needs them.
   const rcCredentialStore = createRcCredentialStore(realFarmFs, paths.frontdoorRcCredentialsDir);
@@ -689,13 +671,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         if (wantedTransparentPort === undefined || Number.isNaN(wantedTransparentPort)) {
           log("self-hosted Remote Control surface: AGENT_SHIM_TRANSPARENT_SURFACE is not set, so nothing redirects the CLI's Remote Control traffic to this door and the door's own client half has no surface to dial; set it to the interception port the mode is deployed with");
         }
-        // A mint from before the record named its identity is attributed to the identity holding its credential, so existing users keep their native sessions; only one no single identity holds is left to refuse every launch.
-        const backfill = backfillRcSelfHostIdentity(realFarmFs, paths.identitiesDir, paths.frontdoorDir);
-        if (backfill.kind === "backfilled") {
-          log(`self-hosted Remote Control surface: recorded the minted credential's identity (${backfill.identityId}), which the mint predated recording`);
-        } else if (backfill.kind === "unmatched") {
-          log(`self-hosted Remote Control surface: the minted credential names no identity and ${String(backfill.holders)} identities hold it, so no launch can be told apart from it and every launch's calls on the intercepted hosts are refused until the identity is minted again (agent-shim frontdoor rc selfhost mint <identity>)`);
-        }
+        attributeRcSelfHostMint(paths, log);
       }
       const server = await startConnectServer(
         {

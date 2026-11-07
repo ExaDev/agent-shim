@@ -87,6 +87,19 @@ describe("the self-hosted mode's routing split on the API host", () => {
   });
 });
 
+describe("a path no named answer serves", () => {
+  it("is answered from the offline table whatever the request presents, never left to be forwarded", async () => {
+    const { port, decisions } = await serveLocal("api.anthropic.com", RECORD);
+    const presentations: readonly Readonly<Record<string, string>>[] = [{}, { authorization: `Bearer ${RECORD.accessToken}` }, { authorization: "Bearer a-real-login-token" }, { "x-api-key": "a-real-api-key" }];
+    for (const presented of presentations) {
+      const offline = await call(port, "GET", "/api/nothing", undefined, presented);
+      expect(offline.status).toBe(HTTP_STATUS.notFound);
+      expect(offline.body).toContain("self-hosted Remote Control mode serves nothing at /api/nothing");
+    }
+    expect(Object.values(decisions).every(Boolean)).toBe(true);
+  });
+});
+
 describe("a mint that names no identity", () => {
   it("is refused on every call, with the instruction to mint again", async () => {
     const { accessToken, refreshToken, organizationUuid, accountUuid } = RECORD;
