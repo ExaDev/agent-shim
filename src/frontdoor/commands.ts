@@ -84,10 +84,10 @@ import { createRcSessionRegistryReader, rcRegistryIdentitiesOf } from "./rcSessi
 import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, isRcSessionExchange, observingRoutedRoute } from "./rcSessions";
 import { targetRefs } from "../models/targets";
 import { createRcStatusResolver } from "./rcStatus";
-import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, readRcWorkerState, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
+import { answerRcControlRequest, authenticateRcSessionMcpServer, perSessionRcEventDial, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, readRcWorkerState, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
 import { createDoorRcSessionCommands } from "./doorSessionCommands";
 import { createRcClaudeCodeVersions, rcSelfHostEventDial, selfHostSurfaceUnboundReason } from "./rcSelfHostCommands";
-import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
+import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, perSessionRcStreamDial, type RcStreamHub } from "./rcStream";
 import type { RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
 import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_COOLDOWN_CAP_MS, DOOR_RESPAWN_DELAY_ENV, DOOR_RESPAWN_GENERATION_ENV, DOOR_RESPAWN_MAX_GENERATIONS, DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startNextRespawnGeneration, startThreadWatchdog, type RespawnChainParams } from "./watchdog";
@@ -275,7 +275,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     sequenceNumOf: rcTracker.sequenceNumOf,
     storedSequenceNumOf: rcCredentialStore.readCursor,
     saveSequenceNum: rcCredentialStore.writeCursor,
-    dial: rcSelfHost ? lateRcStreamDial(rcSelfHostDialTarget) : realRcStreamDial(),
+    // Chosen per session: a session the door's own self-hosted service holds attaches to it through the door's own surface, and any other attaches to the real service.
+    dial: rcSelfHostSurface === undefined ? realRcStreamDial() : perSessionRcStreamDial(rcSelfHostSurface.holdsSession, lateRcStreamDial(rcSelfHostDialTarget), realRcStreamDial()),
     fanout: rcFanout,
     newClientId: randomUUID,
     backoffMs: RC_STREAM_BACKOFF_MS,
@@ -524,9 +525,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     startProviderListener: async (source) => {
       const authority = loadCa();
       // The write operations the control routes and the typed API both carry out: the door itself dials the real API host over its interception-proof agent, using the observed credential, which is why the CLI never dials the API directly. A confirmed write advances the session's sequence cursor through the tracker, so a stream resume continues after the door's own events too. In the self-hosted mode the dial's target is resolved per call so it names the door's own surface once that has bound.
-      const rcDial = rcSelfHost ? lateRcEventDial(rcSelfHostDialTarget) : realRcEventDial();
-      // The real API host's dial, whatever the mode: the status read's service backend, for sessions created against claude.ai.
-      const rcServiceDial = rcSelfHost ? realRcEventDial() : rcDial;
+      // Chosen per session, as the stream's is: the door's own surface for a session its self-hosted service holds, the real API host for any other.
+      const rcDial = rcSelfHostSurface === undefined ? realRcEventDial() : perSessionRcEventDial(rcSelfHostSurface.holdsSession, lateRcEventDial(rcSelfHostDialTarget), realRcEventDial());
       const rcInject = async (sessionId: string, text: string) =>
         await injectRcUserMessage({ credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial, newUuid: randomUUID }, sessionId, text);
       // The status the control routes and the typed API serve: the tracker's, with the worker state of any session that has none read from the service on the same dial and credential as the writes, and every session registered on this machine (in the shared Claude home's registry or any identity's) that the tracker holds no record of.
@@ -538,10 +538,10 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         registry: createRcSessionRegistryReader({ fs: realRcSessionRegistryFs, identities: () => rcRegistryIdentitiesOf(paths), isRunning: realIsProcessAlive }),
         identityNameOf: usageEventNames.nameOf,
         persistedCredentialOf: rcCredentialStore.read,
-        // Chosen per session: a session the door's own self-hosted service holds is read from it in process, and any other is read from the real service with its OAuth credential, over a dial to the real API host even in self-hosted mode (where the writes' dial points at the door's own surface, which would observe the read as the session's traffic).
+        // Chosen per session: a session the door's own self-hosted service holds is read from it in process (a dial to the door's own surface would be observed as the session's traffic), and any other is read from the real service with its OAuth credential, which the per-session dial sends to the real API host.
         backends: {
           ...(rcSelfHostSurface === undefined ? {} : { selfHosted: { holds: rcSelfHostSurface.holdsSession, read: rcSelfHostSurface.readWorkerState } }),
-          service: async (sessionId, credentialOf) => await readRcWorkerState({ credentialOf, dial: rcServiceDial }, sessionId),
+          service: async (sessionId, credentialOf) => await readRcWorkerState({ credentialOf, dial: rcDial }, sessionId),
         },
         now: () => Date.now(),
       });

@@ -38,6 +38,7 @@ import {
   rcEventWriteResultFromAnswer,
   RC_WORKER_READ_ANSWER_EXCERPT_CHARS,
   RC_WORKER_READ_TIMEOUT_MS,
+  perSessionRcEventDial,
   readRcSessionFile,
   readRcWorkerState,
   reconnectRcSessionMcpServer,
@@ -969,5 +970,32 @@ describe("reading a session's worker state from the service", () => {
       const { dial } = readingDial(async () => await Promise.resolve({ status: HTTP_STATUS.ok, body }));
       expect(await readRcWorkerState({ credentialOf: tracker.credentialOf, dial }, SESSION_ID)).toEqual({ ok: false, message: expect.stringContaining("without a worker.worker_status") as unknown });
     }
+  });
+});
+
+describe("the per-session choice of write dial", () => {
+  it("sends a session the self-hosted service holds to the door's own surface, and every other session to the real service", async () => {
+    const calls: string[] = [];
+    const recording = (backend: string): RcEventDial => ({
+      writeEvents: async (sessionId) => {
+        calls.push(`${backend} events ${sessionId}`);
+        return await Promise.resolve({ status: HTTP_STATUS.ok, body: "{}" });
+      },
+      writeTeleportEvents: async (sessionId) => {
+        calls.push(`${backend} teleport ${sessionId}`);
+        return await Promise.resolve({ status: HTTP_STATUS.ok, body: "{}" });
+      },
+      readWorker: async (sessionId) => {
+        calls.push(`${backend} worker ${sessionId}`);
+        return await Promise.resolve({ status: HTTP_STATUS.ok, body: "{}" });
+      },
+    });
+    const selfHostedId = "cse_00000000-0000-4000-8000-0000000000a1";
+    const dial = perSessionRcEventDial((id) => id === selfHostedId, recording("self-hosted"), recording("service"));
+    await dial.writeEvents(selfHostedId, {}, "{}");
+    await dial.writeEvents(SESSION_ID, {}, "{}");
+    await dial.writeTeleportEvents(SESSION_ID, {}, "{}");
+    await dial.readWorker(selfHostedId, {}, new AbortController().signal);
+    expect(calls).toEqual([`self-hosted events ${selfHostedId}`, `service events ${SESSION_ID}`, `service teleport ${SESSION_ID}`, `self-hosted worker ${selfHostedId}`]);
   });
 });

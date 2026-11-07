@@ -173,6 +173,16 @@ export interface RcStreamDial {
   readonly openStream: (sessionId: string, headers: Readonly<Record<string, string>>, resume: { readonly fromSequenceNum: number } | undefined, signal: AbortSignal) => Promise<RcStreamAnswer>;
 }
 
+/** The stream dial's per-session backend choice, for the same reason as `perSessionRcEventDial`: a session the door's own self-hosted service holds attaches to it, and every other session to the real service. */
+export function perSessionRcStreamDial(holdsSelfHosted: (sessionId: string) => boolean, selfHosted: RcStreamDial, service: RcStreamDial): RcStreamDial {
+  const dialOf = (sessionId: string): RcStreamDial => (holdsSelfHosted(sessionId) ? selfHosted : service);
+  return {
+    announcePresence: async (sessionId, headers, clientId, clear) => await dialOf(sessionId).announcePresence(sessionId, headers, clientId, clear),
+    markRead: async (sessionId, headers, eventId) => await dialOf(sessionId).markRead(sessionId, headers, eventId),
+    openStream: async (sessionId, headers, resume, signal) => await dialOf(sessionId).openStream(sessionId, headers, resume, signal),
+  };
+}
+
 /** The fan-out every stream event is handed to: the tracker files what it recognises, and each subscriber receives the event beside it. */
 export interface RcEventFanout {
   /** Delivers one event to every subscriber listening for its session (or for every session), synchronously, in publication order. */

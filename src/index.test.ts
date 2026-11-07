@@ -379,6 +379,8 @@ describe("library surface", () => {
       "parseConnectTarget",
       "parseRcGoalOutput",
       "parseRcStreamEnvelope",
+      "perSessionRcEventDial",
+      "perSessionRcStreamDial",
       "planOf",
       "poolIdentities",
       "poolSelectedByLaunch",

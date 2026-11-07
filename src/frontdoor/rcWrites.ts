@@ -55,6 +55,18 @@ export interface RcEventDial {
 }
 
 /**
+ * A dial that chooses its backend per session: the door's own self-hosted Remote Control service for a session it holds (one created against the door itself, with no Anthropic login), and the real service for every other session (one created against claude.ai). One door serves both kinds at once, so a door in self-hosted mode still reaches a claude.ai session's real service, and never sends a self-hosted session's writes to claude.ai.
+ */
+export function perSessionRcEventDial(holdsSelfHosted: (sessionId: string) => boolean, selfHosted: RcEventDial, service: RcEventDial): RcEventDial {
+  const dialOf = (sessionId: string): RcEventDial => (holdsSelfHosted(sessionId) ? selfHosted : service);
+  return {
+    writeEvents: async (sessionId, headers, body) => await dialOf(sessionId).writeEvents(sessionId, headers, body),
+    writeTeleportEvents: async (sessionId, headers, body) => await dialOf(sessionId).writeTeleportEvents(sessionId, headers, body),
+    readWorker: async (sessionId, headers, signal) => await dialOf(sessionId).readWorker(sessionId, headers, signal),
+  };
+}
+
+/**
  * What one client-half write produced: the sequence numbers the real service assigned, or a verbose failure message ready to show a user. A write that carried a `control_request` also names the request id it minted, because the worker's `control_response` echoes exactly that id on the stream: a consumer that wants the answer matches it there, and the id is surfaced here since only the door ever knew it.
  */
 export type RcEventWriteResult = { readonly ok: true; readonly sequenceNums: readonly number[]; readonly requestId?: string } | { readonly ok: false; readonly message: string };
