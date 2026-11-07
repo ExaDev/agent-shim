@@ -8,6 +8,8 @@ import { createRcSelfHostLaunchCheck } from "./rcSelfHostLaunches";
 const SELF_HOSTED_PID = 4101;
 const NATIVE_PID = 4102;
 const STARTED_AT_MS = 1_700_000_000_000;
+/** The first launcher pid the directory cases number their entries from. */
+const LAUNCH_PID_BASE = 4200;
 
 /**
  * A door state where launch SELF_HOSTED_PID runs the identity whose id is `rig` (the minted one, since renamed `rig2`) and launch NATIVE_PID runs the identity whose id is `work-2` (a suffixed id, created while another `work` existed) and is named `rig`, so a lookup of the minted id by name would find the wrong identity. The launch records are written by the launcher's own `registerLaunch`, from the id the launcher resolves, exactly as a real launch writes them.
@@ -64,6 +66,7 @@ const checks = (minted: string | undefined, record: "none" | "legacy" | "current
     fs: world(),
     sessionsDir: "/state/frontdoor/sessions",
     launchesDir: "/state/launches",
+    identitiesDir: "/state/identities",
     mintedRecord: () => (record === "none" ? undefined : record === "legacy" ? RECORD_FIELDS : { ...RECORD_FIELDS, ...(minted === undefined ? {} : { identityId: minted }) }),
     peerProcessOf: async (port) => await Promise.resolve(PORT_OWNERS.get(port)),
     parentTable: async () => await Promise.resolve(tables.parents),
@@ -109,5 +112,57 @@ describe("which redirected connections the self-hosted mode owns", () => {
     expect(await checks("rig", "current", { parents: undefined }).ownsPeer(NATIVE_PORT)).toBe(true);
     expect(await checks(undefined, "none").ownsPeer(UNHELD_PORT)).toBe(false);
     expect(await checks(undefined, "legacy").ownsPeer(NATIVE_PORT)).toBe(true);
+  });
+});
+
+/** The cases that make no redirected connection hold no peer at all. */
+const NO_PEERS: ReadonlyMap<number, number> = new Map();
+
+describe("attributing a launch by the configuration directory its session names", () => {
+  /** A door state holding one session entry per case's launch, each written as the launcher writes it. */
+  const withSessions = (entries: Readonly<Record<string, Readonly<Record<string, unknown>>>>): ReturnType<typeof createRcSelfHostLaunchCheck> => {
+    const fs = createFakeFarmFs(Object.fromEntries(Object.entries(entries).map(([capability, extra], index) => [`/state/frontdoor/sessions/${String(LAUNCH_PID_BASE + index)}.json`, JSON.stringify({ pid: LAUNCH_PID_BASE + index, startedAt: STARTED_AT_MS, token: capability, ...extra })])));
+    return createRcSelfHostLaunchCheck({
+      fs,
+      sessionsDir: "/state/frontdoor/sessions",
+      launchesDir: "/state/launches",
+      identitiesDir: "/state/identities",
+      mintedRecord: () => ({ ...RECORD_FIELDS, identityId: "rig" }),
+      peerProcessOf: async (port) => await Promise.resolve(NO_PEERS.get(port)),
+      parentTable: async () => await Promise.resolve(PARENTS),
+      doorPid: DOOR_PID,
+    });
+  };
+
+  it("owns a launch whose child runs in the minted identity's directory, an escape-hatch launch pointed at it included, and no other directory", () => {
+    const checked = withSessions({ "cap-own": { configDir: "/state/identities/rig" }, "cap-hatch": { configDir: "/state/identities/./rig/" }, "cap-other": { configDir: "/state/identities/work-2" }, "cap-default": { configDir: "/home/user/.claude" } });
+    expect(checked.ownsLaunch("cap-own")).toBe(true);
+    expect(checked.ownsLaunch("cap-hatch")).toBe(true);
+    expect(checked.ownsLaunch("cap-other")).toBe(false);
+    expect(checked.ownsLaunch("cap-default")).toBe(false);
+  });
+
+  it("fails closed for an older launcher's entry that names neither a directory nor a launch record", () => {
+    expect(withSessions({ "cap-legacy": {} }).ownsLaunch("cap-legacy")).toBe(true);
+  });
+
+  it("decides a reused pid by the entry the new launch wrote, never by a crashed launcher's", () => {
+    const fs = createFakeFarmFs({ [`/state/frontdoor/sessions/${String(SELF_HOSTED_PID)}.json`]: JSON.stringify({ pid: SELF_HOSTED_PID, startedAt: STARTED_AT_MS, token: "cap-crashed", configDir: "/state/identities/rig" }) });
+    const running = (): boolean => true;
+    // The crashed self-hosted launcher's launch record survives; the native launcher reusing its pid writes its own registry entry over the crashed one's.
+    registerLaunch(fs, "/state/launches", { pid: SELF_HOSTED_PID, identity: "rig", startedAtMs: STARTED_AT_MS }, running);
+    fs.seed({ [`/state/frontdoor/sessions/${String(SELF_HOSTED_PID)}.json`]: JSON.stringify({ pid: SELF_HOSTED_PID, startedAt: STARTED_AT_MS + 1, token: "cap-reused", configDir: "/state/identities/work-2" }) });
+    const checked = createRcSelfHostLaunchCheck({
+      fs,
+      sessionsDir: "/state/frontdoor/sessions",
+      launchesDir: "/state/launches",
+      identitiesDir: "/state/identities",
+      mintedRecord: () => ({ ...RECORD_FIELDS, identityId: "rig" }),
+      peerProcessOf: async (port) => await Promise.resolve(NO_PEERS.get(port)),
+      parentTable: async () => await Promise.resolve(PARENTS),
+      doorPid: DOOR_PID,
+    });
+    expect(checked.ownsLaunch("cap-reused")).toBe(false);
+    expect(checked.ownsLaunch("cap-crashed")).toBe(false);
   });
 });

@@ -235,7 +235,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
 
   // The mode's one discriminator: a CONNECT tunnel is a self-hosted session's when its launch runs the minted identity, and a redirected connection when the process holding its other end descends from such a launch; every request, upgrade and blind tunnel of such a session is the mode's, whatever it presents.
   const rcSelfHostOwnership = rcSelfHost
-    ? createRcSelfHostLaunchCheck({ fs: realFarmFs, sessionsDir: paths.frontdoorSessionsDir, launchesDir: paths.launchesDir, mintedRecord: () => readRcSelfHostRecord(realFarmFs, paths.frontdoorDir), peerProcessOf, parentTable, doorPid: process.pid })
+    ? createRcSelfHostLaunchCheck({ fs: realFarmFs, sessionsDir: paths.frontdoorSessionsDir, launchesDir: paths.launchesDir, identitiesDir: paths.identitiesDir, mintedRecord: () => readRcSelfHostRecord(realFarmFs, paths.frontdoorDir), peerProcessOf, parentTable, doorPid: process.pid })
     : undefined;
   // The served CCR surface itself: one per door process, in memory only. Its route rides the resolver below (so its exchanges are observed by the tracker exactly as the real host's are), and its local answers ride the connect surface's config.
   const rcSelfHostSurface = rcSelfHostOwnership !== undefined

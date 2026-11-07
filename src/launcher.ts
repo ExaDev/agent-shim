@@ -787,7 +787,8 @@ function prepareRegisteredLaunch(params: PrepareLaunchParams, onRecorded: (remov
   const sessionId = params.supervised?.sessionId ?? randomUUID();
   const resolvedModels = decided.models ?? (decided.globalModels === undefined ? undefined : {});
   const sessionModels = isDeepStrictEqual(resolvedModels, decided.globalModels) ? undefined : resolvedModels;
-  const session = { sessionId, ...(decided.farmIdentity === undefined ? {} : { identity: decided.farmIdentity }), ...(sessionModels === undefined ? {} : { models: sessionModels }) };
+  // The configuration directory the child runs with is always named to the door: the decision's, or Claude Code's own default when the launch names none, so a session record without one can only be an older launcher's.
+  const session = { sessionId, ...(decided.farmIdentity === undefined ? {} : { identity: decided.farmIdentity }), ...(sessionModels === undefined ? {} : { models: sessionModels }), configDir: decision.configDir ?? path.join(os.homedir(), ".claude") };
   let frontDoor = frontDoorEngaged && frontDoorPort !== undefined ? frontDoorPort.ensure(env.NODE_EXTRA_CA_CERTS, session) : undefined;
   if (frontDoor !== undefined && frontDoorPort !== undefined) {
     let beforePid = frontDoor.supervisorPid;

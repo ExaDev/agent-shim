@@ -41,9 +41,11 @@ export function readCatalogueStatus(fs: Pick<HeadroomFs, "readFileUtf8">, paths:
  *
  * Protocol 8: a launch's registry record names the identity the launch runs as, so the door attributes a request that carries no identity header (Remote Control's calls ride the capability the tunnel supplies) to the launch's identity. The record's schema is strict, so a protocol 7 door cannot read a record with the new field and would refuse the launch; it is replaced rather than joined.
  *
+ * Protocol 9: a launch's session record names the configuration directory its child runs with (`configDir`), which the self-hosted Remote Control mode attributes launches by. A protocol 8 door reads session records strictly, so it would reject this launcher's record and refuse the launch's every request.
+ *
  * The rule that makes a bump safe: a door accepts every lower protocol's launches (protocol 1 accepts the former `x-claude-use-*` header names), and a launcher replaces a door whose protocol is lower than its own, never one that is higher. Replacing is safe because restarts are what the door is designed for: the capability registry is on disk and the listeners keep their sticky ports, so launches already running reach the replacement on the addresses they froze at launch.
  */
-export const FRONT_DOOR_PROTOCOL = 8;
+export const FRONT_DOOR_PROTOCOL = 9;
 
 /** The first protocol whose door hands its listeners over on `SIGUSR2` (see protocol 6 above): a launcher sends that request only to a door recording this protocol or a later one. */
 export const FRONT_DOOR_HANDOVER_PROTOCOL = 6;
@@ -51,7 +53,7 @@ export const FRONT_DOOR_HANDOVER_PROTOCOL = 6;
 /**
  * The record held in one front-door session-registry file: the launcher's pid plus the per-launch capability token its child presents on every request, and the supervisor of the door the launch was sent to. `sessionId` is the id the launch's requests carry in their session header, and `models` the models block this launch resolved when its directory, profile or committed file added definitions of its own to the global block (absent otherwise, so the door follows the global block live). `supervisorPid` is absent on a record written before it existed and on a door's own transparent-surface record; such a launch cannot be attributed to a door, so a superseded door treats it as its own.
  */
-const FrontDoorSessionSchema = z.strictObject({ pid: z.number().int().positive(), startedAt: z.number(), token: z.string().min(1), supervisorPid: z.number().int().positive().optional(), sessionId: z.string().min(1).optional(), identity: z.string().min(1).optional(), models: ModelsConfigSchema.optional() });
+const FrontDoorSessionSchema = z.strictObject({ pid: z.number().int().positive(), startedAt: z.number(), token: z.string().min(1), supervisorPid: z.number().int().positive().optional(), sessionId: z.string().min(1).optional(), identity: z.string().min(1).optional(), models: ModelsConfigSchema.optional(), configDir: z.string().min(1).optional() });
 export type FrontDoorSession = z.infer<typeof FrontDoorSessionSchema>;
 
 /**
@@ -289,11 +291,13 @@ export interface FrontDoorSessionDetails {
   /** The id of the identity the launch runs as: what the door attributes the launch's requests to even when a request carries no identity header of its own (Remote Control's calls ride the capability the tunnel supplies). */
   readonly identity?: string;
   readonly models?: ModelsConfig;
+  /** The configuration directory the launch's child runs with, whichever way it was chosen (the identity's own, one the caller named, or Claude Code's default): what tells the door which login the launch holding this record's capability runs as, renames and the escape hatch included. Every launcher that knows the field names it, so a record without it was written by an older launcher. */
+  readonly configDir?: string;
 }
 
 /** The fields of a registry entry that `details` contributes, none when the launch told the door nothing. */
-export function recordOf(details: FrontDoorSessionDetails | undefined): Pick<FrontDoorSession, "sessionId" | "identity" | "models"> | Record<string, never> {
-  return details === undefined ? {} : { sessionId: details.sessionId, ...(details.identity === undefined ? {} : { identity: details.identity }), ...(details.models === undefined ? {} : { models: details.models }) };
+export function recordOf(details: FrontDoorSessionDetails | undefined): Pick<FrontDoorSession, "sessionId" | "identity" | "models" | "configDir"> | Record<string, never> {
+  return details === undefined ? {} : { sessionId: details.sessionId, ...(details.identity === undefined ? {} : { identity: details.identity }), ...(details.models === undefined ? {} : { models: details.models }), ...(details.configDir === undefined ? {} : { configDir: details.configDir }) };
 }
 
 /**

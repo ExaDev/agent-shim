@@ -1,5 +1,9 @@
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
+import type { FrontDoorSessionDetails } from "./frontdoor/state";
 import type { HeadroomPort } from "./launcher/ports";
 import { runLauncher } from "./launcher";
 import { captureExitCode, discovered, FAKE_HOME, FAKE_TRUST_BUNDLE, fakeCredentials, fakeFs, fakeFrontDoorPort, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv, reportedRow } from "./test-helpers";
@@ -74,6 +78,25 @@ describe("runLauncher with a provider", () => {
     expect(spawnedEnv(spawn).HTTPS_PROXY).toContain(`127.0.0.1:`);
     // The base URL is HTTPS with a leaf from agent-shim's CA, so the child must trust that CA.
     expect(spawnedEnv(spawn).NODE_EXTRA_CA_CERTS).toBe(FAKE_TRUST_BUNDLE);
+  });
+
+  it("tells the door the configuration directory the child runs with, the caller's own under the escape hatch and Claude Code's default otherwise", () => {
+    const sessionOf = (env: Readonly<Record<string, string>>): FrontDoorSessionDetails | undefined => {
+      const frontdoor = fakeFrontDoorPort(FRONTDOOR_PORT);
+      runAndCaptureExit({
+        paths,
+        fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/z.json`]: { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z" }] } } }),
+        spawn: fakeSpawn(),
+        proc: fakeProc({ Z: "tok", ...env }, ["--provider", "z"]),
+        log: fakeLog(),
+        resolveClaudeBinary: () => discovered,
+        frontdoor,
+        credentials: fakeCredentials(),
+      });
+      return frontdoor.sessions()[0];
+    };
+    expect(sessionOf({ CLAUDE_CONFIG_DIR: "/custom/config" })?.configDir).toBe("/custom/config");
+    expect(sessionOf({})?.configDir).toBe(path.join(os.homedir(), ".claude"));
   });
 
   it("hands the door the parent's own NODE_EXTRA_CA_CERTS and logs why the trust bundle dropped it, when it did", () => {
