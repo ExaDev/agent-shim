@@ -929,6 +929,8 @@ describe("reading a session's worker state from the service", () => {
       await vi.advanceTimersByTimeAsync(1);
       expect(signals[0]?.aborted).toBe(true);
       expect(settled).toEqual({ ok: false, message: expect.stringContaining("did not answer the worker state read") as unknown });
+      // The resolver holds a failed read for its reuse bound, so the message promises no retry of its own.
+      expect(settled?.ok === false ? settled.message : "").not.toContain("asks again");
     });
 
     it("reports a dial that rejects on the abort as the timeout, not as an unreachable host", async () => {

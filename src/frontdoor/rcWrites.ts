@@ -635,7 +635,7 @@ export function buildRcMarkReadBody(eventId: string | undefined): Record<string,
 }
 
 /**
- * The deadline of one worker-state read. Every status surface (the CLI, the REST and RPC procedures, the MCP tool, and the web client, which polls) awaits the reads of the sessions it reports, so a read the API host never answers would hold every one of those answers open with it. A worker record is one small JSON answer; five seconds leaves room for a fresh TLS handshake over a slow link, while an interactive caller still gets its answer within about one of the web client's four-second polls.
+ * The deadline of one worker-state read. Every status surface (the CLI, the REST and RPC procedures, the MCP tool, and the web client, which polls) awaits the reads of the sessions it reports, so a read the API host never answers would hold every one of those answers open with it. A worker record is one small JSON answer, so the deadline only has to cover a fresh TLS handshake over a slow link; it is a chosen bound, not a derived one, and must stay well below `RC_IDLE_EXPIRY_MS`, the span a settled failed read is held for, so a read that timed out is abandoned long before its hold would have lapsed.
  */
 export const RC_WORKER_READ_TIMEOUT_MS = 5_000;
 
@@ -676,7 +676,7 @@ function workerStatusOf(body: string): string | undefined {
 
 /** The failure a worker-state read reports when the API host did not answer within its deadline. */
 function workerReadTimedOut(sessionId: string): RcWorkerStateReadResult {
-  return { ok: false, message: `the API host did not answer the worker state read of session ${sessionId} within ${String(RC_WORKER_READ_TIMEOUT_MS / MS_PER_SECOND)} s, so the read was abandoned; the next status read asks again` };
+  return { ok: false, message: `the API host did not answer the worker state read of session ${sessionId} within ${String(RC_WORKER_READ_TIMEOUT_MS / MS_PER_SECOND)} s, so the read was abandoned` };
 }
 
 /** Everything one worker-state read needs, injected so the decision logic runs against fakes in unit tests. */
