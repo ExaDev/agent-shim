@@ -177,6 +177,18 @@ describe("the session event log", () => {
     }
   });
 
+  it("cuts a field on a code point boundary, never between the halves of a surrogate pair", () => {
+    const log = createRcSessionEventLog({ generation: GENERATION, capacity: ROOMY_CAPACITY });
+    // A field whose last kept unit would be the high half of an emoji: the cut steps back before the pair instead of keeping half of it.
+    const keptUnits = RC_SESSION_EVENT_TOKEN_MAX_CHARS - "...".length;
+    const state = `${"a".repeat(keptUnits - 1)}${"\u{1F600}".repeat(RC_SESSION_EVENT_TOKEN_MAX_CHARS)}`;
+    log.append({ kind: "worker-state", session: SESSION_A, state, at: 1 });
+    const read = log.read({});
+    const stored = read.status === "ok" && read.events[0]?.kind === "worker-state" ? read.events[0].state : "";
+    expect(stored).toBe(`${"a".repeat(keptUnits - 1)}...`);
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/u.test(stored)).toBe(false);
+  });
+
   it("refuses a generation id longer than a UUID", () => {
     expect(() => createRcSessionEventLog({ generation: `${GENERATION}0`, capacity: ROOMY_CAPACITY })).toThrow(/at most/);
   });

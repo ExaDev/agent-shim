@@ -17,6 +17,12 @@ import { RC_PENDING_SUMMARY_EXCERPT_CHARS } from "./rcSessions";
  */
 export const RC_SESSION_EVENT_TOKEN_MAX_CHARS = 255;
 
+/** The UTF-16 surrogate ranges, from the Unicode standard: a code point beyond the Basic Multilingual Plane is stored as one unit of each, high then low. */
+const HIGH_SURROGATE_FIRST = 0xd8_00;
+const HIGH_SURROGATE_LAST = 0xdb_ff;
+const LOW_SURROGATE_FIRST = 0xdc_00;
+const LOW_SURROGATE_LAST = 0xdf_ff;
+
 /** What marks a field the log stored cut. */
 const CUT_MARKER = "...";
 
@@ -190,11 +196,20 @@ function parseCursor(cursor: string): { readonly generation: string; readonly se
   return { generation: cursor.slice(0, at), sequence: Number(digits) };
 }
 
+/** The largest index at or below `at` that does not fall between the two halves of a surrogate pair, so a cut there never leaves a lone high surrogate (an unpaired half no UTF-8 encoder can represent). */
+function codePointBoundary(text: string, at: number): number {
+  const before = text.charCodeAt(at - 1);
+  const after = text.charCodeAt(at);
+  const isHigh = before >= HIGH_SURROGATE_FIRST && before <= HIGH_SURROGATE_LAST;
+  const isLow = after >= LOW_SURROGATE_FIRST && after <= LOW_SURROGATE_LAST;
+  return isHigh && isLow ? at - 1 : at;
+}
+
 /**
  * One stored text field, cut to its cap with the cut marker when it is longer, and always copied into a string with storage of its own. V8 may represent a string as a view onto others (a long enough `slice`, or a concatenation over one), and a field under its cap can still be such a view: the tracker builds a pending summary by concatenating a tool name with a slice of the whole stringified input. Keeping a view would keep its whole source alive (up to the tracker's parse cap per field) and the log's memory bound would not hold, so every field is copied, cut or not. Encoding the text and decoding it back yields a string that references nothing else.
  */
 function bounded(text: string, maxChars: number): string {
-  const kept = text.length <= maxChars ? text : `${text.slice(0, maxChars - CUT_MARKER.length)}${CUT_MARKER}`;
+  const kept = text.length <= maxChars ? text : `${text.slice(0, codePointBoundary(text, maxChars - CUT_MARKER.length))}${CUT_MARKER}`;
   return Buffer.from(kept, "utf16le").toString("utf16le");
 }
 
