@@ -157,8 +157,8 @@ agent-shim frontdoor rc mcp-reconnect --session <cse_id> --server <name> [--json
 agent-shim frontdoor rc mcp-authenticate --session <cse_id> --server <name> --redirect-uri <uri> [--json]
 agent-shim frontdoor rc mcp-oauth-callback-url --session <cse_id> --server <name> --callback-url <url> [--json]
 agent-shim frontdoor rc teleport --session <cse_id> --marker <text> [--json]
-agent-shim frontdoor rc goal get|clear --session <cse_id> [--wait-ms <ms>] [--json]   # runs /goal as a person would and prints the worker's answer; see docs/rc-slash-commands.md
-agent-shim frontdoor rc goal set --session <cse_id> --condition <text> [--wait-ms <ms>] [--json]
+agent-shim frontdoor rc goal get|clear --session <cse_id> [--wait-ms <ms>] [--json]   # through a supervised session's control plugin or the self-hosted surface; see docs/rc-slash-commands.md
+agent-shim frontdoor rc goal set --session <cse_id> --condition <text> [--wait-ms <ms>] [--json]   # a directive to the session's model
 agent-shim frontdoor rc compact --session <cse_id> [--instructions <text>] [--wait-ms <ms>] [--json]   # waits for the compaction's outcome
 agent-shim frontdoor rc watch [<cse_id>] [--json]
 agent-shim frontdoor rc events [<cse_id> | --all] [--since <cursor>] [--json]   # every observed session's appearances, endings, worker state changes and pending-request births and retirements, resumable by cursor; see rc-session-events.md
@@ -173,9 +173,9 @@ agent-shim usage [--identity <name>] [--provider <name>] [--since <duration>] [-
 agent-shim account show [<identity>] [--refresh] [--json]
 agent-shim session list [--identity <name>] [--all] [--json]   # sessions that spawned agents or ran workflows, newest transcript first
 agent-shim session show <session> [--identity <name>] [--json]   # the session id or an unambiguous prefix
-agent-shim mcp [--allow-writes] [--allow-remote-control] [--allow-history]      # serve the door's typed API as MCP tools on stdio; read-only without the flags
+agent-shim mcp [--allow-writes] [--allow-remote-control] [--allow-remote-control-directives] [--allow-history]      # serve the door's typed API as MCP tools on stdio; read-only without the flags
 agent-shim mcp permissions show [--json]               # what the stored file allows
-agent-shim mcp permissions allow|deny <writes|remote-control|history>   # change it; a running server follows on its next request, with no restart
+agent-shim mcp permissions allow|deny <writes|remote-control|remote-control-directives|history>   # change it; a running server follows on its next request, with no restart
 agent-shim update [--check] [--restart-door] [--mode <off|notify|auto>] [--json]
 agent-shim completion <bash|zsh|fish>
 agent-shim shim enable [--dir <path>] [--force]

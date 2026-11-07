@@ -84,7 +84,8 @@ import { createRcSessionRegistryReader, rcRegistryIdentitiesOf, rcStatusWithRegi
 import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, isRcSessionExchange, observingRoutedRoute } from "./rcSessions";
 import { targetRefs } from "../models/targets";
 import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
-import { clearRcSessionGoal, compactRcSession, createRcClaudeCodeVersions, getRcSessionGoal, setRcSessionGoal, type RcCompactOptions, type RcSlashCommandDeps, type RcSlashCommandOptions } from "./rcSlashCommands";
+import { createDoorRcSessionCommands } from "./doorSessionCommands";
+import { createRcClaudeCodeVersions } from "./rcSelfHostCommands";
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
 import type { RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
@@ -548,24 +549,12 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       const rcMcpAuthenticate = async (sessionId: string, serverName: string, redirectUri: string) => await authenticateRcSessionMcpServer(rcControlRequestDeps, sessionId, serverName, redirectUri);
       const rcMcpOAuthCallbackUrl = async (sessionId: string, serverName: string, callbackUrl: string) => await submitRcSessionMcpOAuthCallbackUrl(rcControlRequestDeps, sessionId, serverName, callbackUrl);
       const rcTeleport = async (sessionId: string, marker: string) => await teleportRcSession(rcControlRequestDeps, sessionId, marker);
-      // The goal and compaction verbs: each writes its slash command as a person's message through the same inject operation, under the platform the worker runs a person's commands for, and reads the worker's answer off the same fan-out every subscriber reads.
-      const rcSlashCommandDeps: RcSlashCommandDeps = {
-        inject: async (sessionId, text, clientPlatform) => await injectRcUserMessage({ credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial, newUuid: randomUUID }, sessionId, text, clientPlatform),
-        fanout: rcFanout,
-        claudeCodeVersionOf: rcClaudeCodeVersions.versionOf,
-        setTimer: (action, ms) => {
-          const timer = setTimeout(action, ms);
-          return () => {
-            clearTimeout(timer);
-          };
-        },
-      };
-      const rcSlashCommandOperations = {
-        goalGet: async (sessionId: string, options: RcSlashCommandOptions) => await getRcSessionGoal(rcSlashCommandDeps, sessionId, options),
-        goalSet: async (sessionId: string, condition: string, options: RcSlashCommandOptions) => await setRcSessionGoal(rcSlashCommandDeps, sessionId, condition, options),
-        goalClear: async (sessionId: string, options: RcSlashCommandOptions) => await clearRcSessionGoal(rcSlashCommandDeps, sessionId, options),
-        compact: async (sessionId: string, options: RcCompactOptions) => await compactRcSession(rcSlashCommandDeps, sessionId, options),
-      };
+      // The goal and compaction verbs: supervised sessions through their control plugin, and in the self-hosted mode the door's own surface (doorSessionCommands.ts).
+      const rcSessionCommands = createDoorRcSessionCommands({
+        paths,
+        isTracked: (sessionId) => rcTracker.statusOf(sessionId).length > 0,
+        selfHost: rcSelfHost ? { inject: async (sessionId, text, clientPlatform) => await injectRcUserMessage({ credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial, newUuid: randomUUID }, sessionId, text, clientPlatform), fanout: rcFanout, versions: rcClaudeCodeVersions } : undefined,
+      });
       // The control-plane reads the typed API serves beside Remote Control, each one the same read-only collector the CLI's own verbs use, so the door's answer and `frontdoor status`'s can never disagree, plus the live rate-limit observations the event backbone files.
       const controlDeps = {
         list: rcTracker.list,
@@ -641,7 +630,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
             mcpAuthenticate: rcMcpAuthenticate,
             mcpOAuthCallbackUrl: rcMcpOAuthCallbackUrl,
             teleport: rcTeleport,
-            ...rcSlashCommandOperations,
+            ...rcSessionCommands,
             fanout: rcFanout,
             sessionEvents: rcSessionEvents,
             ...controlDeps,

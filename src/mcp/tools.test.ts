@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { SESSION_HISTORY_TAG } from "../frontdoor/rcApi";
+import { RC_DIRECTIVE_TAG, SESSION_HISTORY_TAG } from "../frontdoor/rcApi";
 import { REMOTE_CONTROL_TAG, toolsFromOpenApiDocument } from "./tools";
 
-const READ_ONLY = { writes: false, remoteControl: false, history: false } as const;
+const READ_ONLY = { writes: false, remoteControl: false, history: false, directives: false } as const;
 
 /** A document in the shape the door's generator produces: a query-parameter read, a body write, a Remote Control write and a stream. */
 const DOCUMENT = {
@@ -68,15 +68,15 @@ describe("toolsFromOpenApiDocument", () => {
   });
 
   it("adds configuration writes on their own opt-in, taking the request body's schema as the input", () => {
-    const tools = toolsFromOpenApiDocument(DOCUMENT, { writes: true, remoteControl: false, history: false });
+    const tools = toolsFromOpenApiDocument(DOCUMENT, { writes: true, remoteControl: false, history: false, directives: false });
     expect(tools.map((tool) => tool.name)).toEqual(["usage_effectiveWindow", "pool_add"]);
     expect(tools[1]).toMatchObject({ readOnly: false, procedure: ["pool", "add"], inputSchema: { type: "object", required: ["name"] } });
   });
 
   it("keeps Remote Control writes behind their own opt-in, separate from configuration writes", () => {
-    const remote = toolsFromOpenApiDocument(DOCUMENT, { writes: false, remoteControl: true, history: false });
+    const remote = toolsFromOpenApiDocument(DOCUMENT, { writes: false, remoteControl: true, history: false, directives: false });
     expect(remote.map((tool) => tool.name)).toEqual(["usage_effectiveWindow", "rc_send"]);
-    const all = toolsFromOpenApiDocument(DOCUMENT, { writes: true, remoteControl: true, history: false });
+    const all = toolsFromOpenApiDocument(DOCUMENT, { writes: true, remoteControl: true, history: false, directives: false });
     expect(all.map((tool) => tool.name)).toEqual(["usage_effectiveWindow", "pool_add", "rc_send"]);
   });
 
@@ -87,8 +87,19 @@ describe("toolsFromOpenApiDocument", () => {
         "/rest/usage/windows": { get: { operationId: "usage.effectiveWindow", tags: ["usage"], responses: {} } },
       },
     };
-    expect(toolsFromOpenApiDocument(document, { writes: true, remoteControl: true, history: false }).map((tool) => tool.name)).toEqual(["usage_effectiveWindow"]);
-    expect(toolsFromOpenApiDocument(document, { writes: false, remoteControl: false, history: true }).map((tool) => tool.name)).toEqual(["agentTrees_list", "usage_effectiveWindow"]);
+    expect(toolsFromOpenApiDocument(document, { writes: true, remoteControl: true, history: false, directives: false }).map((tool) => tool.name)).toEqual(["usage_effectiveWindow"]);
+    expect(toolsFromOpenApiDocument(document, { writes: false, remoteControl: false, history: true, directives: false }).map((tool) => tool.name)).toEqual(["agentTrees_list", "usage_effectiveWindow"]);
+  });
+
+  it("keeps the Remote Control directives behind their own opt-in, which neither the Remote Control nor the write grant implies", () => {
+    const document = {
+      paths: {
+        "/rest/rc/goal/set": { post: { operationId: "rc.goalSet", tags: [RC_DIRECTIVE_TAG], responses: {} } },
+        "/rest/rc/send": { post: { operationId: "rc.send", tags: [REMOTE_CONTROL_TAG], responses: {} } },
+      },
+    };
+    expect(toolsFromOpenApiDocument(document, { writes: true, remoteControl: true, history: true, directives: false }).map((tool) => tool.name)).toEqual(["rc_send"]);
+    expect(toolsFromOpenApiDocument(document, { writes: false, remoteControl: false, history: false, directives: true }).map((tool) => tool.name)).toEqual(["rc_goalSet"]);
   });
 
   it("refuses two operations that map to one tool name", () => {

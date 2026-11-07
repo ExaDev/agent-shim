@@ -23,7 +23,7 @@ const CONTROL_TOKEN = "unit-mcp-identity-add-token";
 /** A made-up login, which no message or call of the check may carry. */
 const LOGIN_BLOB = "a-made-up-login-blob";
 
-const WRITES: McpPermissions = { writes: true, remoteControl: false, history: false };
+const WRITES: McpPermissions = { writes: true, remoteControl: false, history: false, directives: false };
 
 /** The text of the first block of a tool result. */
 function textOf(result: Awaited<ReturnType<Client["callTool"]>>): string {
@@ -86,7 +86,7 @@ describe("the MCP tool that adds an identity, over the door's configuration rout
   }
 
   it("is offered only when writes are allowed", async () => {
-    const readOnly = await connect({ writes: false, remoteControl: false, history: false });
+    const readOnly = await connect({ writes: false, remoteControl: false, history: false, directives: false });
     expect((await readOnly.listTools()).tools.map((tool) => tool.name)).not.toContain("config_identity_add");
     await readOnly.close();
     const writing = await connect(WRITES);

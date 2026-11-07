@@ -1,12 +1,11 @@
 import { withIdentityClaude, type IdentityClaudeParams } from "../usage/identityClaude";
 import { JOB_ISOLATION_OPTIONS } from "../usage/realJobRunner";
 import { successfulResult } from "../usage/sdkResult";
+import { COMPACT_TIMEOUT_MS } from "./compactTimeout";
 
 /** The launch flags a compaction adds: no daemons beyond the identity's own routing, and usage tracking on so the door records the request against the identity it was made as. */
 const COMPACT_LAUNCH_FLAGS = ["--no-headroom", "--no-remote-control", "--track-usage"] as const;
 
-/** The most a compaction may run before it is abandoned. It summarises the whole of a conversation's context, which for a large one is a long request; this bounds a request that has hung, not a slow one. */
-export const COMPACT_TIMEOUT_MS = 900_000;
 
 /** What a compaction came to. A failure is thrown. */
 export type CompactionResult = { readonly kind: "compacted"; readonly beforeTokens?: number; readonly afterTokens?: number } | { readonly kind: "unchanged"; readonly reason: string };

@@ -35,12 +35,12 @@ function doorMcpPorts(paths: LayoutPaths, permissions: () => McpPermissions): Mc
 }
 
 /** The permission names the `mcp permissions` verbs take, each the field of the stored permissions it sets. */
-const PERMISSION_FIELDS = { writes: "writes", "remote-control": "remoteControl", history: "history" } as const;
+const PERMISSION_FIELDS = { writes: "writes", "remote-control": "remoteControl", history: "history", "remote-control-directives": "directives" } as const;
 type PermissionName = keyof typeof PERMISSION_FIELDS;
 
 function permissionName(value: string): PermissionName {
-  if (value !== "writes" && value !== "remote-control" && value !== "history") {
-    throw new UsageError(`unknown permission "${value}": expected writes, remote-control or history`);
+  if (value !== "writes" && value !== "remote-control" && value !== "history" && value !== "remote-control-directives") {
+    throw new UsageError(`unknown permission "${value}": expected writes, remote-control, remote-control-directives or history`);
   }
   return value;
 }
@@ -52,9 +52,10 @@ export function registerMcpCommand(program: Command, deps: CommandDeps): void {
     .description("Serve the front door's typed API as MCP tools on standard input and output, so an agent can read quota and door state and, when allowed, act on it.")
     .option("--allow-writes", "Also expose the operations that change the door's configuration and lifecycle, whatever `mcp permissions` says. Read-only without it or a stored permission.")
     .option("--allow-remote-control", "Also expose the Remote Control operations that send into, answer for and end other sessions, whatever `mcp permissions` says.")
+    .option("--allow-remote-control-directives", "Also expose the Remote Control operations that put a directive into another session as its user's intent (setting a goal, compacting under summary instructions), whatever `mcp permissions` says. Not implied by --allow-remote-control.")
     .option("--allow-history", "Also expose the reads of session history (agents, tasks and workflow runs across every identity), whatever `mcp permissions` says.")
-    .action(async (options: Readonly<{ allowWrites?: boolean; allowRemoteControl?: boolean; allowHistory?: boolean }>) => {
-      const flags: McpPermissions = { writes: options.allowWrites === true, remoteControl: options.allowRemoteControl === true, history: options.allowHistory === true };
+    .action(async (options: Readonly<{ allowWrites?: boolean; allowRemoteControl?: boolean; allowRemoteControlDirectives?: boolean; allowHistory?: boolean }>) => {
+      const flags: McpPermissions = { writes: options.allowWrites === true, remoteControl: options.allowRemoteControl === true, history: options.allowHistory === true, directives: options.allowRemoteControlDirectives === true };
       // Re-read on every request, so `agent-shim mcp permissions allow` takes effect on a server that is already running.
       const inForce = (): McpPermissions => effectiveMcpPermissions(flags, readStoredMcpPermissions(deps.paths));
       const server = createMcpServer({ name: "agent-shim", version: packageJson.version }, doorMcpPorts(deps.paths, inForce));
@@ -85,6 +86,7 @@ export function registerMcpCommand(program: Command, deps: CommandDeps): void {
         console.log(`writes: ${stored.writes ? "allowed" : "not allowed"}`);
         console.log(`remote-control: ${stored.remoteControl ? "allowed" : "not allowed"}`);
         console.log(`history: ${stored.history ? "allowed" : "not allowed"}`);
+        console.log(`remote-control-directives: ${stored.directives ? "allowed" : "not allowed"}`);
       }),
     ["agent-shim mcp permissions show"],
   );

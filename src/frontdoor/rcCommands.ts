@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 
+import { COMPACT_TIMEOUT_MS } from "../supervise/compactTimeout";
 import type { Command } from "commander";
 import { printJson, withExamples } from "../cli/commandDeps";
 import { UsageError } from "../cliError";
@@ -13,7 +14,7 @@ import { registerRcEventsCommand } from "./rcEventsCommand";
 import { rcRateLimitInfoOf } from "./rcLiveUsage";
 import type { RcRateLimitInfo } from "./rcSchemas";
 import { mintRcSelfHostCredential, type RcSelfHostMintResult } from "./rcSelfHostMint";
-import { RC_GOAL_CLEAR_WORDS, RC_SLASH_COMMAND_DEFAULT_WAIT_MS, RC_SLASH_COMMAND_VERIFIED_VERSIONS } from "./rcSlashCommands";
+import { RC_GOAL_CLEAR_WORDS, RC_SESSION_COMMAND_MAX_WAIT_MS, RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "./rcSessionCommands";
 import { RC_PENDING_SUMMARY_EXCERPT_CHARS, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
 import { RC_CONTEXT_USAGE_DETAILS, RC_PERMISSION_MODES, RC_READ_FILE_ENCODINGS, isRcContextUsageDetail, isRcPermissionMode, isRcReadFileEncoding, type RcEventWriteResult } from "./rcWrites";
 import type { RcStreamEvent } from "./rcSchemas";
@@ -507,25 +508,26 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
     if (waitMs === undefined) {
       return {};
     }
-    if (!/^[1-9][0-9]*$/.test(waitMs)) {
-      throw new UsageError(`--wait-ms must be a positive whole number of milliseconds, not "${waitMs}"`);
+    if (!/^[1-9][0-9]*$/.test(waitMs) || Number(waitMs) > RC_SESSION_COMMAND_MAX_WAIT_MS) {
+      throw new UsageError(`--wait-ms must be a positive whole number of milliseconds no larger than ${String(RC_SESSION_COMMAND_MAX_WAIT_MS)}, not "${waitMs}"`);
     }
     return { waitMs: Number(waitMs) };
   };
-  const waitOption = `How long to wait for the worker's answer, in milliseconds (default ${String(RC_SLASH_COMMAND_DEFAULT_WAIT_MS)}).`;
-  const versions = RC_SLASH_COMMAND_VERIFIED_VERSIONS.join(", ");
+  const waitOption = `How long to wait for the session's answer, in milliseconds (default ${String(COMPACT_TIMEOUT_MS)}, at most ${String(RC_SESSION_COMMAND_MAX_WAIT_MS)}).`;
+  const versions = RC_SESSION_COMMAND_VERIFIED_VERSIONS.join(", ");
+  const routes = "A session an agent-shim supervisor launched is reached through its in-process control plugin, and one on the door's own self-hosted surface through that surface; any other session is refused with the reason.";
 
   const goal = withExamples(
     rc
       .command("goal")
-      .description(`Read, set or clear one observed session's /goal by running the command in it as a person typing it into a claude.ai client would, and print the worker's answer. Verified on Claude Code ${versions}; a session on any other version is refused.`),
+      .description(`Read, set or clear one Remote Control session's /goal. ${routes} Verified on Claude Code ${versions}; a session on any other version is refused.`),
     ["agent-shim frontdoor rc goal get --session cse_00000000-0000-4000-8000-000000000000"],
   );
 
   withExamples(
     goal
       .command("get")
-      .description("Run /goal with no argument and print the active goal's condition, how many turns the goal check has evaluated it on and its last reason, or that there is none.")
+      .description("Print the active goal's condition, how many turns the goal check has evaluated it on and its last reason, or that there is none.")
       .requiredOption("--session <id>", "The cse_ session id, as `frontdoor rc list` shows it.")
       .option("--wait-ms <ms>", waitOption)
       .option("--json", "Print the answer as JSON.")
@@ -543,7 +545,7 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
   withExamples(
     goal
       .command("set")
-      .description("Run /goal <condition>, so the session's goal check keeps it working until the condition holds, and print the condition the worker confirmed.")
+      .description("Set the goal, so the session's goal check keeps it working until the condition holds; the condition reaches the session's model as a directive. Prints the condition set and the one it replaced.")
       .requiredOption("--session <id>", "The cse_ session id, as `frontdoor rc list` shows it.")
       .requiredOption("--condition <text>", `The goal's condition; not one of the words /goal reads as a clear (${RC_GOAL_CLEAR_WORDS.join(", ")}).`)
       .option("--wait-ms <ms>", waitOption)
@@ -554,7 +556,7 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
           printJson(answer);
           return;
         }
-        console.log(`goal set on ${answer.session}: ${answer.condition}`);
+        console.log(`goal set on ${answer.session}: ${answer.condition}${answer.superseded === null ? "" : ` (replacing: ${answer.superseded})`}`);
       }),
     ['agent-shim frontdoor rc goal set --session cse_00000000-0000-4000-8000-000000000000 --condition "the test suite passes"'],
   );
@@ -562,7 +564,7 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
   withExamples(
     goal
       .command("clear")
-      .description("Run /goal clear and print the condition it cleared, or that there was none.")
+      .description("Clear the goal and print the condition it cleared, or that there was none.")
       .requiredOption("--session <id>", "The cse_ session id, as `frontdoor rc list` shows it.")
       .option("--wait-ms <ms>", waitOption)
       .option("--json", "Print the answer as JSON.")
@@ -580,18 +582,20 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
   withExamples(
     rc
       .command("compact")
-      .description(`Compact one observed session's conversation by running /compact in it as a person would, and wait for the worker to report the outcome: the token counts before and after, or its reason for not compacting. Verified on Claude Code ${versions}; a session on any other version is refused.`)
+      .description(`Compact one Remote Control session's conversation and wait for the outcome: the token counts before and after, or the session's reason for not compacting. ${routes} Verified on Claude Code ${versions}; a session on any other version is refused.`)
       .requiredOption("--session <id>", "The cse_ session id, as `frontdoor rc list` shows it.")
-      .option("--instructions <text>", "Custom summarisation instructions, passed to /compact as its argument.")
+      .option("--instructions <text>", "Custom summarisation instructions, a directive to the session's model.")
       .option("--wait-ms <ms>", waitOption)
       .option("--json", "Print the answer as JSON.")
       .action(async (options: Readonly<{ session: string; instructions?: string; waitMs?: string; json?: boolean }>) => {
-        const answer = await frontDoorRcApiFromState(realFarmFs, paths).rc.compact({ session: options.session, ...(options.instructions === undefined ? {} : { instructions: options.instructions }), ...waitMsOf(options.waitMs) });
+        const api = frontDoorRcApiFromState(realFarmFs, paths);
+        const answer = options.instructions === undefined ? await api.rc.compact({ session: options.session, ...waitMsOf(options.waitMs) }) : await api.rc.compactWithInstructions({ session: options.session, instructions: options.instructions, ...waitMsOf(options.waitMs) });
         if (options.json === true) {
           printJson(answer);
           return;
         }
-        console.log(`compacted ${answer.session} (${answer.trigger}): ${String(answer.preTokens)} tokens before, ${String(answer.postTokens)} after`);
+        const sizes = answer.preTokens === undefined || answer.postTokens === undefined ? "the session recorded no token counts" : `${String(answer.preTokens)} tokens before, ${String(answer.postTokens)} after`;
+        console.log(`compacted ${answer.session} (${answer.trigger}, ${answer.route}): ${sizes}`);
       }),
     ['agent-shim frontdoor rc compact --session cse_00000000-0000-4000-8000-000000000000 --instructions "keep the open decisions"'],
   );
