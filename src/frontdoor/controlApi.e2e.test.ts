@@ -14,6 +14,7 @@ import { createDoorEventHub, rcFanoutOnDoorHub } from "./eventHub";
 import { createRcLiveUsage } from "./rcLiveUsage";
 import { createRcSessionTracker, RC_IDLE_EXPIRY_MS } from "./rcSessions";
 import type { RcEventWriteResult } from "./rcWrites";
+import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog } from "./rcEventLog";
 import { createRcEventFanout } from "./rcStream";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
 import type { FrontDoorStatus } from "./status";
@@ -137,6 +138,7 @@ describe("the door's typed API with the control plane mounted beside Remote Cont
       mcpOAuthCallbackUrl: unexercised,
       teleport: unexercised,
       fanout: rcFanout,
+      sessionEvents: createRcSessionEventLog({ generation: "00000000-0000-4000-8000-0000000000ee", capacity: RC_SESSION_EVENT_LOG_CAPACITY }),
       events: doorEvents,
       liveRateLimits: rcLiveUsage.liveOf,
       latestRateLimit: rcLiveUsage.latestOf,

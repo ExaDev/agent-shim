@@ -7,6 +7,7 @@ import { LIFECYCLE_AND_CODEX_TEST_DEPS } from "./lifecycleCodexTestDeps";
 import { createDoorApiNodeHandler } from "./controlApi";
 import { DOOR_EVENT_SOURCE_RC, LAUNCH_EVENT_SOURCE } from "./eventSchemas";
 import { createDoorEventHub } from "./eventHub";
+import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog } from "./rcEventLog";
 import type { RcLiveRateLimit } from "./rcSchemas";
 import { RC_CLIENT_PAGE_HTML, RC_CLIENT_PAGE_SCRIPT, RC_CLIENT_PATH, createRcClientPage } from "./rcClientPage";
 import { createRcSessionTracker, RC_IDLE_EXPIRY_MS } from "./rcSessions";
@@ -136,6 +137,7 @@ describe("the door's web client page and its API calls over the door's own TLS",
       mcpOAuthCallbackUrl: unexercised,
       teleport: unexercised,
       fanout: { publish: () => undefined, subscribe: () => () => undefined },
+      sessionEvents: createRcSessionEventLog({ generation: "00000000-0000-4000-8000-0000000000ee", capacity: RC_SESSION_EVENT_LOG_CAPACITY }),
       events: doorEvents,
       liveRateLimits: () => (liveLatest === undefined ? [] : [liveLatest]),
       latestRateLimit: () => liveLatest,
