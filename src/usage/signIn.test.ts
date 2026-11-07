@@ -86,3 +86,12 @@ describe("identitySignIn", () => {
     expect(run).not.toHaveBeenCalled();
   });
 });
+
+describe("Claude Code's Keychain login derivation", () => {
+  it("hashes the directory path normalised to NFC, so a decomposed spelling names the item Claude Code files", () => {
+    const composed = "/example/caf\u00e9";
+    const decomposed = "/example/cafe\u0301";
+    expect(composed).not.toBe(decomposed);
+    expect(claudeCodeKeychainService(decomposed)).toBe(claudeCodeKeychainService(composed));
+  });
+});

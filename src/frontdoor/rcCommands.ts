@@ -6,18 +6,21 @@ import { printJson, withExamples } from "../cli/commandDeps";
 import { collectRepeated } from "../cli/parsers";
 import { UsageError } from "../cliError";
 import type { HeadroomFs } from "../headroom/state";
+import type { ClaudeCodeLoginEnv, KeychainProbe } from "../keychainLogin";
+import type { FarmFs, RunPort } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
-import { realFarmFs } from "../realPorts";
+import { realFarmFs, realRunPortWithin } from "../realPorts";
 import { readFrontDoorControlMaterial } from "./doorClient";
 import { frontDoorRcApiClient, type RcApiClient } from "./rcApi";
+import { cliKeychainProbe } from "../keychainProbe";
 import { frontDoorRcControl, realRcControlTransport, type FrontDoorRcControl } from "./rcControl";
 import { registerRcEventsCommand } from "./rcEventsCommand";
 import { rcRateLimitInfoOf } from "./rcLiveUsage";
 import type { RcRateLimitInfo } from "./rcSchemas";
-import { mintRcSelfHostCredential, type RcSelfHostMintResult } from "./rcSelfHostMint";
 import { RC_GOAL_CLEAR_WORDS, RC_SESSION_COMMAND_MAX_WAIT_MS, RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "./rcSessionCommands";
 import type { RcQuestionSelection } from "./rcQuestions";
 import { RC_PENDING_PER_SESSION_MAX, rcExcerpt, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
+import { mintRcSelfHostLogin, type RcSelfHostMintResult } from "./rcSelfHostMint";
 import { RC_CONTEXT_USAGE_DETAILS, RC_PERMISSION_MODES, RC_READ_FILE_ENCODINGS, isRcContextUsageDetail, isRcPermissionMode, isRcReadFileEncoding, type RcEventWriteResult } from "./rcWrites";
 import type { RcStreamEvent } from "./rcSchemas";
 
@@ -238,8 +241,20 @@ export function frontDoorRcApiFromState(fsPort: HeadroomFs, paths: LayoutPaths):
   const { port, ca, token } = readFrontDoorControlMaterial(fsPort, paths, "its typed API");
   return frontDoorRcApiClient(port, ca, token);
 }
-/** Registers the `frontdoor rc` verbs on the frontdoor command: the reads, the writes, the watch, and the self-hosted minting. */
-export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void {
+/** What `frontdoor rc selfhost mint` reads of the machine: the Keychain it asks, the environment a session launched from here would inherit, and the filesystem it writes. Injected so a test mints against a fake Keychain, environment and filesystem. */
+export interface RcMintPorts {
+  readonly keychain: KeychainProbe;
+  readonly login: ClaudeCodeLoginEnv;
+  readonly fs: FarmFs;
+}
+
+/** The mint's real ports: this process's platform, environment and filesystem, with the Keychain asked under the bound `cliKeychainProbe` gives it. `within` builds the Keychain runner for a bound, and is the real one except in a test that checks the bound. */
+export function realRcMintPorts(within: (timeoutMs: number) => RunPort = realRunPortWithin): RcMintPorts {
+  return { keychain: cliKeychainProbe(process.platform, within), login: { env: process.env }, fs: realFarmFs };
+}
+
+/** Registers the `frontdoor rc` verbs on the frontdoor command: the reads, the writes, the watch, and the self-hosted minting, which reads the machine through `mintPorts`. */
+export function registerRcCommand(frontdoor: Command, paths: LayoutPaths, mintPorts: RcMintPorts = realRcMintPorts()): void {
   const rc = withExamples(
     frontdoor.command("rc").description("Observe the Remote Control sessions passing through the front door, watch the stream their attached client receives, send a prompt into one, answer its pending control requests, and steer one with the client half's own control requests (interrupt, model, permission mode, end-session, the usage and context queries, read-file, file-suggestions, keep-alive, and the mcp_* family)."),
     ["agent-shim frontdoor rc list", "agent-shim frontdoor rc pending"],
@@ -710,13 +725,14 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
   withExamples(
     selfhost
       .command("mint")
-      .description("Mint the local OAuth credential, account block and feature-cache seed one identity needs to activate Remote Control against the door's own served surface, and record the door-side copy the surface authenticates against. Refuses to replace a real claude.ai login unless --force. Never prints a token.")
+      .description("Mint the local OAuth credential, account block and feature-cache seed one identity needs to activate Remote Control against the door's own served surface, and record the door-side copy the surface authenticates against. Refuses to replace a real claude.ai login file unless --force, and refuses outright, whatever --force says, while CLAUDE_SECURESTORAGE_CONFIG_DIR is set or CLAUDE_CODE_CUSTOM_OAUTH_URL is non-empty, and on macOS while a Claude Code login is filed in the Keychain for the identity's directory. Never prints a token.")
       .argument("<identity>", "The identity to mint into, as `agent-shim identity list` names it.")
-      .option("--force", "Replace an existing OAuth credential this door did not mint.")
+      .option("--force", "Replace an existing OAuth credential file this door did not mint. On macOS it does not override the refusal of a Keychain login filed for the directory's service.")
       .option("--json", "Print the mint result as JSON.")
       .action((identity: string, options: Readonly<{ force?: boolean; json?: boolean }>) => {
-        const result = mintRcSelfHostCredential({
-          fs: realFarmFs,
+        // On macOS a Keychain login filed for the directory's service is read ahead of the minted file, so any is refused before anything is written; nothing is ever deleted.
+        const result = mintRcSelfHostLogin({
+          ...mintPorts,
           identitiesDir: paths.identitiesDir,
           frontdoorDir: paths.frontdoorDir,
           identity,

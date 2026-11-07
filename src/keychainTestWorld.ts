@@ -152,7 +152,10 @@ export function createFakeKeychain(): FakeKeychain {
       return { status: 0, stdout: "", stderr: "" };
     }
     const service = optionValue(args, "-s");
-    const item = service === undefined ? undefined : items.get(service);
+    const account = optionValue(args, "-a");
+    // An `-a` narrows the match to the item filed under that account, as the real tool does: one under another account is not found and not deleted.
+    const stored = service === undefined ? undefined : items.get(service);
+    const item = stored !== undefined && (account === undefined || stored.account === account) ? stored : undefined;
     if (args[0] === "find-generic-password") {
       if (service === undefined || item === undefined || hideFromLookup.has(service)) {
         return { status: 44, stdout: "", stderr: "The specified item could not be found in the keychain." };
@@ -185,3 +188,6 @@ export function createFakeKeychain(): FakeKeychain {
     hideFromLookup,
   };
 }
+
+/** The environment every self-hosted mint test runs under: a fixed, empty one, so no test reads or mutates the real `process.env`. */
+export const TEST_CLAUDE_LOGIN = { env: {} } as const;

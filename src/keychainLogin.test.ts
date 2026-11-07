@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { deleteKeychainLogin, KeychainLoginError, planKeychainLogin, readKeychainLogin, writeKeychainLogin, type KeychainLoginPlan } from "./keychainLogin";
+import { deleteKeychainLogin, KeychainLoginError, planKeychainLogin, readKeychainLogin, requireNoClaudeCodeLoginForMint, selfHostedLoginLeftover, writeKeychainLogin, type KeychainLoginPlan } from "./keychainLogin";
 import type { RunPort } from "./launcher/ports";
-import { createFakeKeychain } from "./keychainTestWorld";
+import { TEST_CLAUDE_LOGIN, createFakeKeychain } from "./keychainTestWorld";
 import { claudeCodeKeychainService } from "./usage/signIn";
 
 /** Sizes chosen against the 4095-character interactive line: two parts that together are too large for the hex form and fit the quoted one, a size that fits neither, and a size too large for the hex form of a login that cannot be quoted. */
@@ -12,6 +12,8 @@ const TOO_LARGE_FOR_ANY_FORM = 4000;
 const TOO_LARGE_FOR_HEX = 2000;
 /** How many leading hex digits of the secret the fake tool's error text quotes, a fragment of a word that a whole-form scrubber would not catch. */
 const QUOTED_FRAGMENT_DIGITS = 24;
+/** A failure `security` gives that is not an item it cannot find, as a locked Keychain gives. */
+const LOCKED_KEYCHAIN_STATUS = 51;
 const FROM_DIR = "/example/identities/work";
 const TO_DIR = "/example/identities/client";
 const FROM_SERVICE = claudeCodeKeychainService(FROM_DIR);
@@ -205,5 +207,128 @@ describe("deleteKeychainLogin", () => {
     expect(() => {
       deleteKeychainLogin(keychain.run, FROM_SERVICE, "alex");
     }).not.toThrow();
+  });
+});
+
+describe("the self-hosted mint's Keychain checks, which refuse and never delete", () => {
+  const LAB_DIR = "/example/lab/identities/lab";
+  /** What a removal of the self-hosted identity "lab" leaves its note to describe: the name and directory as they were when it was removed. */
+  const REMOVED_LAB = { name: "lab", directory: LAB_DIR } as const;
+  const LAB_SERVICE = claudeCodeKeychainService(LAB_DIR);
+  const darwin = (keychain: ReturnType<typeof createFakeKeychain>) => ({ run: keychain.run, platform: "darwin" as const });
+  const neverReadsAPassword = (keychain: ReturnType<typeof createFakeKeychain>): boolean => !keychain.calls.some((call) => call.args.includes("-g") || call.args.includes("-w"));
+
+  it("asks nothing off macOS, and lets a mint through on macOS when no login is filed for the directory", () => {
+    const keychain = createFakeKeychain();
+    requireNoClaudeCodeLoginForMint({ run: keychain.run, platform: "linux" }, LAB_DIR, "lab", TEST_CLAUDE_LOGIN);
+    expect(keychain.calls).toEqual([]);
+    requireNoClaudeCodeLoginForMint(darwin(keychain), LAB_DIR, "lab", TEST_CLAUDE_LOGIN);
+    expect(keychain.calls.map((call) => call.args)).toEqual([["find-generic-password", "-s", LAB_SERVICE]]);
+  });
+
+  it("refuses a mint over any login filed for the directory and deletes nothing: a mint, then a real /login, then a second mint", () => {
+    const keychain = createFakeKeychain();
+    // After the first mint the person signed in for real: the CLI wrote its Keychain item and removed the minted file. Nothing tells that item from a copy of the minted login without reading it.
+    keychain.seed(LAB_SERVICE, "alex", "a-made-up-real-login");
+    const second = () => {
+      requireNoClaudeCodeLoginForMint(darwin(keychain), LAB_DIR, "lab", TEST_CLAUDE_LOGIN);
+    };
+    expect(second).toThrow(KeychainLoginError);
+    expect(second).toThrow(`security delete-generic-password -s '${LAB_SERVICE}' -a 'alex'`);
+    expect(second).toThrow("--force does not override this");
+    expect(keychain.secretOf(LAB_SERVICE)?.toString("utf8")).toBe("a-made-up-real-login");
+    expect(keychain.calls.some((call) => call.args[0] === "delete-generic-password")).toBe(false);
+    expect(neverReadsAPassword(keychain)).toBe(true);
+  });
+
+  it("finds a login filed under any account of the directory's service and names that account in the delete command", () => {
+    const keychain = createFakeKeychain();
+    keychain.seed(LAB_SERVICE, "someone-else", "a-made-up-login");
+    expect(() => {
+      requireNoClaudeCodeLoginForMint(darwin(keychain), LAB_DIR, "lab", TEST_CLAUDE_LOGIN);
+    }).toThrow(`security delete-generic-password -s '${LAB_SERVICE}' -a 'someone-else'`);
+    expect(() => {
+      requireNoClaudeCodeLoginForMint(darwin(keychain), LAB_DIR, "lab", TEST_CLAUDE_LOGIN);
+    }).toThrow("a Claude Code login filed for the directory's service");
+  });
+
+  it("refuses outright, naming the variable and no item to delete, while CLAUDE_SECURESTORAGE_CONFIG_DIR is set, on every platform", () => {
+    for (const value of ["/example/secure-storage", ""]) {
+      for (const platform of ["darwin", "linux"] as const) {
+        const keychain = createFakeKeychain();
+        // The user's default login, which an empty override would point a session at: the refusal must not tell anyone to delete it.
+        keychain.seed("Claude Code-credentials", "alex", "a-made-up-default-login");
+        const login = { env: { CLAUDE_SECURESTORAGE_CONFIG_DIR: value } };
+        const mint = () => {
+          requireNoClaudeCodeLoginForMint({ run: keychain.run, platform }, LAB_DIR, "lab", login);
+        };
+        expect(mint).toThrow("CLAUDE_SECURESTORAGE_CONFIG_DIR is set");
+        expect(mint).toThrow("Nothing was minted");
+        expect(mint).not.toThrow("delete-generic-password");
+        expect(keychain.calls).toEqual([]);
+      }
+    }
+  });
+
+  it("refuses outright on every platform, naming the variable and no item to delete, while CLAUDE_CODE_CUSTOM_OAUTH_URL is set, because it renames the account block's file and the Keychain item", () => {
+    for (const platform of ["darwin", "linux", "win32"] as const) {
+      const keychain = createFakeKeychain();
+      keychain.seed("Claude Code-custom-oauth-credentials-00000000", "alex", "a-made-up-login");
+      const mint = () => {
+        requireNoClaudeCodeLoginForMint({ run: keychain.run, platform }, LAB_DIR, "lab", { env: { CLAUDE_CODE_CUSTOM_OAUTH_URL: "https://example.com" } });
+      };
+      expect(mint).toThrow("CLAUDE_CODE_CUSTOM_OAUTH_URL is set");
+      expect(mint).toThrow(".claude-custom-oauth.json");
+      expect(mint).toThrow("Nothing was minted");
+      expect(mint).not.toThrow("delete-generic-password");
+      expect(keychain.calls).toEqual([]);
+    }
+  });
+
+  it("lets a mint through with the variable empty, where nothing is renamed and the item's name is the unsuffixed one", () => {
+    const keychain = createFakeKeychain();
+    requireNoClaudeCodeLoginForMint(darwin(keychain), LAB_DIR, "lab", { env: { CLAUDE_CODE_CUSTOM_OAUTH_URL: "" } });
+    requireNoClaudeCodeLoginForMint({ run: keychain.run, platform: "linux" }, LAB_DIR, "lab", { env: { CLAUDE_CODE_CUSTOM_OAUTH_URL: "" } });
+    requireNoClaudeCodeLoginForMint({ run: keychain.run, platform: "win32" }, LAB_DIR, "lab", { env: { CLAUDE_CODE_CUSTOM_OAUTH_URL: "" } });
+    expect(keychain.calls.map((call) => call.args)).toEqual([["find-generic-password", "-s", LAB_SERVICE]]);
+  });
+
+  it("checks the directory's own item when the variable is not set, even with the session's other environment present", () => {
+    const keychain = createFakeKeychain();
+    keychain.seed(LAB_SERVICE, "alex", "a-made-up-login");
+    expect(() => {
+      requireNoClaudeCodeLoginForMint(darwin(keychain), LAB_DIR, "lab", { env: { CLAUDE_CONFIG_DIR: "/example/elsewhere" } });
+    }).toThrow(LAB_SERVICE);
+  });
+
+  it("finds a login filed for a directory whose path is spelled decomposed, as Claude Code names it", () => {
+    const keychain = createFakeKeychain();
+    const decomposed = "/example/lab/identities/cafe\u0301";
+    // Claude Code files the item under the NFC spelling's hash, whatever bytes the path was given in.
+    keychain.seed(claudeCodeKeychainService(decomposed.normalize("NFC")), "alex", "a-made-up-login");
+    expect(claudeCodeKeychainService(decomposed)).toBe(claudeCodeKeychainService(decomposed.normalize("NFC")));
+    expect(() => {
+      requireNoClaudeCodeLoginForMint(darwin(keychain), decomposed, "lab", TEST_CLAUDE_LOGIN);
+    }).toThrow(KeychainLoginError);
+  });
+
+  it("reports a Keychain that cannot be asked at removal as a note saying the identity was removed, never as a failure", () => {
+    const locked = { run: (): { status: number; stdout: string; stderr: string } => ({ status: LOCKED_KEYCHAIN_STATUS, stdout: "", stderr: "User interaction is not allowed." }) };
+    const note = selfHostedLoginLeftover({ run: locked, platform: "darwin" }, REMOVED_LAB);
+    expect(note).toContain(`The identity "lab" was removed, but the Keychain could not be checked`);
+    expect(note).toContain(LAB_DIR);
+    expect(note).toContain(LAB_SERVICE);
+  });
+
+  it("names a self-hosted identity's leftover login on removal without deleting it, and says nothing for an unmarked identity or off macOS", () => {
+    const keychain = createFakeKeychain();
+    keychain.seed(LAB_SERVICE, "alex", "a-made-up-login");
+    expect(selfHostedLoginLeftover(darwin(keychain), REMOVED_LAB)).toContain(`security delete-generic-password -s '${LAB_SERVICE}' -a 'alex'`);
+    expect(selfHostedLoginLeftover(darwin(keychain), REMOVED_LAB)).toContain(`the directory ${LAB_DIR} of the removed identity "lab"`);
+    expect(selfHostedLoginLeftover(darwin(keychain), undefined)).toBeUndefined();
+    expect(selfHostedLoginLeftover({ run: keychain.run, platform: "linux" }, REMOVED_LAB)).toBeUndefined();
+    expect(keychain.items.has(LAB_SERVICE)).toBe(true);
+    expect(keychain.calls.some((call) => call.args[0] === "delete-generic-password")).toBe(false);
+    expect(neverReadsAPassword(keychain)).toBe(true);
   });
 });

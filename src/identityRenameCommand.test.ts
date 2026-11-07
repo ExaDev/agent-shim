@@ -7,18 +7,20 @@ import { EXIT_FAILURE, EXIT_USAGE } from "./cliError";
 import { reportFatalError } from "./cliReport";
 import type { CredentialCachePort } from "./credentialCache";
 import { KeychainCacheDeleteError } from "./keychainLogin";
-import { IdentityNamesLockBusyError, nonWaitingIdentityNamesLockPorts } from "./identityNamesLock";
+import { IdentityNamesLockBusyError, acquireIdentityNamesLock, nonWaitingIdentityNamesLockPorts } from "./identityNamesLock";
 import type { IdentityRenamePorts } from "./identityRename";
 import { readRenameJournal, renameJournalFile, writeRenameJournal } from "./identityRenameJournal";
 import type { SessionProcess } from "./identitySessions";
 import { addIdentity, identityExists, identityIdOf, readActiveIdentity, useIdentity } from "./identityStore";
 import { createFakeKeychain } from "./keychainTestWorld";
+import { RC_SELF_HOST_MINT_MARKER } from "./selfHostMintMarker";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { buildProgram } from "./program";
 import { realFarmFs } from "./realPorts";
 import { realpathOrSelf } from "./realIdentityRename";
 import { sameDirectory } from "./sameDirectory";
 import { fakeCommandDeps } from "./test-helpers";
+import type { CommandDeps } from "./cli/commandDeps";
 import { claudeCodeKeychainService } from "./usage/signIn";
 
 const NOW_MS = 1_000;
@@ -37,6 +39,12 @@ describe("identity rename", () => {
   let cacheRemovals: string[];
   /** When true, deleting from the Keychain store fails as a locked Keychain makes it. */
   let keychainDeleteFails: boolean;
+  /** When true, every Keychain lookup fails as a locked Keychain makes it, which says nothing about whether an item is there. */
+  let keychainFindLocked: boolean;
+  /** The arguments of every `security` call that went through the unbounded runner, which the attribute-only leftover lookup must not use. */
+  let unboundedCalls: (readonly string[])[];
+  /** Called on every attribute-only lookup the removal makes through the bounded runner, before it is answered. */
+  let lookupProbe: (() => void) | undefined;
   let duringCacheRemoval: (() => void) | undefined;
   const keychain = createFakeKeychain();
 
@@ -48,6 +56,9 @@ describe("identity rename", () => {
     sessions = [];
     cacheRemovals = [];
     keychainDeleteFails = false;
+    keychainFindLocked = false;
+    unboundedCalls = [];
+    lookupProbe = undefined;
     duringCacheRemoval = undefined;
     keychain.items.clear();
     keychain.calls.length = 0;
@@ -81,7 +92,16 @@ describe("identity rename", () => {
     return {
       fs: realFarmFs,
       credentialCache: { port: cache, platform: "darwin" },
-      run: keychain.run,
+      run: { run: (command, args, input) => {
+        unboundedCalls.push(args);
+        return keychain.run.run(command, args, input);
+      } },
+      lookupRun: {
+        run: (command, args, input) => {
+          lookupProbe?.();
+          return keychainFindLocked && args[0] === "find-generic-password" ? { status: LOCKED_KEYCHAIN_STATUS, stdout: "", stderr: "" } : keychain.run.run(command, args, input);
+        },
+      },
       platform: "darwin",
       home: "/example/home",
       sameDirectory,
@@ -98,8 +118,8 @@ describe("identity rename", () => {
     };
   }
 
-  async function run(argv: readonly string[]): Promise<number> {
-    const program = buildProgram({ ...fakeCommandDeps(paths), runClaude: vi.fn(), identityRenamePorts: ports() });
+  async function run(argv: readonly string[], commandDeps: CommandDeps = fakeCommandDeps(paths)): Promise<number> {
+    const program = buildProgram({ ...commandDeps, runClaude: vi.fn(), identityRenamePorts: ports() });
     try {
       await program.parseAsync([...argv], { from: "user" });
       return typeof process.exitCode === "number" ? process.exitCode : 0;
@@ -241,6 +261,101 @@ describe("identity rename", () => {
     expect(await run(["identity", "rename", "work", "client"])).toBe(0);
     expect(await run(["identity", "remove", "client", "--yes"])).toBe(0);
     expect(cacheRemovals).toEqual(["keychain:identity work"]);
+  });
+
+  it("identity remove leaves every Claude Code login item, and names the one a self-hosted identity left, after a mint and a real /login", async () => {
+    addIdentity(paths, "lab");
+    const labDir = path.join(paths.identitiesDir, "lab");
+    fs.writeFileSync(path.join(labDir, RC_SELF_HOST_MINT_MARKER), `${JSON.stringify({ mintedAt: new Date(NOW_MS).toISOString() })}\n`);
+    // After the mint the person ran /login with a real account: the CLI filed its login in the Keychain under the directory's service.
+    keychain.seed(claudeCodeKeychainService(labDir), "alex", "a-made-up-real-login");
+    addIdentity(paths, "work");
+    keychain.seed(claudeCodeKeychainService(path.join(paths.identitiesDir, "work")), "alex", "a-made-up-real-login");
+    expect(await run(["identity", "remove", "lab", "--yes"])).toBe(0);
+    expect(keychain.secretOf(claudeCodeKeychainService(labDir))?.toString("utf8")).toBe("a-made-up-real-login");
+    expect(warnings.join("\n")).toContain(`security delete-generic-password -s '${claudeCodeKeychainService(labDir)}' -a 'alex'`);
+    expect(keychain.calls.some((call) => call.args[0] === "delete-generic-password" && call.args.includes(claudeCodeKeychainService(labDir)))).toBe(false);
+    expect(keychain.calls.some((call) => call.args.includes("-g") || call.args.includes("-w"))).toBe(false);
+    // An identity the mint never wrote into is removed as it always was: its item is kept and nothing is said about it.
+    warnings.length = 0;
+    expect(await run(["identity", "remove", "work", "--yes"])).toBe(0);
+    expect(keychain.items.has(claudeCodeKeychainService(path.join(paths.identitiesDir, "work")))).toBe(true);
+    expect(warnings).toEqual([]);
+  });
+
+  it("identity remove of a self-hosted identity on a Keychain that cannot be asked still reports the removal, with the warning", async () => {
+    addIdentity(paths, "lab");
+    const labDir = path.join(paths.identitiesDir, "lab");
+    fs.writeFileSync(path.join(labDir, RC_SELF_HOST_MINT_MARKER), `${JSON.stringify({ mintedAt: new Date(NOW_MS).toISOString() })}\n`);
+    keychain.seed(claudeCodeKeychainService(labDir), "alex", "a-made-up-login");
+    keychainFindLocked = true;
+    expect(await run(["identity", "remove", "lab", "--yes"])).toBe(0);
+    expect(out.join("\n")).toContain('Removed identity "lab".');
+    expect(warnings.join("\n")).toContain('The identity "lab" was removed, but the Keychain could not be checked');
+  });
+
+  it("asks the Keychain for a self-hosted identity's leftover login only after the identity names lock is released", async () => {
+    addIdentity(paths, "lab");
+    const labDir = path.join(paths.identitiesDir, "lab");
+    fs.writeFileSync(path.join(labDir, RC_SELF_HOST_MINT_MARKER), `${JSON.stringify({ mintedAt: new Date(NOW_MS).toISOString() })}\n`);
+    keychain.seed(claudeCodeKeychainService(labDir), "alex", "a-made-up-login");
+    let lockFreeDuringLookup = false;
+    lookupProbe = () => {
+      // A non-waiting acquire throws while the removal still holds the lock.
+      acquireIdentityNamesLock(paths, nonWaitingIdentityNamesLockPorts).release();
+      lockFreeDuringLookup = true;
+    };
+    expect(await run(["identity", "remove", "lab", "--yes"])).toBe(0);
+    expect(lockFreeDuringLookup).toBe(true);
+  });
+
+  it("looks a self-hosted identity's leftover login up through the bounded runner, never the unbounded one", async () => {
+    addIdentity(paths, "lab");
+    const labDir = path.join(paths.identitiesDir, "lab");
+    fs.writeFileSync(path.join(labDir, RC_SELF_HOST_MINT_MARKER), `${JSON.stringify({ mintedAt: new Date(NOW_MS).toISOString() })}\n`);
+    keychain.seed(claudeCodeKeychainService(labDir), "alex", "a-made-up-login");
+    expect(await run(["identity", "remove", "lab", "--yes"])).toBe(0);
+    expect(warnings.join("\n")).toContain(claudeCodeKeychainService(labDir));
+    expect(unboundedCalls).toEqual([]);
+  });
+
+  it("identity remove whose Keychain cache delete fails still names a self-hosted identity's leftover login, in the one failure", async () => {
+    addIdentity(paths, "lab");
+    const labDir = path.join(paths.identitiesDir, "lab");
+    fs.writeFileSync(path.join(labDir, RC_SELF_HOST_MINT_MARKER), `${JSON.stringify({ mintedAt: new Date(NOW_MS).toISOString() })}\n`);
+    keychain.seed(claudeCodeKeychainService(labDir), "alex", "a-made-up-login");
+    keychainDeleteFails = true;
+    expect(await run(["identity", "remove", "lab", "--yes"])).toBe(EXIT_FAILURE);
+    const printed = out.join("\n");
+    expect(printed).toContain('Removed identity "lab", but could not delete its cached credential');
+    expect(printed).toContain(`security delete-generic-password -s '${claudeCodeKeychainService(labDir)}' -a 'alex'`);
+    expect(identityIdOf(paths, "lab")).toBeUndefined();
+  });
+
+  it("names the leftover login of the identity the removal really removed, when the name moves to another identity while the removal waits for its confirmation", async () => {
+    addIdentity(paths, "lab");
+    const labDir = path.join(paths.identitiesDir, "lab");
+    fs.writeFileSync(path.join(labDir, RC_SELF_HOST_MINT_MARKER), `${JSON.stringify({ mintedAt: new Date(NOW_MS).toISOString() })}\n`);
+    keychain.seed(claudeCodeKeychainService(labDir), "alex", "a-made-up-login");
+    const base = fakeCommandDeps(paths, { interactive: true });
+    const moveTheName: CommandDeps = {
+      ...base,
+      prompts: {
+        ...base.prompts,
+        select: async <Value extends string>(): Promise<Value | symbol> => {
+          // Another process, during the confirmation: the marked identity is renamed away and an unmarked one takes the name.
+          fs.writeFileSync(path.join(labDir, "identity.json"), JSON.stringify({ name: "elsewhere" }));
+          fs.mkdirSync(path.join(paths.identitiesDir, "taker"), { recursive: true });
+          fs.writeFileSync(path.join(paths.identitiesDir, "taker", "identity.json"), JSON.stringify({ name: "lab" }));
+          return await Promise.resolve("remove" as Value);
+        },
+      },
+    };
+    expect(await run(["identity", "remove", "lab"], moveTheName)).toBe(0);
+    expect(fs.existsSync(path.join(paths.identitiesDir, "taker"))).toBe(false);
+    expect(fs.existsSync(labDir)).toBe(true);
+    expect(keychain.items.has(claudeCodeKeychainService(labDir))).toBe(true);
+    expect(warnings).toEqual([]);
   });
 
   it("keeps the removed id reserved until the CLI deletes its Keychain cache", async () => {

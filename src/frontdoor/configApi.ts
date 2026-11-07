@@ -11,13 +11,14 @@ import { applyProfileChange, createProfile, ProfileAlreadyExistsError, ProfileNo
 import { summariseCredential } from "../credential";
 import { mergeCredentialCache } from "../credentialCacheChange";
 import { addDirectoryRule, DirectoryRuleAlreadyExistsError, DirectoryRuleNotFoundError, listDirectoryRules, removeDirectoryRule, requireRuleSelector, updateDirectoryRule } from "../directoryRulesStore";
-import { addIdentity, IdentityAlreadyExistsError, IdentityNotFoundError, identityExists, readIdentity, removeIdentityWithLockHeld, REMOVED_STATE, loggedIdentityIds, requireIdentityAddable, requireIdentityNames, setAllowAmbientCredential, setDefaultConfigProfile, setIdentityLabel, setIdentityProvider, setIdentityAnchors, setIdentityCredential, useIdentity, type IdentityCredentialChange, identityNotFound } from "../identityStore";
-import { KeychainCacheDeleteError, KeychainLoginError, KeychainLookupError, requireKeychainCacheDeleted } from "../keychainLogin";
+import { addIdentity, IdentityAlreadyExistsError, IdentityNotFoundError, identityDirectory, identityIdOf, identityExists, readIdentity, removeIdentityWithLockHeld, REMOVED_STATE, loggedIdentityIds, requireIdentityAddable, requireIdentityNames, setAllowAmbientCredential, setDefaultConfigProfile, setIdentityLabel, setIdentityProvider, setIdentityAnchors, setIdentityCredential, useIdentity, type IdentityCredentialChange, identityNotFound } from "../identityStore";
+import { KeychainCacheDeleteError, KeychainLoginError, KeychainLookupError, leftoverWarnings, requireKeychainCacheDeleted, selfHostedLoginLeftover, type AsyncKeychainProbe, type RemovedIdentity } from "../keychainLogin";
 import { acquireIdentityNamesLock, nonWaitingIdentityNamesLockPorts } from "../identityNamesLock";
 import { IdentityLockBusyError } from "../launcher/lock";
 import { poolNameOf } from "../launcher/identity";
+import type { FarmFs } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
-import { resolveWithAsyncRuns, type AsyncRun } from "../replayRun";
+import { resolveWithAsyncRuns } from "../replayRun";
 import { addPool, changePool, isPoolChange, PoolAlreadyExistsError, PoolNotFoundError, readPools, removePool, requirePool } from "../poolStore";
 import { addProvider, ProviderAlreadyExistsError, ProviderNotFoundError, providerExists, readProvider, removeProvider, requireProviderExists, updateProvider } from "../providersStore";
 import {
@@ -57,6 +58,7 @@ import {
   ConfigRuleSetOutputSchema,
 } from "./configSchemas";
 import { doorApiAuth } from "./rcApi";
+import { isSelfHostMinted } from "../selfHostMintMarker";
 
 /**
  * The door's configuration management as a typed oRPC API: the writes the CLI's `identity`, `profile`, `pool`, `provider` and `rule` verbs make, as `config.<noun>.<verb>` procedures, every one behind the same per-generation control token as the rest of the mount.
@@ -73,7 +75,9 @@ export interface ConfigApiDeps {
   /** The configuration tree the stores operate on. */
   readonly paths: LayoutPaths;
   /** How the door asks the macOS Keychain whether a login is already filed for a directory an identity is about to be created in: `security` run without blocking the event loop, and the platform, since only macOS has a Keychain. The door builds it with `doorKeychainProbe`. */
-  readonly keychain: { readonly runAsync: AsyncRun; readonly platform: NodeJS.Platform };
+  readonly keychain: AsyncKeychainProbe;
+  /** The file reads `identity remove` makes of the directory it is about to delete (whether the self-hosted mint wrote into it). */
+  readonly fs: Pick<FarmFs, "readFileUtf8">;
 }
 
 /** The OpenAPI tag the configuration procedures group under in the document. */
@@ -265,20 +269,40 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
           .handler(async ({ input }) => {
             requireConfirmation(input.confirm, `identity "${input.name}", its directory, and ${REMOVED_STATE}`);
             const lock = guarded(() => acquireIdentityNamesLock(paths, nonWaitingIdentityNamesLockPorts));
+            // A cache delete that fails is held until the leftover check has run, so the one failure names both; the check runs after the lock is released, so a slow Keychain never holds the names lock.
+            let cacheFailure: KeychainCacheDeleteError | undefined;
+            let removedSelfHosted: RemovedIdentity | undefined;
             try {
+              // Read before the directory goes: the removal leaves every Claude Code login item, and for an identity the self-hosted mint wrote into, a leftover one is named in the answer.
+              // The lookup does not throw for an unknown name: the removal's own checks (an unfinished rename holding the name, a launch using it) give their refusals first, and an unknown name gets its own error from the removal.
+              const idBefore = guarded(() => identityIdOf(paths, input.name));
+              const configDir = idBefore === undefined ? undefined : identityDirectory(paths, idBefore);
+              removedSelfHosted = configDir !== undefined && isSelfHostMinted(deps.fs, configDir) ? { name: input.name, directory: configDir } : undefined;
               const id = guarded(() => removeIdentityWithLockHeld(paths, input.name, nonWaitingIdentityNamesLockPorts));
               // The Keychain store's cached credential is forgotten too, through the runner that does not block the event loop; an item that is not there is no failure, and any other leaves the entry behind, so it is reported (the identity itself is removed by then).
               if (deps.keychain.platform === "darwin") {
                 const owner = identityCacheKey(id);
                 const { status } = await deps.keychain.runAsync("security", keychainCacheDeleteArgs(owner));
-                guarded(() => {
+                try {
                   requireKeychainCacheDeleted(owner, status, input.name);
-                });
+                } catch (error: unknown) {
+                  if (!(error instanceof KeychainCacheDeleteError)) {
+                    throw error;
+                  }
+                  cacheFailure = error;
+                }
               }
-              return { action: "removed" as const, kind: "identity" as const, name: input.name };
             } finally {
               lock.release();
             }
+            const warnings = leftoverWarnings(await guardedAsync(async () => await resolveWithAsyncRuns((run) => selfHostedLoginLeftover({ run, platform: deps.keychain.platform }, removedSelfHosted), deps.keychain.runAsync)));
+            if (cacheFailure !== undefined) {
+              const failure = cacheFailure.withNotes(warnings);
+              guarded(() => {
+                throw failure;
+              });
+            }
+            return { action: "removed" as const, kind: "identity" as const, name: input.name, ...(warnings.length === 0 ? {} : { warnings: [...warnings] }) };
           }),
         use: route("/rest/config/identity/use", "Select the active identity")
           .input(ConfigNameInputSchema)

@@ -3,6 +3,9 @@ import path from "node:path";
 import { identityIdOver } from "../identityRecords";
 import { isIdentityName } from "../usage/account";
 import type { FarmFs } from "../launcher/ports";
+import { isRecord, readJsonObject } from "../jsonObjectFile";
+import { RC_SELF_HOST_MINT_MARKER } from "../selfHostMintMarker";
+import { requireNoClaudeCodeLoginForMint, type ClaudeCodeLoginEnv, type KeychainProbe } from "../keychainLogin";
 import type { RcSelfHostCredentialRecord } from "./rcSelfHost";
 import { RC_SELF_HOST_SCOPE_LIST } from "./rcSelfHostLocal";
 
@@ -16,7 +19,7 @@ import { RC_SELF_HOST_SCOPE_LIST } from "./rcSelfHostLocal";
  * Nothing minted is ever returned to a caller or logged: the result names the identity, the organisation and the files, never a token.
  */
 
-/** The file Claude Code keeps its OAuth credential in on Linux and Windows, inside the configuration directory the farm makes of the identity. */
+/** The file Claude Code keeps its OAuth credential in on Linux and Windows, and falls back to on macOS when there is no Keychain item (or its read fails), inside the configuration directory the farm makes of the identity. */
 const CREDENTIALS_FILE = ".credentials.json";
 
 /** The file Claude Code keeps its account block and feature cache in, inside the same directory. */
@@ -64,26 +67,6 @@ export interface RcSelfHostMintResult {
   readonly replaced: boolean;
 }
 
-/** The guard every parsed file narrowing goes through, per the codebase's `unknown` discipline. */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** Reads and parses one JSON object file, or undefined when it is absent or not one JSON object. */
-function readJsonObject(fs: Pick<FarmFs, "readFileUtf8">, file: string): Record<string, unknown> | undefined {
-  const raw = fs.readFileUtf8(file);
-  if (raw === undefined) {
-    return undefined;
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-  return isRecord(parsed) ? parsed : undefined;
-}
-
 /** Reads the door's previously minted record, or undefined when none exists (or what exists does not parse). */
 export function readRcSelfHostRecord(fs: Pick<FarmFs, "readFileUtf8">, frontdoorDir: string): RcSelfHostCredentialRecord | undefined {
   const parsed = readJsonObject(fs, path.join(frontdoorDir, RC_SELF_HOST_RECORD_DIR, RC_SELF_HOST_RECORD_FILE));
@@ -98,7 +81,7 @@ export function readRcSelfHostRecord(fs: Pick<FarmFs, "readFileUtf8">, frontdoor
 }
 
 /**
- * Mints the local credential for one identity and records the door's copy. Refuses, unless `force`, when the identity already holds an OAuth credential this door did not mint (a real claude.ai login): overwriting one silently would sign the identity out, and the mode's own contract is that no Anthropic credential is in play at all.
+ * Mints the local credential for one identity and records the door's copy. Refuses, unless `force`, when the identity already holds an OAuth credential this door did not mint (a real claude.ai login): overwriting one silently would sign the identity out, and the mode's own contract is that no Anthropic credential is in play at all. This writes the files only and never asks the Keychain: on macOS a login filed there for the directory is read ahead of the file written here, so a caller that mints for a real session uses `mintRcSelfHostLogin`, which refuses first.
  */
 export function mintRcSelfHostCredential(deps: RcSelfHostMintDeps): RcSelfHostMintResult {
   if (!isIdentityName(deps.identity)) {
@@ -160,8 +143,27 @@ export function mintRcSelfHostCredential(deps: RcSelfHostMintDeps): RcSelfHostMi
     },
   }, null, 2)}\n`);
 
+  deps.fs.writeFilePrivate(path.join(identityDir, RC_SELF_HOST_MINT_MARKER), `${JSON.stringify({ mintedAt })}\n`);
+
   deps.fs.mkdirPrivate(recordDir);
   deps.fs.writeFilePrivate(recordFile, `${JSON.stringify({ accessToken, refreshToken, organizationUuid, accountUuid }, null, 2)}\n`);
 
   return { identity: deps.identity, organizationUuid, credentialsFile, claudeJsonFile, recordFile, replaced: existingIsOwn };
+}
+
+/** What the guarded mint needs beyond the mint's own deps: the Keychain to ask, and the environment and user a session would derive its login item from. */
+export interface RcSelfHostGuardedMintDeps extends RcSelfHostMintDeps {
+  readonly keychain: KeychainProbe;
+  readonly login: ClaudeCodeLoginEnv;
+}
+
+/**
+ * The mint as `frontdoor rc selfhost mint` runs it: on macOS the Keychain is asked first, by attributes only, whether a Claude Code login is filed for the identity directory's service, which a session reads ahead of the minted file, and the mint is refused (`requireNoClaudeCodeLoginForMint`) before anything is written when one is filed; then `mintRcSelfHostCredential`. Nothing in the Keychain is ever deleted.
+ */
+export function mintRcSelfHostLogin(deps: RcSelfHostGuardedMintDeps): RcSelfHostMintResult {
+  const id = identityIdOver(deps.fs, deps.identitiesDir, deps.identity);
+  if (id !== undefined) {
+    requireNoClaudeCodeLoginForMint(deps.keychain, path.join(deps.identitiesDir, id), deps.identity, deps.login);
+  }
+  return mintRcSelfHostCredential(deps);
 }

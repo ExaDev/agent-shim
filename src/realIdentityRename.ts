@@ -6,7 +6,9 @@ import { createIdentitySessionProbe, type ProcessTableFs, type ProcRead } from "
 import { liveLaunchesOn } from "./launcher/launchRecords";
 import type { LayoutPaths } from "./paths";
 import { realCredentialCacheEnv } from "./realCredentialCache";
-import { realFarmFs, realIsProcessRunning, realRunPort, realSleepSync } from "./realPorts";
+import { realFarmFs, realIsProcessRunning, realRunPort, realRunPortWithin, realSleepSync } from "./realPorts";
+import { cliKeychainProbe } from "./keychainProbe";
+import type { RunPort } from "./launcher/ports";
 import { sameDirectory } from "./sameDirectory";
 
 /** What a read of another process's `/proc` entry gives when the process has exited since it was listed. */
@@ -92,11 +94,12 @@ export function realLaunchProbe(paths: LayoutPaths): IdentityLaunchProbe {
 }
 
 /** The real ports behind `identity rename`: the filesystem, the credential cache, `security`, the process table and the resync lock's clock, sleep and liveness check. */
-export function realIdentityRenamePorts(paths: LayoutPaths): IdentityRenamePorts {
+export function realIdentityRenamePorts(paths: LayoutPaths, within: (timeoutMs: number) => RunPort = realRunPortWithin): IdentityRenamePorts {
   return {
     fs: realFarmFs,
     credentialCache: realCredentialCacheEnv(paths),
     run: realRunPort,
+    lookupRun: cliKeychainProbe(process.platform, within).run,
     platform: process.platform,
     home: os.homedir(),
     sameDirectory,

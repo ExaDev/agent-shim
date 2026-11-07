@@ -145,6 +145,7 @@ export function createWorld(platform: NodeJS.Platform = "linux"): World {
       fs: unflushedFarmFs,
       credentialCache: { port: cachePort, platform: "linux" },
       run: keychain.run,
+      lookupRun: keychain.run,
       platform,
       home: "/example/home",
       sameDirectory,

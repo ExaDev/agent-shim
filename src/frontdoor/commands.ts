@@ -40,7 +40,7 @@ import { machineTimeZone } from "../usage/anchor";
 import { runWindowKeeper } from "../usage/windowKeeper";
 import { realAsyncCredentialCacheEnv } from "../realCredentialCache";
 import { createDoorPipelines } from "./assembly";
-import { doorKeychainProbe } from "./keychainProbe";
+import { doorKeychainProbe } from "../keychainProbe";
 import { appendDoorLog } from "./doorLog";
 import { handOverOnSignal, retireOnSignals, type DoorExitFacts } from "./replacement";
 import { createRoutingSettingReader } from "../headroom/routingSetting";
@@ -643,6 +643,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
             ...controlDeps,
             ...lifecycleAndCodexDeps,
             keychain: doorKeychainProbe(process.platform),
+            fs: realFarmFs,
             events: doorEvents,
           }),
           // The self-hosted web client rides the same listener under the same per-generation token as the typed API it speaks: no extra process, no new trust surface.

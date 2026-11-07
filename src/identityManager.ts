@@ -19,7 +19,8 @@ import type { LayoutPaths } from "./paths";
 import { realFarmFs } from "./realPorts";
 import { describeIdentityMove, describeIdentityRename, discardRenameJournal, moveIdentity, renameIdentity, type IdentityRenamePorts } from "./identityRename";
 import { realIdentityRenamePorts } from "./realIdentityRename";
-import { KEEP_KEYCHAIN_LOGIN_DESCRIPTION, KeychainCacheDeleteError, type KeychainProbe } from "./keychainLogin";
+import { KEEP_KEYCHAIN_LOGIN_DESCRIPTION, KeychainCacheDeleteError, leftoverWarnings, selfHostedLoginLeftover, type KeychainProbe } from "./keychainLogin";
+import { isSelfHostMinted } from "./selfHostMintMarker";
 import { InvalidIdentityNameError, REMOVED_STATE, identityExists, readIdentity, addIdentity, addNewIdentity, requireIdentityAddable, useIdentity, type IdentityListing, listIdentities, setDefaultConfigProfile, setIdentityLabel, setIdentityProvider, setAllowAmbientCredential, setIdentityCredential, setIdentityAnchors, removeIdentityWithLockHeld, requireNoUnfinishedRenameNaming, identityDirectory, requireIdentityId, identityNotFound } from "./identityStore";
 import { realIdentityNamesLockPorts, withIdentityNamesLock } from "./identityNamesLock";
 import { describeAccountHolder, describeIdentityAccount, groupByLogin, loginKeyOf, readIdentityAccount, summariseIdentityAccount, type IdentityAccountRead, type IdentityAccountSummary } from "./identityAccounts";
@@ -477,23 +478,36 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
         requireNoUnfinishedRenameNaming(paths, name, "remove");
         const id = requireIdentityId(paths, name);
         await confirmRemoval(deps, options.yes, `identity "${name}", its directory ${identityDirectory(paths, id)}, and ${REMOVED_STATE}`);
-        withIdentityNamesLock(paths, realIdentityNamesLockPorts, () => {
-        const removed = removeIdentityWithLockHeld(paths, name, realIdentityNamesLockPorts);
-        // The Keychain store holds a cached credential the store function cannot reach; forgetting it keeps a later identity given the same id from reading it.
-        if (renamePorts.credentialCache.platform === "darwin") {
-          // The identity is removed by now, so a delete that fails says so beside the command that deletes the entry left behind.
-          try {
-            renamePorts.credentialCache.port.remove("keychain", identityCacheKey(removed));
-          } catch (error: unknown) {
-            if (error instanceof KeychainCacheDeleteError) {
-              throw error.afterRemoving(name);
+        // A cache delete that fails is held until the leftover check has run, so the one failure names both; the check runs after the lock is released, so a slow Keychain never holds the names lock.
+        let cacheFailure: KeychainCacheDeleteError | undefined;
+        const removedSelfHosted = withIdentityNamesLock(paths, realIdentityNamesLockPorts, () => {
+          // Read before the directory goes, under the lock: the id read before the confirmation can be another identity's by now (the name may have been renamed away and taken), and the removal resolves the name again here. The removal leaves every Claude Code login item, and for an identity the self-hosted mint wrote into, a leftover one is named afterwards.
+          const configDir = identityDirectory(paths, requireIdentityId(paths, name));
+          const selfHosted = isSelfHostMinted(renamePorts.fs, configDir);
+          const removed = removeIdentityWithLockHeld(paths, name, realIdentityNamesLockPorts);
+          // The Keychain store holds a cached credential the store function cannot reach; forgetting it keeps a later identity given the same id from reading it.
+          if (renamePorts.credentialCache.platform === "darwin") {
+            // The identity is removed by now, so a delete that fails says so beside the command that deletes the entry left behind.
+            try {
+              renamePorts.credentialCache.port.remove("keychain", identityCacheKey(removed));
+            } catch (error: unknown) {
+              if (!(error instanceof KeychainCacheDeleteError)) {
+                throw error;
+              }
+              cacheFailure = error.afterRemoving(name);
             }
-            throw error;
           }
-        }
+          return selfHosted ? { name, directory: configDir } : undefined;
         });
-        reportMutation(options.json, { action: "removed", kind: "identity", name }, () => {
+        const warnings = leftoverWarnings(selfHostedLoginLeftover({ run: renamePorts.lookupRun, platform: renamePorts.platform }, removedSelfHosted));
+        if (cacheFailure !== undefined) {
+          throw cacheFailure.withNotes(warnings);
+        }
+        reportMutation(options.json, { action: "removed", kind: "identity", name, ...(warnings.length === 0 ? {} : { warnings }) }, () => {
           console.log(`Removed identity "${name}".`);
+          for (const warning of warnings) {
+            console.warn(warning);
+          }
         });
       }),
     ["agent-shim identity remove old-client --yes"],

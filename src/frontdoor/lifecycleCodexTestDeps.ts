@@ -1,4 +1,5 @@
 import type { CodexStatus } from "../codex/commands";
+import { realFarmFs } from "../realPorts";
 
 /** The door's pid the lifecycle fakes report, a value no test process shares. */
 const FAKE_DOOR_PID = 424_242;
@@ -26,4 +27,6 @@ export const LIFECYCLE_AND_CODEX_TEST_DEPS = {
     platform: "linux" as const,
     runAsync: async (): Promise<never> => await Promise.reject(new Error("this suite mounts a door that has no Keychain to ask")),
   },
+  // The file reads identity removal makes.
+  fs: realFarmFs,
 };

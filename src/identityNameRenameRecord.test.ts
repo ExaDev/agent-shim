@@ -96,7 +96,7 @@ describe("a rename of the name alone that was killed part way", () => {
 
   it("is refused through the door's config.identity.add as a conflict with the same message", async () => {
     await killedAfterReferences();
-    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths: world.paths, keychain: { runAsync: async () => await Promise.reject(new Error("no Keychain here")), platform: "linux" } }), {
+    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths: world.paths, keychain: { runAsync: async () => await Promise.reject(new Error("no Keychain here")), platform: "linux" }, fs: realFarmFs }), {
       context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
     }).config;
     const refusal: unknown = await api.identity.add({ name: "client" }).catch((error: unknown) => error);

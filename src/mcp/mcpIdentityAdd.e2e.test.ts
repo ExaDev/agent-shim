@@ -17,6 +17,7 @@ import type { AsyncRun } from "../replayRun";
 import { claudeCodeKeychainService } from "../usage/signIn";
 import { createMcpServer, serveMcp, type McpServerPorts } from "./server";
 import { toolsFromOpenApiDocument, type McpPermissions } from "./tools";
+import { realFarmFs } from "../realPorts";
 
 const CONTROL_TOKEN = "unit-mcp-identity-add-token";
 
@@ -55,7 +56,7 @@ describe("the MCP tool that adds an identity, over the door's configuration rout
     keychain = createFakeKeychain();
     unanswering = false;
     const runAsync: AsyncRun = async (command, args) => await Promise.resolve(unanswering ? { status: null, stdout: "", stderr: "" } : keychain.run.run(command, args));
-    const mounted = await mountRouterClient(createConfigApiRouter({ expectedToken: CONTROL_TOKEN, paths, keychain: { runAsync, platform: "darwin" } }), CONTROL_TOKEN, CONTROL_TOKEN);
+    const mounted = await mountRouterClient(createConfigApiRouter({ expectedToken: CONTROL_TOKEN, paths, keychain: { runAsync, platform: "darwin" }, fs: realFarmFs }), CONTROL_TOKEN, CONTROL_TOKEN);
     origin = new URL(mounted.url).origin;
     close = mounted.close;
   });
