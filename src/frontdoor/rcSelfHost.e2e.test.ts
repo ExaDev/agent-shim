@@ -608,6 +608,33 @@ describe("the self-hosted Remote Control mode end to end", () => {
     oauthSocket.destroy();
   }, TEST_TIMEOUT_MS);
 
+  /** Runs `body` with a tap's upstream dial landing on a loopback stand-in for the real host, and resolves with every byte the stand-in received: a native launch's control-plane session is the byte tap, and what reaches the stand-in is what the real host would have seen. */
+  const withTapStandIn = async (body: (received: () => string) => Promise<void>): Promise<string> => {
+    const received: Buffer[] = [];
+    const standIn = net.createServer((socket) => {
+      socket.on("data", (chunk: Buffer) => {
+        received.push(chunk);
+      });
+    });
+    await new Promise<void>((resolve) => {
+      standIn.listen(0, "127.0.0.1", () => {
+        resolve();
+      });
+    });
+    const standInAddress = standIn.address();
+    if (standInAddress === null || typeof standInAddress === "string") {
+      throw new Error("the stand-in reported no port");
+    }
+    tapStandIn = { port: standInAddress.port };
+    try {
+      await body(() => Buffer.concat(received).toString("utf8"));
+    } finally {
+      tapStandIn = undefined;
+      standIn.close();
+    }
+    return Buffer.concat(received).toString("utf8");
+  };
+
   /** A terminated session of the self-hosted launch on `host`, reached the two ways the mode's traffic arrives: by redirect (no capability, attributed by its peer) and through the launch's own CONNECT tunnel (attributed by its capability). */
   const openSelfHosted = async (via: "redirect" | "tunnel", host: string): Promise<tls.TLSSocket> =>
     via === "redirect" ? await connectRedirected(transparentPort, host, ca.certPem) : await connectThroughProxy(connectHandle.port, host, ca.certPem, SELF_HOSTED_CAPABILITY);
@@ -708,37 +735,21 @@ describe("the self-hosted Remote Control mode end to end", () => {
   it("forwards a native peer's redirected calls exactly as sent, its token refresh with its body intact, and answers a self-hosted peer's locally", async () => {
     upstreamDials.length = 0;
     const nativeRefreshBody = JSON.stringify({ grant_type: "refresh_token", refresh_token: "native-refresh-token", client_id: "native-client" });
-    const received: Buffer[] = [];
-    const standIn = net.createServer((socket) => {
-      socket.on("data", (chunk: Buffer) => {
-        received.push(chunk);
-      });
-    });
-    await new Promise<void>((resolve) => {
-      standIn.listen(0, "127.0.0.1", () => {
-        resolve();
-      });
-    });
-    const standInAddress = standIn.address();
-    if (standInAddress === null || typeof standInAddress === "string") {
-      throw new Error("the stand-in reported no port");
-    }
     redirectedPeerIsSelfHosted = false;
-    tapStandIn = { port: standInAddress.port };
     try {
-      // A native peer's control-plane session is the byte tap, as with the mode off: its token refresh reaches the (stand-in) real host exactly as the client sent it, body and all.
-      const refreshSocket = await connectRedirected(transparentPort, "platform.claude.com", ca.certPem);
-      const refreshRequest = rawRequest("POST", "/v1/oauth/token", { "Content-Type": "application/json" }, nativeRefreshBody);
-      refreshSocket.write(refreshRequest);
-      await waitUntil(() => Buffer.concat(received).toString("utf8") === refreshRequest);
-      refreshSocket.destroy();
-      const directorySocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
-      expect((await requestOn(directorySocket, rawRequest("GET", "/mcp-registry/v0/servers", {}))).statusLine).toContain(String(FORWARDED_STATUS));
-      directorySocket.destroy();
+      await withTapStandIn(async (received) => {
+        // A native peer's control-plane session is the byte tap, as with the mode off: its token refresh reaches the (stand-in) real host exactly as the client sent it, body and all.
+        const refreshSocket = await connectRedirected(transparentPort, "platform.claude.com", ca.certPem);
+        const refreshRequest = rawRequest("POST", "/v1/oauth/token", { "Content-Type": "application/json" }, nativeRefreshBody);
+        refreshSocket.write(refreshRequest);
+        await waitUntil(() => received() === refreshRequest);
+        refreshSocket.destroy();
+        const directorySocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+        expect((await requestOn(directorySocket, rawRequest("GET", "/mcp-registry/v0/servers", {}))).statusLine).toContain(String(FORWARDED_STATUS));
+        directorySocket.destroy();
+      });
     } finally {
       redirectedPeerIsSelfHosted = true;
-      tapStandIn = undefined;
-      standIn.close();
     }
     expect(upstreamDials).toEqual(["tls platform.claude.com", "forward GET /mcp-registry/v0/servers"]);
     const selfHosted = await connectRedirected(transparentPort, "platform.claude.com", ca.certPem);
@@ -746,6 +757,38 @@ describe("the self-hosted Remote Control mode end to end", () => {
     selfHosted.destroy();
     expect(JSON.parse(minted.body)).toMatchObject({ access_token: MINTED_OAUTH_TOKEN });
     expect(upstreamDials).toHaveLength(2);
+  }, TEST_TIMEOUT_MS);
+
+  it.each(["redirect", "tunnel"] as const)("answers a self-hosted launch's token requests locally over a %s whatever refresh token or grant they carry, and forwards a native launch's untouched", async (via) => {
+    upstreamDials.length = 0;
+    const json = { "Content-Type": "application/json" };
+    // A real login's refresh token presented from inside the minted identity, and an authorization-code exchange: neither is the minted refresh, and neither may leave the door.
+    const foreign = JSON.stringify({ grant_type: "refresh_token", refresh_token: "a-real-login-refresh-token", client_id: "native-client" });
+    const exchange = JSON.stringify({ grant_type: "authorization_code", code: "a-real-authorization-code", client_id: "native-client" });
+    for (const body of [foreign, exchange]) {
+      const socket = await openSelfHosted(via, "platform.claude.com");
+      const answered = await requestOn(socket, rawRequest("POST", "/v1/oauth/token", json, body));
+      socket.destroy();
+      expect(answered.statusLine, body).not.toContain(String(FORWARDED_STATUS));
+      expect(upstreamDials, body).toEqual([]);
+    }
+    // The foreign refresh is answered with the minted pair, never passed on, so the real token is not spent and the minted session is not signed out.
+    const refreshed = await openSelfHosted(via, "platform.claude.com");
+    const answer = await requestOn(refreshed, rawRequest("POST", "/v1/oauth/token", json, foreign));
+    refreshed.destroy();
+    expect(JSON.parse(answer.body)).toMatchObject({ access_token: MINTED_OAUTH_TOKEN, refresh_token: RECORD.refreshToken });
+    expect(upstreamDials).toEqual([]);
+
+    // The control: a native launch's refresh through its own tunnel is the byte tap, which reaches the (stand-in) real host exactly as sent.
+    const nativeRequest = rawRequest("POST", "/v1/oauth/token", json, foreign);
+    const reached = await withTapStandIn(async (received) => {
+      const nativeSocket = await connectThroughProxy(connectHandle.port, "platform.claude.com", ca.certPem, NATIVE_CAPABILITY);
+      nativeSocket.write(nativeRequest);
+      await waitUntil(() => received() === nativeRequest);
+      nativeSocket.destroy();
+    });
+    expect(reached).toBe(nativeRequest);
+    expect(upstreamDials).toEqual(["tls platform.claude.com"]);
   }, TEST_TIMEOUT_MS);
 
   it("taps a native launch's control-plane session byte for byte, and parses only a self-hosted launch's", async () => {
