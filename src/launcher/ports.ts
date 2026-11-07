@@ -88,6 +88,8 @@ export interface SpawnPort {
 
 /** A child process a launcher runs without blocking on it, so it can act while the child owns the terminal. */
 export interface ChildProcess {
+  /** The child pid, absent when spawning failed. */
+  readonly pid: number | undefined;
   /** Settles when the child has exited, or could not be spawned (`error` is then set). It never rejects. */
   readonly exit: Promise<SpawnResult>;
   /** Sends the child a signal. A signal to a child that has already exited does nothing. */

@@ -276,3 +276,7 @@ The reverse direction matters just as much: a directory materialised because of 
 ### Native Codex launch
 
 `runCommand.ts` dispatches a leading `--agent codex` to `codex/launch.ts`. Its injected `prepareCodexLaunch` resolves a typed identity and sharing profile, then resyncs the home through the existing farm builder with `codex/categories.ts`. `codex/identity.ts` supplies canonical-home resolution and the ambient-credential guard, also used by `check`. `runCodexChild` forwards signals over the existing process ports and returns the child status. Existing Claude launch and translation-provider pipelines retain their separate behavior.
+
+## Supervisor lifecycle diagnostics
+
+Supervised launches write private JSON lines under the agent-shim logs directory in `supervisor/`. Each file records the session and supervisor identifiers, bundled supervisor version, and SHA-256 of the installed entrypoint read when supervision starts. The fingerprint identifies the file observed at startup; a concurrent replacement can make it differ from the code already loaded. Events record child starts and exits, signals sent, quota or model departures, and live or destination compaction outcomes. The next child start identifies a replacement. These records do not contain credentials, headers, request bodies, or error messages. Existing supervisors continue running their already-loaded code and begin producing these records only on their next launch.

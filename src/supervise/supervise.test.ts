@@ -30,11 +30,13 @@ async function settle(): Promise<void> {
 }
 
 /** A child whose exit the test settles, and which exits at once on a signal it is told to obey. */
+const FIRST_CHILD_PID = 1000;
+
 class FakeChild implements ChildProcess {
   readonly signals: NodeJS.Signals[] = [];
   readonly exit: Promise<SpawnResult>;
   private finish: (result: SpawnResult) => void = () => undefined;
-  constructor(private readonly obeys: readonly NodeJS.Signals[]) {
+  constructor(private readonly obeys: readonly NodeJS.Signals[], readonly pid = FIRST_CHILD_PID) {
     this.exit = new Promise((resolve) => {
       this.finish = resolve;
     });
@@ -123,7 +125,7 @@ function world(options: Readonly<{ first?: string; ids?: Readonly<Record<string,
     },
     spawn: {
       spawn: () => {
-        const child = new FakeChild(state.obeys);
+        const child = new FakeChild(state.obeys, FIRST_CHILD_PID + children.length);
         children.push(child);
         return child;
       },
@@ -601,6 +603,58 @@ function compactionWorld(decision: CompactionDecision = GO): CompactionWorld {
   const liveCompact = vi.fn<NonNullable<CompactionDeps["live"]>["compact"]>().mockResolvedValue({ kind: "compacted", beforeTokens: 900_000, afterTokens: 20_000 });
   return { deps: { shouldCompact, acquire, compact, markCompacted, live: { ready: () => true, compact: liveCompact } }, shouldCompact, acquire, compact, liveCompact, markCompacted, slotsReleased };
 }
+
+describe("sanitised supervisor lifecycle", () => {
+  it("distinguishes quota departure, the child exit, compaction and replacement", async () => {
+    const w = world();
+    const c = compactionWorld();
+    const events: unknown[] = [];
+    const done = supervise({ ...w.deps, compaction: c.deps, lifecycle: (event: unknown) => { events.push(event); } }, FIRST);
+    await settle();
+    w.quotaHit = () => HIT;
+    w.watchers.get("work")?.();
+    await settle();
+    expect(events).toEqual(expect.arrayContaining([
+      { kind: "child_started", childPid: 1000 },
+      { kind: "departure", reason: "quota" },
+      { kind: "child_signal", childPid: 1000, signal: "SIGTERM" },
+      { kind: "child_exited", childPid: 1000, status: null, signal: "SIGTERM", spawnFailed: false },
+      { kind: "compaction", phase: "after_move", outcome: "compacted" },
+      { kind: "child_started", childPid: 1001 },
+    ]));
+    w.children[1]?.exitWith(0);
+    await done;
+    expect(events).toContainEqual({ kind: "child_exited", childPid: 1001, status: 0, signal: null, spawnFailed: false });
+    expect(JSON.stringify(events)).not.toContain("pool subs: spare is next");
+  });
+
+  it("records failed destination compaction without its error contents before replacement", async () => {
+    const w = world();
+    const c = compactionWorld();
+    c.compact.mockRejectedValue(new Error("private compaction detail"));
+    const events: unknown[] = [];
+    const done = supervise({ ...w.deps, compaction: c.deps, lifecycle: (event: unknown) => { events.push(event); } }, FIRST);
+    await settle();
+    w.quotaHit = () => HIT;
+    w.watchers.get("work")?.();
+    await settle();
+    expect(events).toContainEqual({ kind: "compaction", phase: "after_move", outcome: "failed" });
+    expect(events).toContainEqual({ kind: "child_started", childPid: 1001 });
+    expect(JSON.stringify(events)).not.toContain("private compaction detail");
+    w.children[1]?.exitWith(0);
+    await done;
+  });
+
+  it("does not record a departure or replacement for an ordinary child exit", async () => {
+    const w = world();
+    const events: unknown[] = [];
+    const done = supervise({ ...w.deps, lifecycle: (event: unknown) => { events.push(event); } }, FIRST);
+    await settle();
+    w.children[0]?.exitWith(0);
+    await done;
+    expect(events).toEqual([{ kind: "child_started", childPid: 1000 }, { kind: "child_exited", childPid: 1000, status: 0, signal: null, spawnFailed: false }]);
+  });
+});
 
 describe("supervise with compaction", () => {
   it("compacts the current conversation without stopping or relaunching the child", async () => {

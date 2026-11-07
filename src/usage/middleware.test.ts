@@ -556,6 +556,15 @@ describe("a model choice among alternatives", () => {
     expect(singleRecord(h).requestedModel).toBeUndefined();
   });
 
+  it("retains the requested model on a quota refusal that has no response model", () => {
+    const h = harness();
+    const body = begin(h, event({ status: 429, requestedModel: "claude-haiku-test" }));
+    body.chunk(bytes(JSON.stringify({ type: "error", error: { type: "rate_limit_error" } })));
+    finishBody(h, body);
+    h.flush();
+    expect(singleRecord(h)).toMatchObject({ requestedModel: "claude-haiku-test", status: 429 });
+  });
+
   it("reconstructs a choice behind the headroom hop from the request's own model name paired with the model the body was served under", () => {
     const h = harness();
     const body = begin(h, event({ requestedModel: "auto" }));

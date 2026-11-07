@@ -5,6 +5,7 @@ import type { LogPort, SpawnResult, SupervisedSpawnPort } from "../launcher/port
 import { childExitCode } from "../launcher/spawn";
 import type { CompactionDecision } from "./compaction";
 import type { QuotaHit } from "./limit";
+import type { LifecycleEvent } from "./lifecycle";
 import type { MoveOutcome, MoveRequest } from "./move";
 import type { CompactionResult, CompactRequest } from "./realCompact";
 import type { SupervisedSession } from "./registry";
@@ -45,6 +46,8 @@ export interface CompactionDeps {
 export interface SupervisorDeps {
   readonly pool: string;
   readonly cwd: string;
+  /** Records only sanitised lifecycle metadata, independently of terminal output. */
+  readonly lifecycle?: (event: LifecycleEvent) => void;
   /** The supervising launcher's process id, which marks its registry entry as live. */
   readonly pid: number;
   /** Builds the launch plan for one launch: `prepareLaunch` with the supervised parameter set. */
@@ -118,6 +121,7 @@ function messageOf(error: unknown): string {
  * Stops a child that is waiting at a prompt: SIGTERM, then SIGKILL after the grace period. A child that stops on SIGTERM gives the terminal back itself; one that was killed could not, so the terminal is reset.
  */
 async function stopChild(deps: Readonly<SupervisorDeps>, child: ReturnType<SupervisedSpawnPort["spawn"]>): Promise<SpawnResult> {
+  deps.lifecycle?.({ kind: "child_signal", childPid: child.pid ?? null, signal: "SIGTERM" });
   child.signal("SIGTERM");
   const grace = deps.timer.after(STOP_GRACE_MS);
   const stopped = await Promise.race([child.exit.then((result) => ({ result })), grace.elapsed.then(() => undefined)]);
@@ -125,6 +129,7 @@ async function stopChild(deps: Readonly<SupervisorDeps>, child: ReturnType<Super
   if (stopped !== undefined) {
     return stopped.result;
   }
+  deps.lifecycle?.({ kind: "child_signal", childPid: child.pid ?? null, signal: "SIGKILL" });
   child.signal("SIGKILL");
   const result = await child.exit;
   deps.resetTerminal();
@@ -142,6 +147,11 @@ async function runChild(deps: Readonly<SupervisorDeps>, plan: LaunchPlan, identi
   const startedMs = deps.now();
   const child = deps.spawn.spawn(plan.bin, plan.args, { stdio: "inherit", env: plan.env });
   plan.markChildStarted();
+  deps.lifecycle?.({ kind: "child_started", childPid: child.pid ?? null });
+  const observedExit = child.exit.then((result) => {
+    deps.lifecycle?.({ kind: "child_exited", childPid: child.pid ?? null, status: result.status, signal: result.signal, spawnFailed: result.error !== undefined });
+    return result;
+  });
 
   // One object rather than separate variables: the handlers and callbacks below set these, and a variable assigned only in a closure is narrowed to its initial value where it is read. `leaving` is set once a departure has been decided: a later change to the snapshot must not decide it again.
   const state = { terminating: false, leaving: false, checking: false, compacting: false, wakes: 0, declined: false, lastWarning: "" };
@@ -154,6 +164,7 @@ async function runChild(deps: Readonly<SupervisorDeps>, plan: LaunchPlan, identi
     ...(["SIGHUP", "SIGTERM"] as const).map((signal) =>
       deps.signals.on(signal, () => {
         state.terminating = true;
+        deps.lifecycle?.({ kind: "child_signal", childPid: child.pid ?? null, signal });
         child.signal(signal);
       }),
     ),
@@ -179,6 +190,7 @@ async function runChild(deps: Readonly<SupervisorDeps>, plan: LaunchPlan, identi
     const outcome = await deps.decideMove({ sessionId: plan.sessionId, ...(conversationId === plan.sessionId ? {} : { conversationId }), from: identity, contextTokens: deps.contextTokens(conversationId) });
     if (outcome.kind === "move") {
       state.leaving = true;
+      deps.lifecycle?.({ kind: "departure", reason: "quota" });
       depart({ ...outcome, conversationId });
     } else {
       state.declined = true;
@@ -207,6 +219,7 @@ async function runChild(deps: Readonly<SupervisorDeps>, plan: LaunchPlan, identi
     const conversationId = decision.conversationId ?? plan.sessionId;
     deps.log.info(`agent-shim: ${decision.reason}; compacting session ${plan.sessionId} in process`);
     liveTask = live.compact(conversationId, liveAbort.signal).then((result) => {
+      deps.lifecycle?.({ kind: "compaction", phase: "live", outcome: result.kind });
       if (result.kind === "compacted") {
         if (compaction.markCompacted(plan.sessionId, true, conversationId)) {
           compacted = conversationId;
@@ -217,6 +230,7 @@ async function runChild(deps: Readonly<SupervisorDeps>, plan: LaunchPlan, identi
         deps.log.info(`agent-shim: session ${plan.sessionId} was left as it was: ${result.reason}`);
       }
     }).catch((error: unknown) => {
+      deps.lifecycle?.({ kind: "compaction", phase: "live", outcome: liveAbort.signal.aborted ? "interrupted" : "failed" });
       if (!liveAbort.signal.aborted) deps.log.warn(`agent-shim: could not compact session ${plan.sessionId}: ${messageOf(error)}`);
     }).finally(() => {
       slot.release();
@@ -249,6 +263,7 @@ async function runChild(deps: Readonly<SupervisorDeps>, plan: LaunchPlan, identi
           const outcome = deps.decideRemodel({ sessionId: plan.sessionId, ...(currentConversation === plan.sessionId ? {} : { conversationId: currentConversation }), from: identity, to: move.to, contextTokens: deps.contextTokens(currentConversation) });
           if (outcome.kind === "move") {
             state.leaving = true;
+            deps.lifecycle?.({ kind: "departure", reason: "model" });
             depart({ kind: "remodel", to: outcome.to, model: move.model, conversationId: currentConversation });
           } else {
             deps.log.warn(`agent-shim: session ${plan.sessionId} picked a model under ${labelOf(deps, move.to)}, but stays on ${labelOf(deps, identity)}: ${outcome.reason}`);
@@ -288,7 +303,7 @@ async function runChild(deps: Readonly<SupervisorDeps>, plan: LaunchPlan, identi
   });
 
   try {
-    const first = await Promise.race([child.exit.then((result) => ({ kind: "exited" as const, result })), departing]);
+    const first = await Promise.race([observedExit.then((result) => ({ kind: "exited" as const, result })), departing]);
     stopWatching();
     stopWatchingMoves?.();
     if (first.kind === "exited") {
@@ -334,6 +349,7 @@ async function compactSession(deps: Readonly<SupervisorDeps>, compaction: Compac
   );
   try {
     const result = await compaction.compact({ identity: memberName(deps, identity), sessionId: conversationId, cwd: deps.cwd }, abort.signal);
+    deps.lifecycle?.({ kind: "compaction", phase: "after_move", outcome: result.kind });
     if (result.kind === "unchanged") {
       deps.log.info(`agent-shim: session ${sessionId} was left as it was: ${result.reason}`);
     } else {
@@ -341,6 +357,7 @@ async function compactSession(deps: Readonly<SupervisorDeps>, compaction: Compac
       deps.log.info(`agent-shim: compacted session ${sessionId} on ${labelOf(deps, identity)}${sizes}`);
     }
   } catch (error) {
+    deps.lifecycle?.({ kind: "compaction", phase: "after_move", outcome: interrupted.signal === undefined ? "failed" : "interrupted" });
     if (interrupted.signal === undefined) {
       deps.log.warn(`agent-shim: could not compact session ${sessionId} on ${labelOf(deps, identity)}, which resumes as it was: ${messageOf(error)}`);
     }
@@ -410,7 +427,11 @@ export async function supervise(deps: Readonly<SupervisorDeps>, first: Supervise
           if (interrupted !== undefined) {
             return signalExit(interrupted);
           }
+        } else {
+          deps.lifecycle?.({ kind: "compaction", phase: "after_move", outcome: "not_attempted" });
         }
+      } else {
+        deps.lifecycle?.({ kind: "compaction", phase: "after_move", outcome: "not_attempted" });
       }
     }
   } finally {

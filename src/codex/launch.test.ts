@@ -161,7 +161,7 @@ describe("Codex native identities", () => {
   it("forwards parent signals and cleans up on a spawn failure", async () => {
     const kill = vi.fn<() => void>();
     const off = vi.fn<() => void>();
-    await expect(runCodexChild({ bin: "missing", args: [], env: {} }, { spawn: () => ({ signal: kill, exit: Promise.resolve({ status: null, signal: null, error: new Error("ENOENT") }) }) }, { on: (signal, handler) => { if (signal === "SIGTERM") handler(); return off; } })).rejects.toThrow("ENOENT");
+    await expect(runCodexChild({ bin: "missing", args: [], env: {} }, { spawn: () => ({ pid: undefined, signal: kill, exit: Promise.resolve({ status: null, signal: null, error: new Error("ENOENT") }) }) }, { on: (signal, handler) => { if (signal === "SIGTERM") handler(); return off; } })).rejects.toThrow("ENOENT");
     expect(kill).toHaveBeenCalledWith("SIGTERM");
     expect(off).toHaveBeenCalledTimes(SIGNAL_COUNT);
   });

@@ -64,6 +64,14 @@ describe("quotaHitOf", () => {
     expect(quotaHitOf(store(snapshot, [record({})]), paths, "work", "s1", SINCE, FAKE_NOW_MS)).toBeUndefined();
   });
 
+  it("does not attribute a different provider's refusal to the Anthropic identity", () => {
+    const snapshot = snapshotOf("work", "rejected", 1);
+    const otherProvider = record({ provider: "anthropic", route: "codex:codex", status: 429, limit: EXHAUSTED });
+    expect(quotaHitOf(store(snapshot, [otherProvider]), paths, "work", "s1", SINCE, FAKE_NOW_MS)).toBeUndefined();
+    const anthropic = record({ provider: "codex", route: "anthropic", status: 429, limit: EXHAUSTED });
+    expect(quotaHitOf(store(snapshot, [anthropic]), paths, "work", "s1", SINCE, FAKE_NOW_MS)).toBeDefined();
+  });
+
   it("ignores a refusal from before the child started", () => {
     const fs = store(snapshotOf("work", "rejected", 1), [record({ at: iso(-THREE_HOURS_MS), status: 429, limit: EXHAUSTED })]);
     expect(quotaHitOf(fs, paths, "work", "s1", SINCE, FAKE_NOW_MS)).toBeUndefined();

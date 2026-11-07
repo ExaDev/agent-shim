@@ -19,6 +19,7 @@ export const realSupervisedSpawnPort: SupervisedSpawnPort = {
       });
     });
     return {
+      pid: child.pid,
       exit,
       signal: (signal) => {
         child.kill(signal);
