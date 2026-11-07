@@ -166,6 +166,71 @@ describe("the Remote Control status with worker states read from the service", (
   });
 });
 
+describe("the Remote Control status under concurrent callers", () => {
+  /** A dial whose every worker read waits until the test releases it, recording each request it was asked to make. */
+  const gatedDial = (): { readonly dial: RcEventDial; readonly reads: string[]; readonly release: () => void } => {
+    const reads: string[] = [];
+    const waiting: (() => void)[] = [];
+    return {
+      reads,
+      release: () => {
+        for (const resume of waiting.splice(0)) {
+          resume();
+        }
+      },
+      dial: {
+        ...readingDial({}).dial,
+        readWorker: async (sessionId) => {
+          reads.push(sessionId);
+          await new Promise<void>((resume) => {
+            waiting.push(resume);
+          });
+          return workerRecord("idle");
+        },
+      },
+    };
+  };
+  const persisted = { authorization: OAUTH_BEARER, anthropicVersion: undefined, anthropicClientPlatform: undefined };
+
+  it("shares one in-flight read among every caller asking about the same session", async () => {
+    const tracker = trackerWith(QUIET_SESSION_ID);
+    const { dial, reads, release } = gatedDial();
+    const resolve = resolverOf(tracker, dial, { registered: [registeredAs(OBSERVED_SESSION_ID)], persisted: { [OBSERVED_SESSION_ID]: persisted } });
+    const first = resolve();
+    const second = resolve();
+    const third = resolve(OBSERVED_SESSION_ID);
+    // Let every caller reach its awaits before the dial answers.
+    await new Promise<void>((settled) => {
+      setImmediate(settled);
+    });
+    release();
+    const [, secondReport, thirdReport] = await Promise.all([first, second, third]);
+    expect(reads.sort()).toEqual([QUIET_SESSION_ID, OBSERVED_SESSION_ID].sort());
+    expect(secondReport.statuses[0]?.workerState?.value).toBe("idle");
+    expect(thirdReport.unobserved[0]?.workerState?.value).toBe("idle");
+  });
+
+  it("measures the reuse bound from when a read settled, not from when it was made", async () => {
+    const tracker = trackerWith();
+    const { dial, reads, release } = gatedDial();
+    let now = CLOCK_START_MS;
+    const resolve = resolverOf(tracker, dial, { registered: [registeredAs(OBSERVED_SESSION_ID)], persisted: { [OBSERVED_SESSION_ID]: persisted }, now: () => now });
+    const pending = resolve();
+    await new Promise<void>((settled) => {
+      setImmediate(settled);
+    });
+    // The read takes longer than the bound itself to answer.
+    now += RC_IDLE_EXPIRY_MS;
+    release();
+    const report = await pending;
+    // The answer describes the instant the read was made.
+    expect(report.unobserved[0]?.workerState?.observedAt).toBe(CLOCK_START_MS);
+    now += RC_IDLE_EXPIRY_MS - 1;
+    await resolve();
+    expect(reads).toEqual([OBSERVED_SESSION_ID]);
+  });
+});
+
 describe("the Remote Control status of registered sessions the door holds no record of", () => {
   it("lists a registered session the tracker does not hold as unobserved, with its worker state read with the persisted credential", async () => {
     const tracker = trackerWith(QUIET_SESSION_ID);
