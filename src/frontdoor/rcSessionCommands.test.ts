@@ -247,6 +247,29 @@ describe("goal and compaction control over Remote Control, by route", () => {
     expect(world.written).toHaveLength(1);
   });
 
+  it("waits for the transcript row that records a goal set when it lands after the command returns", async () => {
+    const world = supervisedWorld();
+    const lagging: RcSessionCommandDeps = {
+      ...world.deps,
+      supervisedOf: async () => {
+        const target = await world.deps.supervisedOf(SESSION);
+        if (target === undefined || "refused" in target) throw new Error("no target");
+        return {
+          ...target,
+          // The command resolves before its row is written, as a transcript flush can trail the command's own completion.
+          runGoal: async (args) => {
+            world.ran.push(args);
+            setTimeout(() => {
+              world.transcript.push(goalRow({ met: false, sentinel: true, condition: args }));
+            }, 0);
+            await Promise.resolve();
+          },
+        };
+      },
+    };
+    expect(await createRcSessionCommands(lagging).goalSet(SESSION, "tests pass")).toEqual({ ok: true, report: { route: "supervised", condition: "tests pass", superseded: null } });
+  });
+
   it("refuses a goal condition that spans lines, unsent", async () => {
     const world = supervisedWorld();
     const result = await createRcSessionCommands(world.deps).goalSet(SESSION, "tests pass\nand docs build");
