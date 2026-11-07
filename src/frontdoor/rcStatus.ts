@@ -2,11 +2,6 @@ import type { RcRegisteredSession } from "./rcRegistry";
 import { RC_IDLE_EXPIRY_MS, type RcSessionStatus, type RcSessionTracker, type RcWorkerStateFact } from "./rcSessions";
 import type { RcObservedCredential, RcWorkerStateReadResult } from "./rcWrites";
 
-/**
- * The Remote Control status read: the tracker's synchronous status, with the worker state of every session that has none filled in from the service, plus every session that registered with the Remote Control service on this machine but that the door holds no record of. A session's state is observed only when a worker state update crosses the door while its record exists, so a session whose last state change predates the door (or whose record expired and was recreated by a heartbeat) would otherwise report nothing until its next change, however long that is; and a session none of whose traffic has crossed the door within the tracker's idle bound has no record at all, so it would be missing from the status entirely. The service holds the state, so the door asks it, on the same dial and with the same credential as its client-half writes, and marks every answer as read rather than observed.
- */
-
-
 /** Milliseconds in a second, for stating the idle bound in a reason a person reads. */
 const MS_PER_SECOND = 1_000;
 
@@ -53,14 +48,11 @@ export interface RcStatusDeps {
 }
 
 /** The reason an unobserved session whose create an earlier door generation (or this one, before the record expired) observed has no record now. */
-function quietReason(): string {
-  return `the front door holds no record of this session: none of its traffic has crossed the door within the last ${String(RC_IDLE_EXPIRY_MS / MS_PER_SECOND)} s (it has been quiet since this door started or since its record expired, or its traffic now reaches the service by another route). A door generation observed its create, so its worker state is read with the credential persisted then`;
-}
+const QUIET_REASON = `the front door holds no record of this session: none of its traffic has crossed the door within the last ${String(RC_IDLE_EXPIRY_MS / MS_PER_SECOND)} s (it has been quiet since this door started or since its record expired, or its traffic now reaches the service by another route). A door generation observed its create, so its worker state is read with the credential persisted then`;
 
 /** The reason an unobserved session whose create no door generation observed has no record, and no worker state either. */
-function neverObservedReason(): string {
-  return "the front door has never observed this session: it registered with the Remote Control service without its create crossing any door generation on this machine (it was launched without routing through the front door, or before the door was serving), so the door holds no record and no credential for it";
-}
+const NEVER_OBSERVED_REASON =
+  "the front door has never observed this session: it registered with the Remote Control service without its create crossing any door generation on this machine (it was launched without routing through the front door, or before the door was serving), so the door holds no record and no credential for it";
 
 /** The message for an unobserved session's missing worker state when the door holds no credential to read it with. */
 function noCredentialMessage(sessionId: string): string {
@@ -85,7 +77,9 @@ interface HeldRead {
 export type RcStatusResolver = (sessionId?: string) => Promise<RcStatusReport>;
 
 /**
- * Creates the status read. Every call answers the tracked sessions (filtered to one when named) and the unobserved registered ones (filtered the same way). Reads for the sessions that lack a state run concurrently, and a failed read is reported on its own session (`workerStateUnavailable`) without costing the others theirs, so one session the service refuses never hides the rest. A tracked session's successful read is filed on the tracker, so the next status finds it already there; a failed one, and every read of an unobserved session, is held for `RC_IDLE_EXPIRY_MS` and then made again.
+ * Creates the Remote Control status read: the tracker's synchronous status, with the worker state of every session that has none filled in from the service, plus every session that registered with the Remote Control service on this machine but that the door holds no record of. A session's state is observed only when a worker state update crosses the door while its record exists, so a session whose last state change predates the door (or whose record expired and was recreated by a heartbeat) would otherwise report nothing until its next change, however long that is; and a session none of whose traffic has crossed the door within the tracker's idle bound has no record at all, so it would be missing from the status entirely. The service holds the state, so the door asks it, on the same dial and with the same credential as its client-half writes, and marks every answer as read rather than observed.
+ *
+ * Every call answers the tracked sessions (filtered to one when named) and the unobserved registered ones (filtered the same way). Reads for the sessions that lack a state run concurrently, and a failed read is reported on its own session (`workerStateUnavailable`) without costing the others theirs, so one session the service refuses never hides the rest. A tracked session's successful read is filed on the tracker, so the next status finds it already there; a failed one, and every read of an unobserved session, is held for `RC_IDLE_EXPIRY_MS` and then made again.
  */
 export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
   const held = new Map<string, HeldRead>();
@@ -140,14 +134,14 @@ export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
         registered.map(async (session): Promise<RcUnobservedSession> => {
           const base = { id: session.id, localSessionId: session.localSessionId, pid: session.pid };
           if (deps.persistedCredentialOf(session.id)?.authorization === undefined) {
-            return { ...base, reason: neverObservedReason(), workerState: undefined, workerStateUnavailable: noCredentialMessage(session.id) };
+            return { ...base, reason: NEVER_OBSERVED_REASON, workerState: undefined, workerStateUnavailable: noCredentialMessage(session.id) };
           }
           const holding = heldRead(session.id, deps.persistedCredentialOf);
           const read = await holding.result;
           const at = holding.requestedAt;
           return read.ok
-            ? { ...base, reason: quietReason(), workerState: { value: read.workerStatus, observedAt: at, source: "read" }, workerStateUnavailable: undefined }
-            : { ...base, reason: quietReason(), workerState: undefined, workerStateUnavailable: read.message };
+            ? { ...base, reason: QUIET_REASON, workerState: { value: read.workerStatus, observedAt: at, source: "read" }, workerStateUnavailable: undefined }
+            : { ...base, reason: QUIET_REASON, workerState: undefined, workerStateUnavailable: read.message };
         }),
       ),
     ]);
