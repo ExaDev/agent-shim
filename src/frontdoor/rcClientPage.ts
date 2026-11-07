@@ -211,8 +211,8 @@ function selectSession(id) {
 }
 
 // The identity of one pending list as the page draws it: the request ids in order. The poll redraws the list only when this changes, so a half-made choice (a picked radio button, a typed message) survives every refresh of the same requests.
-function pendingKey(pending) {
-  return pending.map(function (request) { return request.sessionId + '/' + request.requestId; }).join(' ');
+function pendingKey(pending, dropped) {
+  return pending.map(function (request) { return request.sessionId + '/' + request.requestId; }).concat(dropped.map(function (entry) { return entry.sessionId + '#' + String(entry.count); })).join(' ');
 }
 
 // Turns what one question card holds into the answer's choices: per question, the picked labels in option order and the typed free text when there is any (the dialog's own "Type something" row), which joins the picks of a multi-select question and replaces the pick of a single-select one, since that takes one answer. Returns the choices, or the refusal naming the first question left without a selection.
@@ -228,14 +228,18 @@ function answerChoices(picked, typed, multiSelect) {
   return { choices: choices };
 }
 
-function renderPending(pending) {
+function renderPending(pending, dropped) {
   if (ui === null) { return; }
-  var key = pendingKey(pending);
+  var key = pendingKey(pending, dropped);
   if (ui.pendingKey === key) { return; }
   ui.pendingKey = key;
   var list = ui.pendingList;
   list.textContent = '';
-  if (pending.length === 0) {
+  // A session whose requests the door did not list (past its cap) is said so first: a question the user expects may be among them, to be answered in the session itself.
+  for (var d = 0; d < dropped.length; d++) {
+    list.appendChild(el('div', 'event dim', shortId(dropped[d].sessionId) + '  ' + String(dropped[d].count) + ' request(s) not listed; answer them in the session'));
+  }
+  if (pending.length === 0 && dropped.length === 0) {
     list.appendChild(el('div', 'event dim', 'no control requests awaiting an answer'));
     return;
   }
@@ -330,7 +334,7 @@ function refreshSessions() {
 }
 
 function refreshPending() {
-  rpc('rc/pending', ui !== null && ui.selected !== null ? { session: ui.selected } : {}).then(function (result) { renderPending(result.pending); }, authOrReport('rc/pending'));
+  rpc('rc/pending', ui !== null && ui.selected !== null ? { session: ui.selected } : {}).then(function (result) { renderPending(result.pending, result.dropped === undefined ? [] : result.dropped); }, authOrReport('rc/pending'));
 }
 
 // The header's quota span, fed by the door's live read on the same refresh cycle as the session and pending lists: the freshest rate-limit observation any session's stream has filed, with its observation time so its freshness reads at a glance.

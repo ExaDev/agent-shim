@@ -17,7 +17,7 @@ import type { RcRateLimitInfo } from "./rcSchemas";
 import { mintRcSelfHostCredential, type RcSelfHostMintResult } from "./rcSelfHostMint";
 import { RC_GOAL_CLEAR_WORDS, RC_SESSION_COMMAND_MAX_WAIT_MS, RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "./rcSessionCommands";
 import type { RcQuestionSelection } from "./rcQuestions";
-import { rcExcerpt, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
+import { RC_PENDING_PER_SESSION_MAX, rcExcerpt, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
 import { RC_CONTEXT_USAGE_DETAILS, RC_PERMISSION_MODES, RC_READ_FILE_ENCODINGS, isRcContextUsageDetail, isRcPermissionMode, isRcReadFileEncoding, type RcEventWriteResult } from "./rcWrites";
 import type { RcStreamEvent } from "./rcSchemas";
 
@@ -107,6 +107,11 @@ export function formatRcPendingList(pending: readonly RcPendingRequestSummary[])
       ]),
     ];
   });
+}
+
+/** Formats the sessions whose requests the door did not list, one line each, so `rc pending` says when a question may be missing from it. */
+export function formatRcDroppedPending(dropped: readonly { readonly sessionId: string; readonly count: number }[]): string[] {
+  return dropped.map((entry) => `${entry.sessionId}  ${String(entry.count)} request(s) not listed: past the per-session cap of ${String(RC_PENDING_PER_SESSION_MAX)}, or an id the protocol does not mint; answer them in the session`);
 }
 
 /** Separates the question number from the selection in one `--choose` or `--other` value. */
@@ -283,12 +288,15 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
       .argument("[session]", "One cse_ session id, as `frontdoor rc list` shows it; every observed session when omitted.")
       .option("--json", "Print the pending requests as JSON.")
       .action(async (session: string | undefined, options: Readonly<{ json?: boolean }>) => {
-        const pending = await frontDoorRcControlFromState(realFarmFs, paths).pendingOf(session);
+        const control = frontDoorRcControlFromState(realFarmFs, paths);
+        const pending = await control.pendingOf(session);
+        // The status read carries how many requests each session had that the door did not list, so a question dropped at the cap is visible here rather than only in `rc status`.
+        const dropped = (await control.statusOf(session)).flatMap((status) => (status.pendingDropped === undefined ? [] : [{ sessionId: status.id, count: status.pendingDropped }]));
         if (options.json === true) {
-          printJson({ pending });
+          printJson({ pending, ...(dropped.length === 0 ? {} : { dropped }) });
           return;
         }
-        for (const line of formatRcPendingList(pending)) {
+        for (const line of [...formatRcPendingList(pending), ...formatRcDroppedPending(dropped)]) {
           console.log(line);
         }
       }),

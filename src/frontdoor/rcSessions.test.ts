@@ -424,6 +424,9 @@ describe("the Remote Control pending-request lifecycle", () => {
       ask(tracker, "x".repeat(RC_REQUEST_ID_MAX_CHARS + 1), RC_PENDING_PER_SESSION_MAX + 1);
       expect(tracker.pendingOf()).toHaveLength(RC_PENDING_PER_SESSION_MAX);
       expect(tracker.statusOf()[0]?.pendingDropped).toBe(2);
+      // A stream replay of the dropped request is the same request, so it is not counted again.
+      ask(tracker, `req-${String(RC_PENDING_PER_SESSION_MAX)}`, RC_PENDING_PER_SESSION_MAX + 2);
+      expect(tracker.statusOf()[0]?.pendingDropped).toBe(2);
     });
 
     it("marks a request past the parse cap as oversized, holding its summary only", () => {
