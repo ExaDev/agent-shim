@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { RcStreamEvent } from "./rcSchemas";
 import type { RcDialTarget } from "./connectEffects";
+import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
 import { createRcClaudeCodeVersions, selfHostSurfaceUnboundReason, parseRcGoalOutput, rcSelfHostEventDial, runSelfHostedSlashCommand, type RcSelfHostCommandDeps } from "./rcSelfHostCommands";
 import { createRcEventFanout } from "./rcStream";
 import type { RcEventDial, RcEventWriteResult } from "./rcWrites";
@@ -159,5 +160,12 @@ describe("slash commands on the door's own self-hosted surface", () => {
     expect(selfHostSurfaceUnboundReason(undefined)).toContain("is not set");
     expect(selfHostSurfaceUnboundReason("abc")).toContain('is "abc", which is not a port');
     expect(selfHostSurfaceUnboundReason("47592")).toContain("on port 47592 is not bound");
+  });
+
+  it("refuses a command whose event write would be larger than the door's own surface reads, unsent", async () => {
+    const world = makeWorld();
+    const result = await runSelfHostedSlashCommand(world.deps, SESSION, { kind: "compact", instructions: "x".repeat(CONTROL_BODY_CAP_BYTES) }, undefined, NEVER);
+    expect(result.ok ? "" : result.message).toContain("over the");
+    expect(world.written).toEqual([]);
   });
 });
