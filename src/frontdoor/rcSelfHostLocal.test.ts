@@ -1,4 +1,5 @@
 import http from "node:http";
+import { text as bodyText } from "node:stream/consumers";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
@@ -31,13 +32,7 @@ async function serveLocal(host: string, record: RcSelfHostCredentialRecord): Pro
   const local = createRcSelfHostLocal({
     now: () => 0,
     credentialRecord: () => record,
-    readBody: async (request) => {
-      const chunks: Buffer[] = [];
-      for await (const chunk of request) {
-        chunks.push(Buffer.from(chunk as Uint8Array));
-      }
-      return Buffer.concat(chunks).toString("utf8");
-    },
+    readBody: async (request) => await bodyText(request),
     ownsLaunch: () => true,
     ownsPeer: async () => await Promise.resolve(true),
   });
@@ -57,7 +52,11 @@ async function serveLocal(host: string, record: RcSelfHostCredentialRecord): Pro
       resolve();
     });
   });
-  return { port: (server.address() as { port: number }).port, decisions };
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("the stand-in surface server is not listening on a port");
+  }
+  return { port: address.port, decisions };
 }
 
 async function call(port: number, method: string, path: string, body?: unknown, headers: Readonly<Record<string, string>> = {}): Promise<{ readonly status: number; readonly body: string }> {
