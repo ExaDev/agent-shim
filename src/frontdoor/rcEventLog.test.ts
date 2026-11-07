@@ -503,6 +503,15 @@ describe("the tracker's transitions into the log", () => {
     expect(tracker.pendingOf(SESSION_A).map((request) => request.requestId)).toEqual(["req_1"]);
   });
 
+  it("sees a session already running when the door started as appearing, with no worker state until its next registration", () => {
+    const { tracker, kinds } = trackedLog();
+    // The door's first sight of the session is a heartbeat: the session predates the door, so its create and registration were never observed.
+    exchange(tracker, "POST", `/v1/code/sessions/${SESSION_A}/worker/heartbeat`, "{}");
+    expect(kinds()).toEqual([{ kind: "session-appeared", session: SESSION_A }]);
+    exchange(tracker, "PUT", `/v1/code/sessions/${SESSION_A}/worker`, JSON.stringify({ worker_status: "running" }));
+    expect(kinds().at(-1)).toEqual({ kind: "worker-state", session: SESSION_A, state: "running" });
+  });
+
   it("records a pending request retiring at its deadline", () => {
     const { tracker, advance, kinds } = trackedLog();
     exchange(tracker, "POST", `/v1/code/sessions/${SESSION_A}/worker/events`, workerEvents(canUseTool));
