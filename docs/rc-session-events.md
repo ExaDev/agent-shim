@@ -35,20 +35,25 @@ To start without missing anything, read the head first (every page answer names 
 
 ## Which sessions it covers
 
-A Remote Control session reaches the door in one of three ways, and the stream covers all three because it is fed by the one tracker every Remote Control exchange crosses, whichever backend serves it:
+A Remote Control session reaches the door in one of three ways, and the stream is fed by the one tracker every Remote Control exchange crosses, whichever backend serves it:
 
 1. **An Anthropic OAuth login, inference on Anthropic.** The session's Remote Control calls ride the door's `/v1/` pass-through to the real service, where the tracker observes them, and the door's own writes reach the real service with the observed credential.
-2. **An Anthropic OAuth login, inference on a provider.** The door routes inference by the provider header and leaves Remote Control on the same pass-through as kind 1, so the tracker sees exactly what it sees for kind 1.
-3. **A third-party provider with no Anthropic login (self-hosted mode).** With `AGENT_SHIM_FRONTDOOR_RC_SELF_HOST=1` the door serves the CCR session family itself (see [rc-interception-rig.md](rc-interception-rig.md#the-self-hosted-proof-no-login-at-all)), and that surface is mounted as a route on the same resolver the tracker wraps, so its exchanges are observed exactly as the real service's are.
+2. **An Anthropic OAuth login, inference on a provider.** The door routes inference by the provider header and leaves Remote Control on the same pass-through as kind 1, so the tracker sees what it sees for kind 1. This is inferred from the routing, not tested: no test drives a provider-routed session's Remote Control traffic.
+3. **A third-party provider with no Anthropic login (self-hosted mode).** With `AGENT_SHIM_FRONTDOOR_RC_SELF_HOST=1` the door serves the CCR session family itself (see [rc-interception-rig.md](rc-interception-rig.md#the-self-hosted-proof-no-login-at-all)), mounted as a route on the same resolver the tracker wraps, so its exchanges are observed as the real service's are.
 
-| Event | Kinds 1 and 2 (real service) | Kind 3 (self-hosted) |
+What covers each event, per backend. "Connect surface" is `src/frontdoor/connect.rc.test.ts`, a session against a stand-in for the real service. "Self-hosted" is `src/frontdoor/rcSelfHost.e2e.test.ts`, a session through the self-hosted surface's real assembly. "Tracker" is `src/frontdoor/rcEventLog.test.ts`, exchanges driven straight into the tracker, which does not depend on the backend.
+
+| Event | Real service (kinds 1 and 2) | Self-hosted (kind 3) |
 |---|---|---|
-| `session-appeared` | Supported | Supported |
-| `worker-state` (`idle`, `running`, `requires_action`) | Supported | Supported |
-| `pending-born` and `pending-retired` (`answered`, `expired`) | Supported, including an approval that arrives only on the client read stream | Supported |
-| `session-ended` | `archived`, `conflict`, `expired` | `archived`, `conflict` (the surface answers a stale-epoch write with the protocol's own conflict header), `expired` |
-| Resume after a cursor, expiry of an evicted or foreign cursor | Supported | Supported |
+| `session-appeared` | Connect surface | Self-hosted |
+| `worker-state` | Tracker | Self-hosted (`idle`, `running`) |
+| `pending-born`, `pending-retired` `answered` | Connect surface (an approval delivered only on the client read stream) | Self-hosted |
+| `pending-retired` `expired` | Tracker | Tracker |
+| `session-ended` `archived` | Tracker | Self-hosted |
+| `session-ended` `conflict` | Tracker | Tracker (the surface answers a stale-epoch write with the protocol's conflict header) |
+| `session-ended` `expired` | Tracker | Tracker |
+| Resume after a cursor, expiry of an evicted or foreign cursor | Log tests, independent of the backend | Self-hosted (resume), log tests |
 
-The cases are covered by tests: `src/frontdoor/connect.rc.test.ts` drives a session against a stand-in for the real service through the connect surface (kinds 1 and 2 share this path), and `src/frontdoor/rcSelfHost.e2e.test.ts` drives one through the self-hosted surface's real assembly. Kind 3 was also followed end to end with a real Claude Code against a mock provider, with no Anthropic login, as the rig's self-hosted proof describes. Kinds 1 and 2 were not run live for this stream, because that needs the rig's manual browser login.
+A door that starts while a session is already running sees it appear at its first accepted call through that door, and reports no `worker-state` until the worker's next registration, exactly as `rc status` shows no worker state for it until then.
 
-One known gap affects kind 3 outside this stream: a self-hosted session still sends some non-Remote-Control startup calls to the real hosts through the door (issue #731). With that traffic blocked the session still activates, and the stream behaves identically.
+A retired request is remembered for one answer deadline (`RC_PENDING_DEADLINE_MS`, swept at the tracker's sweep cadence), so a copy of it that arrives on the other channel inside that window is not born again. A copy arriving later, or a request the tracker never saw pending, is born as a new request.
