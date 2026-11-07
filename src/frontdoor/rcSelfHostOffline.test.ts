@@ -1,24 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
-import { rcSelfHostOfflineAnswer, rcSelfHostOwnsPresentation } from "./rcSelfHostOffline";
+import { isRcSessionFamilyPath, rcSelfHostOfflineAnswer } from "./rcSelfHostOffline";
 
-/** A short fake bearer of the OAuth kind (kept short of the redaction filter's eight-character suffix on purpose). */
-const MINTED = "sk-ant-oat1";
-
-describe("which requests the self-hosted mode owns", () => {
-  it("owns the minted bearer whatever the scheme word's case, and a request presenting no credential at all", () => {
-    expect(rcSelfHostOwnsPresentation({ authorization: `Bearer ${MINTED}` }, MINTED)).toBe(true);
-    expect(rcSelfHostOwnsPresentation({ authorization: `bearer ${MINTED}` }, MINTED)).toBe(true);
-    expect(rcSelfHostOwnsPresentation({}, MINTED)).toBe(true);
-    expect(rcSelfHostOwnsPresentation({}, undefined)).toBe(true);
-  });
-
-  it("leaves every other credential to its native session: another bearer, another scheme, an API key, and any bearer while nothing is minted", () => {
-    expect(rcSelfHostOwnsPresentation({ authorization: "Bearer sk-ant-oat2" }, MINTED)).toBe(false);
-    expect(rcSelfHostOwnsPresentation({ authorization: `Basic ${MINTED}` }, MINTED)).toBe(false);
-    expect(rcSelfHostOwnsPresentation({ "x-api-key": "sk-ant-api" }, MINTED)).toBe(false);
-    expect(rcSelfHostOwnsPresentation({ authorization: `Bearer ${MINTED}` }, undefined)).toBe(false);
+describe("the Remote Control session family", () => {
+  it("is the session and compatibility families and nothing beside them", () => {
+    for (const path of ["/v1/code/sessions", "/v1/code/sessions/cse_1/events", "/v1/sessions", "/v1/sessions/session_1"]) {
+      expect(isRcSessionFamilyPath(path), path).toBe(true);
+    }
+    for (const path of ["/v1/code/sessionsx", "/v1/sessionsx", "/v1/mcp_servers", "/v1/messages"]) {
+      expect(isRcSessionFamilyPath(path), path).toBe(false);
+    }
   });
 });
 

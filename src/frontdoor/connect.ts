@@ -372,10 +372,6 @@ export interface ConnectServerConfig {
   readonly limits: ConnectLimits;
   /** The diagnostic tap, when capturing is enabled; absent means nothing is recorded. */
   readonly capture?: ConnectCapture;
-  /**
-   * Whether a blind tunnel the launch presenting `capability` asks for is refused rather than dialled: the self-hosted Remote Control mode's rule that its sessions reach no host the door does not serve (see `rcSelfHostLaunches.ts`). A refused tunnel is answered 403 with a body naming the mode, and nothing is dialled. Absent, every blind tunnel is dialled.
-   */
-  readonly refusesBlindTunnel?: (capability: string) => boolean;
 }
 
 /** A running connect surface. */
@@ -396,17 +392,17 @@ export interface ConnectServerHandle {
 }
 
 /**
- * A surface the connect layer consults before it routes or pipes anything: the door's self-hosted Remote Control answers (see `rcSelfHost.ts`), which own every non-pipeline request of a self-hosted session on the intercepted hosts, the OAuth refresh on the control-plane host among them, and every websocket upgrade such a session attempts. Absent, every request keeps exactly the behaviour it has today.
+ * A surface the connect layer consults before it routes or pipes anything: the door's self-hosted Remote Control answers (see `rcSelfHost.ts`). Which sessions it owns is decided once per terminated session from the tunnel it arrived on, never from a request's headers: a CONNECT tunnel whose launch `ownsLaunch` names, and every connection the transparent surface terminates, since a redirected connection carries no launch to attribute it to and the mode fails closed. An owned session's requests go to `serve` first, its upgrades and blind tunnels are refused, and nothing it sends reaches a real host except what the routed pipeline serves; every other session is served exactly as with no surface at all. Absent, every request keeps exactly the behaviour it has today.
  *
  * A host this surface needs to parse (`parsesHost`) is served as ordinary HTTP even when it is named as a tap host: the tap exists because that host's channel could not be safely parsed, so taking it over is the surface's own explicit decision, made only for the mode whose contract already excludes the traffic the tap protects.
  */
 export interface ConnectLocalSurface {
   /** Whether this surface needs one host's terminated sessions parsed as HTTP rather than byte-tapped. */
   readonly parsesHost: (host: string) => boolean;
-  /** Serves one request locally; resolves false when the surface does not own the path, so routing or piping continues unchanged. */
+  /** Serves one request of a session the surface owns (the connect surface consults it for no other); resolves false when the request is for the routed pipeline, so routing continues unchanged. */
   readonly serve: (host: string, request: IncomingMessage, response: ServerResponse) => Promise<boolean>;
-  /** Whether a websocket upgrade is this surface's to refuse rather than the real host's to answer: a claimed upgrade is answered with a 404 on the spot and never relayed. Absent, the surface claims no upgrade, and every one is relayed as with no surface at all. */
-  readonly claimsUpgrade?: (request: IncomingMessage) => boolean;
+  /** Whether the launch whose capability a CONNECT tunnel presented is one this surface owns: its requests are served by `serve`, its upgrades refused and its blind tunnels refused, whatever any request presents. */
+  readonly ownsLaunch: (capability: string) => boolean;
 }
 
 /** The whole answer to an upgrade the local surface claims: a 404 that closes the connection, since no upgrade it claims has anything on this machine to talk to. */
@@ -426,12 +422,29 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
   const ledger = createConnectionLedger(config.limits, config.isLiveCapability);
   /** The deadline of each terminated session a retiring surface took on, disarmed by its first request (see `serveSecure`). */
   const lateSessionDeadlines = new WeakMap<net.Socket, NodeJS.Timeout>();
+  // Whether each terminated session is the local surface's, decided once from the tunnel it arrived on: a tunnel's launch cannot change while the tunnel is open, and every request and upgrade on it is decided the same way.
+  const owned = new WeakMap<net.Socket, boolean>();
+  const ownedBySurface = (secure: net.Socket): boolean => {
+    const surface = config.localSurface;
+    if (surface === undefined) {
+      return false;
+    }
+    const known = owned.get(secure);
+    if (known !== undefined) {
+      return known;
+    }
+    const capability = tunnelTokens.get(secure);
+    // A session with no tunnel capability, or the transparent surface's own, arrived by redirect and names no launch: it is the surface's, so an unattributable session fails closed.
+    const decided = capability === undefined || capability === "" || capability === config.transparentCapability || surface.ownsLaunch(capability);
+    owned.set(secure, decided);
+    return decided;
+  };
   // One HTTP parser per intercept host, so each handler knows by closure which host's session it serves and therefore which upstream a non-routed path is piped to. No socket-to-host bookkeeping to get wrong: the only path into a session's handler is that host's acceptor.
   // An upgrade request is relayed, never parsed: the client wants a 101 and a raw byte channel after it (Remote Control's websocket to the API host is exactly this), which no request/response forwarding can carry. The relay splices the client's TLS session to a fresh TLS connection to the session's real host, byte for byte, using the same pump a tap host uses; the capture records the upgrade's head, and the frames after it flow unrecorded.
   const onUpgrade = (host: string) => (request: IncomingMessage, socket: Duplex, head: Buffer) => {
     config.capture?.upgrade(request);
-    if (config.localSurface?.claimsUpgrade?.(request) === true) {
-      // The local surface serves no upgrade, so one it claims is refused here, before any upstream is dialled: relaying it would carry the claimed credential to the real host.
+    if (ownedBySurface(request.socket)) {
+      // The local surface serves no upgrade, so an owned session's is refused here, before any upstream is dialled: relaying it would carry the session to the real host whatever it presents.
       socket.end(REFUSED_UPGRADE_RESPONSE);
       return;
     }
@@ -464,7 +477,7 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
           request.socket.end();
         });
       }
-      if (config.localSurface !== undefined && (await config.localSurface.serve(host, request, response))) {
+      if (config.localSurface !== undefined && ownedBySurface(request.socket) && (await config.localSurface.serve(host, request, response))) {
         return;
       }
       if (host === config.routedHost && servedByPipeline(request.url)) {
@@ -789,7 +802,7 @@ function routeConnect(socket: net.Socket, head: string, context: ConnectionConte
     return;
   }
   const session = sessions.find((entry) => entry.host === target.host);
-  if (session === undefined && config.refusesBlindTunnel?.(capability) === true) {
+  if (session === undefined && config.localSurface?.ownsLaunch(capability) === true) {
     config.capture?.refusedTunnel(target);
     refuseWithReason(socket, REFUSAL.forbidden, SELF_HOSTED_TUNNEL_REFUSAL, `the front door's self-hosted Remote Control mode does not tunnel to ${target.host}: a self-hosted session reaches no host the door does not serve itself`);
     return;

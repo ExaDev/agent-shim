@@ -22,17 +22,27 @@ import { answerRcControlRequest, endRcSession, getRcSessionMcpStatus, getRcSessi
 import { createRcSelfHostSurface, type RcSelfHostCredentialRecord } from "./rcSelfHost";
 import { realRcWebFetch } from "./rcWebFetch";
 import { createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
-import { connectRedirected, KEYGEN_TIMEOUT_MS, requestOn, TEST_CAPABILITY } from "./connectTestWorld";
+import { connectHead, connectRedirected, connectThroughProxy, KEYGEN_TIMEOUT_MS, proxyAuthorizationFor, rawAttempt, requestOn, TEST_CAPABILITY } from "./connectTestWorld";
 
 /**
  * The end-to-end proof of the self-hosted Remote Control mode, against the real assembly the door runs: the connect surface with its transparent listener, the real admission and pipeline, the route resolution that hands the Remote Control family to the served surface, the observation wrapper that feeds the tracker, and the door's own client half (the stream attachment and the inject and answer writes) dialling the door's own transparent surface exactly as the mode wires it. A fake CLI (a raw TLS client through the redirect, speaking the protocol the 2.1.289 rig pinned) creates, bridges, registers, streams and writes; the door's client half consumes and controls. No upstream exists anywhere in the world, which is the point: nothing leaves the machine.
  */
 
+/** A launch the world treats as self-hosted (the launch check names it), so its CONNECT tunnels are the mode's whatever their requests present. */
+const SELF_HOSTED_CAPABILITY = "e2e-self-hosted-launch";
+/** A live launch that is not self-hosted: a native login's or a provider session's, whose traffic the mode must leave exactly as it would be with the mode off. */
+const NATIVE_CAPABILITY = "e2e-native-launch";
+/** Every capability the world's admission accepts as a live launch. */
+const LIVE_CAPABILITIES: readonly string[] = [TEST_CAPABILITY, SELF_HOSTED_CAPABILITY, NATIVE_CAPABILITY];
+
+/** The status the world's stand-in forwarding answers with, echoing the forwarded body: one the door itself never answers, so a forwarded request cannot be mistaken for a local answer. */
+const FORWARDED_STATUS = 299;
+
 /** A short fake bearer of the OAuth kind (kept short of the redaction filter's eight-character suffix on purpose). */
 const MINTED_OAUTH_TOKEN = "sk-ant-oat1";
 /** The id of the identity the fake launch runs as, recorded in its registry entry. */
 const RIG_IDENTITY_ID = "rig-identity";
-const RECORD: RcSelfHostCredentialRecord = { accessToken: MINTED_OAUTH_TOKEN, refreshToken: "selfhost-refresh", organizationUuid: "11111111-1111-4111-8111-111111111111", accountUuid: "22222222-2222-4222-8222-222222222222" };
+const RECORD: RcSelfHostCredentialRecord = { accessToken: MINTED_OAUTH_TOKEN, refreshToken: "selfhost-refresh", organizationUuid: "11111111-1111-4111-8111-111111111111", accountUuid: "22222222-2222-4222-8222-222222222222", identityId: "lab" };
 
 /** How long the e2e waits for a stream frame or an attachment that arrives asynchronously: generous against scheduling noise, short against a hang. */
 const SETTLE_TIMEOUT_MS = 5_000;
@@ -164,6 +174,7 @@ describe("the self-hosted Remote Control mode end to end", () => {
       credentialRecord: () => RECORD,
       // The real production fetch dial, with the private-address refusal lifted because this world's fetch targets are loopback stand-ins the test itself starts.
       webFetch: realRcWebFetch({ allowPrivate: true }),
+      ownsLaunch: (capability) => capability === SELF_HOSTED_CAPABILITY,
     });
     sessionEvents = createRcSessionEventLog({ generation: SESSION_EVENTS_GENERATION, capacity: RC_SESSION_EVENT_LOG_CAPACITY });
     tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: 45_000, onTransition: sessionEvents.append, onClose: sessionEvents.close });
@@ -193,7 +204,7 @@ describe("the self-hosted Remote Control mode end to end", () => {
       directPort: () => 0,
       env: {},
       credentials: fakeAsyncCredentials(),
-      rcSelfHost: surface,
+      rcSelfHostRoute: surface.route,
     });
     const observingResolver = async (request: Parameters<typeof resolver>[0]) => {
       const resolution = await resolver(request);
@@ -202,7 +213,7 @@ describe("the self-hosted Remote Control mode end to end", () => {
     const pipelines = createDoorPipelines({
       resolveRoute: observingResolver,
       canonicalProvider: (name) => name,
-      isLiveToken: (token) => token === TEST_CAPABILITY,
+      isLiveToken: (token) => LIVE_CAPABILITIES.includes(token),
       // The fake CLI sends no identity header (a Remote Control call carries none), so the identity can only come from the launch the tunnel's capability belongs to.
       identityOfToken: (token) => (token === TEST_CAPABILITY ? RIG_IDENTITY_ID : undefined),
       headroomDecision: followsLaunchFlag, responseObservers: [],
@@ -234,7 +245,7 @@ describe("the self-hosted Remote Control mode end to end", () => {
         },
         leafFor: createLeafCache(ca, () => new Date()),
         upstreamFor: () => ({ host: "127.0.0.1", port: echoPort, tls: false }),
-        isLiveCapability: (token) => token === TEST_CAPABILITY,
+        isLiveCapability: (token) => LIVE_CAPABILITIES.includes(token),
         transparentPort: 0,
         transparentCapability: TEST_CAPABILITY,
         limits: { headDeadlineMs: 10_000, maxPendingHeads: 64, maxTunnels: 1024, revalidateMs: 1_000 },
@@ -641,12 +652,72 @@ describe("the self-hosted Remote Control mode end to end", () => {
     expect(upgrade.statusLine).toContain("404");
     expect(upstreamDials).toEqual([]);
 
-    // The control: a native session's own bearer on the same host is forwarded exactly as with the mode off, which is what proves the recorder above could have gone red.
-    const nativeSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
-    nativeSocket.write(rawRequest("GET", "/api/claude_code_grove", { Authorization: "Bearer sk-ant-oat2" }));
-    await waitUntil(() => upstreamDials.length > 0);
+    // The control: a native launch's tunnel on the same host is forwarded exactly as with the mode off, which is what proves the recorder above could have gone red.
+    const nativeSocket = await connectThroughProxy(connectHandle.port, CONNECT_INTERCEPT_HOST, ca.certPem, NATIVE_CAPABILITY);
+    const native = await requestOn(nativeSocket, rawRequest("GET", "/api/claude_code_grove", { Authorization: "Bearer sk-ant-oat2" }));
     nativeSocket.destroy();
+    expect(native.statusLine).toContain(String(FORWARDED_STATUS));
     expect(upstreamDials).toEqual(["forward GET /api/claude_code_grove"]);
+  }, TEST_TIMEOUT_MS);
+
+  it("decides by the launch a tunnel belongs to, never by the credential a request presents", async () => {
+    upstreamDials.length = 0;
+    // A self-hosted launch's request presenting a credential the door no longer mints (a re-mint since the session began) is still the mode's, through its own tunnel and through the redirect alike.
+    const stale = { Authorization: "Bearer sk-ant-REDACTED" };
+    const selfHostedTunnel = await connectThroughProxy(connectHandle.port, CONNECT_INTERCEPT_HOST, ca.certPem, SELF_HOSTED_CAPABILITY);
+    expect((await requestOn(selfHostedTunnel, rawRequest("GET", "/api/claude_code_grove", stale))).statusLine).toContain(String(HTTP_STATUS.notFound));
+    selfHostedTunnel.destroy();
+    const redirected = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+    expect((await requestOn(redirected, rawRequest("GET", "/v1/mcp_servers", stale))).statusLine).toContain(String(HTTP_STATUS.ok));
+    redirected.destroy();
+    expect(upstreamDials).toEqual([]);
+
+    // A native launch's credential-less calls on both hosts, and its token refresh with its own credential in the body, reach the real hosts exactly as sent.
+    const nativeApi = await connectThroughProxy(connectHandle.port, CONNECT_INTERCEPT_HOST, ca.certPem, NATIVE_CAPABILITY);
+    expect((await requestOn(nativeApi, rawRequest("GET", "/mcp-registry/v0/servers?limit=1", {}))).statusLine).toContain(String(FORWARDED_STATUS));
+    nativeApi.destroy();
+    const nativeRefreshBody = JSON.stringify({ grant_type: "refresh_token", refresh_token: "native-refresh-token", client_id: "native-client" });
+    const nativePlatform = await connectThroughProxy(connectHandle.port, "platform.claude.com", ca.certPem, NATIVE_CAPABILITY);
+    expect((await requestOn(nativePlatform, rawRequest("GET", "/api/organizations", {}))).statusLine).toContain(String(FORWARDED_STATUS));
+    nativePlatform.destroy();
+    const nativeRefreshSocket = await connectThroughProxy(connectHandle.port, "platform.claude.com", ca.certPem, NATIVE_CAPABILITY);
+    const nativeRefresh = await requestOn(nativeRefreshSocket, rawRequest("POST", "/v1/oauth/token", { "Content-Type": "application/json" }, nativeRefreshBody));
+    nativeRefreshSocket.destroy();
+    expect(nativeRefresh.statusLine).toContain(String(FORWARDED_STATUS));
+    expect(nativeRefresh.body).toBe(nativeRefreshBody);
+    expect(upstreamDials).toEqual(["forward GET /mcp-registry/v0/servers?limit=1", "forward GET /api/organizations", "forward POST /v1/oauth/token"]);
+  }, TEST_TIMEOUT_MS);
+
+  it("refuses every upgrade of a self-hosted session whatever it presents, and relays a native launch's", async () => {
+    upstreamDials.length = 0;
+    const upgradeHeaders = { Upgrade: "websocket", "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==", "Sec-WebSocket-Version": "13" };
+    const upgradeRequest = (headers: Readonly<Record<string, string>>): string => rawRequest("GET", "/api/frame/sync?slug=s", { ...upgradeHeaders, ...headers }).replace("Connection: close", "Connection: Upgrade");
+    const presentations: readonly Readonly<Record<string, string>>[] = [{ Authorization: `Bearer ${MINTED_OAUTH_TOKEN}` }, { Authorization: "Bearer sk-ant-oat2" }, { "x-api-key": "sk-ant-api", "Sec-WebSocket-Protocol": `frame-sync.v1, ${MINTED_OAUTH_TOKEN}` }];
+    for (const presented of presentations) {
+      const socket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+      expect((await requestOn(socket, upgradeRequest(presented))).statusLine).toContain(String(HTTP_STATUS.notFound));
+      socket.destroy();
+    }
+    expect(upstreamDials).toEqual([]);
+    const native = await connectThroughProxy(connectHandle.port, CONNECT_INTERCEPT_HOST, ca.certPem, NATIVE_CAPABILITY);
+    native.write(upgradeRequest({ Authorization: "Bearer sk-ant-oat2" }));
+    await waitUntil(() => upstreamDials.length > 0);
+    native.destroy();
+    expect(upstreamDials).toEqual([`tls ${CONNECT_INTERCEPT_HOST}`]);
+  }, TEST_TIMEOUT_MS);
+
+  it("refuses a self-hosted launch's blind tunnel to any host the door does not serve, Anthropic's included, and tunnels a native launch's", async () => {
+    upstreamDials.length = 0;
+    for (const host of ["downloads.claude.ai", "mcp-proxy.anthropic.com", "statsig.anthropic.com", "raw.githubusercontent.com"]) {
+      const attempt = rawAttempt(connectHandle.port, connectHead(host, [proxyAuthorizationFor(SELF_HOSTED_CAPABILITY)]));
+      expect((await attempt.answer).split("\r\n")[0], host).toContain("403");
+      attempt.socket.destroy();
+    }
+    expect(upstreamDials).toEqual([]);
+    const native = rawAttempt(connectHandle.port, connectHead("downloads.claude.ai", [proxyAuthorizationFor(NATIVE_CAPABILITY)]));
+    await waitUntil(() => upstreamDials.length > 0);
+    native.socket.destroy();
+    expect(upstreamDials).toEqual(["tcp downloads.claude.ai"]);
   }, TEST_TIMEOUT_MS);
 
   it("serves the worker's web-fetch proxy through the transparent surface with the door's own dial, redirect and all", async () => {
@@ -722,9 +793,18 @@ describe("the self-hosted Remote Control mode end to end", () => {
 function recordingUpstreamDials(effects: ConnectEffects): ConnectEffects {
   return {
     ...effects,
-    forwardHttp: (target, request, response, observer) => {
+    // A forward is recorded and answered here, never dialled: the stand-in answers FORWARDED_STATUS with the body exactly as the forwarding would have sent it upstream.
+    forwardHttp: (_target, request, response) => {
       upstreamDials.push(`forward ${request.method ?? "?"} ${request.url ?? "?"}`);
-      effects.forwardHttp(target, request, response, observer);
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => {
+        chunks.push(chunk);
+      });
+      request.on("end", () => {
+        const forwarded = Buffer.concat(chunks);
+        response.writeHead(FORWARDED_STATUS, { "content-length": String(forwarded.length) });
+        response.end(forwarded);
+      });
     },
     connectTlsUpstream: async (host) => {
       upstreamDials.push(`tls ${host}`);

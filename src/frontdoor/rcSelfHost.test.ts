@@ -55,7 +55,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const MINTED_OAUTH_TOKEN = "sk-ant-oat1";
 const REFRESH_TOKEN = "selfhost-refresh";
 /** The fixed record the surface authenticates against, standing in for a mint. */
-const RECORD: RcSelfHostCredentialRecord = { accessToken: MINTED_OAUTH_TOKEN, refreshToken: REFRESH_TOKEN, organizationUuid: "11111111-1111-4111-8111-111111111111", accountUuid: "22222222-2222-4222-8222-222222222222" };
+const RECORD: RcSelfHostCredentialRecord = { accessToken: MINTED_OAUTH_TOKEN, refreshToken: REFRESH_TOKEN, organizationUuid: "11111111-1111-4111-8111-111111111111", accountUuid: "22222222-2222-4222-8222-222222222222", identityId: "lab" };
 
 /** A controllable clock, so retention and resume windows are reached without waiting. */
 class FakeClock {
@@ -103,6 +103,7 @@ async function makeWorld(record: RcSelfHostCredentialRecord | null = RECORD, opt
     randomToken: () => "random-token-material",
     credentialRecord: () => held,
     webFetch,
+    ownsLaunch: () => true,
     log: (line) => {
       logLines.push(line);
     },
@@ -857,18 +858,13 @@ describe("the self-hosted local answers", () => {
     const refresh = await call(oauthPort, "POST", "/v1/oauth/token", { grant_type: "refresh_token", refresh_token: REFRESH_TOKEN });
     expect(refresh.status).toBe(HTTP_STATUS.ok);
     expect(JSON.parse(refresh.body)).toMatchObject({ access_token: MINTED_OAUTH_TOKEN, refresh_token: REFRESH_TOKEN });
-    // A path no named answer serves is still the mode's when the request is: answered from the offline table, never left for the connect surface to forward.
-    const presentations: readonly Readonly<Record<string, string>>[] = [{}, { authorization: `Bearer ${MINTED_OAUTH_TOKEN}` }];
+    // The surface serves only sessions the connect surface already attributed to the mode, so a path no named answer serves is answered from the offline table whatever the request presents, never left to be forwarded.
+    const presentations: readonly Readonly<Record<string, string>>[] = [{}, { authorization: `Bearer ${MINTED_OAUTH_TOKEN}` }, { authorization: "Bearer sk-ant-REDACTED" }, { "x-api-key": "sk-ant-api" }];
     for (const presented of presentations) {
       const offline = await call(oauthPort, "GET", "/api/nothing", undefined, presented);
       expect(offline.status).toBe(HTTP_STATUS.notFound);
       expect(offline.body).toContain("self-hosted Remote Control mode serves nothing at /api/nothing");
     }
-    // A native session's own bearer is not the mode's: the surface declines it (this bare server's own empty 404 answers), so the connect surface forwards it exactly as with the mode off.
-    const native = await call(oauthPort, "GET", "/api/nothing", undefined, { authorization: "Bearer sk-ant-oat2" });
-    expect(native).toMatchObject({ status: HTTP_STATUS.notFound, body: "" });
-    const nativeApiKey = await call(oauthPort, "GET", "/v1/oauth/hello", undefined, { "x-api-key": "sk-ant-api" });
-    expect(nativeApiKey).toMatchObject({ status: HTTP_STATUS.notFound, body: "" });
     await new Promise<void>((resolve) => {
       oauthServer.close(() => {
         resolve(undefined);

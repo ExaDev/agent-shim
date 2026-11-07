@@ -240,12 +240,10 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         randomToken: () => randomBytes(MINTED_TOKEN_RANDOM_BYTES).toString("base64url"),
         credentialRecord: () => readRcSelfHostRecord(realFarmFs, paths.frontdoorDir),
         webFetch: realRcWebFetch({ allowPrivate: rcWebFetchAllowsPrivateFromEnv(process.env) }),
+        // The one discriminator of the mode: a CONNECT tunnel is a self-hosted session's when its launch runs the minted identity, and every request, upgrade and blind tunnel of such a session is the mode's, whatever it presents.
+        ownsLaunch: createRcSelfHostLaunchCheck({ fs: realFarmFs, sessionsDir: paths.frontdoorSessionsDir, launchesDir: paths.launchesDir, identitiesDir: paths.identitiesDir, mintedRecord: () => readRcSelfHostRecord(realFarmFs, paths.frontdoorDir) }),
         log,
       })
-    : undefined;
-  // The mode's tunnel rule: a blind CONNECT from a launch running the minted identity is refused, every other launch's is dialled as before.
-  const refusesBlindTunnel = rcSelfHost
-    ? createRcSelfHostLaunchCheck({ fs: realFarmFs, sessionsDir: paths.frontdoorSessionsDir, launchesDir: paths.launchesDir, identitiesDir: paths.identitiesDir, mintedIdentityId: () => readRcSelfHostRecord(realFarmFs, paths.frontdoorDir)?.identityId })
     : undefined;
 
   // The Remote Control session record: one per door process, in memory only, fed by every resolved route's served exchanges. Wrapping the resolver (rather than any one listener) is what lets whichever pipeline serves a `/v1/code/sessions` exchange observe it, and the wrapper is inert for every path outside the Remote Control prefix. The client credential and the stream's sequence cursor are the two parts that must outlive the process (a session outlives any one door generation, only client-half calls state the OAuth bearer, and a generation that lost the cursor would re-read the stream from its head), so both are persisted per session in one owner-only file and read back by whichever generation needs them.
@@ -324,7 +322,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       // An `acct:` model member is served by relaunch: the door leaves a move request for the session's supervisor (found across every pool's registry, since the door does not know which pool launched the session) and answers the request with what is happening. A session nothing supervises gets the message naming the command to run instead.
       observations: (target) => observations.observation(target),
       accountMoves: async (sessionId, to, model) => await requestAccountMove({ fs: realFarmFs, paths, runningAmong: realRunningAmong, idOf: (name) => identityIdOf(paths, name), now: () => Date.now() }, sessionId, to, model),
-      ...(rcSelfHostSurface === undefined ? {} : { rcSelfHost: rcSelfHostSurface }),
+      ...(rcSelfHostSurface === undefined ? {} : { rcSelfHostRoute: rcSelfHostSurface.route }),
     }),
     rcTracker,
     rcHub,
@@ -686,7 +684,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         }
         const minted = readRcSelfHostRecord(realFarmFs, paths.frontdoorDir);
         if (minted !== undefined && minted.identityId === undefined) {
-          log("self-hosted Remote Control surface: the minted credential predates recording its identity, so no launch can be attributed to the mode and its sessions' blind tunnels are dialled; mint the identity again (agent-shim frontdoor rc selfhost mint <identity>) to refuse them");
+          log("self-hosted Remote Control surface: the minted credential predates recording its identity, so no launch can be told apart from it and every launch's calls on the intercepted hosts are refused until the identity is minted again (agent-shim frontdoor rc selfhost mint <identity>)");
         }
       }
       const server = await startConnectServer(
@@ -721,7 +719,6 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
           ...(wantedTransparentPort === undefined || Number.isNaN(wantedTransparentPort) ? {} : { transparentPort: wantedTransparentPort, ...(transparentCapability === undefined ? {} : { transparentCapability }) }),
           limits: CONNECT_LIMITS,
           ...(capture === undefined ? {} : { capture }),
-          ...(refusesBlindTunnel === undefined ? {} : { refusesBlindTunnel }),
         },
         realConnectEffects(),
         source,

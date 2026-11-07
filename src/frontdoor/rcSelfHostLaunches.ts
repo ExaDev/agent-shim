@@ -3,9 +3,12 @@ import { launchIdentitiesOf } from "../launcher/launchRecords";
 import { isLiveCapability } from "./capability";
 import { isSessionRecordName, readFrontDoorSessionRecord } from "./state";
 import type { HeadroomFs } from "../headroom/state";
+import type { RcSelfHostCredentialRecord } from "./rcSelfHost";
 
 /**
  * Which CONNECT tunnels belong to a self-hosted Remote Control session (ExaDev/agent-shim#731): the launch whose capability the tunnel presented runs the identity the door's credential was minted into. A blind tunnel from such a launch is refused, because the hosts the CLI dials that way are Anthropic's and other third parties' (its updater and plugin marketplace) and the mode's contract is that a self-hosted session reaches none of them; a tunnel from any other launch (a native login, a provider session on another identity) is untouched.
+ *
+ * A mint recorded before the identity's id was (a record with no `identityId`) cannot be attributed to any launch, so it fails closed: every launch counts as the mode's, and the local surface refuses each of their calls with the instruction to mint again (see `rcSelfHostLocal.ts`), rather than letting the minted identity's traffic pass as native.
  *
  * The decision is read from files the door and the launcher already keep, fresh on every call, because a blind tunnel is rare and launches come and go: the session registry names the launcher pid behind each capability, the launch records name the identity that pid launches, and the minted record names the identity's id. Ids, not names, are compared, so a rename between the mint and the launch changes nothing.
  */
@@ -16,16 +19,20 @@ export interface RcSelfHostLaunchDeps {
   readonly sessionsDir: string;
   readonly launchesDir: string;
   readonly identitiesDir: string;
-  /** The id of the identity the door's credential was minted into, or undefined while nothing is minted (then no launch is self-hosted). */
-  readonly mintedIdentityId: () => string | undefined;
+  /** The door's minted record, read fresh on every call: undefined while nothing is minted (then no launch is self-hosted), and a record without an identity id (a mint from before ids were recorded) attributing every launch to the mode, since one it cannot attribute might be the minted identity's. */
+  readonly mintedRecord: () => RcSelfHostCredentialRecord | undefined;
 }
 
 /** Builds the check: whether the launch presenting `capability` runs the identity the door's credential was minted into. */
 export function createRcSelfHostLaunchCheck(deps: RcSelfHostLaunchDeps): (capability: string) => boolean {
   return (capability) => {
-    const minted = deps.mintedIdentityId();
-    if (minted === undefined) {
+    const mint = deps.mintedRecord();
+    if (mint === undefined) {
       return false;
+    }
+    const minted = mint.identityId;
+    if (minted === undefined) {
+      return true;
     }
     const launch = deps.fs
       .readdir(deps.sessionsDir)

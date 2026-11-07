@@ -26,15 +26,13 @@ import { withoutContextMarker } from "../models/identity";
 import type { TargetObservation } from "../selection/signals";
 import type { UsageSnapshot } from "../usage/schema";
 import { PROVIDER_PATH_PREFIX, directOrigin, parseProviderPath, type FrontDoorRoute, type ModelChoice, type RoutedRequest } from "./route";
-import type { IncomingHttpHeaders } from "node:http";
 import { Readable } from "node:stream";
+import { isRcSessionFamilyPath } from "./rcSelfHostOffline";
 import { scanRequestHead } from "./requestScan";
 
 /**
- * Resolves the route a request's target names: `/providers/<name>/...` reads the provider file fresh on every request (so an edited provider applies to the next request with no restart) and answers with the route its kind selects: the in-process codex translator for a `codex` provider, the pass-through route for an `http` one with the provider's own credential attached in place of whatever the child presented. A bare `/v1/...` target (what the CONNECT surface hands the pipeline from a terminated OAuth session) rides a pass-through to Claude Code's own API, except in two cases: the Remote Control session family and every other request of a self-hosted session when the door serves that surface itself (`rcSelfHost`, the self-hosted mode's route), and a session whose launch named a provider, whose inference is rewritten under that provider's scoped path (`scopeSessionProviderPath`, before anything else, so the route that serves sees the scoped target too, not only the resolution) and resolved as if the child had dialled the provider directly. Anything else is unrouted.
+ * Resolves the route a request's target names: `/providers/<name>/...` reads the provider file fresh on every request (so an edited provider applies to the next request with no restart) and answers with the route its kind selects: the in-process codex translator for a `codex` provider, the pass-through route for an `http` one with the provider's own credential attached in place of whatever the child presented. A bare `/v1/...` target (what the CONNECT surface hands the pipeline from a terminated OAuth session) rides a pass-through to Claude Code's own API, except in two cases: the Remote Control session family when the door serves that surface itself (`rcSelfHostRoute`, the self-hosted mode's route), and a session whose launch named a provider, whose inference is rewritten under that provider's scoped path (`scopeSessionProviderPath`, before anything else, so the route that serves sees the scoped target too, not only the resolution) and resolved as if the child had dialled the provider directly. Anything else is unrouted.
  */
-/** Whether one path belongs to the Remote Control family the self-hosted route serves. */
-const isRcSelfHostPath = (path: string): boolean => path === "/v1/code/sessions" || path.startsWith("/v1/code/sessions/") || path === "/v1/sessions" || path.startsWith("/v1/sessions/");
 
 /**
  * Rewrites a provider session's bare `/v1/` target under its provider's scoped path: the request a child dialling the provider directly would have sent. Any other request (a provider-scoped path, a session that named no provider, a non-`/v1/` path, or the Remote Control family a provider never serves) is returned unchanged.
@@ -44,7 +42,7 @@ function scopeSessionProviderPath(request: RoutedRequest): RoutedRequest {
     return request;
   }
   const path = new URL(request.url, "http://127.0.0.1").pathname;
-  if (!path.startsWith("/v1/") || isRcSelfHostPath(path)) {
+  if (!path.startsWith("/v1/") || isRcSessionFamilyPath(path)) {
     return request;
   }
   return { ...request, url: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(request.session.provider)}${request.url}` };
@@ -179,9 +177,9 @@ export function createProviderRouteResolver(deps: {
   /** The observed latency, success and token mix of one target (`provider/model`), from the door's observation store seeded by the usage log: what the ranked modes of a virtual model's selection read. */
   readonly observations?: (target: string) => TargetObservation | undefined;
   /**
-   * The self-hosted Remote Control mode, when the door runs it: its route takes over the `/v1/code/sessions` family and the `/v1/sessions` compatibility list, and every other bare `/v1/` request a self-hosted session sends (the requests `owns` says are the mode's by the credential they present), all of which would otherwise ride the pass-through to the real API carrying the minted credential. A provider session's inference never reaches this choice, because it is rewritten under its provider's scoped path first. Absent, every `/v1/` target rides the pass-through exactly as before.
+   * The self-hosted Remote Control route, when the door runs that mode: it takes over the `/v1/code/sessions` family and the `/v1/sessions` compatibility list, which would otherwise ride the pass-through to the real API. Every other `/v1/` request of a self-hosted session is answered by the connect surface's local answers before it reaches this resolver. Absent, every `/v1/` target rides the pass-through exactly as before.
    */
-  readonly rcSelfHost?: { readonly route: FrontDoorRoute; readonly owns: (headers: Readonly<IncomingHttpHeaders>) => boolean };
+  readonly rcSelfHostRoute?: FrontDoorRoute;
 }): (request: RoutedRequest) => Promise<RouteResolution> {
   /** The pass-through every bare /v1/ request from the CONNECT surface rides: straight to Claude Code's own API, with no per-request upstream for a headroom hop (the daemon's default upstream is exactly that API, which is what an OAuth session wants). */
   const oauthRoute = createPassthroughRoute("anthropic", { baseUrl: `https://${CONNECT_INTERCEPT_HOST}:${String(HTTPS_PORT)}`, stripPrefix: undefined, headroomUpstream: undefined });
@@ -274,8 +272,8 @@ export function createProviderRouteResolver(deps: {
     const path = new URL(request.url, "http://127.0.0.1").pathname;
     const scoped = parseProviderPath(path);
     if (scoped === undefined) {
-      if (deps.rcSelfHost !== undefined && (isRcSelfHostPath(path) || (path.startsWith("/v1/") && deps.rcSelfHost.owns(request.headers)))) {
-        return { ok: true, route: deps.rcSelfHost.route };
+      if (deps.rcSelfHostRoute !== undefined && isRcSessionFamilyPath(path)) {
+        return { ok: true, route: deps.rcSelfHostRoute };
       }
       return path.startsWith("/v1/") ? { ok: true, route: oauthRoute } : { ok: false, status: HTTP_STATUS.notFound, message: `no such endpoint: ${path}` };
     }
@@ -400,7 +398,7 @@ export function createProviderRouteResolver(deps: {
         routes = undefined;
       }
       // A router resolves each request's model name through the models block to a target provider, whose own kind handling and credential then serve it: the same one-scan, one-rewrite shape the `routes` list below uses. A qualified model name (a slash whose first segment names a defined provider) is resolved on every session, whatever it launched on: the picker offers every provider's models qualified, and a session that selects one is routed to the provider that serves it. Bare names are resolved everywhere, except a name the session's own provider serves itself, which stays that provider's. The Remote Control family of paths is never a provider's to serve.
-      const resolvesNames = !nameResolved && !isRcSelfHostPath(path);
+      const resolvesNames = !nameResolved && !isRcSessionFamilyPath(path);
       if (resolvesNames) {
         // Whole-body, because a resolved name is served under its target's own model name: the qualified or virtual name the session sent is rewritten in the one copy of the body this scan holds, exactly as a `routes` entry that names a model is.
         const scan = await scanRequestHead(current, true);
