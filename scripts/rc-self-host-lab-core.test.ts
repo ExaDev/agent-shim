@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { labBaseEnv, labLaunchVariables, labPaneCommand, labPaneState, labSessionId, parseLabDoorState, readLabCapture, shellQuote } from "./rc-self-host-lab-core";
+import { labBaseEnv, labLaunchVariables, labPaneCommand, labPaneState, labRefusal, labSessionId, nonLoopbackSockets, parseLabDoorState, readLabCapture, shellQuote } from "./rc-self-host-lab-core";
 
 /** Ports and a pid with no meaning beyond being told apart in the assertions. */
 const TRANSPARENT_PORT = 4321;
@@ -12,12 +12,24 @@ const line = (record: Record<string, unknown>): string => JSON.stringify({ ts: "
 
 describe("the lab's environment", () => {
   it("keeps only the inherited minimum and the lab's own home, never the operator's configuration directory, proxy or credentials", () => {
-    const env = labBaseEnv({ HOME: "/h", PATH: "/bin", CLAUDE_CONFIG_DIR: "/real", HTTPS_PROXY: "http://x", ANTHROPIC_API_KEY: "k", AGENT_SHIM_HOME: "/real-home" }, { home: "/lab/home" });
-    expect(env).toEqual({ HOME: "/h", PATH: "/bin", TERM: "xterm-256color", AGENT_SHIM_HOME: "/lab/home" });
+    const env = labBaseEnv({ HOME: "/h", PATH: "/bin", CLAUDE_CONFIG_DIR: "/real", HTTPS_PROXY: "http://x", ANTHROPIC_API_KEY: "k", AGENT_SHIM_HOME: "/real-home" }, { home: "/lab/home", claudeHome: "/lab/claude-home" });
+    expect(env).toEqual({ HOME: "/h", PATH: "/bin", TERM: "xterm-256color", AGENT_SHIM_HOME: "/lab/home", AGENT_SHIM_CLAUDE_HOME: "/lab/claude-home" });
   });
 
   it("starts the door in self-hosted mode with its capture on, its transparent surface on the given port, and nothing of ~/.claude shared", () => {
     expect(labLaunchVariables(TRANSPARENT_PORT)).toMatchObject({ AGENT_SHIM_FRONTDOOR_RC_SELF_HOST: "1", AGENT_SHIM_TRANSPARENT_SURFACE: "4321", AGENT_SHIM_FRONTDOOR_CAPTURE: "1", AGENT_SHIM_CATEGORY_OVERRIDE: "all=false" });
+  });
+
+  it("refuses an inherited CLAUDE_CONFIG_DIR, a foreign AGENT_SHIM_HOME, and a lab directory in a real state root or /tmp", () => {
+    expect(labRefusal({}, "/work/lab1", "/u")).toBeUndefined();
+    expect(labRefusal({ AGENT_SHIM_HOME: "/work/lab1/home" }, "/work/lab1", "/u")).toBeUndefined();
+    expect(labRefusal({ CLAUDE_CONFIG_DIR: "/u/.claude" }, "/work/lab1", "/u")).toContain("CLAUDE_CONFIG_DIR is set");
+    expect(labRefusal({ AGENT_SHIM_HOME: "/u/.agent-shim" }, "/work/lab1", "/u")).toContain("AGENT_SHIM_HOME is set");
+    for (const dir of ["/u/.agent-shim/lab", "/u/.claude-use", "/u/.claude/x"]) {
+      expect(labRefusal({}, dir, "/u")).toContain("a real state root");
+    }
+    expect(labRefusal({}, "/private/tmp/lab", "/u")).toContain("under /tmp");
+    expect(labRefusal({}, "/u/.claude-elsewhere", "/u")).toBeUndefined();
   });
 
   it("builds the pane command with CLAUDE_CONFIG_DIR unset first and every word quoted", () => {
@@ -29,17 +41,19 @@ describe("the lab's environment", () => {
 describe("the lab's leak check", () => {
   it("passes a capture holding only the intercepted tunnels and upgrade arrivals", () => {
     const capture = [line({ kind: "connect", host: "api.anthropic.com", port: TLS_PORT, intercepted: true }), line({ kind: "upgrade", method: "GET", url: "/x", headers: {} }), ""].join("\n");
-    expect(readLabCapture(capture, [])).toEqual({ records: 2, leaks: [] });
+    expect(readLabCapture(capture)).toEqual({ records: 2, leaks: [], refusedTunnels: [] });
   });
 
-  it("names every forwarded exchange, tapped stream and blind tunnel, except a tunnel host the caller allows", () => {
+  it("names every forwarded exchange, tapped stream and dialled tunnel as a leak, and a refused tunnel as refused", () => {
     const capture = [
       line({ kind: "request", id: 1, method: "GET", url: "/api/claude_code_grove", headers: {} }),
       line({ kind: "stream", id: 2, host: "platform.claude.com" }),
       line({ kind: "connect", host: "downloads.example.test", port: TLS_PORT, intercepted: false }),
-      line({ kind: "connect", host: "allowed.example.test", port: TLS_PORT, intercepted: false }),
+      line({ kind: "connect-refused", host: "refused.example.test", port: TLS_PORT }),
     ].join("\n");
-    expect(readLabCapture(capture, ["allowed.example.test"]).leaks).toEqual([
+    const verdict = readLabCapture(capture);
+    expect(verdict.refusedTunnels).toEqual([`refused.example.test:${String(TLS_PORT)}`]);
+    expect(verdict.leaks).toEqual([
       { kind: "forwarded", detail: "GET /api/claude_code_grove" },
       { kind: "forwarded", detail: "stream to platform.claude.com" },
       { kind: "tunnel", detail: "downloads.example.test:443" },
@@ -47,8 +61,14 @@ describe("the lab's leak check", () => {
   });
 
   it("refuses a capture it cannot read instead of calling it clean", () => {
-    expect(() => readLabCapture("not json\n", [])).toThrow("capture line 1 is not JSON");
-    expect(() => readLabCapture("[1]\n", [])).toThrow("capture line 1 is not a JSON object");
+    expect(() => readLabCapture("not json\n")).toThrow("capture line 1 is not JSON");
+    expect(() => readLabCapture("[1]\n")).toThrow("capture line 1 is not a JSON object");
+  });
+
+  it("names every socket off this machine in lsof's field output, and none that is loopback or listening", () => {
+    const fields = ["p101", "f12", "n127.0.0.1:5000", "f13", "n127.0.0.1:5001->127.0.0.1:5002", "f14", "n*:5003", "f15", "n[::1]:5004->[::1]:5005", "p102", "f3", "n192.168.1.20:6000->160.79.104.10:443"].join("\n");
+    expect(nonLoopbackSockets(fields)).toEqual(["192.168.1.20:6000->160.79.104.10:443"]);
+    expect(nonLoopbackSockets("")).toEqual([]);
   });
 });
 

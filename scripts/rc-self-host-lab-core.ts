@@ -7,14 +7,44 @@
  */
 export const LAB_INHERITED_VARIABLES: readonly string[] = ["HOME", "PATH", "USER", "LOGNAME", "SHELL", "LANG", "TERM", "TMPDIR"];
 
-/** What the lab's environment is built from: the lab's own state root and, for the launch, the ports the door's transparent surface binds. */
+/**
+ * The Claude Code version the lab runs unless told otherwise: the release the self-hosted surface's protocol and the isolation work were verified against. A pin the machine does not have installed fails the launch loudly rather than falling back to another version.
+ */
+export const PINNED_CLAUDE_VERSION = "2.1.319";
+
+/** What the lab's environment is built from: the lab's own state roots. */
 export interface LabEnvInputs {
   /** The throwaway `AGENT_SHIM_HOME`, inside the lab directory. */
   readonly home: string;
+  /** The empty directory the lab's farm treats as `~/.claude` (`AGENT_SHIM_CLAUDE_HOME`), inside the lab directory, so no farm entry can point into the operator's real one. */
+  readonly claudeHome: string;
 }
 
 /**
- * The environment every lab process starts with: the inherited minimum, the lab's own `AGENT_SHIM_HOME`, and a terminal type the CLI renders against. `CLAUDE_CONFIG_DIR` is never in it, whatever the operator's environment holds.
+ * Why the lab refuses to run in this environment, or undefined when it may: `CLAUDE_CONFIG_DIR` set (a launched CLI would run as the operator's real login, ExaDev/agent-shim#725, so the operator runs the lab under `env -u CLAUDE_CONFIG_DIR` and the refusal proves they did); `AGENT_SHIM_HOME` set to anything but the lab's own home (the lab makes its own throwaway one and never writes into another); or a lab directory inside a real state root (`~/.agent-shim`, `~/.claude-use`, `~/.claude`) or under `/tmp`, where the lab's minted credential and transcripts would outlive it or mix with real state.
+ */
+export function labRefusal(operator: Readonly<Record<string, string | undefined>>, labDir: string, operatorHome: string): string | undefined {
+  if (operator.CLAUDE_CONFIG_DIR !== undefined) {
+    return "CLAUDE_CONFIG_DIR is set; run the lab under env -u CLAUDE_CONFIG_DIR so nothing it starts can run as a real login";
+  }
+  const labHome = `${labDir}/home`;
+  if (operator.AGENT_SHIM_HOME !== undefined && operator.AGENT_SHIM_HOME !== labHome) {
+    return `AGENT_SHIM_HOME is set to ${operator.AGENT_SHIM_HOME}; unset it, since the lab makes its own throwaway home at ${labHome}`;
+  }
+  const inside = (root: string): boolean => labDir === root || labDir.startsWith(`${root}/`);
+  const realRoots = [".agent-shim", ".claude-use", ".claude"].map((name) => `${operatorHome}/${name}`);
+  const realRoot = realRoots.find(inside);
+  if (realRoot !== undefined) {
+    return `${labDir} is inside ${realRoot}, a real state root; put the lab somewhere of its own`;
+  }
+  if (inside("/tmp") || inside("/private/tmp")) {
+    return `${labDir} is under /tmp; keep the lab out of it, since it holds a minted credential until down removes it`;
+  }
+  return undefined;
+}
+
+/**
+ * The environment every lab process starts with: the inherited minimum, the lab's own `AGENT_SHIM_HOME` and `AGENT_SHIM_CLAUDE_HOME`, and a terminal type the CLI renders against. `CLAUDE_CONFIG_DIR` is never in it, whatever the operator's environment holds.
  */
 export function labBaseEnv(operator: Readonly<Record<string, string | undefined>>, inputs: LabEnvInputs): Record<string, string> {
   const env: Record<string, string> = {};
@@ -26,6 +56,7 @@ export function labBaseEnv(operator: Readonly<Record<string, string | undefined>
   }
   env.TERM = "xterm-256color";
   env.AGENT_SHIM_HOME = inputs.home;
+  env.AGENT_SHIM_CLAUDE_HOME = inputs.claudeHome;
   return env;
 }
 
@@ -56,15 +87,17 @@ export function labPaneCommand(variables: Readonly<Record<string, string>>, comm
 
 /** One thing the capture shows leaving the machine. */
 export interface LabLeak {
-  /** `forwarded`: a request, upgrade relay or tapped stream piped to an intercepted host's real upstream, which carries whatever credential the CLI presented. `tunnel`: a blind CONNECT tunnel to a host outside the intercept set. */
+  /** `forwarded`: a request, upgrade relay or tapped stream piped to an intercepted host's real upstream, which carries whatever credential the CLI presented. `tunnel`: a blind CONNECT tunnel the door dialled to a host outside the intercept set. */
   readonly kind: "forwarded" | "tunnel";
   readonly detail: string;
 }
 
-/** What the capture says about the lab: everything that left the machine, and how many records were read. */
+/** What the capture says about the lab: everything that left the machine, the tunnels the door refused instead, and how many records were read. */
 export interface LabCaptureVerdict {
   readonly records: number;
   readonly leaks: readonly LabLeak[];
+  /** The `host:port` of every CONNECT the door refused for the self-hosted session: attempted, never dialled. */
+  readonly refusedTunnels: readonly string[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -76,10 +109,11 @@ function text(value: unknown): string {
 }
 
 /**
- * Reads the door's capture (`logs/frontdoor-capture.jsonl`, one JSON object per line) for anything that left the machine. A `request` record is a piped exchange to an intercepted host's real upstream (the door records one only for a request it forwards), a `stream` record is a tapped host's channel or a relayed upgrade, both pumped to the real host, and a `connect` record with `intercepted: false` is a blind tunnel to some other host; each is a leak. A `connect` record for an intercepted host is the tunnel the door terminates itself, and an `upgrade` record is an upgrade's arrival (a refused one is recorded too, and a relayed one also leaves a `stream` record), so neither is. A line that is not a JSON object is an error rather than a skip: a capture the check cannot read cannot be said to be clean.
+ * Reads the door's capture (`logs/frontdoor-capture.jsonl`, one JSON object per line) for anything that left the machine. A `request` record is a piped exchange to an intercepted host's real upstream (the door records one only for a request it forwards), a `stream` record is a tapped host's channel or a relayed upgrade, both pumped to the real host, and a `connect` record with `intercepted: false` is a blind tunnel to some other host; each is a leak, with no exemption, since a self-hosted session's door refuses every blind tunnel (a `connect-refused` record, reported but nothing dialled). A `connect` record for an intercepted host is the tunnel the door terminates itself, and an `upgrade` record is an upgrade's arrival (a refused one is recorded too, and a relayed one also leaves a `stream` record), so neither is. A line that is not a JSON object is an error rather than a skip: a capture the check cannot read cannot be said to be clean.
  */
-export function readLabCapture(capture: string, allowedTunnelHosts: readonly string[]): LabCaptureVerdict {
+export function readLabCapture(capture: string): LabCaptureVerdict {
   const leaks: LabLeak[] = [];
+  const refusedTunnels: string[] = [];
   let records = 0;
   for (const [index, line] of capture.split("\n").entries()) {
     if (line.trim() === "") {
@@ -99,11 +133,13 @@ export function readLabCapture(capture: string, allowedTunnelHosts: readonly str
       leaks.push({ kind: "forwarded", detail: `${text(parsed.method)} ${text(parsed.url)}` });
     } else if (parsed.kind === "stream") {
       leaks.push({ kind: "forwarded", detail: `stream to ${text(parsed.host)}` });
-    } else if (parsed.kind === "connect" && parsed.intercepted === false && !allowedTunnelHosts.includes(text(parsed.host))) {
+    } else if (parsed.kind === "connect" && parsed.intercepted === false) {
       leaks.push({ kind: "tunnel", detail: `${text(parsed.host)}:${text(parsed.port)}` });
+    } else if (parsed.kind === "connect-refused") {
+      refusedTunnels.push(`${text(parsed.host)}:${text(parsed.port)}`);
     }
   }
-  return { records, leaks };
+  return { records, leaks, refusedTunnels };
 }
 
 /**
@@ -149,4 +185,21 @@ export function parseLabDoorState(stateJson: string): LabDoorState | undefined {
     return undefined;
   }
   return { port: parsed.port, supervisorPid: parsed.supervisorPid };
+}
+
+/** Whether one socket endpoint address (lsof's `host:port` form, IPv6 bracketed) is on this machine: loopback, or a listening wildcard. */
+function isLocalEndpoint(endpoint: string): boolean {
+  const host = endpoint.slice(0, endpoint.lastIndexOf(":"));
+  return host === "127.0.0.1" || host === "[::1]" || host === "localhost" || host === "*" || host.startsWith("127.");
+}
+
+/**
+ * The network endpoints in `lsof -nP -i -F n` output (one `n<local>` or `n<local>-><remote>` line per socket) that are not on this machine: every socket a lab process holds must be loopback, so any remote address here is traffic leaving the machine at the moment of reading, whatever the capture recorded.
+ */
+export function nonLoopbackSockets(lsofFields: string): readonly string[] {
+  return lsofFields
+    .split("\n")
+    .filter((line) => line.startsWith("n"))
+    .map((line) => line.slice(1))
+    .filter((name) => !name.split("->").every(isLocalEndpoint));
 }
