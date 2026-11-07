@@ -69,7 +69,6 @@ export { lateRcEventDial, lateRcStreamDial, realConnectEffects, realRcEventDial,
 export {
   RC_SESSIONS_PATH_PREFIX,
   RC_IDLE_EXPIRY_MS,
-  RC_PENDING_DEADLINE_MS,
   RC_REQUEST_PARSE_CAP_BYTES,
   createRcSessionTracker,
   observingRoutedRoute,

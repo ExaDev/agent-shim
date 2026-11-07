@@ -193,7 +193,6 @@ describe("library surface", () => {
       "RC_CONTEXT_USAGE_DETAILS",
       "RC_IDLE_EXPIRY_MS",
       "RC_ORPC_PATH_PREFIX",
-      "RC_PENDING_DEADLINE_MS",
       "RC_PERMISSION_MODES",
       "RC_READ_FILE_ENCODINGS",
       "RC_REQUEST_PARSE_CAP_BYTES",
