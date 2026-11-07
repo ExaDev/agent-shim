@@ -107,6 +107,22 @@ describe("a launch started from inside a session another launch started", () => 
     expect(child.log.errors.join("\n")).toContain("ANTHROPIC_API_KEY is set in the environment");
   });
 
+  it("drops a bypass list a provider's own env set, not only the hosts the launcher appended", () => {
+    const withBypass = { ...providerZ, env: { ...providerZ.env, NO_PROXY: "internal.glm.example" } };
+    const parentFs = fakeFs({ ...FILES, [`${FAKE_HOME}/.agent-shim/providers/z.json`]: withBypass });
+    const spawn = fakeSpawn();
+    const run = (env: Readonly<Record<string, string | undefined>>, argv: readonly string[]): void => {
+      runAndCaptureExit({ paths, fs: parentFs, spawn, proc: fakeProc(env, argv), log: fakeLog(), resolveClaudeBinary: () => discovered, credentials: fakeCredentials(), frontdoor: fakeFrontDoorPort(), farm: fakeFarm(createFakeFarmFs({})) });
+    };
+    run({ Z_API_TOKEN: "tok-z" }, ["@work", "--provider", "z", "--print"]);
+    const parent = spawnedEnv(spawn);
+    expect(parent.NO_PROXY).toContain("internal.glm.example");
+    spawn.spawnSync.mockClear();
+    run(parent, ["@personal", "--no-provider", "--no-track-usage", "--print"]);
+    expect(spawnedEnv(spawn).NO_PROXY).toBeUndefined();
+    expect(spawnedEnv(spawn).no_proxy).toBeUndefined();
+  });
+
   describe("whose launcher routed it through a provider with Remote Control on", () => {
     const parent = (): Record<string, string | undefined> =>
       launch({ Z_API_TOKEN: "tok-z", ANTHROPIC_CUSTOM_HEADERS: "x-user-header: keep" }, ["@work", "--provider", "z", "--remote-control", "--print"], true).env;
