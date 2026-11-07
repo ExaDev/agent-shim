@@ -236,7 +236,7 @@ describe("Remote Control observation and injection over the connect surface", ()
           statusOf: (sessionId?: string) => tracker.statusOf(sessionId),
           pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
           inject: async (sessionId, text) => await injectRcUserMessage({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial: rcDial, newUuid: () => "uuid-e2e-control" }, sessionId, text),
-          answer: async (sessionId, requestId, decision) => await answerRcControlRequest({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, pendingToolInputOf: tracker.pendingToolInputOf, dial: rcDial }, sessionId, requestId, decision),
+          answer: async (sessionId, requestId, decision) => await answerRcControlRequest({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, pendingToolInputOf: tracker.pendingToolInputOf, claimPending: tracker.claimPending, dial: rcDial }, sessionId, requestId, decision),
           ...controlRequestOperations(tracker, rcDial, () => "uuid-e2e-control"),
         }),
       );
@@ -289,7 +289,7 @@ describe("Remote Control observation and injection over the connect surface", ()
       const world = makeTlsWorld(ca, upstreamCa, { rc: { tracker } });
       const { connectPort, rcDial, close } = await world.start();
       const answer = async (sessionId: string, requestId: string, decision: RcAnswerDecision): Promise<RcEventWriteResult> =>
-        await answerRcControlRequest({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, pendingToolInputOf: tracker.pendingToolInputOf, dial: rcDial }, sessionId, requestId, decision);
+        await answerRcControlRequest({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, pendingToolInputOf: tracker.pendingToolInputOf, claimPending: tracker.claimPending, dial: rcDial }, sessionId, requestId, decision);
       const server = http.createServer(
         createRcControlHandler({
           expectedToken: CONTROL_TOKEN,
@@ -401,7 +401,7 @@ describe("Remote Control observation and injection over the connect surface", ()
           statusOf: (sessionId?: string) => tracker.statusOf(sessionId),
           pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
           inject: async (sessionId, text) => await injectRcUserMessage({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial: rcDial, newUuid: () => "uuid-e2e-control" }, sessionId, text),
-          answer: async (sessionId, requestId, decision) => await answerRcControlRequest({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, pendingToolInputOf: tracker.pendingToolInputOf, dial: rcDial }, sessionId, requestId, decision),
+          answer: async (sessionId, requestId, decision) => await answerRcControlRequest({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, pendingToolInputOf: tracker.pendingToolInputOf, claimPending: tracker.claimPending, dial: rcDial }, sessionId, requestId, decision),
           ...controlRequestOperations(tracker, rcDial, () => `uuid-e2e-control-request-${String(++minted)}`),
         }),
       );
@@ -467,7 +467,7 @@ describe("Remote Control observation and injection over the connect surface", ()
       const rcInject = async (sessionId: string, text: string) =>
         await injectRcUserMessage({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial: rcDial, newUuid: () => "uuid-e2e-stream" }, sessionId, text);
       const rcAnswer = async (sessionId: string, requestId: string, decision: RcAnswerDecision): Promise<RcEventWriteResult> =>
-        await answerRcControlRequest({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, pendingToolInputOf: tracker.pendingToolInputOf, dial: rcDial }, sessionId, requestId, decision);
+        await answerRcControlRequest({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, pendingToolInputOf: tracker.pendingToolInputOf, claimPending: tracker.claimPending, dial: rcDial }, sessionId, requestId, decision);
       const controlDeps = {
         expectedToken: CONTROL_TOKEN,
         list: tracker.list,

@@ -262,7 +262,7 @@ describe("the control_response payload and answerRcControlRequest over an inject
   it("answers with the observed bearer and protocol headers, and retires the request once the write is confirmed", async () => {
     const { tracker } = trackerWithPending();
     const { dial, dialled } = dialRecording();
-    const result = await answerRcControlRequest({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, pendingToolInputOf: tracker.pendingToolInputOf, dial }, SESSION_ID, REQUEST_ID, { approve: true, message: undefined });
+    const result = await answerRcControlRequest({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, pendingToolInputOf: tracker.pendingToolInputOf, claimPending: tracker.claimPending, dial }, SESSION_ID, REQUEST_ID, { approve: true, message: undefined });
     expect(result).toEqual({ ok: true, sequenceNums: [SECOND_SEQUENCE_NUM] });
     expect(dialled).toEqual([
       {
@@ -277,7 +277,7 @@ describe("the control_response payload and answerRcControlRequest over an inject
   it("refuses an unobserved session, an unknown request, and a dial failure, each verbosely and without throwing", async () => {
     const { tracker } = trackerWithPending();
     const { dial } = dialRecording();
-    const deps = { credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id: string) => tracker.pendingOf(id), completePending: tracker.completePending, pendingToolInputOf: tracker.pendingToolInputOf, dial };
+    const deps = { credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id: string) => tracker.pendingOf(id), completePending: tracker.completePending, pendingToolInputOf: tracker.pendingToolInputOf, claimPending: tracker.claimPending, dial };
     const unknownSession = await answerRcControlRequest(deps, "cse_00000000-0000-4000-8000-0000000000ff", REQUEST_ID, { approve: true, message: undefined });
     expect(unknownSession.ok).toBe(false);
     if (!unknownSession.ok) {
@@ -319,7 +319,7 @@ describe("the control_response payload and answerRcControlRequest over an inject
       }).respond(HTTP_STATUS.ok);
       return tracker;
     };
-    const depsOf = (tracker: RcSessionTracker, dial: RcEventDial): Parameters<typeof answerRcControlRequest>[0] => ({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, pendingToolInputOf: tracker.pendingToolInputOf, dial });
+    const depsOf = (tracker: RcSessionTracker, dial: RcEventDial): Parameters<typeof answerRcControlRequest>[0] => ({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, pendingToolInputOf: tracker.pendingToolInputOf, claimPending: tracker.claimPending, dial });
 
     it("lists the question's text, header, selection kind and options on the pending entry", () => {
       const question = trackerWithQuestion().pendingOf().find((request) => request.requestId === QUESTION_ID);
@@ -335,6 +335,25 @@ describe("the control_response payload and answerRcControlRequest over an inject
         events: [{ payload: { type: "control_response", response: { subtype: "success", request_id: QUESTION_ID, response: { behavior: "allow", updatedInput: { ...QUESTION_INPUT, answers: { "Which database?": "SQLite", "Which checks?": "lint, test" } } } } } }],
       });
       expect(tracker.pendingOf().map((request) => request.requestId)).toEqual([REQUEST_ID]);
+    });
+
+    it("sends one answer when two are written at once, refusing the second while the first is in flight", async () => {
+      const tracker = trackerWithQuestion();
+      const dialled: string[] = [];
+      let finish: () => void = () => undefined;
+      const slow = dialOf(async (_sessionId, _headers, body) => {
+        dialled.push(body);
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        return { status: HTTP_STATUS.ok, body: JSON.stringify({ results: [{ sequence_num: SECOND_SEQUENCE_NUM }] }) };
+      });
+      const first = answerRcControlRequest(depsOf(tracker, slow), SESSION_ID, QUESTION_ID, { approve: true, message: undefined, choices: [["SQLite"], ["lint"]] });
+      const second = await answerRcControlRequest(depsOf(tracker, slow), SESSION_ID, QUESTION_ID, { approve: true, message: undefined, choices: [["Postgres"], ["test"]] });
+      expect(second.ok ? "delivered" : second.message).toContain("being written right now");
+      finish();
+      expect((await first).ok).toBe(true);
+      expect(dialled).toHaveLength(1);
     });
 
     it("dismisses a question with a plain denial", async () => {

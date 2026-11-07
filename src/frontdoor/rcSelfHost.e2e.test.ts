@@ -324,7 +324,7 @@ describe("the self-hosted Remote Control mode end to end", () => {
     expect(tracker.statusOf(sessionId)[0]).toMatchObject({ identity: RIG_IDENTITY_ID, model: "rig-model" });
 
     // The door answers the request: the control_response write is served and delivered back to the worker.
-    const answered = await answerRcControlRequest({ credentialOf: tracker.credentialOf, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, pendingToolInputOf: tracker.pendingToolInputOf, noteSequenceNums: tracker.noteSequenceNums, dial: writeDial }, sessionId, "req-1", { approve: true, message: undefined });
+    const answered = await answerRcControlRequest({ credentialOf: tracker.credentialOf, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, pendingToolInputOf: tracker.pendingToolInputOf, claimPending: tracker.claimPending, noteSequenceNums: tracker.noteSequenceNums, dial: writeDial }, sessionId, "req-1", { approve: true, message: undefined });
     expect(answered.ok).toBe(true);
     if (!answered.ok) {
       throw new Error(answered.message);
