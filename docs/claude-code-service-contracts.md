@@ -107,6 +107,18 @@ A Remote Control session registers a code session and a worker, then streams. Ev
 
 A Remote Control session id starts `cse_` and a cloud session id starts `session_`; both are served by the same `/v1/code/sessions/{id}` routes.
 
+### What a self-hosted session needs from the other calls
+
+A session running against the front door's self-hosted Remote Control mode (no Anthropic login, the minted credential) still makes the start-up and feature calls of an ordinary session on the intercepted hosts, all carrying the minted bearer except the connector directory, which is unauthenticated: `GET /api/claude_cli/bootstrap`, `GET /api/claude_code_penguin_mode`, `GET /api/claude_code_grove`, `GET /api/frame/contract/latest`, `POST /api/artifacts/mcp`, `GET /api/oauth/organizations/{org}/referral/eligibility`, `GET /api/oauth/organizations/{org}/sync/github/auth`, `GET /api/directory/plugins`, `GET /v1/mcp_servers` and `GET /mcp-registry/v0/servers`. None of them is needed for Remote Control to activate or for a provider turn to complete: an isolated lab (Claude Code 2.1.319, a throwaway home, the loopback mock provider, every upstream dial of the door sent to a loopback sink) answered all of them with a 401, a 404 and an empty `200 {}` in turn, and Remote Control activated and the turn completed under each. What differed is the side effects, read from the client's debug log:
+
+| Answer | What the client did |
+|---|---|
+| `401` | treated the login as stale: forced an OAuth refresh and retried each read once (bootstrap, fast mode), and the artifacts MCP connection three more times with backoff |
+| `404` | one clean failure per call, no refresh and no retry; the connector list asked once more without `include_additional_installs` |
+| `200 {}` | the bootstrap parsed and was cached; the fast-mode status read as disabled by preference; the grove read was rejected for its missing boolean `grove_enabled` (the notice dialog is then skipped); the connector list and the artifacts MCP server failed to parse |
+
+The door therefore answers each of these itself, never with a 401: a feature's off state where the client parses one (`{}` for the bootstrap, `{enabled: false, disabled_reason: "preference"}` for fast mode, `{is_authenticated: false}` for the GitHub sync check, an empty `data` list for the connector list and an empty `servers` list for the directory), and a 404 naming the mode for everything else. The same lab showed the local profile answer must carry `account.email`, which the client's profile schema requires. See `src/frontdoor/rcSelfHostOffline.ts`.
+
 ## Artifacts
 
 An Artifact is a page the CLI publishes, which the claude.ai viewer serves in a sandbox. Evidence: capture of a publish, an update, an update that declared a capability, a read, a list and the live sync socket.

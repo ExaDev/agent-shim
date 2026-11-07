@@ -13,6 +13,7 @@ import { createDoorPipelines } from "./assembly";
 import { createCredentialCustody } from "./custody";
 import { CONNECT_INTERCEPT_HOST, CONNECT_INTERCEPT_HOSTS, CONNECT_TAP_HOSTS, createLeafCache, generateCa, startConnectServer, type CaMaterial } from "./connect";
 import { lateRcEventDial, lateRcStreamDial, realConnectEffects, type RcDialTarget } from "./connectEffects";
+import type { ConnectEffects } from "./connect";
 import { createProviderRouteResolver } from "./providerRoute";
 import { serveRouted } from "./pipeline";
 import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog, type RcSessionEventLog } from "./rcEventLog";
@@ -120,11 +121,14 @@ function rawRequest(method: string, path: string, headers: Readonly<Record<strin
   return head + text;
 }
 
-/** A stand-in for the echo server unmatched piped paths would reach; the e2e never sends one, and the pointer exists so a stray request fails loudly instead of dialling the network. */
+/** A stand-in for the echo server unmatched piped paths would reach; only the isolation case's native-credential control sends one, and the pointer exists so a stray request fails loudly instead of dialling the network. */
 let echoPort = 0;
 
 /** The door generation the session event log stamps, a made-up UUID of the production shape. */
 const SESSION_EVENTS_GENERATION = "00000000-0000-4000-8000-0000000000f1";
+
+/** Every upstream dial the connect surface made, by kind: a piped forward, a relayed upgrade's TLS dial, or a blind tunnel's TCP dial. The isolation case asserts this stays empty for every call a self-hosted session makes, and its control proves a native credential still lands here. */
+const upstreamDials: string[] = [];
 
 describe("the self-hosted Remote Control mode end to end", () => {
   let ca: CaMaterial;
@@ -189,7 +193,7 @@ describe("the self-hosted Remote Control mode end to end", () => {
       directPort: () => 0,
       env: {},
       credentials: fakeAsyncCredentials(),
-      rcSelfHostRoute: surface.route,
+      rcSelfHost: surface,
     });
     const observingResolver = async (request: Parameters<typeof resolver>[0]) => {
       const resolution = await resolver(request);
@@ -235,7 +239,7 @@ describe("the self-hosted Remote Control mode end to end", () => {
         transparentCapability: TEST_CAPABILITY,
         limits: { headDeadlineMs: 10_000, maxPendingHeads: 64, maxTunnels: 1024, revalidateMs: 1_000 },
       },
-      realConnectEffects(),
+      recordingUpstreamDials(realConnectEffects()),
       { preferredPort: undefined },
     );
     transparentPort = connectHandle.transparentPort ?? 0;
@@ -579,6 +583,48 @@ describe("the self-hosted Remote Control mode end to end", () => {
     oauthSocket.destroy();
   }, TEST_TIMEOUT_MS);
 
+  it("answers every non-Remote-Control call a self-hosted session makes on this machine, forwarding none, while a native credential is still forwarded", async () => {
+    upstreamDials.length = 0;
+    const minted = { Authorization: `Bearer ${MINTED_OAUTH_TOKEN}`, "anthropic-beta": "oauth-2025-04-20" };
+    const org = RECORD.organizationUuid;
+    // The calls a 2.1.319 session sent upstream in self-hosted mode before this surface answered them (the lab capture behind issue #731), each with the answer the offline table gives it, then the control-plane host, whose terminated session the mode parses and answers the same way.
+    const calls: readonly { readonly host: string; readonly path: string; readonly method: string; readonly headers: Readonly<Record<string, string>>; readonly status: number; readonly body?: unknown }[] = [
+      { host: CONNECT_INTERCEPT_HOST, method: "GET", path: "/api/claude_cli/bootstrap?entrypoint=cli&model=claude-opus-5-5", headers: minted, status: HTTP_STATUS.ok, body: {} },
+      { host: CONNECT_INTERCEPT_HOST, method: "GET", path: "/api/claude_code_penguin_mode", headers: minted, status: HTTP_STATUS.ok, body: { enabled: false, disabled_reason: "preference" } },
+      { host: CONNECT_INTERCEPT_HOST, method: "GET", path: `/api/oauth/organizations/${org}/sync/github/auth`, headers: minted, status: HTTP_STATUS.ok, body: { is_authenticated: false } },
+      { host: CONNECT_INTERCEPT_HOST, method: "GET", path: "/mcp-registry/v0/servers?version=latest&limit=100", headers: {}, status: HTTP_STATUS.ok, body: { servers: [], metadata: { count: 0 } } },
+      { host: CONNECT_INTERCEPT_HOST, method: "GET", path: "/v1/mcp_servers?limit=1000&include_additional_installs=true", headers: minted, status: HTTP_STATUS.ok, body: { data: [], next_page: null } },
+      { host: CONNECT_INTERCEPT_HOST, method: "GET", path: "/api/claude_code_grove", headers: minted, status: HTTP_STATUS.notFound },
+      { host: CONNECT_INTERCEPT_HOST, method: "GET", path: "/api/frame/contract/latest", headers: minted, status: HTTP_STATUS.notFound },
+      { host: CONNECT_INTERCEPT_HOST, method: "GET", path: `/api/oauth/organizations/${org}/referral/eligibility?campaign=claude_code_guest_pass`, headers: minted, status: HTTP_STATUS.notFound },
+      { host: CONNECT_INTERCEPT_HOST, method: "POST", path: "/api/artifacts/mcp", headers: { ...minted, "Content-Type": "application/json" }, status: HTTP_STATUS.notFound },
+      { host: "platform.claude.com", method: "GET", path: `/api/oauth/organizations/${org}/sync/github/auth`, headers: minted, status: HTTP_STATUS.ok, body: { is_authenticated: false } },
+      { host: "platform.claude.com", method: "GET", path: "/api/anything/else", headers: minted, status: HTTP_STATUS.notFound },
+    ];
+    for (const call of calls) {
+      const socket = await connectRedirected(transparentPort, call.host, ca.certPem);
+      const answered = await requestOn(socket, rawRequest(call.method, call.path, call.headers, call.method === "POST" ? JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" }) : undefined));
+      socket.destroy();
+      expect(answered.statusLine, call.path).toContain(String(call.status));
+      if (call.body !== undefined) {
+        expect(JSON.parse(answered.body)).toEqual(call.body);
+      }
+    }
+    // A websocket upgrade of the mode's (the artifacts sync socket presents its token as a subprotocol, not an Authorization header) is refused before any dial.
+    const upgradeSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+    const upgrade = await requestOn(upgradeSocket, rawRequest("GET", "/api/frame/sync?slug=s&vn=passive", { Upgrade: "websocket", "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==", "Sec-WebSocket-Version": "13", "Sec-WebSocket-Protocol": "frame-sync.v1" }).replace("Connection: close", "Connection: Upgrade"));
+    upgradeSocket.destroy();
+    expect(upgrade.statusLine).toContain("404");
+    expect(upstreamDials).toEqual([]);
+
+    // The control: a native session's own bearer on the same host is forwarded exactly as with the mode off, which is what proves the recorder above could have gone red.
+    const nativeSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+    nativeSocket.write(rawRequest("GET", "/api/claude_code_grove", { Authorization: "Bearer sk-ant-oat2" }));
+    await waitUntil(() => upstreamDials.length > 0);
+    nativeSocket.destroy();
+    expect(upstreamDials).toEqual(["forward GET /api/claude_code_grove"]);
+  }, TEST_TIMEOUT_MS);
+
   it("serves the worker's web-fetch proxy through the transparent surface with the door's own dial, redirect and all", async () => {
     // The fetch target: a loopback stand-in whose first hop redirects, so the whole walk (mount, auth, bounds check, redirect, read, answer) runs against real sockets.
     const standIn = http.createServer((request, response) => {
@@ -647,6 +693,25 @@ describe("the self-hosted Remote Control mode end to end", () => {
     });
   }, TEST_TIMEOUT_MS);
 });
+
+/** Wraps the real connect effects so every upstream dial is recorded, and the two that would reach a real host by name (a relayed upgrade's TLS dial, a blind tunnel's TCP dial) are refused instead of made: nothing in this world may reach the network. */
+function recordingUpstreamDials(effects: ConnectEffects): ConnectEffects {
+  return {
+    ...effects,
+    forwardHttp: (target, request, response, observer) => {
+      upstreamDials.push(`forward ${request.method ?? "?"} ${request.url ?? "?"}`);
+      effects.forwardHttp(target, request, response, observer);
+    },
+    connectTlsUpstream: async (host) => {
+      upstreamDials.push(`tls ${host}`);
+      return Promise.reject(new Error(`the e2e world dials no real host, and ${host} was asked for`));
+    },
+    connectTcp: async (host) => {
+      upstreamDials.push(`tcp ${host}`);
+      return Promise.reject(new Error(`the e2e world dials no real host, and ${host} was asked for`));
+    },
+  };
+}
 
 /** Whether one envelope's payload is a plain JSON object, the narrowing every payload assertion in the verbs test reads through. */
 function isPayloadRecord(value: unknown): value is Record<string, unknown> {
