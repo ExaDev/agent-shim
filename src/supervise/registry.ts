@@ -272,36 +272,74 @@ export async function supervisedSessionOf(fs: RegistryFs, paths: LayoutPaths, se
   return live.find(({ session }) => session.sessionId === sessionId)?.session;
 }
 
-/** The text a transcript's `bridge-session` entry carries for one Remote Control session: Claude Code writes `{"type":"bridge-session","sessionId":<local>,"bridgeSessionId":<cse_ id>,...}` each time the bridge's sequence cursor advances (seen on 2.1.296 and 2.1.319). */
-function bridgeSessionNeedle(bridgeSessionId: string): string {
-  return `"bridgeSessionId":${JSON.stringify(bridgeSessionId)}`;
+/** The bridge session id of the last `bridge-session` row in one transcript's text, or undefined when it has none. Claude Code writes `{"type":"bridge-session","sessionId":<local>,"bridgeSessionId":<cse_ id>,...}` each time the bridge's sequence cursor advances (seen on 2.1.296 and 2.1.319), and a fresh row after a reconnect, so the last row names the bridge session the conversation is on now. Only whole rows of that type count: the same key and value inside a tool call's input or a tool's result is text a model could have written, never the CLI's own record. */
+function latestBridgeSessionIdOf(text: string): string | undefined {
+  let latest: string | undefined;
+  for (const line of text.split("\n")) {
+    if (!line.includes('"bridge-session"')) {
+      continue;
+    }
+    let row: unknown;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (typeof row === "object" && row !== null && "type" in row && row.type === "bridge-session" && "bridgeSessionId" in row && typeof row.bridgeSessionId === "string") {
+      latest = row.bridgeSessionId;
+    }
+  }
+  return latest;
 }
 
 /** A live supervised session together with what the door needs to act on it: its recorded state and where its control plugin listens. */
-export interface SupervisedBridgeSession {
+interface SupervisedBridgeSession {
   readonly session: SupervisedSession;
   readonly state: SessionState | undefined;
   readonly control: SessionControl | undefined;
 }
 
+/** Which live supervised session a Remote Control session belongs to: one, none, or more than one, which is refused rather than guessed at (a resumed or forked conversation can carry the same bridge row in two transcripts). */
+export type SupervisedBridgeLookup = { readonly kind: "found"; readonly session: SupervisedBridgeSession } | { readonly kind: "none" } | { readonly kind: "ambiguous"; readonly sessionIds: readonly string[] };
+
+/** What the lookup keeps between calls: each transcript's latest bridge id by path, valid while the file's size and modification time are unchanged, so a call reads only the transcripts that changed since the last one. */
+export type BridgeIdCache = Map<string, { readonly sizeBytes: number; readonly mtimeMs: number; readonly bridgeSessionId: string | undefined }>;
+
 /**
- * The live supervised session a Remote Control session (`cse_` id) belongs to, across every pool: the one whose current transcript records that bridge session id, which Claude Code writes into the transcript itself, so the join needs nothing the supervisor or the door kept beside it. Entries whose launcher has gone are removed, as `supervisedSessionOf` does.
+ * The live supervised session a Remote Control session (`cse_` id) belongs to, across every pool: the one whose current transcript's latest `bridge-session` row names that id, which Claude Code writes into the transcript itself, so the join needs nothing the supervisor or the door kept beside it. Two live launches claiming the id is refused. Entries whose launcher has gone are removed, with their state and control records, as `unregisterSupervised` removes them.
  */
-export async function supervisedSessionOfBridge(fs: RegistryFs, paths: LayoutPaths, bridgeSessionId: string, runningAmong: (pids: readonly number[]) => Promise<ReadonlySet<number>>): Promise<SupervisedBridgeSession | undefined> {
+export async function supervisedSessionOfBridge(fs: RegistryFs & Pick<FarmFs, "lstat">, paths: LayoutPaths, bridgeSessionId: string, runningAmong: (pids: readonly number[]) => Promise<ReadonlySet<number>>, cache: BridgeIdCache = new Map()): Promise<SupervisedBridgeLookup> {
   const listed = fs.readdir(paths.superviseDir).flatMap((pool) => listSupervised(fs, paths, pool));
   const running = await runningAmong(listed.map(({ session }) => session.pid));
-  const needle = bridgeSessionNeedle(bridgeSessionId);
-  for (const { file, session } of listed) {
+  const claims: SupervisedBridgeSession[] = [];
+  for (const { session } of listed) {
     if (!running.has(session.pid)) {
-      fs.removeRecursive(file);
+      unregisterSupervised(fs, paths, session.pool, session.sessionId);
       continue;
     }
     const state = readSessionState(fs, paths, session.pool, session.sessionId);
-    const transcript = state?.transcriptPath === undefined ? undefined : fs.readFileUtf8(state.transcriptPath);
-    if (transcript?.includes(needle) === true) {
+    const transcript = state?.transcriptPath;
+    if (transcript === undefined) {
+      continue;
+    }
+    const stat = fs.lstat(transcript);
+    if (stat === undefined) {
+      continue;
+    }
+    let cached = cache.get(transcript);
+    if (cached?.sizeBytes !== stat.sizeBytes || cached.mtimeMs !== stat.mtimeMs) {
+      const text = fs.readFileUtf8(transcript);
+      cached = { sizeBytes: stat.sizeBytes, mtimeMs: stat.mtimeMs, bridgeSessionId: text === undefined ? undefined : latestBridgeSessionIdOf(text) };
+      cache.set(transcript, cached);
+    }
+    if (cached.bridgeSessionId === bridgeSessionId) {
       const control = readSessionControl(fs, paths, session.pool, session.sessionId);
-      return { session, state, control: control?.pid === session.pid ? control : undefined };
+      claims.push({ session, state, control: control?.pid === session.pid ? control : undefined });
     }
   }
-  return undefined;
+  const [only, ...others] = claims;
+  if (only === undefined) {
+    return { kind: "none" };
+  }
+  return others.length === 0 ? { kind: "found", session: only } : { kind: "ambiguous", sessionIds: claims.map((claim) => claim.session.sessionId).sort() };
 }

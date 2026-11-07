@@ -93,8 +93,8 @@ export interface RcSupervisedTarget {
 
 /** Everything the verbs need, injected so they run against fakes in unit tests. */
 export interface RcSessionCommandDeps {
-  /** The supervised launch a `cse_` session belongs to, or undefined when no live supervisor owns it, or when it does but its control plugin is not recorded. */
-  readonly supervisedOf: (sessionId: string) => Promise<RcSupervisedTarget | undefined>;
+  /** The supervised launch a `cse_` session belongs to; undefined when no live supervisor owns it, or when it does but its control plugin is not recorded; a refusal when the door cannot tell which launch it is (two live launches claim it). */
+  readonly supervisedOf: (sessionId: string) => Promise<RcSupervisedTarget | { readonly refused: string } | undefined>;
   /** Reads one file's text, undefined when it does not exist. */
   readonly readFile: (path: string) => string | undefined;
   /** The door's own surface, present only when the door serves Remote Control itself: the one place it writes a command as a person's app. */
@@ -149,6 +149,9 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
         return { ok: false, message: `the request for session ${sessionId} was aborted before it ran` };
       }
       const target = await deps.supervisedOf(sessionId);
+      if (target !== undefined && "refused" in target) {
+        return { ok: false, message: target.refused };
+      }
       if (target !== undefined) {
         if (target.version === undefined || !RC_SESSION_COMMAND_VERIFIED_VERSIONS.includes(target.version)) {
           return { ok: false, message: unverifiedVersionMessage(sessionId, target.version, "its supervisor's control plugin has not loaded") };
