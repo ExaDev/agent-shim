@@ -27,7 +27,7 @@ describe("doorKeychainProbe", () => {
 });
 
 describe("cliKeychainProbe", () => {
-  it("runs `security` under the bound a non-interactive credential command has, so a hung lookup cannot hold what the caller holds", () => {
+  it("runs `security` under the bound a non-interactive credential command has, so a hung lookup ends as a lookup failure instead of hanging the command", () => {
     const runner: RunPort = { run: () => ({ status: 0, stdout: "", stderr: "" }) };
     const within = vi.fn<(timeoutMs: number) => RunPort>(() => runner);
     const probe = cliKeychainProbe("darwin", within);

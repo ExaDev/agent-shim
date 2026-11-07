@@ -422,7 +422,7 @@ const BYTES_PER_MIB = 1_048_576;
 const RUN_OUTPUT_LIMIT_BYTES = RUN_OUTPUT_LIMIT_MIB * BYTES_PER_MIB;
 
 /**
- * A real `RunPort` that stops a command still running after `timeoutMs`: it is killed and reported with no exit status. For a command that must not hang its caller, such as the attribute-only `security` lookups the mint and `identity remove` make while holding a lock. `realRunPort` is the unbounded form.
+ * A real `RunPort` that stops a command still running after `timeoutMs`: it is killed and reported with no exit status. For a command that must not hang its caller, such as the attribute-only `security` lookups the self-hosted mint and `identity remove` make. `realRunPort` is the unbounded form.
  */
 export function realRunPortWithin(timeoutMs: number | undefined): RunPort {
   return {

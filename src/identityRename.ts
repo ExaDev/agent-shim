@@ -35,7 +35,7 @@ export interface IdentityRenamePorts {
   readonly credentialCache: { readonly port: CredentialCachePort; readonly platform: NodeJS.Platform };
   /** Runs `security`. Only used when `platform` is `darwin`. */
   readonly run: RunPort;
-  /** Runs the attribute-only `security` lookups (which never read a secret, so never wait on a person), stopped at a bound so a hung `security` cannot hold the caller's lock. Only used when `platform` is `darwin`. */
+  /** Runs the attribute-only `security` lookups (which never read a secret, so never wait on a person), stopped at a bound so a hung `security` ends as a lookup failure instead of hanging `identity remove`, which asks only after it has released the identity names lock. Only used when `platform` is `darwin`. */
   readonly lookupRun: RunPort;
   readonly platform: NodeJS.Platform;
   /** The home directory a credential `file` source spelled `~/...` is relative to. */
