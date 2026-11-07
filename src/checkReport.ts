@@ -271,8 +271,8 @@ export interface RunCheckParams {
   readonly home: string;
   readonly claudeHome: string;
   readonly env: Readonly<Record<string, string | undefined>>;
-  /** Whether a launch here would take the `CLAUDE_CONFIG_DIR` escape hatch (the selection says so); absent means it would not. It decides whether the ambient-credential guard is judged over `env` as it is or without what a parent launcher injected, as the launch itself does. */
-  readonly configDirEscapeHatch?: boolean;
+  /** Whether a launch here would take the `CLAUDE_CONFIG_DIR` escape hatch (the selection says so). It decides whether the ambient-credential guard is judged over `env` as it is or without what a parent launcher injected, as the launch itself does. */
+  readonly configDirEscapeHatch: boolean;
   readonly branch?: string;
   readonly branchDetached?: boolean;
   readonly nowMs: number;
@@ -373,7 +373,8 @@ export function runCheck(params: RunCheckParams): CheckReport {
 
   const projectEncodingAmbiguities = flagAmbiguousEncodings(resolved.flattened, facts);
 
-  const guardEnv = launchEnvironment(params.env, params.configDirEscapeHatch === true);
+  const guardEnv = launchEnvironment(params.env, params.configDirEscapeHatch);
+  // Codex reads its own credential variables, which no Claude launcher injects, so the Codex guard reads the environment as it is.
   const ambientCredential = isCodex ? codexCredentialGuard(params.env, params.identity?.allowAmbientCredential ?? false) : evaluateAmbientCredentialGuard({
     env: guardEnv,
     allowAmbientCredential: params.identity?.allowAmbientCredential ?? false,

@@ -27,6 +27,7 @@ function baseParams(overrides: Partial<RunCheckParams> = {}): RunCheckParams {
     home: FAKE_HOME,
     claudeHome: FAKE_CLAUDE_HOME,
     env: {},
+    configDirEscapeHatch: false,
     nowMs: FAKE_NOW_MS,
     farmFs: createFakeFarmFs(),
     cascade: emptyCascade(),
