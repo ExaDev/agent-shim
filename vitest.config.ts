@@ -13,6 +13,8 @@ const HANG_GUARD_MS = 120_000;
 export default defineConfig({
   test: {
     testTimeout: HANG_GUARD_MS,
+    // `gc` is exposed so a test asserting retained memory (the session event log's bound, `rcEventLog.test.ts`) measures what is live, not garbage the collector has yet to reach.
+    execArgv: ["--expose-gc"],
     hookTimeout: HANG_GUARD_MS,
     environment: "node",
     globalSetup: ["./src/test-global-setup.ts"],

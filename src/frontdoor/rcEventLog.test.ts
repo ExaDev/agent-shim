@@ -28,6 +28,8 @@ const SESSION_B = "cse_00000000-0000-4000-8000-00000000000b";
 const SESSION_C = "cse_00000000-0000-4000-8000-00000000000c";
 /** A small retention bound, so an eviction is reached in a few appends. */
 const SMALL_CAPACITY = 3;
+/** How many events the retention case appends, each from a distinct parse-cap-sized source: enough that a log pinning its sources would retain far more than the case's bound, yet few enough that the case allocates a bounded amount. */
+const RETENTION_EVENTS = 64;
 /** A retention bound the tests never reach. */
 const ROOMY_CAPACITY = 100;
 
@@ -84,13 +86,17 @@ async function settle(): Promise<void> {
 describe("the session event log", () => {
   it("holds every retained event's fields to their caps, so a log full of worst-case events stays within its memory budget", () => {
     const log = createRcSessionEventLog({ generation: GENERATION, capacity: RC_SESSION_EVENT_LOG_CAPACITY });
-    // Every observed value far past any cap: the tracker's own parse budget is what bounds a value before it reaches the log.
+    // Every observed value far past any cap: the tracker's own parse budget is what bounds a value before it reaches the log. The values are built once and shared, so this case measures the stored fields; whether a cut keeps its whole source alive is the next case's.
     const huge = (letter: string): string => letter.repeat(RC_REQUEST_PARSE_CAP_BYTES);
+    const [session, requestId, type, summary, state, previous] = ["s", "r", "t", "x", "w", "p"].map(huge);
+    if (session === undefined || requestId === undefined || type === undefined || summary === undefined || state === undefined || previous === undefined) {
+      throw new Error("expected six values");
+    }
     const overflow = 2;
     for (let at = 0; at < RC_SESSION_EVENT_LOG_CAPACITY + overflow; at += 1) {
-      log.append({ kind: "pending-born", session: huge("s"), requestId: huge("r"), type: huge("t"), summary: huge("x"), at });
+      log.append({ kind: "pending-born", session, requestId, type, summary, at });
     }
-    log.append({ kind: "worker-state", session: huge("s"), state: huge("w"), previous: huge("p"), at: 0 });
+    log.append({ kind: "worker-state", session, state, previous, at: 0 });
     const read = log.read({});
     if (read.status !== "ok") {
       throw new Error("expected the retained window to be readable");
@@ -108,6 +114,27 @@ describe("the session event log", () => {
     expect(born?.kind === "pending-born" ? born.summary.length : undefined).toBe(RC_SESSION_EVENT_SUMMARY_MAX_CHARS);
     const retained = read.events.reduce((total, event) => total + sizeOf(event), 0);
     expect(retained).toBeLessThanOrEqual(CONTROL_BODY_CAP_BYTES);
+  });
+
+  it("keeps no cut field's whole source alive, so retained memory follows the stored fields rather than the observed values", () => {
+    // `gc` is exposed to every test worker by vitest.config.ts, so the measurement reads live memory rather than garbage the collector has not reached yet.
+    const collect = globalThis.gc;
+    if (collect === undefined) {
+      throw new Error("this case needs the test workers started with --expose-gc (vitest.config.ts)");
+    }
+    const log = createRcSessionEventLog({ generation: GENERATION, capacity: RETENTION_EVENTS });
+    collect();
+    const before = process.memoryUsage().heapUsed;
+    for (let at = 0; at < RETENTION_EVENTS; at += 1) {
+      // A distinct source per event, as every parsed request body is: a cut that pinned its source would retain one parse cap's worth of characters per field.
+      const source = `${String(at)}:`.padEnd(RC_REQUEST_PARSE_CAP_BYTES, "x");
+      log.append({ kind: "pending-born", session: source, requestId: source, type: source, summary: source, at });
+    }
+    collect();
+    const grown = process.memoryUsage().heapUsed - before;
+    // A log that kept any one source alive per event would grow by at least a parse cap's worth per event; the stored fields are a small fraction of that.
+    expect(grown).toBeLessThan(RETENTION_EVENTS * RC_REQUEST_PARSE_CAP_BYTES);
+    expect(log.read({}).status).toBe("ok");
   });
 
   it("refuses a generation id longer than a UUID", () => {
