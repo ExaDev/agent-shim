@@ -1,3 +1,9 @@
+## [11.89.1](https://github.com/ExaDev/agent-shim/compare/v11.89.0...v11.89.1) (2026-11-07)
+
+### Bug Fixes
+
+* **usage:** rank a pool member known to bill by use as pay-per-use before any usage is recorded ([1c72447](https://github.com/ExaDev/agent-shim/commit/1c7244781f2e73788dbcdeb0272bb3cf5e6c8193))
+
 ## [11.89.0](https://github.com/ExaDev/agent-shim/compare/v11.88.1...v11.89.0) (2026-11-07)
 
 ### Features
