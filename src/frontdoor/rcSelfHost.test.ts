@@ -1,5 +1,4 @@
 import http from "node:http";
-import type { IncomingMessage } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
@@ -858,8 +857,18 @@ describe("the self-hosted local answers", () => {
     const refresh = await call(oauthPort, "POST", "/v1/oauth/token", { grant_type: "refresh_token", refresh_token: REFRESH_TOKEN });
     expect(refresh.status).toBe(HTTP_STATUS.ok);
     expect(JSON.parse(refresh.body)).toMatchObject({ access_token: MINTED_OAUTH_TOKEN, refresh_token: REFRESH_TOKEN });
-    const otherHost = await serve("api.anthropic.com", { method: "GET", url: "/api/nothing", headers: {} } as unknown as IncomingMessage, { writeHead: () => undefined, end: () => undefined } as unknown as http.ServerResponse);
-    expect(otherHost).toBe(false);
+    // A path no named answer serves is still the mode's when the request is: answered from the offline table, never left for the connect surface to forward.
+    const presentations: readonly Readonly<Record<string, string>>[] = [{}, { authorization: `Bearer ${MINTED_OAUTH_TOKEN}` }];
+    for (const presented of presentations) {
+      const offline = await call(oauthPort, "GET", "/api/nothing", undefined, presented);
+      expect(offline.status).toBe(HTTP_STATUS.notFound);
+      expect(offline.body).toContain("self-hosted Remote Control mode serves nothing at /api/nothing");
+    }
+    // A native session's own bearer is not the mode's: the surface declines it (this bare server's own empty 404 answers), so the connect surface forwards it exactly as with the mode off.
+    const native = await call(oauthPort, "GET", "/api/nothing", undefined, { authorization: "Bearer sk-ant-oat2" });
+    expect(native).toMatchObject({ status: HTTP_STATUS.notFound, body: "" });
+    const nativeApiKey = await call(oauthPort, "GET", "/v1/oauth/hello", undefined, { "x-api-key": "sk-ant-api" });
+    expect(nativeApiKey).toMatchObject({ status: HTTP_STATUS.notFound, body: "" });
     await new Promise<void>((resolve) => {
       oauthServer.close(() => {
         resolve(undefined);

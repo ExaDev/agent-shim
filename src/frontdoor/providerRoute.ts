@@ -45,9 +45,10 @@ import { createServedModels } from "./servedModel";
 
 /** How often the door logs that one upstream could not be connected to, while it stays down. */
 export const COULD_NOT_CONNECT_LOG_INTERVAL_MS = 60_000;
+import type { IncomingHttpHeaders } from "node:http";
 
 /**
- * Resolves the route a request's target names: `/providers/<name>/...` reads the provider file fresh on every request (so an edited provider applies to the next request with no restart) and answers with the route its kind selects: the in-process codex translator for a `codex` provider, the pass-through route for an `http` one with the provider's own credential attached in place of whatever the child presented. A bare `/v1/...` target (what the CONNECT surface hands the pipeline from a terminated OAuth session) rides a pass-through to Claude Code's own API, except in two cases: the Remote Control session family when the door serves that surface itself (`rcSelfHostRoute`, the self-hosted mode's route), and a session whose launch named a provider, whose inference is rewritten under that provider's scoped path (`scopeSessionProviderPath`, before anything else, so the route that serves sees the scoped target too, not only the resolution) and resolved as if the child had dialled the provider directly. Anything else is unrouted.
+ * Resolves the route a request's target names: `/providers/<name>/...` reads the provider file fresh on every request (so an edited provider applies to the next request with no restart) and answers with the route its kind selects: the in-process codex translator for a `codex` provider, the pass-through route for an `http` one with the provider's own credential attached in place of whatever the child presented. A bare `/v1/...` target (what the CONNECT surface hands the pipeline from a terminated OAuth session) rides a pass-through to Claude Code's own API, except in two cases: the Remote Control session family and every other request of a self-hosted session when the door serves that surface itself (`rcSelfHost`, the self-hosted mode's route), and a session whose launch named a provider, whose inference is rewritten under that provider's scoped path (`scopeSessionProviderPath`, before anything else, so the route that serves sees the scoped target too, not only the resolution) and resolved as if the child had dialled the provider directly. Anything else is unrouted.
  */
 /** Whether one path belongs to the Remote Control family the self-hosted route serves. */
 const isRcSelfHostPath = (path: string): boolean => path === "/v1/code/sessions" || path.startsWith("/v1/code/sessions/") || path === "/v1/sessions" || path.startsWith("/v1/sessions/");
@@ -255,9 +256,9 @@ export function createProviderRouteResolver(deps: {
   /** The observed latency, success and token mix of one target (`provider/model`), from the door's observation store seeded by the usage log: what the ranked modes of a virtual model's selection read. */
   readonly observations?: (target: string) => TargetObservation | undefined;
   /**
-   * The self-hosted Remote Control route, when the door runs that mode: it takes over the `/v1/code/sessions` family and the `/v1/sessions` compatibility list, which would otherwise ride the pass-through to the real API. Absent, every `/v1/` target rides the pass-through exactly as before.
+   * The self-hosted Remote Control mode, when the door runs it: its route takes over the `/v1/code/sessions` family and the `/v1/sessions` compatibility list, and every other bare `/v1/` request a self-hosted session sends (the requests `owns` says are the mode's by the credential they present), all of which would otherwise ride the pass-through to the real API carrying the minted credential. A provider session's inference never reaches this choice, because it is rewritten under its provider's scoped path first. Absent, every `/v1/` target rides the pass-through exactly as before.
    */
-  readonly rcSelfHostRoute?: FrontDoorRoute;
+  readonly rcSelfHost?: { readonly route: FrontDoorRoute; readonly owns: (headers: Readonly<IncomingHttpHeaders>) => boolean };
   /** The door's log: where an upstream that could not be connected to is reported, at most once per upstream per `COULD_NOT_CONNECT_LOG_INTERVAL_MS`. */
   readonly log: (line: string) => void;
   /** The clock that interval is measured on. */
@@ -508,8 +509,8 @@ export function createProviderRouteResolver(deps: {
     const path = new URL(request.url, "http://127.0.0.1").pathname;
     const scoped = parseProviderPath(path);
     if (scoped === undefined) {
-      if (deps.rcSelfHostRoute !== undefined && isRcSelfHostPath(path)) {
-        return { ok: true, route: deps.rcSelfHostRoute };
+      if (deps.rcSelfHost !== undefined && (isRcSelfHostPath(path) || (path.startsWith("/v1/") && deps.rcSelfHost.owns(request.headers)))) {
+        return { ok: true, route: deps.rcSelfHost.route };
       }
       return path.startsWith("/v1/") ? { ok: true, route: oauthRoute } : { ok: false, status: HTTP_STATUS.notFound, message: `no such endpoint: ${path}` };
     }

@@ -377,7 +377,7 @@ export interface ConnectServerHandle {
 }
 
 /**
- * A surface the connect layer consults before it routes or pipes anything: the door's self-hosted Remote Control answers (see `rcSelfHost.ts`), which own a fixed set of non-pipeline paths on the API host and the OAuth refresh on the control-plane host. Absent, every request keeps exactly the behaviour it has today.
+ * A surface the connect layer consults before it routes or pipes anything: the door's self-hosted Remote Control answers (see `rcSelfHost.ts`), which own every non-pipeline request of a self-hosted session on the intercepted hosts, the OAuth refresh on the control-plane host among them, and every websocket upgrade such a session attempts. Absent, every request keeps exactly the behaviour it has today.
  *
  * A host this surface needs to parse (`parsesHost`) is served as ordinary HTTP even when it is named as a tap host: the tap exists because that host's channel could not be safely parsed, so taking it over is the surface's own explicit decision, made only for the mode whose contract already excludes the traffic the tap protects.
  */
@@ -386,7 +386,12 @@ export interface ConnectLocalSurface {
   readonly parsesHost: (host: string) => boolean;
   /** Serves one request locally; resolves false when the surface does not own the path, so routing or piping continues unchanged. */
   readonly serve: (host: string, request: IncomingMessage, response: ServerResponse) => Promise<boolean>;
+  /** Whether a websocket upgrade is this surface's to refuse rather than the real host's to answer: a claimed upgrade is answered with a 404 on the spot and never relayed. Absent, the surface claims no upgrade, and every one is relayed as with no surface at all. */
+  readonly claimsUpgrade?: (request: IncomingMessage) => boolean;
 }
+
+/** The whole answer to an upgrade the local surface claims: a 404 that closes the connection, since no upgrade it claims has anything on this machine to talk to. */
+const REFUSED_UPGRADE_RESPONSE = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 
 /** The ALPN protocols a tap host's TLS offers: HTTP/2 first, because that is what its real server negotiates and what the channel has proved to be, with HTTP/1.1 still allowed so a client that speaks it is served rather than refused. */
 const TAP_ALPN_PROTOCOLS: readonly string[] = ["h2", "http/1.1"];
@@ -406,6 +411,11 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
   // An upgrade request is relayed, never parsed: the client wants a 101 and a raw byte channel after it (Remote Control's websocket to the API host is exactly this), which no request/response forwarding can carry. The relay splices the client's TLS session to a fresh TLS connection to the session's real host, byte for byte, using the same pump a tap host uses; the capture records the upgrade's head, and the frames after it flow unrecorded.
   const onUpgrade = (host: string) => (request: IncomingMessage, socket: Duplex, head: Buffer) => {
     config.capture?.upgrade(request);
+    if (config.localSurface?.claimsUpgrade?.(request) === true) {
+      // The local surface serves no upgrade, so one it claims is refused here, before any upstream is dialled: relaying it would carry the claimed credential to the real host.
+      socket.end(REFUSED_UPGRADE_RESPONSE);
+      return;
+    }
     if (head.length > 0) {
       // Paused first, exactly as the CONNECT head parser does: an unshift on a still-flowing socket hands its bytes to listeners that no longer exist, losing them before the relay's pipe attaches.
       socket.pause();
