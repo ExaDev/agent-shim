@@ -6,7 +6,7 @@ import { createRouterClient } from "@orpc/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { addIdentity, requireIdentityAddable, identityExists } from "../identityStore";
-import { nonWaitingIdentityNamesLockPorts, IdentityNamesLockBusyError } from "../identityNamesLock";
+import { acquireIdentityNamesLock, nonWaitingIdentityNamesLockPorts, IdentityNamesLockBusyError } from "../identityNamesLock";
 import { KEYCHAIN_CACHE_SERVICE, KEYCHAIN_ITEM_NOT_FOUND_STATUS } from "../credentialCache";
 import { cacheEntryProbe, createFakeKeychain, type FakeKeychain } from "../keychainTestWorld";
 import { buildLayoutPaths, type LayoutPaths } from "../paths";
@@ -261,6 +261,28 @@ describe("config.identity.remove and the credential the Keychain store caches", 
     );
     expect(failure).toHaveProperty("message", expect.stringContaining('Cannot remove identity "client"'));
     expect(failure).not.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("asks the Keychain for a self-hosted identity's leftover login only after the identity names lock is released", async () => {
+    addIdentity(paths, "lab");
+    const labDir = path.join(paths.identitiesDir, "lab");
+    fs.writeFileSync(path.join(labDir, RC_SELF_HOST_MINT_MARKER), `${JSON.stringify({ mintedAt: "2026-01-01T00:00:00.000Z" })}\n`);
+    const keychain = createFakeKeychain();
+    keychain.seed(claudeCodeKeychainService(labDir), "alex", "a-made-up-login");
+    let lockFreeDuringLookup = false;
+    const runAsync: AsyncRun = async (command, args) => {
+      if (args[0] === "find-generic-password" && args.includes(claudeCodeKeychainService(labDir))) {
+        // A non-waiting acquire throws while the removal still holds the lock.
+        acquireIdentityNamesLock(paths, nonWaitingIdentityNamesLockPorts).release();
+        lockFreeDuringLookup = true;
+      }
+      return await Promise.resolve(keychain.run.run(command, args));
+    };
+    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" }, fs: realFarmFs }), {
+      context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
+    }).config;
+    await api.identity.remove({ name: "lab", confirm: true });
+    expect(lockFreeDuringLookup).toBe(true);
   });
 
   it("answers a removal whose cache delete fails with the failure, and in it names a self-hosted identity's leftover login too", async () => {
