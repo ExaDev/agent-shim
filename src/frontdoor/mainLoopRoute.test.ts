@@ -6,12 +6,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { HTTP_STATUS } from "../codex/http";
 import type { CodexRoutePorts } from "../codex/route";
 import { fakeAuth, fakeResponse, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
-import { CODEX_DEFAULT_TIER_MODELS } from "../config/schema";
+import { ANTIGRAVITY_DEFAULT_TIER_MODELS, CODEX_DEFAULT_TIER_MODELS } from "../config/schema";
 import { FAKE_HOME, admitLaunchToken, fakeAsyncCredentials, fakeFs, followsLaunchFlag } from "../test-helpers";
 import { createUsageMiddleware } from "../usage/middleware";
 import type { UsageRecord } from "../usage/schema";
 import { createMainLoopRouteRecord, type MainLoopRouteRecord } from "./mainLoopRoute";
-import { serveRouted } from "./pipeline";
+import { serveRouted, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
 import { AUTH_HEADER, PROVIDER_HEADER, SESSION_HEADER, type RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
@@ -76,6 +76,25 @@ async function fakeUpstream(status: number = HTTP_STATUS.ok): Promise<{ readonly
   return { port: (address satisfies AddressInfo).port, seen };
 }
 
+/** The codex translator's ports over `fetch`, with the fixed-token auth store. */
+function codexPortsOver(fetch: ReturnType<typeof recordingFetch>["fetch"]): Omit<CodexRoutePorts, "loadProvider"> {
+  return {
+    upstreams: sameUpstreamForEveryLogin({ fetch, auth: fakeAuth(), timers: { after: () => () => undefined }, randomId: () => "random" }),
+    writeUsageSnapshot: () => undefined,
+    now: () => 0,
+    log: () => undefined,
+  };
+}
+
+/** Codex ports for a world with no codex provider, which never call an upstream. */
+function unusedCodexPorts(): Omit<CodexRoutePorts, "loadProvider"> {
+  return codexPortsOver(
+    recordingFetch(() => {
+      throw new Error("this world has no codex provider");
+    }).fetch,
+  );
+}
+
 interface World {
   readonly url: string;
   readonly upstream: { readonly seen: UpstreamSeen[] };
@@ -90,12 +109,7 @@ interface World {
 async function startWorld(record: MainLoopRouteRecord = createMainLoopRouteRecord({ holdsSession: () => true }), upstreamStatus: number = HTTP_STATUS.ok): Promise<World> {
   const upstream = await fakeUpstream(upstreamStatus);
   const codexFetch = recordingFetch(() => fakeResponse({ events: TEXT_TURN }));
-  const codexPorts: Omit<CodexRoutePorts, "loadProvider"> = {
-    upstreams: sameUpstreamForEveryLogin({ fetch: codexFetch.fetch, auth: fakeAuth(), timers: { after: () => () => undefined }, randomId: () => "random" }),
-    writeUsageSnapshot: () => undefined,
-    now: () => 0,
-    log: () => undefined,
-  };
+  const codexPorts = codexPortsOver(codexFetch.fetch);
   const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0,
     mainLoopRoutes: record,
     fs: fakeFs({
@@ -279,5 +293,99 @@ describe("the main-loop route record", () => {
     live.add("s-b");
     expect(record.routeOf("s-b")).toBeUndefined();
     expect(record.routeOf("s-a")).toEqual({ kind: "anthropic" });
+  });
+});
+
+/** A Gemini-shaped streaming backend standing in for the antigravity provider's cloud endpoint: it records the model each generation call names in its path, and answers one complete text chunk. */
+async function fakeGeminiBackend(): Promise<{ readonly endpoint: string; readonly generated: string[] }> {
+  const generated: string[] = [];
+  const server = http.createServer((incoming, response) => {
+    incoming.resume();
+    incoming.on("end", () => {
+      const match = /\/models\/([^/:]+):streamGenerateContent/.exec(incoming.url ?? "");
+      if (match?.[1] === undefined) {
+        // Anything else (the quota summary) has nothing to report here.
+        response.writeHead(HTTP_STATUS.notFound, { "content-type": "application/json" });
+        response.end("{}");
+        return;
+      }
+      generated.push(decodeURIComponent(match[1]));
+      response.writeHead(HTTP_STATUS.ok, { "content-type": "text/event-stream" });
+      response.end(`data: ${JSON.stringify({ candidates: [{ content: { role: "model", parts: [{ text: "ok" }] }, finishReason: "STOP" }], usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 } })}\n\n`);
+    });
+  });
+  servers.push(server);
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("backend has no TCP address");
+  }
+  return { endpoint: `http://127.0.0.1:${String((address satisfies AddressInfo).port)}`, generated };
+}
+
+describe("a native session on antigravity/auto", () => {
+  it("sends the /goal judge's auxiliary request for a Claude haiku name to antigravity under its haiku mapping, and nothing to the Anthropic route", async () => {
+    const backend = await fakeGeminiBackend();
+    const resolveRoute = createProviderRouteResolver({ log: () => undefined, now: () => 0,
+      mainLoopRoutes: createMainLoopRouteRecord({ holdsSession: () => true }),
+      fs: fakeFs({ [`${PROVIDERS_DIR}/antigravity.json`]: { kind: "antigravity", displayName: "Antigravity", credential: { sources: [{ literal: "ag-token" }] }, antigravity: { mode: "cloud", cloud: { endpoint: backend.endpoint } } } }),
+      providersDir: PROVIDERS_DIR,
+      codexPorts: unusedCodexPorts(),
+      directPort: () => OWN_PORT,
+      env: {},
+      credentials: fakeAsyncCredentials(),
+    });
+    // The Anthropic route is the real API: a request the door would send there is answered here instead, and counted, so the test never leaves the machine.
+    const toAnthropic: string[] = [];
+    const guarded = async (request: RoutedRequest): Promise<RouteResolution> => {
+      const resolution = await resolveRoute(request);
+      if (!resolution.ok || resolution.route.name !== "anthropic") {
+        return resolution;
+      }
+      return {
+        ok: true,
+        route: {
+          name: "anthropic",
+          headroomEligible: false,
+          headroomUpstream: undefined,
+          serve: async (served, response) => {
+            toAnthropic.push(served.headers["x-claude-code-request-class"]?.toString() ?? "(no class)");
+            response.start(HTTP_STATUS.badGateway, { "content-type": "application/json" });
+            await response.write(JSON.stringify({ type: "error", error: { type: "api_error", message: "the test's stand-in for the Anthropic route" } }));
+            response.end();
+          },
+        },
+      };
+    };
+    const server = createFrontDoorServer(
+      async (pipelineRequest) => {
+        await serveRouted(pipelineRequest, { resolveRoute: guarded, canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [], admit: admitLaunchToken(LAUNCH_TOKEN), now: () => 0, log: () => undefined });
+      },
+      () => undefined,
+    );
+    const handle = await listenFrontDoor(server);
+    const url = `http://127.0.0.1:${String(handle.port)}`;
+    // A native launch: no provider header, only the capability and the session id.
+    const post = async (model: string, requestClass: string): Promise<number> => {
+      const response = await fetch(`${url}/v1/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json", [AUTH_HEADER]: LAUNCH_TOKEN, [SESSION_HEADER]: "s-native", "x-claude-code-request-class": requestClass },
+        body: JSON.stringify({ model, stream: true, max_tokens: 16, messages: [{ role: "user", content: "hi" }] }),
+      });
+      await response.text();
+      return response.status;
+    };
+    try {
+      expect(await post("antigravity/auto", "main")).toBe(HTTP_STATUS.ok);
+      // What Claude Code's prompt-hook judge (query source hook_prompt) sends: class auxiliary, a Claude haiku name.
+      expect(await post(HAIKU_NAME, "auxiliary")).toBe(HTTP_STATUS.ok);
+      expect(toAnthropic).toEqual([]);
+      expect(backend.generated).toHaveLength(2);
+      expect(backend.generated[1]).toBe(ANTIGRAVITY_DEFAULT_TIER_MODELS.haiku[0]);
+    } finally {
+      await handle.close();
+    }
   });
 });
