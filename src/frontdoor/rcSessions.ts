@@ -436,6 +436,7 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
   const timer = setInterval(sweep, Math.min(deps.idleMs, RC_PENDING_DEADLINE_MS));
   timer.unref();
 
+  /** Begins describing one session. Only for an id the tracker does not hold: an entry is never replaced, so a session appears once and every appearance is matched by one ending. */
   const birth = (id: string, facts: Readonly<{ oauthAuthorization: string | undefined; anthropicVersion: string | undefined; anthropicClientPlatform: string | undefined }>): RcSessionRecord => {
     const record: RcSessionRecord = { id, createdAt: deps.now(), lastSeenAt: deps.now(), ...facts, pending: new Map(), retired: new Map(), workerState: undefined, workerIdleSeconds: undefined, sequenceNum: undefined, liveTasks: new Map() };
     entries.set(id, record);
@@ -448,6 +449,15 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
     if (entry.oauthAuthorization !== undefined) {
       deps.credentialStore?.write(entry.id, { authorization: entry.oauthAuthorization, anthropicVersion: entry.anthropicVersion, anthropicClientPlatform: entry.anthropicClientPlatform });
     }
+  };
+
+  /** Refreshes a tracked entry from one observed call: the protocol headers and the OAuth-kind bearer are latest-wins because the freshest observed value is the live one. A worker call's JWT is not an OAuth credential, so it refreshes the entry's liveness without touching the injection credential (a worker JWT replayed on the client half is answered 401). */
+  const refresh = (entry: RcSessionRecord, facts: Readonly<{ oauthAuthorization: string | undefined; anthropicVersion: string | undefined; anthropicClientPlatform: string | undefined }>): void => {
+    entry.lastSeenAt = deps.now();
+    entry.oauthAuthorization = facts.oauthAuthorization ?? entry.oauthAuthorization;
+    entry.anthropicVersion = facts.anthropicVersion ?? entry.anthropicVersion;
+    entry.anthropicClientPlatform = facts.anthropicClientPlatform ?? entry.anthropicClientPlatform;
+    persistCredential(entry);
   };
 
   const observeExchange = (request: RcObservedRequest): RcExchangeObserver | undefined => {
@@ -489,7 +499,13 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
           if (id === undefined) {
             return;
           }
-          persistCredential(birth(id, facts));
+          // A create answered for a session already tracked (its recurring calls crossed while the create's answer was still arriving) refreshes the entry, never replaces it, so its pending requests, worker state and appearance stand.
+          const existing = entries.get(id);
+          if (existing === undefined) {
+            persistCredential(birth(id, facts));
+            return;
+          }
+          refresh(existing, facts);
         },
       };
     }
@@ -498,13 +514,11 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
     if (id?.startsWith(RC_SESSION_ID_PREFIX) !== true) {
       return undefined;
     }
-    // Every recurring session call refreshes the entry: the protocol headers and the OAuth-kind bearer are latest-wins because the freshest observed value is the live one. A worker call's JWT is not an OAuth credential, so it refreshes the entry's liveness without touching the injection credential (a worker JWT replayed on the client half is answered 401).
-    const entry = entries.get(id) ?? birth(id, facts);
-    entry.lastSeenAt = deps.now();
-    entry.oauthAuthorization = facts.oauthAuthorization ?? entry.oauthAuthorization;
-    entry.anthropicVersion = facts.anthropicVersion ?? entry.anthropicVersion;
-    entry.anthropicClientPlatform = facts.anthropicClientPlatform ?? entry.anthropicClientPlatform;
-    persistCredential(entry);
+    // Every recurring call for a tracked session refreshes its entry at the request. A session the tracker does not hold yet is born only once the service accepts one of its calls (in `onResponse` below): a refused call (a mistyped or forged id answered 401 or 404, a worker still calling after its session was archived) says nothing is live there, and birthing on it would describe a session that does not exist.
+    const tracked = entries.get(id);
+    if (tracked !== undefined) {
+      refresh(tracked, facts);
+    }
 
     // The one request-body shape each of these exchanges reads; every other recurring call's request body carries nothing the tracker retains.
     const bodyKind: RcRequestBodyKind | undefined =
@@ -589,6 +603,9 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
           return;
         }
         accepted = isSuccessful(status);
+        if (accepted && !entries.has(id)) {
+          persistCredential(birth(id, facts));
+        }
         file();
       },
       onBodyChunk: () => {

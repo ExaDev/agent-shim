@@ -21,6 +21,7 @@ const OTHER_GENERATION = "00000000-0000-4000-8000-0000000000bb";
 /** Two made-up session ids of the protocol's shape. */
 const SESSION_A = "cse_00000000-0000-4000-8000-00000000000a";
 const SESSION_B = "cse_00000000-0000-4000-8000-00000000000b";
+const SESSION_C = "cse_00000000-0000-4000-8000-00000000000c";
 /** A small retention bound, so an eviction is reached in a few appends. */
 const SMALL_CAPACITY = 3;
 /** A retention bound the tests never reach. */
@@ -324,7 +325,9 @@ describe("the tracker's transitions into the log", () => {
     exchange(tracker, "POST", `/v1/code/sessions/${SESSION_B}/worker/heartbeat`, "{}");
     exchange(tracker, "POST", `/v1/code/sessions/${SESSION_A}/archive`);
     exchange(tracker, "POST", `/v1/code/sessions/${SESSION_B}/worker/heartbeat`, "{}", { "x-ccr-conflict-reason": "superseded" });
-    exchange(tracker, "POST", `/v1/code/sessions/${SESSION_A}/worker/heartbeat`, "{}");
+    // A worker still calling after its session was archived is refused, and a refused call never brings the session back.
+    exchange(tracker, "POST", `/v1/code/sessions/${SESSION_A}/worker/heartbeat`, "{}", {}, HTTP_STATUS.notFound);
+    exchange(tracker, "POST", `/v1/code/sessions/${SESSION_C}/worker/heartbeat`, "{}");
     advance(RC_IDLE_EXPIRY_MS);
     tracker.list();
     expect(kinds()).toEqual([
@@ -334,8 +337,32 @@ describe("the tracker's transitions into the log", () => {
       { kind: "pending-retired", session: SESSION_A, requestId: "req_1", reason: "session-ended" },
       { kind: "session-ended", session: SESSION_A, reason: "archived" },
       { kind: "session-ended", session: SESSION_B, reason: "conflict" },
+      { kind: "session-appeared", session: SESSION_C },
+      { kind: "session-ended", session: SESSION_C, reason: "expired" },
+    ]);
+  });
+
+  it("births a session only on an accepted call, and balances every appearance with one ending", () => {
+    const { tracker, kinds } = trackedLog();
+    // A refused call names no live session, whatever id it carries.
+    exchange(tracker, "POST", `/v1/code/sessions/${SESSION_A}/worker/heartbeat`, "{}", {}, HTTP_STATUS.unauthorized);
+    expect(tracker.list()).toEqual([]);
+    exchange(tracker, "POST", `/v1/code/sessions/${SESSION_A}/worker/events`, workerEvents(canUseTool));
+    // The create's answer arrives after the session's calls have already crossed: it refreshes the entry rather than replacing it, so the pending request stands and the session appears once.
+    const create = tracker.observeExchange({ method: "POST", url: "/v1/code/sessions", headers: { authorization: "Bearer sk-ant-REDACTED" } });
+    create?.onResponse(HTTP_STATUS.ok, {});
+    create?.onBodyChunk(Buffer.from(JSON.stringify({ session: { id: SESSION_A } }), "utf8"));
+    create?.onEnd();
+    expect(tracker.pendingOf(SESSION_A).map((request) => request.requestId)).toEqual(["req_1"]);
+    // A session the service accepts again after an archive is live again: it appears anew only after its ending.
+    exchange(tracker, "POST", `/v1/code/sessions/${SESSION_A}/archive`);
+    exchange(tracker, "POST", `/v1/code/sessions/${SESSION_A}/worker/heartbeat`, "{}");
+    expect(kinds()).toEqual([
       { kind: "session-appeared", session: SESSION_A },
-      { kind: "session-ended", session: SESSION_A, reason: "expired" },
+      { kind: "pending-born", session: SESSION_A, requestId: "req_1", type: "can_use_tool", summary: 'Bash {"command":"ls"}' },
+      { kind: "pending-retired", session: SESSION_A, requestId: "req_1", reason: "session-ended" },
+      { kind: "session-ended", session: SESSION_A, reason: "archived" },
+      { kind: "session-appeared", session: SESSION_A },
     ]);
   });
 
