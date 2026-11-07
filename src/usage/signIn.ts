@@ -41,7 +41,7 @@ export function claudeCodeKeychainService(configDir: string): string {
 export const SECURE_STORAGE_CONFIG_DIR_ENV = "CLAUDE_SECURESTORAGE_CONFIG_DIR";
 
 /**
- * The variable that points Claude Code at a custom OAuth deployment. While it is non-empty the Keychain item's name carries the suffix `-custom-oauth` after the prefix (`Claude Code-custom-oauth-credentials-<hash>`), which `claudeCodeKeychainService` does not derive (2.1.319's OAuth configuration); the plaintext `.credentials.json` keeps its name.
+ * The variable that points Claude Code at a custom OAuth deployment. While it is non-empty (2.1.319's OAuth configuration) the Keychain item's name carries the suffix `-custom-oauth` after the prefix (`Claude Code-custom-oauth-credentials-<hash>`), which `claudeCodeKeychainService` does not derive, and the global config file is `.claude-custom-oauth.json` instead of `.claude.json`; the plaintext `.credentials.json` keeps its name.
  */
 export const CUSTOM_OAUTH_URL_ENV = "CLAUDE_CODE_CUSTOM_OAUTH_URL";
 

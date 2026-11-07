@@ -307,7 +307,7 @@ function claudeCodeLoginFound(run: RunPort, configDir: string): { readonly servi
 }
 
 /**
- * Refuses a self-hosted mint into `configDir` whenever `CLAUDE_SECURESTORAGE_CONFIG_DIR` is set (on any platform), on macOS whenever `CLAUDE_CODE_CUSTOM_OAUTH_URL` is non-empty (it renames the item), and on macOS while the Keychain holds the Claude Code login filed for the directory. Claude Code reads that item ahead of the `.credentials.json` the mint writes, so the session would sign in as that account instead of with the minted login. Nothing can tell a real login from a copy the CLI made of an earlier mint without reading the secret, which this never does, so every item is refused, the mint's own directory included, and nothing is ever deleted: the message names the exact command that deletes the item, for the person to run if they do not need it. `--force` does not override this. Off macOS the file is Claude Code's only store and nothing is asked. Throws `KeychainLookupError`, saying nothing was minted, when the Keychain could not be asked.
+ * Refuses a self-hosted mint into `configDir` whenever `CLAUDE_SECURESTORAGE_CONFIG_DIR` is set (on any platform), whenever `CLAUDE_CODE_CUSTOM_OAUTH_URL` is non-empty (it renames the account block's file and the Keychain item), and on macOS while the Keychain holds the Claude Code login filed for the directory. Claude Code reads that item ahead of the `.credentials.json` the mint writes, so the session would sign in as that account instead of with the minted login. Nothing can tell a real login from a copy the CLI made of an earlier mint without reading the secret, which this never does, so every item is refused, the mint's own directory included, and nothing is ever deleted: the message names the exact command that deletes the item, for the person to run if they do not need it. `--force` does not override this. Off macOS the file is Claude Code's only store and nothing is asked. Throws `KeychainLookupError`, saying nothing was minted, when the Keychain could not be asked.
  */
 export function requireNoClaudeCodeLoginForMint(keychain: KeychainProbe, configDir: string, identity: string, login: ClaudeCodeLoginEnv): void {
   // The variable moves Claude Code's whole credential store, the Keychain item's name and the plaintext fallback alike, to the directory it names (or to the default `~/.claude` when empty), on every platform (2.1.319's secure storage). A session that inherits it never reads the minted file, and which of its items a session would read is the session's environment's to decide, not this process's: so the mint refuses outright rather than guess, and names no item to delete.
@@ -316,15 +316,15 @@ export function requireNoClaudeCodeLoginForMint(keychain: KeychainProbe, configD
       `Cannot mint a self-hosted login into identity "${identity}": ${SECURE_STORAGE_CONFIG_DIR_ENV} is set, which moves Claude Code's credential store (its Keychain item and its .credentials.json) away from ${configDir}, so a session that inherits it would never read the minted login. Nothing was minted. Unset ${SECURE_STORAGE_CONFIG_DIR_ENV} here and in the environment the session is launched from, then mint again.`,
     );
   }
-  if (keychain.platform !== "darwin") {
-    return;
-  }
-  // On macOS a non-empty custom OAuth URL renames the Keychain item a session reads, so the lookup below, for the unsuffixed name, would miss it: the mint refuses rather than report a clean Keychain it did not check. The variable of the mint's own environment is the one seen, as for the secure-storage override above.
+  // A non-empty custom OAuth URL makes Claude Code read its global config (the `.claude.json` that carries the minted account block and feature-cache seed) from `.claude-custom-oauth.json` instead, and on macOS file its Keychain item under a `-custom-oauth` name the lookup below does not derive (2.1.319): the minted account block would never be read, and the lookup could report a clean Keychain it did not check. The mint refuses on every platform rather than write files the session ignores. The variable of the mint's own environment is the one seen, as for the secure-storage override above.
   const customOAuthUrl = login.env[CUSTOM_OAUTH_URL_ENV];
   if (customOAuthUrl !== undefined && customOAuthUrl !== "") {
     throw new KeychainLoginError(
-      `Cannot mint a self-hosted login into identity "${identity}": ${CUSTOM_OAUTH_URL_ENV} is set, which on macOS files Claude Code's Keychain login under a different name (with a -custom-oauth suffix) that this check does not look for, so a login filed for ${configDir} could not be ruled out. Nothing was minted. Unset ${CUSTOM_OAUTH_URL_ENV} here and in the environment the session is launched from, then mint again.`,
+      `Cannot mint a self-hosted login into identity "${identity}": ${CUSTOM_OAUTH_URL_ENV} is set, which makes Claude Code read its account block from .claude-custom-oauth.json instead of the .claude.json the mint writes in ${configDir} (and, on macOS, file its Keychain login under a different name this check does not look for), so a session that inherits it would not use the minted login. Nothing was minted. Unset ${CUSTOM_OAUTH_URL_ENV} here and in the environment the session is launched from, then mint again.`,
     );
+  }
+  if (keychain.platform !== "darwin") {
+    return;
   }
   let found: ReturnType<typeof claudeCodeLoginFound>;
   try {

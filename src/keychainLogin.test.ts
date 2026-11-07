@@ -268,22 +268,25 @@ describe("the self-hosted mint's Keychain checks, which refuse and never delete"
     }
   });
 
-  it("refuses outright on macOS, naming the variable and no item to delete, while CLAUDE_CODE_CUSTOM_OAUTH_URL is set, because it renames the item the lookup would make", () => {
-    const keychain = createFakeKeychain();
-    keychain.seed("Claude Code-custom-oauth-credentials-00000000", "alex", "a-made-up-login");
-    const mint = () => {
-      requireNoClaudeCodeLoginForMint(darwin(keychain), LAB_DIR, "lab", { env: { CLAUDE_CODE_CUSTOM_OAUTH_URL: "https://example.com" } });
-    };
-    expect(mint).toThrow("CLAUDE_CODE_CUSTOM_OAUTH_URL is set");
-    expect(mint).toThrow("Nothing was minted");
-    expect(mint).not.toThrow("delete-generic-password");
-    expect(keychain.calls).toEqual([]);
+  it("refuses outright on every platform, naming the variable and no item to delete, while CLAUDE_CODE_CUSTOM_OAUTH_URL is set, because it renames the account block's file and the Keychain item", () => {
+    for (const platform of ["darwin", "linux"] as const) {
+      const keychain = createFakeKeychain();
+      keychain.seed("Claude Code-custom-oauth-credentials-00000000", "alex", "a-made-up-login");
+      const mint = () => {
+        requireNoClaudeCodeLoginForMint({ run: keychain.run, platform }, LAB_DIR, "lab", { env: { CLAUDE_CODE_CUSTOM_OAUTH_URL: "https://example.com" } });
+      };
+      expect(mint).toThrow("CLAUDE_CODE_CUSTOM_OAUTH_URL is set");
+      expect(mint).toThrow(".claude-custom-oauth.json");
+      expect(mint).toThrow("Nothing was minted");
+      expect(mint).not.toThrow("delete-generic-password");
+      expect(keychain.calls).toEqual([]);
+    }
   });
 
-  it("lets a mint through off macOS and with the variable empty, where the item's name is the unsuffixed one", () => {
+  it("lets a mint through with the variable empty, where nothing is renamed and the item's name is the unsuffixed one", () => {
     const keychain = createFakeKeychain();
-    requireNoClaudeCodeLoginForMint({ run: keychain.run, platform: "linux" }, LAB_DIR, "lab", { env: { CLAUDE_CODE_CUSTOM_OAUTH_URL: "https://example.com" } });
     requireNoClaudeCodeLoginForMint(darwin(keychain), LAB_DIR, "lab", { env: { CLAUDE_CODE_CUSTOM_OAUTH_URL: "" } });
+    requireNoClaudeCodeLoginForMint({ run: keychain.run, platform: "linux" }, LAB_DIR, "lab", { env: { CLAUDE_CODE_CUSTOM_OAUTH_URL: "" } });
     expect(keychain.calls.map((call) => call.args)).toEqual([["find-generic-password", "-s", LAB_SERVICE]]);
   });
 
