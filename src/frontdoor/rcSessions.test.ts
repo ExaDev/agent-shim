@@ -12,6 +12,7 @@ import {
   RC_IDLE_EXPIRY_MS,
   RC_PENDING_PER_SESSION_MAX,
   RC_REQUEST_ID_MAX_CHARS,
+  RC_RETIRED_TOMBSTONES_MAX,
   RC_PENDING_SUMMARY_EXCERPT_CHARS,
   RC_REQUEST_PARSE_CAP_BYTES,
   createRcSessionTracker,
@@ -439,6 +440,22 @@ describe("the Remote Control pending-request lifecycle", () => {
       expect(pending?.unanswerable).toContain("parse cap");
       expect(pending?.questions).toBeUndefined();
       expect(tracker.pendingToolInputOf(SESSION_ID, REQUEST_ID)).toBeUndefined();
+    });
+
+    it("forgets the oldest retired id once RC_RETIRED_TOMBSTONES_MAX are remembered, so only that id can be born again", () => {
+      const { tracker } = trackerWithClock();
+      heartbeat(tracker);
+      const retireOne = (requestId: string, sequence: number): void => {
+        ask(tracker, requestId, sequence);
+        tracker.completePending(SESSION_ID, requestId);
+      };
+      for (let index = 0; index <= RC_RETIRED_TOMBSTONES_MAX; index += 1) {
+        retireOne(`req-${String(index)}`, index);
+      }
+      // One past the bound has been retired: the first is forgotten and comes back on a replay, the second is still remembered.
+      ask(tracker, "req-0", RC_RETIRED_TOMBSTONES_MAX + 1);
+      ask(tracker, "req-1", RC_RETIRED_TOMBSTONES_MAX + 2);
+      expect(tracker.pendingOf().map((request) => request.requestId)).toEqual(["req-0"]);
     });
 
     it("lets one answer at a time claim a pending request", () => {
