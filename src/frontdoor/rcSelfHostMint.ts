@@ -4,7 +4,7 @@ import { identityIdOver } from "../identityRecords";
 import { isIdentityName } from "../usage/account";
 import type { FarmFs } from "../launcher/ports";
 import type { RcSelfHostCredentialRecord } from "./rcSelfHost";
-import { RC_SELF_HOST_SCOPE_LIST } from "./rcSelfHostLocal";
+import { RC_SELF_HOST_EMAIL, RC_SELF_HOST_SCOPE_LIST } from "./rcSelfHostLocal";
 
 /**
  * The minting half of the self-hosted Remote Control mode (ExaDev/agent-shim#207): the local credential that lets a Claude Code session activate Remote Control against the door's own served surface with no claude.ai login anywhere.
@@ -27,9 +27,6 @@ export const RC_SELF_HOST_RECORD_DIR = "rc-selfhost";
 
 /** The door's copy of the minted credential: the record `rcSelfHost.ts` reads fresh on every authenticated call. */
 export const RC_SELF_HOST_RECORD_FILE = "credential.json";
-
-/** The email address the minted account block names: a `.invalid` domain, so nothing about it can be mistaken for a reachable identity. */
-const SELF_HOST_EMAIL = "selfhost@agent-shim.invalid";
 
 /**
  * The subscription type the minted credential names. `max` is the value the CLI's own checks all accept (`claude_max` organisation type maps to it), and the local profile answer names that type right back, so the two never disagree.
@@ -144,7 +141,7 @@ export function mintRcSelfHostCredential(deps: RcSelfHostMintDeps): RcSelfHostMi
     oauthAccount: {
       ...existingBlock(claudeJson.oauthAccount),
       accountUuid,
-      emailAddress: SELF_HOST_EMAIL,
+      emailAddress: RC_SELF_HOST_EMAIL,
       organizationUuid,
       organizationName: "agent-shim self-hosted",
       // The billing and creation fields exist so the CLI's "populate the account block if it is missing" step finds a complete block and skips its profile fetch; the door answers that fetch locally anyway, so these are the quiet path, not a load-bearing claim.
