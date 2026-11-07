@@ -190,9 +190,14 @@ function parseCursor(cursor: string): { readonly generation: string; readonly se
   return { generation: cursor.slice(0, at), sequence: Number(digits) };
 }
 
-/** One stored text field, cut to its cap with the cut marker when it is longer. */
+/**
+ * One stored text field, cut to its cap with the cut marker when it is longer. The cut is copied into a string of its own: V8 represents a long enough `slice` as a view onto the string it was cut from, so a slice kept in the log would keep the whole observed value alive (up to the tracker's parse cap per field) and the log's memory bound would not hold. Encoding the cut and decoding it back yields a string with storage of its own.
+ */
 function bounded(text: string, maxChars: number): string {
-  return text.length <= maxChars ? text : `${text.slice(0, maxChars - CUT_MARKER.length)}${CUT_MARKER}`;
+  if (text.length <= maxChars) {
+    return text;
+  }
+  return Buffer.from(`${text.slice(0, maxChars - CUT_MARKER.length)}${CUT_MARKER}`, "utf16le").toString("utf16le");
 }
 
 /** One transition with every text field an observed value controls held to its cap, so no event the log retains is larger than `RC_SESSION_EVENT_MAX_BYTES`. */
