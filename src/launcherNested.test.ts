@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { CREDENTIAL_UNAVAILABLE_EXIT } from "./credential";
 import { createFakeFarmFs, discovered, FAKE_HOME, fakeCredentials, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
 
 const WORK_TOKEN = "oauth-work-token";
@@ -20,7 +21,16 @@ const providerZ = {
   env: { ANTHROPIC_MODEL: "glm-4.6", ANTHROPIC_CUSTOM_HEADERS: "x-provider-entry: 1" },
 };
 
-const FILES = { ...workWithCredential, [`${FAKE_HOME}/.agent-shim/providers/z.json`]: providerZ };
+/** Identity `reader` takes its credential from the very variable a launch of `work` exports. */
+const readerFromEnvironment = {
+  [`${paths.identitiesDir}/reader/identity.json`]: {
+    name: "reader",
+    allowAmbientCredential: false,
+    credential: { sources: [{ env: "CLAUDE_CODE_OAUTH_TOKEN" }], target: "oauthToken" },
+  },
+};
+
+const FILES = { ...workWithCredential, ...readerFromEnvironment, [`${FAKE_HOME}/.agent-shim/providers/z.json`]: providerZ };
 
 /** One launch of the launcher over `env` and `argv`: its exit code, what it logged and the environment its child was spawned with. */
 function launch(env: Readonly<Record<string, string | undefined>>, argv: readonly string[], hasStoredLogin?: boolean) {
@@ -39,6 +49,12 @@ function launch(env: Readonly<Record<string, string | undefined>>, argv: readonl
     ...(hasStoredLogin === undefined ? {} : { hasStoredLogin: () => hasStoredLogin }),
   });
   return { code, log, env: code === 0 ? spawnedEnv(spawn) : {} };
+}
+
+/** The variables (not headers or hosts) an environment's marker records, with their digests: what a launch that keeps its parent's session must keep recording. */
+function recordedVariables(env: Readonly<Record<string, string | undefined>>): Record<string, string> {
+  const marker = JSON.parse(env.AGENT_SHIM_INJECTED ?? "{}") as Record<string, string>;
+  return Object.fromEntries(Object.entries(marker).filter(([key]) => !key.includes(":") && !key.includes(",")));
 }
 
 describe("a launch started from inside a session another launch started", () => {
@@ -121,6 +137,35 @@ describe("a launch started from inside a session another launch started", () => 
         expect(child.env[name], name).toBeUndefined();
       }
       expect(child.env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-user-header: keep");
+    });
+  });
+
+  it("fails an identity whose credential reads the variable the parent injected, since that value is the parent's account", () => {
+    const parent = launch({}, ["@work", "--print"]).env;
+    const child = launch(parent, ["@reader", "--print"]);
+    expect(child.code).toBe(CREDENTIAL_UNAVAILABLE_EXIT);
+    expect(child.log.errors.join("\n")).toContain("identity reader");
+  });
+
+  describe("under the escape hatch, where the child is the parent's session", () => {
+    it("keeps the parent's routing, headers and marker for a bare launch", () => {
+      const parent = launch({ Z_API_TOKEN: "tok-z", ANTHROPIC_CUSTOM_HEADERS: "x-user-header: keep" }, ["@work", "--provider", "z", "--remote-control", "--print"], true).env;
+      const child = launch(parent, ["--print"]);
+      expect(child.code).toBe(0);
+      expect(child.env.CLAUDE_CONFIG_DIR).toBe(parent.CLAUDE_CONFIG_DIR);
+      expect(child.env.AGENT_SHIM_PROVIDER).toBe("GLM");
+      expect(recordedVariables(child.env)).toEqual(expect.objectContaining(recordedVariables(parent)));
+      expect(child.env.ANTHROPIC_CUSTOM_HEADERS).toContain("x-agent-shim-provider: z");
+      expect(child.env.ANTHROPIC_CUSTOM_HEADERS).toContain("x-user-header: keep");
+    });
+
+    it("keeps the parent's credential when the person opts in to it, and still refuses it otherwise", () => {
+      const parent = launch({}, ["@work", "--print"]).env;
+      expect(launch(parent, ["--print"]).code).toBe(1);
+      const child = launch({ ...parent, AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL: "1" }, ["--print"]);
+      expect(child.code).toBe(0);
+      expect(child.env.CLAUDE_CODE_OAUTH_TOKEN).toBe(WORK_TOKEN);
+      expect(recordedVariables(child.env)).toEqual(expect.objectContaining(recordedVariables(parent)));
     });
   });
 });
