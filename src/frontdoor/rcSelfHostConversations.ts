@@ -5,7 +5,7 @@ import { HTTP_STATUS } from "../codex/http";
 import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
 import type { RoutedRequest, RoutedResponse } from "./route";
 import type { PresentationRefusal, RcEventWriter, SelfHostConversation, StoredEvent } from "./rcSelfHost";
-import { RC_SOURCE_CLIENT, serveRcClientChannels } from "./rcSelfHostEndpoints";
+import { RC_SOURCE_CLIENT, serveRcClientChannels, withClientPlatform } from "./rcSelfHostEndpoints";
 
 /**
  * The conversation family of the self-hosted Remote Control surface (`/v1/code/conversations...`), the door's own sessionless half: a client that joins a live conversation without creating a `cse_` session of its own reads, writes, streams and announces through it, sharing the one event log and sequence space the attached sessions already write into. Split out of `rcSelfHost.ts` so each file stays a readable size, exactly as the client channels and the compatibility family were split into `rcSelfHostEndpoints.ts`.
@@ -125,7 +125,7 @@ export async function serveRcConversations(ctx: RcConversationContext, pathname:
         await ctx.answerJson(response, HTTP_STATUS.badRequest, { type: "error", error: { type: "invalid_request_error", message: "every event in a write is an object carrying one payload object" } });
         return;
       }
-      const published = ctx.publish(conversation, { session: undefined, half: "client" }, RC_SOURCE_CLIENT, event.payload);
+      const published = ctx.publish(conversation, { session: undefined, half: "client" }, RC_SOURCE_CLIENT, withClientPlatform(event.payload, request.headers));
       results.push({ sequence_num: String(published.sequenceNum), duplicate: published.duplicate });
     }
     ctx.sweep();

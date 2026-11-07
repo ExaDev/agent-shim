@@ -4,7 +4,7 @@ import type { Readable } from "node:stream";
 import { HTTP_STATUS } from "../codex/http";
 import { isLiveCapability } from "./capability";
 import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
-import { RC_SOURCE_CLIENT, RC_SOURCE_WORKER, pageOfRcChannel, serveRcClientChannels, serveRcCompatSessions } from "./rcSelfHostEndpoints";
+import { RC_SOURCE_CLIENT, RC_SOURCE_WORKER, pageOfRcChannel, serveRcClientChannels, serveRcCompatSessions, withClientPlatform } from "./rcSelfHostEndpoints";
 import { RC_CONVERSATIONS_PATH_PREFIX, newRcSelfHostConversation, serveRcConversations } from "./rcSelfHostConversations";
 import { createRcSelfHostLocal, type RcSelfHostLocal } from "./rcSelfHostLocal";
 import { RC_WEB_FETCH_MAX_BYTES, type RcWebFetcher } from "./rcWebFetch";
@@ -812,7 +812,7 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
           await answerJson(response, HTTP_STATUS.badRequest, { type: "error", error: { type: "invalid_request_error", message: "every event in a write is an object carrying one payload object" } });
           return;
         }
-        const published = publish(session.conversation, { session: session.id, half: "client" }, RC_SOURCE_CLIENT, event.payload);
+        const published = publish(session.conversation, { session: session.id, half: "client" }, RC_SOURCE_CLIENT, withClientPlatform(event.payload, request.headers));
         // The write answer the door's own client half parses: per-event sequence numbers as strings (the form the real endpoint was observed returning) beside the duplicate flag the live proof saw.
         results.push({ sequence_num: String(published.sequenceNum), duplicate: published.duplicate });
       }

@@ -157,6 +157,9 @@ agent-shim frontdoor rc mcp-reconnect --session <cse_id> --server <name> [--json
 agent-shim frontdoor rc mcp-authenticate --session <cse_id> --server <name> --redirect-uri <uri> [--json]
 agent-shim frontdoor rc mcp-oauth-callback-url --session <cse_id> --server <name> --callback-url <url> [--json]
 agent-shim frontdoor rc teleport --session <cse_id> --marker <text> [--json]
+agent-shim frontdoor rc goal get|clear --session <cse_id> [--wait-ms <ms>] [--json]   # runs /goal as a person would and prints the worker's answer; see docs/rc-slash-commands.md
+agent-shim frontdoor rc goal set --session <cse_id> --condition <text> [--wait-ms <ms>] [--json]
+agent-shim frontdoor rc compact --session <cse_id> [--instructions <text>] [--wait-ms <ms>] [--json]   # waits for the compaction's outcome
 agent-shim frontdoor rc watch [<cse_id>] [--json]
 agent-shim job add <name> (--identity <name> | --pool <name>) (--at <days>@<HH:MM>[/<zone>]... | --before-reset <fiveHour|sevenDay> --lead <duration>) --prompt <text> --timeout <duration> [--cwd <dir>] [--model <model>] [--allowed-tool <tool>]... [--json]
 agent-shim job list [--json]

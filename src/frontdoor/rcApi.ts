@@ -41,6 +41,8 @@ import {
   RcWriteOutputSchema,
   type RcStreamEvent,
 } from "./rcSchemas";
+import { RcCompactInputSchema, RcCompactOutputSchema, RcGoalClearOutputSchema, RcGoalGetOutputSchema, RcGoalSessionInputSchema, RcGoalSetInputSchema, RcGoalSetOutputSchema } from "./rcSlashCommandSchemas";
+import type { RcCompactOptions, RcCompactReport, RcGoalClearReport, RcGoalReport, RcGoalSetReport, RcSlashCommandOptions, RcSlashCommandResult } from "./rcSlashCommands";
 import type { RcEventFanout } from "./rcStream";
 import type { PrePipelineApi } from "./server";
 
@@ -107,6 +109,14 @@ export interface RcApiDeps {
   readonly mcpOAuthCallbackUrl: (sessionId: string, serverName: string, callbackUrl: string) => Promise<RcEventWriteResult>;
   /** The teleport operation, already wired to the tracker and the door's API-host dial. */
   readonly teleport: (sessionId: string, marker: string) => Promise<RcEventWriteResult>;
+  /** The goal read, already wired to the inject operation, the fan-out and the observed versions (`rcSlashCommands.ts`). */
+  readonly goalGet: (sessionId: string, options: RcSlashCommandOptions) => Promise<RcSlashCommandResult<RcGoalReport>>;
+  /** The goal set, wired the same way. */
+  readonly goalSet: (sessionId: string, condition: string, options: RcSlashCommandOptions) => Promise<RcSlashCommandResult<RcGoalSetReport>>;
+  /** The goal clear, wired the same way. */
+  readonly goalClear: (sessionId: string, options: RcSlashCommandOptions) => Promise<RcSlashCommandResult<RcGoalClearReport>>;
+  /** The compaction, wired the same way. */
+  readonly compact: (sessionId: string, options: RcCompactOptions) => Promise<RcSlashCommandResult<RcCompactReport>>;
   /** The client attachment's fan-out, whose events the subscription yields. */
   readonly fanout: RcEventFanout;
 }
@@ -167,6 +177,14 @@ export function createRcApiRouter(deps: RcApiDeps) {
     }
     return { request: result.requestId, sequenceNums: result.sequenceNums };
   };
+  // A goal or compaction verb that did not reach an outcome (an unverified version, an undelivered write, a refusal in the worker's own words, or no answer within the wait) becomes the same verbose message, carried as an oRPC error.
+  const commanded = <T>(sessionId: string, result: RcSlashCommandResult<T>): { readonly session: string; readonly sequenceNums: readonly number[] } & T => {
+    if (!result.ok) {
+      throw new ORPCError("BAD_GATEWAY", { message: result.message });
+    }
+    return { session: sessionId, sequenceNums: result.sequenceNums, ...result.report };
+  };
+  const waitOf = (waitMs: number | undefined): RcSlashCommandOptions => (waitMs === undefined ? {} : { waitMs });
   return {
     rc: {
       list: authed
@@ -279,6 +297,26 @@ export function createRcApiRouter(deps: RcApiDeps) {
         .input(RcTeleportInputSchema)
         .output(RcWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, sequenceNums: delivered(input.session, await deps.teleport(input.session, input.marker)) })),
+      goalGet: authed
+        .meta(openapi({ method: "POST", path: "/rest/rc/goal/get", summary: "Read a session's goal by running /goal", tags: [RC_API_TAG] }))
+        .input(RcGoalSessionInputSchema)
+        .output(RcGoalGetOutputSchema)
+        .handler(async ({ input }) => commanded(input.session, await deps.goalGet(input.session, waitOf(input.waitMs)))),
+      goalSet: authed
+        .meta(openapi({ method: "POST", path: "/rest/rc/goal/set", summary: "Set a session's goal by running /goal <condition>", tags: [RC_API_TAG] }))
+        .input(RcGoalSetInputSchema)
+        .output(RcGoalSetOutputSchema)
+        .handler(async ({ input }) => commanded(input.session, await deps.goalSet(input.session, input.condition, waitOf(input.waitMs)))),
+      goalClear: authed
+        .meta(openapi({ method: "POST", path: "/rest/rc/goal/clear", summary: "Clear a session's goal by running /goal clear", tags: [RC_API_TAG] }))
+        .input(RcGoalSessionInputSchema)
+        .output(RcGoalClearOutputSchema)
+        .handler(async ({ input }) => commanded(input.session, await deps.goalClear(input.session, waitOf(input.waitMs)))),
+      compact: authed
+        .meta(openapi({ method: "POST", path: "/rest/rc/compact", summary: "Compact a session's conversation by running /compact", tags: [RC_API_TAG] }))
+        .input(RcCompactInputSchema)
+        .output(RcCompactOutputSchema)
+        .handler(async ({ input }) => commanded(input.session, await deps.compact(input.session, { ...waitOf(input.waitMs), ...(input.instructions === undefined ? {} : { instructions: input.instructions }) }))),
       subscribe: authed
         .meta(openapi({ method: "GET", path: "/rest/rc/events", summary: "Stream a session's Remote Control events (SSE)", tags: [RC_API_TAG] }))
         .input(RcSessionQuerySchema)
