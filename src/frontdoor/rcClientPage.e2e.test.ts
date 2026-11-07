@@ -484,4 +484,18 @@ describe("the door's web client page and its API calls over the door's own TLS",
     expect(writes.find((write) => write.detail === `${session}:req_q`)?.decision).toEqual({ approve: true, message: undefined, choices: [["SQLite"], ["lint", { text: "fmt" }]] });
     expect(dom.alerts).toEqual([]);
   });
+  it("draws a question the door cannot answer with its reason and only a Dismiss, and says where requests were not listed", () => {
+    const dom = stubDocument();
+    const page = pageScript({ document: dom.document, alert: () => undefined });
+    page.ui = { pendingList: dom.root, eventList: dom.node("div"), selected: null, pendingKey: undefined };
+    const session = "cse_00000000-0000-4000-8000-0000000000ab";
+    const unanswerable = { sessionId: session, requestId: "req_u", type: "can_use_tool", summary: "AskUserQuestion", unanswerable: "the request asks \"Which?\" twice", observedAt: 0 };
+    const oversized = { sessionId: session, requestId: "req_o", type: "can_use_tool", summary: "AskUserQuestion", oversized: true, unanswerable: "the request is past the door's parse cap", observedAt: 0 };
+    page.renderPending([unanswerable, oversized], [{ sessionId: session, count: 3 }]);
+    expect(dom.findAll((node) => node.tag === "button" && (node.textContent === "Approve" || node.textContent === "Answer"))).toEqual([]);
+    expect(dom.findAll((node) => node.tag === "button" && node.textContent === "Dismiss")).toHaveLength(2);
+    expect(dom.findAll((node) => node.textContent.includes("answer it in the session") && node.textContent.includes("twice"))).toHaveLength(1);
+    expect(dom.findAll((node) => node.textContent.includes("parse cap"))).toHaveLength(1);
+    expect(dom.findAll((node) => node.textContent.includes("3 request(s) not listed"))).toHaveLength(1);
+  });
 });

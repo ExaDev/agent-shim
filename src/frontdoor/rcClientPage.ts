@@ -246,10 +246,15 @@ function renderPending(pending, dropped) {
   for (var i = 0; i < pending.length; i++) {
     var request = pending[i];
     var card = el('div', 'card');
-    var isQuestion = Array.isArray(request.questions);
+    var answerable = Array.isArray(request.questions);
+    // A question the door lists without its questions (malformed, past a bound, or past the parse cap) carries its reason instead, and can only be dismissed here.
+    var isQuestion = answerable || request.unanswerable !== undefined;
     card.appendChild(el('div', null, isQuestion ? 'question' : request.type + '  ' + (request.summary === '' ? shortId(request.requestId) : request.summary)));
     card.appendChild(el('div', 'dim', shortId(request.sessionId) + '  ' + shortId(request.requestId) + '  observed ' + new Date(request.observedAt).toLocaleTimeString()));
-    var pickers = isQuestion ? renderQuestions(card, request) : null;
+    if (isQuestion && !answerable) {
+      card.appendChild(el('div', 'dim', 'the door cannot answer this question (' + request.unanswerable + '); answer it in the session, or dismiss it'));
+    }
+    var pickers = answerable ? renderQuestions(card, request) : null;
     var row = el('div', 'row');
     var denial = el('input');
     denial.type = 'text';
@@ -259,7 +264,7 @@ function renderPending(pending, dropped) {
     approve.addEventListener('click', answerRequest(request, true, denial, pickers));
     deny.addEventListener('click', answerRequest(request, false, denial, null));
     row.appendChild(denial);
-    row.appendChild(approve);
+    if (!isQuestion || answerable) { row.appendChild(approve); }
     row.appendChild(deny);
     card.appendChild(row);
     list.appendChild(card);
