@@ -111,6 +111,23 @@ describe("the Remote Control status with worker states read from the service", (
     expect(reads).toEqual([QUIET_SESSION_ID]);
   });
 
+  it("stamps a read state with when the read was made, not when its answer was filed", async () => {
+    let now = CLOCK_START_MS;
+    // The tracker and the resolver share one clock, so filing time and read time differ exactly as they would live.
+    const tracker = createRcSessionTracker({ now: () => now, idleMs: RC_IDLE_EXPIRY_MS });
+    exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: OAUTH_BEARER }, { status: HTTP_STATUS.ok, body: JSON.stringify({ session: { id: QUIET_SESSION_ID } }) });
+    const { dial } = readingDial({});
+    const slow: RcEventDial = {
+      ...dial,
+      readWorker: async () => {
+        now += RC_IDLE_EXPIRY_MS / 2;
+        return await Promise.resolve(workerRecord("idle"));
+      },
+    };
+    const [status] = await statusesOf(resolverOf(tracker, slow, { now: () => now }));
+    expect(status?.workerState).toEqual({ value: "idle", observedAt: CLOCK_START_MS, source: "read" });
+  });
+
   it("reads a session's state once: the next status finds it already filed", async () => {
     const tracker = trackerWith(QUIET_SESSION_ID);
     const { dial, reads } = readingDial({ [QUIET_SESSION_ID]: workerRecord("idle") });

@@ -657,22 +657,23 @@ describe("the Remote Control session status", () => {
   it("files a worker state the service answered a read with, marked as read, when none was observed", () => {
     const { tracker, advance } = trackerWithClock();
     exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer b" }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
+    // The read was made at the start; it is filed a heartbeat later, and the fact names when it was read.
     advance(HEARTBEAT_INTERVAL_MS);
-    tracker.noteReadWorkerState(SESSION_ID, "idle");
-    expect(tracker.statusOf()[0]?.workerState).toEqual({ value: "idle", observedAt: CLOCK_START_MS + HEARTBEAT_INTERVAL_MS, source: "read" });
+    tracker.noteReadWorkerState(SESSION_ID, "idle", CLOCK_START_MS);
+    expect(tracker.statusOf()[0]?.workerState).toEqual({ value: "idle", observedAt: CLOCK_START_MS, source: "read" });
   });
 
   it("keeps an observed worker state over a read that arrives after it", () => {
     const { tracker } = trackerWithClock();
     exchange(tracker, { method: "PUT", url: WORKER_PATH, authorization: "Bearer b", requestBody: JSON.stringify({ worker_status: "running" }) }).respond(HTTP_STATUS.ok);
-    tracker.noteReadWorkerState(SESSION_ID, "idle");
+    tracker.noteReadWorkerState(SESSION_ID, "idle", CLOCK_START_MS);
     expect(tracker.statusOf()[0]?.workerState).toEqual({ value: "running", observedAt: CLOCK_START_MS, source: "observed" });
   });
 
   it("replaces a read worker state with the next observed one", () => {
     const { tracker, advance } = trackerWithClock();
     exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer b", requestBody: JSON.stringify({ idle_seconds: 1 }) }).respond(HTTP_STATUS.ok);
-    tracker.noteReadWorkerState(SESSION_ID, "idle");
+    tracker.noteReadWorkerState(SESSION_ID, "idle", CLOCK_START_MS);
     advance(HEARTBEAT_INTERVAL_MS);
     exchange(tracker, { method: "PUT", url: WORKER_PATH, authorization: "Bearer b", requestBody: JSON.stringify({ worker_status: "requires_action" }) }).respond(HTTP_STATUS.ok);
     expect(tracker.statusOf()[0]?.workerState).toEqual({ value: "requires_action", observedAt: CLOCK_START_MS + HEARTBEAT_INTERVAL_MS, source: "observed" });
@@ -680,7 +681,7 @@ describe("the Remote Control session status", () => {
 
   it("files no read state for a session the tracker does not hold", () => {
     const { tracker } = trackerWithClock();
-    tracker.noteReadWorkerState(SESSION_ID, "idle");
+    tracker.noteReadWorkerState(SESSION_ID, "idle", CLOCK_START_MS);
     expect(tracker.statusOf()).toEqual([]);
   });
 });

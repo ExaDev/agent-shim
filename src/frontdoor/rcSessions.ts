@@ -273,8 +273,8 @@ export interface RcSessionTracker {
   readonly statusOf: (sessionId?: string) => readonly RcTrackedSessionStatus[];
   /** Every control request awaiting an answer, idle sessions expired first, oldest-observed first, filtered to one session when named. */
   readonly pendingOf: (sessionId?: string) => readonly RcPendingRequestSummary[];
-  /** Files the worker state the service answered a read with, only while the session is tracked and has no state yet: a state that crossed the door while the read was in flight is the fresher fact and is kept. */
-  readonly noteReadWorkerState: (sessionId: string, workerStatus: string) => void;
+  /** Files the worker state the service answered a read with, stamped `readAt` (when the read was made, which is the instant the answer describes, not when it was filed), only while the session is tracked and has no state yet: a state that crossed the door while the read was in flight is the fresher fact and is kept. */
+  readonly noteReadWorkerState: (sessionId: string, workerStatus: string, readAt: number) => void;
   /** The observed credential and protocol headers for one session, the client-half writes' accessor: present only while the session is tracked, and never surfaced anywhere a summary, log or capture goes. */
   readonly credentialOf: (sessionId: string) => RcObservedCredential | undefined;
   /** Advances the session's sequence cursor to the highest number named, which every confirmed client-half write calls with the numbers the real service assigned its events. */
@@ -870,12 +870,12 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
       }
       return { authorization: entry.oauthAuthorization, anthropicVersion: entry.anthropicVersion, anthropicClientPlatform: entry.anthropicClientPlatform };
     },
-    noteReadWorkerState: (sessionId, workerStatus) => {
+    noteReadWorkerState: (sessionId, workerStatus, readAt) => {
       const entry = entries.get(sessionId);
       if (entry === undefined || entry.workerState !== undefined) {
         return;
       }
-      entry.workerState = { value: workerStatus, observedAt: deps.now(), source: "read" };
+      entry.workerState = { value: workerStatus, observedAt: readAt, source: "read" };
     },
     noteSequenceNums: (sessionId, sequenceNums) => {
       const entry = entries.get(sessionId);
