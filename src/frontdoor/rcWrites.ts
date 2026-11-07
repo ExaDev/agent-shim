@@ -338,6 +338,8 @@ export interface RcAnswerDeps {
   readonly pendingOf: (sessionId: string) => readonly RcPendingRequestSummary[];
   /** Retires a pending request as answered: the tracker's accessor, in production, called only once the write is confirmed delivered. */
   readonly completePending: (sessionId: string, requestId: string) => void;
+  /** Claims the request for this answer while it is written, the tracker's accessor in production: undefined means another answer is already being written for it. */
+  readonly claimPending: (sessionId: string, requestId: string) => (() => void) | undefined;
   /** Reads the input a pending question was asked with: the tracker's accessor, in production, which an answer carries back with its answers added. */
   readonly pendingToolInputOf: (sessionId: string, requestId: string) => Record<string, unknown> | undefined;
   /** Advances the session's sequence cursor: the tracker's accessor, in production, so a delivered write's numbers are what a stream resume continues after. */
@@ -351,6 +353,9 @@ export interface RcAnswerDeps {
  */
 function questionAnswerInput(deps: RcAnswerDeps, sessionId: string, pending: RcPendingRequestSummary, decision: RcAnswerDecision): { readonly input: Record<string, unknown> } | { readonly error: string } | undefined {
   const { questions } = pending;
+  if (pending.oversized === true) {
+    return { error: `control request ${pending.requestId} was past the door's parse cap, so the door holds only its summary and cannot write an answer the worker would read correctly; answer it in the session itself` };
+  }
   if (questions === undefined) {
     return decision.choices === undefined ? undefined : { error: `control request ${pending.requestId} is not a question (it is ${pending.type}${pending.summary === "" ? "" : `: ${pending.summary}`}), so it has no options to choose; approve or deny it instead` };
   }
@@ -387,13 +392,19 @@ export async function answerRcControlRequest(deps: RcAnswerDeps, sessionId: stri
   if (updatedInput !== undefined && "error" in updatedInput) {
     return { ok: false, message: updatedInput.error };
   }
+  const release = deps.claimPending(sessionId, requestId);
+  if (release === undefined) {
+    return { ok: false, message: `another answer to control request ${requestId} on session ${sessionId} is being written right now; the worker takes only one, so this one was not sent` };
+  }
   const body = JSON.stringify(buildRcEventWriteBody(buildRcControlResponsePayload(requestId, decision, updatedInput?.input)));
   let answer: RcDialAnswer;
   try {
     answer = await deps.dial.writeEvents(sessionId, rcWriteHeaders(credential), body);
   } catch (error) {
+    release();
     return { ok: false, message: `the door could not reach the API host to answer on session ${sessionId}: ${error instanceof Error ? error.message : String(error)}` };
   }
+  release();
   const result = rcEventWriteResultFromAnswer(answer);
   if (result.ok) {
     deps.completePending(sessionId, requestId);
