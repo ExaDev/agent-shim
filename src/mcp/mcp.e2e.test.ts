@@ -60,9 +60,11 @@ describe("the MCP server over a real door handler", () => {
   /** The session event log the door's page read serves, appended to directly by the test that reads it through the tool. */
   const sessionEvents = createRcSessionEventLog({ generation: "00000000-0000-4000-8000-0000000000ee", capacity: RC_SESSION_EVENT_LOG_CAPACITY });
 
+  /** The door's session tracker, which the pending-question case files a request into. */
+  const tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS });
+
   beforeAll(async () => {
     const events = createDoorEventHub();
-    const tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS });
     const surface = createDoorApiNodeHandler({
       expectedToken: CONTROL_TOKEN,
       list: tracker.list,
@@ -247,6 +249,20 @@ describe("the MCP server over a real door handler", () => {
     expect(set.isError).not.toBe(true);
     expect(JSON.parse(textOf(set))).toMatchObject({ session: SESSION_ID, condition: "the build is green", superseded: null });
     await directives.close();
+  });
+
+  it("lists a pending question with its questions and options through the pending tool", async () => {
+    const session = "cse_00000000-0000-4000-8000-0000000000cc";
+    const observed = tracker.observeExchange({ method: "POST", url: `/v1/code/sessions/${session}/worker/heartbeat`, headers: { authorization: "Bearer b" } });
+    observed?.onResponse(HTTP_STATUS.ok, {});
+    observed?.onEnd();
+    const questions = [{ question: "Which database?", header: "Database", multiSelect: false, options: [{ label: "Postgres", description: "relational" }, { label: "SQLite" }] }];
+    tracker.fileStreamEvent(session, { event_type: "control_request", sequence_num: 1, source: "worker", payload: { type: "control_request", request_id: "req_listed", request: { subtype: "can_use_tool", tool_name: "AskUserQuestion", input: { questions } } } });
+    const client = await connect({ writes: false, remoteControl: true, history: false });
+    const listed = await client.callTool({ name: "rc_pending", arguments: { session } });
+    expect(listed.isError).not.toBe(true);
+    expect(JSON.parse(textOf(listed))).toEqual({ pending: [expect.objectContaining({ sessionId: session, requestId: "req_listed", questions })] });
+    await client.close();
   });
 
   it("answers a question through the rc_answer tool, whose input schema carries the choices", async () => {
