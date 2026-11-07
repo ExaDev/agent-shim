@@ -314,7 +314,7 @@ describe("config.identity.remove and the credential the Keychain store caches", 
     }).config;
     const removed = await api.identity.remove({ name: "lab", confirm: true });
     expect(removed.action).toBe("removed");
-    expect(removed.warnings?.join("\n")).toContain("The identity was removed, but the Keychain could not be checked");
+    expect(removed.warnings?.join("\n")).toContain('The identity "lab" was removed, but the Keychain could not be checked');
     expect(fs.existsSync(path.join(paths.identitiesDir, "lab"))).toBe(false);
   });
 

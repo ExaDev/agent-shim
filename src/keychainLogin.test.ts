@@ -212,6 +212,8 @@ describe("deleteKeychainLogin", () => {
 
 describe("the self-hosted mint's Keychain checks, which refuse and never delete", () => {
   const LAB_DIR = "/example/lab/identities/lab";
+  /** What a removal of the self-hosted identity "lab" leaves its note to describe: the name and directory as they were when it was removed. */
+  const REMOVED_LAB = { name: "lab", directory: LAB_DIR } as const;
   const LAB_SERVICE = claudeCodeKeychainService(LAB_DIR);
   const darwin = (keychain: ReturnType<typeof createFakeKeychain>) => ({ run: keychain.run, platform: "darwin" as const });
   const neverReadsAPassword = (keychain: ReturnType<typeof createFakeKeychain>): boolean => !keychain.calls.some((call) => call.args.includes("-g") || call.args.includes("-w"));
@@ -311,17 +313,19 @@ describe("the self-hosted mint's Keychain checks, which refuse and never delete"
 
   it("reports a Keychain that cannot be asked at removal as a note saying the identity was removed, never as a failure", () => {
     const locked = { run: (): { status: number; stdout: string; stderr: string } => ({ status: LOCKED_KEYCHAIN_STATUS, stdout: "", stderr: "User interaction is not allowed." }) };
-    const note = selfHostedLoginLeftover({ run: locked, platform: "darwin" }, LAB_DIR);
-    expect(note).toContain("The identity was removed, but the Keychain could not be checked");
+    const note = selfHostedLoginLeftover({ run: locked, platform: "darwin" }, REMOVED_LAB);
+    expect(note).toContain(`The identity "lab" was removed, but the Keychain could not be checked`);
+    expect(note).toContain(LAB_DIR);
     expect(note).toContain(LAB_SERVICE);
   });
 
   it("names a self-hosted identity's leftover login on removal without deleting it, and says nothing for an unmarked identity or off macOS", () => {
     const keychain = createFakeKeychain();
     keychain.seed(LAB_SERVICE, "alex", "a-made-up-login");
-    expect(selfHostedLoginLeftover(darwin(keychain), LAB_DIR)).toContain(`security delete-generic-password -s '${LAB_SERVICE}' -a 'alex'`);
+    expect(selfHostedLoginLeftover(darwin(keychain), REMOVED_LAB)).toContain(`security delete-generic-password -s '${LAB_SERVICE}' -a 'alex'`);
+    expect(selfHostedLoginLeftover(darwin(keychain), REMOVED_LAB)).toContain(`the directory ${LAB_DIR} of the removed identity "lab"`);
     expect(selfHostedLoginLeftover(darwin(keychain), undefined)).toBeUndefined();
-    expect(selfHostedLoginLeftover({ run: keychain.run, platform: "linux" }, LAB_DIR)).toBeUndefined();
+    expect(selfHostedLoginLeftover({ run: keychain.run, platform: "linux" }, REMOVED_LAB)).toBeUndefined();
     expect(keychain.items.has(LAB_SERVICE)).toBe(true);
     expect(keychain.calls.some((call) => call.args[0] === "delete-generic-password")).toBe(false);
     expect(neverReadsAPassword(keychain)).toBe(true);

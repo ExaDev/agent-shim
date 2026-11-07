@@ -343,25 +343,31 @@ export function requireNoClaudeCodeLoginForMint(keychain: KeychainProbe, configD
   );
 }
 
+/** An identity as it was when `identity remove` removed it: the name it had and the directory it was stored in. */
+export interface RemovedIdentity {
+  readonly name: string;
+  readonly directory: string;
+}
+
 /**
- * The note `identity remove` gives for an identity the self-hosted mint wrote into (`selfHostedDir` is its directory, undefined for any other identity) whose Claude Code login item is still in the Keychain, or undefined when there is nothing to say. The removal leaves the item, as it leaves every identity's (a login another identity, or a later `identity add --keep-keychain-login`, may still want); this only names it and the command that deletes it, since a minted login is the one kind with nothing to keep. Asked by attributes only, and only on macOS. It is asked after the identity is gone, so a Keychain that could not be asked is a note too, saying the identity was removed and the check could not be made, never a failure of a removal that has already happened.
+ * The note `identity remove` gives for an identity the self-hosted mint wrote into (`removed` names it and its directory as they were when it was removed, and is undefined for any other identity) whose Claude Code login item is still in the Keychain, or undefined when there is nothing to say. The removal leaves the item, as it leaves every identity's (a login another identity, or a later `identity add --keep-keychain-login`, may still want); this only names it and the command that deletes it, since a minted login is the one kind with nothing to keep. Asked by attributes only, and only on macOS. The note says which identity and directory it describes, so an identity created in that directory afterwards cannot be mistaken for the removed one when the note is read or its delete command run. It is asked after the identity is gone, so a Keychain that could not be asked is a note too, saying the identity was removed and the check could not be made, never a failure of a removal that has already happened.
  */
-export function selfHostedLoginLeftover(keychain: KeychainProbe, selfHostedDir: string | undefined): string | undefined {
-  if (selfHostedDir === undefined || keychain.platform !== "darwin") {
+export function selfHostedLoginLeftover(keychain: KeychainProbe, removed: RemovedIdentity | undefined): string | undefined {
+  if (removed === undefined || keychain.platform !== "darwin") {
     return undefined;
   }
   let found: ReturnType<typeof claudeCodeLoginFound>;
   try {
-    found = claudeCodeLoginFound(keychain.run, selfHostedDir);
+    found = claudeCodeLoginFound(keychain.run, removed.directory);
   } catch (error) {
     if (error instanceof KeychainLookupError) {
-      return `The identity was removed, but the Keychain could not be checked for a Claude Code login a self-hosted mint may have left for its directory (service ${claudeCodeKeychainService(selfHostedDir)}): ${error.message}`;
+      return `The identity "${removed.name}" was removed, but the Keychain could not be checked for a Claude Code login a self-hosted mint may have left for its directory ${removed.directory} (service ${claudeCodeKeychainService(removed.directory)}): ${error.message}`;
     }
     throw error;
   }
   return found === undefined
     ? undefined
-    : `The Keychain still holds a Claude Code login for this identity's directory (service ${found.service}), which a self-hosted mint may have left; delete it with \`${keychainDeleteCommand(found.service, found.account)}\` if it is not needed.`;
+    : `The Keychain still holds a Claude Code login filed for the directory ${removed.directory} of the removed identity "${removed.name}" (service ${found.service}), which a self-hosted mint may have left; delete it with \`${keychainDeleteCommand(found.service, found.account)}\` if it is not needed and no identity has been created in that directory since.`;
 }
 
 /** A leftover note as the list of warnings a removal reports: empty when there is none. */

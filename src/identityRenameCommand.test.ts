@@ -291,7 +291,7 @@ describe("identity rename", () => {
     keychainFindLocked = true;
     expect(await run(["identity", "remove", "lab", "--yes"])).toBe(0);
     expect(out.join("\n")).toContain('Removed identity "lab".');
-    expect(warnings.join("\n")).toContain("The identity was removed, but the Keychain could not be checked");
+    expect(warnings.join("\n")).toContain('The identity "lab" was removed, but the Keychain could not be checked');
   });
 
   it("asks the Keychain for a self-hosted identity's leftover login only after the identity names lock is released", async () => {
