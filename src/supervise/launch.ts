@@ -1,6 +1,9 @@
-import { randomUUID } from "node:crypto";
-import { rmSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { createReadStream, rmSync } from "node:fs";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
+
+import packageJson from "../../package.json";
 
 import type { Pool } from "../config/schema";
 import type { FarmRuntime, LaunchPlan } from "../launcher";
@@ -11,10 +14,11 @@ import type { LogPort } from "../launcher/ports";
 import { identityRecordsOver } from "../identityRecords";
 import type { LayoutPaths } from "../paths";
 import { refreshPools } from "../poolUsageRefresh";
-import { realFarmFs, realFsPort, selfInvocation, type DaemonSpawner } from "../realPorts";
+import { realContentSourcePath, realFarmFs, realFsPort, selfInvocation, type DaemonSpawner } from "../realPorts";
 import { contextTokensOfTranscript, latestConversationId } from "../usage/resumeContext";
 import { createCompactionDeps } from "./compactionDeps";
 import { quotaHitOf } from "./limit";
+import { createLifecycleRecorder } from "./lifecycle";
 import { currentConversation, hooksPending } from "./hookGuard";
 import { compactInSession, nativeCompactionReady } from "./nativeCompact";
 import { stageNativeCompactionPlugin, withNativeCompactionPlugin } from "./nativeCompactionPlugin";
@@ -74,6 +78,16 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
     log.warn(`agent-shim: pool "${pool}" resumes on a spent quota, but this launch runs unsupervised: ${first.reason}`);
     return undefined;
   }
+  let entrypointSha256AtStart: string | null;
+  try {
+    const hash = createHash("sha256");
+    await pipeline(createReadStream(realContentSourcePath()), hash);
+    entrypointSha256AtStart = hash.digest("hex");
+  } catch {
+    entrypointSha256AtStart = null;
+    log.warn("agent-shim: could not fingerprint the supervisor entrypoint");
+  }
+  const lifecycle = createLifecycleRecorder({ fs: realFarmFs, logsDir: paths.logsDir, fileId: randomUUID(), sessionId: first.sessionId, supervisorPid: farm.lock.pid, supervisorVersion: packageJson.version, entrypointSha256AtStart, now: farm.now, log });
   // The hooks also identify the current conversation after /clear, which moves need even when the pool does not compact.
   let compaction: CompactionDeps | undefined;
   const policy = params.pools[pool];
@@ -139,6 +153,7 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
       pool,
       cwd: farm.cwd,
       pid: farm.lock.pid,
+      lifecycle,
       prepare: (nextLaunch) => {
         const plan = params.prepare(nextLaunch);
         if (plugin === undefined) return plan;

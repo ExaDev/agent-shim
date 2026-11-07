@@ -13,7 +13,7 @@ export interface QuotaHit {
 }
 
 /**
- * The quota refusal a session has met, or undefined while it has met none. Two things have to hold: the identity's snapshot says it is refused right now, and the usage log holds a request of this very session, made since `sinceMs`, that the door classified as quota-exhausted. The snapshot is cheap and changes on every response, so it gates the log read; the log record is what attributes the refusal to this session, since a refusal another session met says nothing about whether this one's turn is in flight. Throws `UsageSnapshotError` for a snapshot that is present but unreadable.
+ * The quota refusal a session has met, or undefined while it has met none. Two things have to hold: the identity's snapshot says it is refused right now, and the usage log holds a request of this very session, made since `sinceMs`, that the door routed to Anthropic and classified as quota-exhausted. The route identifies the actual upstream even when the recorded provider names the session default. The snapshot is cheap and changes on every response, so it gates the log read; the log record is what attributes the refusal to this session, since a refusal another session met says nothing about whether this one's turn is in flight. Throws `UsageSnapshotError` for a snapshot that is present but unreadable.
  `identity` is the id of the identity, which its snapshot and the log's records are filed under.
  */
 export function quotaHitOf(fs: UsageReadFs, paths: LimitPaths, identity: string, sessionId: string, sinceMs: number, nowMs: number): QuotaHit | undefined {
@@ -24,7 +24,7 @@ export function quotaHitOf(fs: UsageReadFs, paths: LimitPaths, identity: string,
   const { records } = readUsageLog(fs, paths.usageLogDir, { sinceMs });
   for (let index = records.length - 1; index >= 0; index -= 1) {
     const record = records[index];
-    if (record?.sessionId === sessionId && record.identity === identity && record.limit?.kind === "quota-exhausted") {
+    if (record?.sessionId === sessionId && record.identity === identity && record.route === "anthropic" && record.limit?.kind === "quota-exhausted") {
       return { reason, ...(record.limit.resetAt === undefined ? {} : { resetAt: record.limit.resetAt }) };
     }
   }

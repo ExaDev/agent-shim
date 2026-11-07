@@ -87,6 +87,7 @@ function buildRecord(event: RoutedResponseEvent, context: { readonly headAt: num
   const { provider, endpoint } = destinationOf(event.servedPath, event.session.provider);
   // The choice this response answers: the one a routing layer noted outright, or the one reconstructed here when the request crossed the headroom hop and the serving translator behind it resolved the name the body carried into a different model (the hop carries the request's own name home because the daemon's relay never brings the translator's noting back, and the body scan names what served it). A single-provider reconstruction names the provider the record itself already does.
   const choice = modelChoiceOf(event, scan?.model, provider);
+  const requestedModel = choice?.requested ?? (scan?.model === undefined ? event.requestedModel : undefined);
   const rateLimitHeaders = rateLimitHeadersOf(event.headers);
   const limit = classifyLimit({ status: event.status, headers: rateLimitHeaders ?? {}, error: scan?.error, nowMs: context.endedAt });
   const requestId = headerValue(event.headers, "request-id");
@@ -104,7 +105,7 @@ function buildRecord(event: RoutedResponseEvent, context: { readonly headAt: num
     method: event.method,
     endpoint,
     ...(scan?.model === undefined ? {} : { model: scan.model }),
-    ...(choice === undefined ? {} : { requestedModel: choice.requested }),
+    ...(requestedModel === undefined ? {} : { requestedModel }),
     ...(choice !== undefined && choice.providers.length > 1 ? { candidateProviders: [...choice.providers] } : {}),
     status: event.status,
     latencyMs: Math.max(0, Math.round(context.headAt - event.receivedAt)),
