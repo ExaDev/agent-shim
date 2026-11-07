@@ -44,9 +44,8 @@ import { ENV_PREFIX, LEGACY_ENV_PREFIX, LEGACY_HOME_DIRNAME } from "./legacy";
 import { describeUnfinishedRename, finishabilityOf, listRenameJournals, type RenameJournalListing } from "./identityRenameJournal";
 import { aliasFindings, readProviderAliases, type ProviderAliases } from "./providerAliases";
 import { describeProviderEndpoint, legacyProviderConversion, LegacyProviderFileError } from "./providersStore";
-import { detectAmbientCredential, formatAmbientCredentialGuardMessage } from "./launcher/guard";
+import { ambientCredentialFinding } from "./launcher/guard";
 import { poolNameOf } from "./launcher/identity";
-import { launchEnvironment } from "./launcher/injected";
 import { poolCycleOf } from "./poolStore";
 import { describeSharedLoginMembers, sharedLoginMembers } from "./poolSharedLogins";
 import { jobWindowReadFindings, poolWindowReadFindings, receivedWindows } from "./poolWindowReads";
@@ -462,9 +461,8 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     push(section, "warn", `${where} pins Claude Code ${version}, which is not installed (installed: ${installed.length === 0 ? "none" : installed.join(", ")}); a launch that resolves to it fails.`, subject);
   };
 
-  // Judged as a launch of an identity judges it: what a parent launcher injected into this session is not ambient.
-  const ambient = detectAmbientCredential(launchEnvironment(params.env, false));
-  push("ambient-credential", ambient === undefined ? "pass" : "warn", ambient === undefined ? "No ambient-credential environment variable is set." : formatAmbientCredentialGuardMessage(ambient.variable));
+  const ambient = ambientCredentialFinding(params.env);
+  push("ambient-credential", ambient.severity, ambient.message);
 
   if (params.binaryDiscovery.ok) {
     const { binary } = params.binaryDiscovery;
