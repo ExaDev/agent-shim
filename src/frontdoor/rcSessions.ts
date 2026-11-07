@@ -379,8 +379,9 @@ function payloadEventsOf(body: string): readonly Record<string, unknown>[] {
  */
 function pendingOfControlRequestPayload(payload: Record<string, unknown>): Omit<RcPendingRequestRecord, "sessionId" | "observedAt"> | undefined {
   const parsed = fullPendingOfControlRequestPayload(payload);
-  // A request body is already bounded by the parse cap, but a stream envelope is not: one whose serialised payload is past the cap in UTF-8 bytes keeps its summary (itself an excerpt) and drops what would hold the payload whole.
-  if (parsed === undefined || Buffer.byteLength(JSON.stringify(payload), "utf8") <= RC_REQUEST_PARSE_CAP_BYTES) {
+  // A request body is already bounded by the parse cap, but a stream envelope is not: a question whose serialised payload is past the cap in UTF-8 bytes keeps its summary (itself an excerpt) and drops the input an answer would carry back. Only a question holds its input, so any other request is held as it is: its summary is already an excerpt, and approving or denying it carries none of its input.
+  const isQuestion = parsed !== undefined && (parsed.questions !== undefined || parsed.unanswerable !== undefined);
+  if (parsed === undefined || !isQuestion || Buffer.byteLength(JSON.stringify(payload), "utf8") <= RC_REQUEST_PARSE_CAP_BYTES) {
     return parsed;
   }
   return { ...parsed, questions: undefined, toolInput: undefined, oversized: true, unanswerable: parsed.unanswerable ?? (parsed.questions === undefined ? undefined : `the request is past the door's parse cap of ${String(RC_REQUEST_PARSE_CAP_BYTES)} bytes`) };

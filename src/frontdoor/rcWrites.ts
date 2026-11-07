@@ -356,9 +356,6 @@ function questionAnswerInput(deps: RcAnswerDeps, sessionId: string, pending: RcP
   if (pending.unanswerable !== undefined) {
     return { error: `control request ${pending.requestId} is a question the door cannot answer (${pending.unanswerable}), so it cannot write an answer the worker would read correctly; answer it in the session itself` };
   }
-  if (pending.oversized === true) {
-    return { error: `control request ${pending.requestId} was past the door's parse cap, so the door holds only its summary and cannot write an answer the worker would read correctly; answer it in the session itself` };
-  }
   if (questions === undefined) {
     return decision.choices === undefined ? undefined : { error: `control request ${pending.requestId} is not a question (it is ${pending.type}${pending.summary === "" ? "" : `: ${pending.summary}`}), so it has no options to choose; approve or deny it instead` };
   }
