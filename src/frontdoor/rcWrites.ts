@@ -352,15 +352,16 @@ export interface RcAnswerDeps {
  * The `updatedInput` an answer to a pending question carries, or undefined when the answer carries none (any denial, and an approval of a request that is not a question). Choosing options for a request that is not a question, approving a question without choosing, and choosing while denying are refused, each naming the fix, because each would write an answer the worker reads differently from what the caller meant.
  */
 function questionAnswerInput(deps: RcAnswerDeps, sessionId: string, pending: RcPendingRequestSummary, decision: RcAnswerDecision): { readonly input: Record<string, unknown> } | { readonly error: string } | undefined {
-  const { questions } = pending;
-  if (pending.unanswerable !== undefined) {
-    return { error: `control request ${pending.requestId} is a question the door cannot answer (${pending.unanswerable}), so it cannot write an answer the worker would read correctly; answer it in the session itself` };
-  }
-  if (questions === undefined) {
+  const { questions, unanswerable } = pending;
+  if (questions === undefined && unanswerable === undefined) {
     return decision.choices === undefined ? undefined : { error: `control request ${pending.requestId} is not a question (it is ${pending.type}${pending.summary === "" ? "" : `: ${pending.summary}`}), so it has no options to choose; approve or deny it instead` };
   }
+  // A denial dismisses the question and carries none of its input, so it is faithful even for a question the door cannot answer.
   if (!decision.approve) {
     return decision.choices === undefined ? undefined : { error: "a denial dismisses the question and carries no choices; choose options to answer it, or deny it without them" };
+  }
+  if (questions === undefined) {
+    return { error: `control request ${pending.requestId} is a question the door cannot answer (${String(unanswerable)}), so it cannot write an answer the worker would read correctly; answer it in the session itself, or deny it to dismiss it` };
   }
   if (decision.choices === undefined) {
     return { error: `control request ${pending.requestId} is a question, so answering it means choosing an option for each of its ${String(questions.length)} question(s); deny it to dismiss it` };
@@ -401,10 +402,11 @@ export async function answerRcControlRequest(deps: RcAnswerDeps, sessionId: stri
   try {
     answer = await deps.dial.writeEvents(sessionId, rcWriteHeaders(credential), body);
   } catch (error) {
-    release();
     return { ok: false, message: `the door could not reach the API host to answer on session ${sessionId}: ${error instanceof Error ? error.message : String(error)}` };
+  } finally {
+    // The claim lives exactly as long as the write, whichever way it settles.
+    release();
   }
-  release();
   const result = rcEventWriteResultFromAnswer(answer);
   if (result.ok) {
     deps.completePending(sessionId, requestId);

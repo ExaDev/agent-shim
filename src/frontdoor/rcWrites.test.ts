@@ -388,6 +388,20 @@ describe("the control_response payload and answerRcControlRequest over an inject
       expect(dialled).toEqual([]);
     });
 
+    it("dismisses a question the door cannot answer or that was past the parse cap, since a denial carries no input", async () => {
+      const unanswerable = trackerWithPending().tracker;
+      unanswerable.fileStreamEvent(SESSION_ID, { event_type: "control_request", sequence_num: 1, source: "worker", payload: { type: "control_request", request_id: QUESTION_ID, request: { subtype: "can_use_tool", tool_name: "AskUserQuestion", input: { questions: [QUESTION_INPUT.questions[0], QUESTION_INPUT.questions[0]] } } } });
+      expect(unanswerable.pendingOf().find((request) => request.requestId === QUESTION_ID)?.unanswerable).toContain("twice");
+      const oversized = trackerWithPending().tracker;
+      oversized.fileStreamEvent(SESSION_ID, { event_type: "control_request", sequence_num: 1, source: "worker", payload: { type: "control_request", request_id: QUESTION_ID, request: { subtype: "can_use_tool", tool_name: "AskUserQuestion", input: { ...QUESTION_INPUT, padding: "x".repeat(RC_REQUEST_PARSE_CAP_BYTES) } } } });
+      expect(oversized.pendingOf().find((request) => request.requestId === QUESTION_ID)?.oversized).toBe(true);
+      for (const tracker of [unanswerable, oversized]) {
+        const { dial, dialled } = dialRecording();
+        expect((await answerRcControlRequest(depsOf(tracker, dial), SESSION_ID, QUESTION_ID, { approve: false, message: "not now" })).ok).toBe(true);
+        expect(dialled[0]?.body).toBe(JSON.stringify(buildRcEventWriteBody(buildRcControlResponsePayload(QUESTION_ID, { approve: false, message: "not now" }))));
+      }
+    });
+
     it("approves and denies an approval request past the parse cap, which holds none of its input", async () => {
       const { tracker } = trackerWithPending();
       const bigId = "req_00000000-0000-4000-8000-0000000000b1";
