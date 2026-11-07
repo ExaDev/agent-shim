@@ -97,3 +97,26 @@ describe("a mint that names no identity", () => {
     expect(refused.body).toContain("mint <identity> again");
   });
 });
+
+describe("the generation the ownership decisions rest on", () => {
+  it("names the minted identity, and moves when the mint names another, names one for the first time, or is removed", () => {
+    let record: RcSelfHostCredentialRecord | undefined;
+    const local = createRcSelfHostLocal({ now: () => 0, credentialRecord: () => record, readBody: async () => await Promise.resolve(""), ownsLaunch: () => false, ownsPeer: async () => await Promise.resolve(false) });
+    const generations: string[] = [];
+    const note = (): void => {
+      generations.push(local.mintGeneration());
+    };
+    note();
+    record = RECORD;
+    note();
+    record = { ...RECORD, identityId: "rig" };
+    note();
+    const named = local.mintGeneration();
+    record = { ...RECORD, identityId: "work" };
+    note();
+    expect(new Set(generations).size).toBe(generations.length);
+    expect(local.mintGeneration()).not.toBe(named);
+    record = { ...RECORD, identityId: "rig", accessToken: "another-token" };
+    expect(local.mintGeneration()).toBe(named);
+  });
+});

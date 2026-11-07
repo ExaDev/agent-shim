@@ -410,6 +410,8 @@ export interface ConnectLocalSurface {
   readonly ownsLaunch: (capability: string) => boolean;
   /** Whether a redirected connection whose client end is on local port `port` is one this surface owns: attributed by the process holding that end, since a redirect carries no launch capability. Resolves true when the connection cannot be attributed at all, so an unattributable session fails closed. */
   readonly ownsPeer: (port: number) => Promise<boolean>;
+  /** What the surface's ownership decisions currently rest on (for the self-hosted mode, the identity the credential is minted into): when it changes, every decision made under the old value is stale. */
+  readonly mintGeneration: () => string;
 }
 
 /** The statuses the surface answers one request on a terminated session with when it neither serves nor forwards it. */
@@ -432,7 +434,28 @@ const TAP_ALPN_PROTOCOLS: readonly string[] = ["h2", "http/1.1"];
 export async function startConnectServer(config: ConnectServerConfig, effects: ConnectEffects, source: ListenSource): Promise<ConnectServerHandle> {
   // The capability each terminated session's tunnel authenticated with, keyed by the TLS session the acceptor handed over. A request riding that session is admitted by this token when its own headers carry none: the pipeline's per-request admission exists for listeners with no transport auth (a loopback process spending a session's credentials through the provider listener), while a CONNECT surface session already authenticated at the tunnel, and a client inside the child that never sees the launcher's headers (Claude Code's Remote Control bridge is exactly this, and its requests were refused with a 401 Claude Code misreports as a rejected login) has nothing else to present.
   const tunnelTokens = new WeakMap<net.Socket, string>();
-  const ledger = createConnectionLedger(config.limits, config.isLiveCapability);
+  // Which launches the local surface owns can change while sessions are open (a mint names another identity, or names one for the first time): every decision rests on the generation it was made under, so when the generation moves, every authenticated connection and redirected session is ended and its client's reconnection is decided afresh. Checked before every decision and on the ledger's revalidation tick, so a quiet session is not left decided under a mint that no longer holds.
+  let generation = config.localSurface?.mintGeneration();
+  const redirectedSessions = new Set<net.Socket>();
+  const ledger = createConnectionLedger(config.limits, config.isLiveCapability, () => {
+    checkGeneration();
+  });
+  function checkGeneration(): void {
+    const surface = config.localSurface;
+    if (surface === undefined) {
+      return;
+    }
+    const current = surface.mintGeneration();
+    if (current === generation) {
+      return;
+    }
+    config.log?.("connect: the self-hosted mint changed, so every intercepted session and tunnel is ended and decided again on reconnection");
+    generation = current;
+    ledger.endAuthenticated();
+    for (const secure of redirectedSessions) {
+      secure.destroy();
+    }
+  }
   /** The deadline of each terminated session a retiring surface took on, disarmed by its first request (see `serveSecure`). */
   const lateSessionDeadlines = new WeakMap<net.Socket, NodeJS.Timeout>();
   // Whether each terminated session is the local surface's: decided before the session is chosen (from the CONNECT tunnel's launch, or a redirected connection's peer process) and recorded by the session set that serves it, so every request and upgrade on it is decided the same way.
@@ -469,6 +492,10 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
 
     // The local surface is consulted first and awaited, because serving a path it owns means the whole response has been written by the time it resolves; a miss falls through to routing or piping unchanged. The parser's handler shape returns void, so the awaited body runs as its own helper.
     const handleHostRequest = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+      checkGeneration();
+      if (request.socket.destroyed) {
+        return;
+      }
       const target = canonicalRequestTarget(request.url);
       if (target === undefined) {
         request.resume();
@@ -525,7 +552,7 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
   const ownedSessions = config.localSurface === undefined ? undefined : sessionsFor(true);
   // The listener owns teardown of everything it accepted: destroying the raw CONNECT socket ends both the blind tunnels and the TLS sessions layered on top of them.
   const listener = await effects.listenLoopback(source, (socket) => {
-    handleConnect(socket, { config, effects, sessions, ownedSessions, ledger });
+    handleConnect(socket, { config, effects, sessions, ownedSessions, ledger, checkGeneration });
   });
 
   const apiSession = sessions.find((session) => session.host === config.routedHost);
@@ -533,6 +560,10 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
   const ownedSessionByHost = new Map((ownedSessions ?? []).map((session) => [session.host, session]));
   // The transparent surface's terminator: one handshake whose SNI name selects the leaf, because a redirect sends every host sharing the API host's address here and each must be terminated as the host it named, never with the API host's certificate.
   const serveRedirected = (secure: net.Socket, host: string, isOwned: boolean): void => {
+    redirectedSessions.add(secure);
+    secure.once("close", () => {
+      redirectedSessions.delete(secure);
+    });
     const session = (isOwned ? ownedSessionByHost : sessionByHost).get(host);
     if (session === undefined) {
       // The acceptor fails the handshake of every name it was not given, and it was given exactly the intercept hosts these sessions cover, so reaching here means the acceptor itself misrouted; dropping the session is the fail-closed answer.
@@ -548,6 +579,7 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
       serveRedirected(secure, host, false);
       return;
     }
+    checkGeneration();
     surface.ownsPeer(secure.remotePort ?? 0).then(
       (isOwned) => {
         serveRedirected(secure, host, isOwned);
@@ -610,6 +642,8 @@ interface ConnectionContext {
   readonly sessions: readonly InterceptSession[];
   /** The session set the local surface's sessions are served by, when a surface is configured. */
   readonly ownedSessions: readonly InterceptSession[] | undefined;
+  /** Ends every decision made under a mint generation that no longer holds; called before a CONNECT is decided. */
+  readonly checkGeneration: () => void;
   readonly ledger: ConnectionLedger;
 }
 
@@ -621,6 +655,8 @@ interface ConnectionLedger {
   readonly headReceived: (socket: net.Socket) => void;
   /** Records an authenticated connection under the capability it presented, and whether it is a blind tunnel or a terminated session. False, with nothing recorded, when the tunnel cap is already reached. */
   readonly establish: (socket: net.Socket, capability: string, kind: ConnectionKind) => boolean;
+  /** Ends every authenticated connection, blind tunnels and terminated sessions alike: what a change in which launches the local surface owns calls, so each is reopened and decided afresh. */
+  readonly endAuthenticated: () => void;
   /** How many authenticated connections are open. */
   readonly openTunnels: () => number;
   /**
@@ -636,7 +672,7 @@ interface ConnectionLedger {
 /** What an authenticated connection carries: `blind` is a byte pump to a host the door never looks into, `terminated` is a TLS session this surface ends and routes, which holds the door's own state. */
 type ConnectionKind = "blind" | "terminated";
 
-function createConnectionLedger(limits: ConnectLimits, isLiveCapability: (token: string) => boolean): ConnectionLedger {
+function createConnectionLedger(limits: ConnectLimits, isLiveCapability: (token: string) => boolean, onRevalidate: () => void = () => undefined): ConnectionLedger {
   /** Connections still waiting for their head, oldest first (a Map iterates in insertion order), each with its deadline timer. */
   const pending = new Map<net.Socket, NodeJS.Timeout>();
   /** Authenticated connections grouped by the capability they presented, so a revalidation checks each launch once however many connections it holds. */
@@ -659,6 +695,7 @@ function createConnectionLedger(limits: ConnectLimits, isLiveCapability: (token:
   };
 
   const revalidation = setInterval(() => {
+    onRevalidate();
     for (const [capability, sockets] of authenticated) {
       if (!isLiveCapability(capability)) {
         // The launch that held this capability has ended: everything it opened goes with it. Each socket's close handler removes it from the ledger.
@@ -672,6 +709,13 @@ function createConnectionLedger(limits: ConnectLimits, isLiveCapability: (token:
   revalidation.unref();
 
   return {
+    endAuthenticated: () => {
+      for (const sockets of authenticated.values()) {
+        for (const socket of sockets) {
+          socket.destroy();
+        }
+      }
+    },
     accept: (socket) => {
       const [oldest] = pending.keys();
       if (pending.size >= limits.maxPendingHeads && oldest !== undefined) {
@@ -836,6 +880,7 @@ function routeConnect(socket: net.Socket, head: string, context: ConnectionConte
     return;
   }
   // The tunnel's launch decides, once and before its TLS is terminated, which session set serves it and whether a blind tunnel is refused.
+  context.checkGeneration();
   const isOwned = config.localSurface?.ownsLaunch(capability) === true;
   const session = (isOwned && ownedSessions !== undefined ? ownedSessions : sessions).find((entry) => entry.host === target.host);
   if (session === undefined && isOwned) {

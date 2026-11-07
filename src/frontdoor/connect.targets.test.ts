@@ -10,6 +10,8 @@ import { connectThroughProxy, HTTP_OK, KEYGEN_TIMEOUT_MS, makeTlsWorld, requestO
 /** The statuses these cases expect: the refusal of an unreadable target, and the answer to a failure while serving. */
 const HTTP_BAD_REQUEST = 400;
 const HTTP_INTERNAL_SERVER_ERROR = 500;
+/** The status the surface stand-in answers its own requests with: one nothing else in the world answers, so a local answer cannot be mistaken for a routed one. */
+const HTTP_LOCAL_ANSWER = 299;
 
 let ca: CaMaterial;
 let upstreamCa: CaMaterial;
@@ -55,6 +57,7 @@ describe("requests the connect surface cannot decide or serve", () => {
         localSurface: {
           ownsLaunch: () => true,
           ownsPeer: async () => await Promise.resolve(true),
+          mintGeneration: () => "fixed",
           serve: async (_host, request) => {
             if (request.url === "/fails") {
               throw new Error("the local surface failed");
@@ -67,6 +70,55 @@ describe("requests the connect surface cannot decide or serve", () => {
       try {
         expect(await statusOf(connectPort, "/fails")).toContain(String(HTTP_INTERNAL_SERVER_ERROR));
         expect(await statusOf(connectPort, "/v1/messages")).toContain(String(HTTP_OK));
+      } finally {
+        await close();
+        await world.stop();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
+    "ends a session decided under one mint when the mint changes, and decides the reconnection afresh",
+    async () => {
+      let mint = "identity:other";
+      const ownedUnder = (generation: string): boolean => generation === "identity:minted";
+      const world = makeTlsWorld(ca, upstreamCa, {
+        localSurface: {
+          ownsLaunch: () => ownedUnder(mint),
+          ownsPeer: async () => await Promise.resolve(ownedUnder(mint)),
+          mintGeneration: () => mint,
+          serve: async (_host, request, response) => {
+            request.resume();
+            response.writeHead(HTTP_LOCAL_ANSWER, { "content-length": "0" });
+            response.end();
+            return await Promise.resolve(true);
+          },
+        },
+      });
+      const { connectPort, close } = await world.start();
+      try {
+        // Decided as not the surface's: routed as usual.
+        const before = await connectThroughProxy(connectPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+        const kept = `GET /v1/messages HTTP/1.1\r\nHost: ${CONNECT_INTERCEPT_HOST}\r\n\r\n`;
+        expect((await requestOn(before, kept)).statusLine).toContain(String(HTTP_OK));
+        // Everything the stale session receives after the mint changes: a session served under the old decision would answer the request; one ended for it answers nothing.
+        const afterChange: Buffer[] = [];
+        before.on("data", (chunk: Buffer) => {
+          afterChange.push(chunk);
+        });
+        const ended = new Promise<void>((resolve) => {
+          before.once("close", () => {
+            resolve();
+          });
+        });
+        mint = "identity:minted";
+        // The next request on the same session finds the mint changed: the session is ended rather than served under the old decision.
+        before.write(kept);
+        await ended;
+        expect(Buffer.concat(afterChange).toString("utf8")).toBe("");
+        // The reconnection is decided under the new mint: the surface's.
+        expect(await statusOf(connectPort, "/v1/messages")).toContain(String(HTTP_LOCAL_ANSWER));
       } finally {
         await close();
         await world.stop();
