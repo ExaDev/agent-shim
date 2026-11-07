@@ -28,11 +28,10 @@ export function checkedProxyBypass(entries: readonly string[], source: string): 
   return kept;
 }
 
-/** `existing` (a comma-separated `NO_PROXY` value) with `hosts` appended when it does not already list them, compared without case, keeping what was there in the order it was. */
-export function withBypassHosts(existing: string | undefined, hosts: readonly string[]): string {
-  const listed = (existing ?? "").split(",").map((entry) => entry.trim()).filter((entry) => entry !== "");
-  const have = new Set(listed.map((entry) => entry.toLowerCase()));
-  const added = hosts.filter((host) => {
+/** The entries of `hosts` that `existing` (a comma-separated `NO_PROXY` value) does not already list, compared without case, in the order given and each once. */
+export function appendedBypassHosts(existing: string | undefined, hosts: readonly string[]): readonly string[] {
+  const have = new Set((existing ?? "").split(",").map((entry) => entry.trim().toLowerCase()).filter((entry) => entry !== ""));
+  return hosts.filter((host) => {
     const key = host.toLowerCase();
     if (have.has(key)) {
       return false;
@@ -40,5 +39,10 @@ export function withBypassHosts(existing: string | undefined, hosts: readonly st
     have.add(key);
     return true;
   });
-  return [...listed, ...added].join(",");
+}
+
+/** `existing` (a comma-separated `NO_PROXY` value) with `hosts` appended when it does not already list them, compared without case, keeping what was there in the order it was. */
+export function withBypassHosts(existing: string | undefined, hosts: readonly string[]): string {
+  const listed = (existing ?? "").split(",").map((entry) => entry.trim()).filter((entry) => entry !== "");
+  return [...listed, ...appendedBypassHosts(existing, hosts)].join(",");
 }

@@ -40,9 +40,14 @@ export function parseAnthropicCustomHeaders(block: string): readonly CustomHeade
   });
 }
 
-/** `block` with only the entries `keep` accepts, written back as `Name: Value` lines in their original order. */
-export function filterAnthropicCustomHeaders(block: string, keep: (entry: CustomHeaderEntry) => boolean): string {
-  return parseAnthropicCustomHeaders(block).filter(keep).map(({ name, value }) => `${name}: ${value}`).join("\n");
+/** `block` without the lines whose entry `remove` accepts, every other line exactly as written (blank, malformed and oddly spaced ones included); `block` itself when nothing is removed. */
+export function withoutAnthropicCustomHeaders(block: string, remove: (entry: CustomHeaderEntry) => boolean): string {
+  const lines = block.split("\n");
+  const kept = lines.filter((line) => {
+    const entry = parseCustomHeaderLine(line);
+    return entry === undefined || !remove(entry);
+  });
+  return kept.length === lines.length ? block : kept.join("\n");
 }
 
 /** Parses one `Name: Value` line, or undefined for a blank/malformed line (no colon at all). The value keeps any further colons and surrounding whitespace is trimmed. */
