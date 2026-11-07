@@ -158,6 +158,7 @@ agent-shim frontdoor rc mcp-authenticate --session <cse_id> --server <name> --re
 agent-shim frontdoor rc mcp-oauth-callback-url --session <cse_id> --server <name> --callback-url <url> [--json]
 agent-shim frontdoor rc teleport --session <cse_id> --marker <text> [--json]
 agent-shim frontdoor rc watch [<cse_id>] [--json]
+agent-shim frontdoor rc events [<cse_id> | --all] [--since <cursor>] [--json]   # every observed session's appearances, endings, worker state changes and pending-request births and retirements, resumable by cursor; see rc-session-events.md
 agent-shim job add <name> (--identity <name> | --pool <name>) (--at <days>@<HH:MM>[/<zone>]... | --before-reset <fiveHour|sevenDay> --lead <duration>) --prompt <text> --timeout <duration> [--cwd <dir>] [--model <model>] [--allowed-tool <tool>]... [--json]
 agent-shim job list [--json]
 agent-shim job show <name> [--json]
