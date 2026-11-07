@@ -4,7 +4,7 @@ import { HTTP_STATUS } from "../codex/http";
 
 import { mountRouterClient } from "./apiTestMount";
 import { DOOR_EVENT_BUFFER_EVENTS } from "./eventHub";
-import { RC_SESSION_EVENT_LOG_CAPACITY, RcSessionEventSchema, RcSessionEventsReadOutputSchema, createRcSessionEventLog, type RcSessionEvent } from "./rcEventLog";
+import { RcSessionEventSchema, RcSessionEventsReadOutputSchema, createRcSessionEventLog, type RcSessionEvent } from "./rcEventLog";
 import { createRcSessionEventsApiRouter, type RcSessionEventsApiRouter } from "./rcEventLogApi";
 import { createSseParser, type SseParsedEvent } from "./rcStream";
 import type { RouterClient } from "@orpc/server";
@@ -82,7 +82,7 @@ describe("the session events surface of the typed API", () => {
     expect(expired).toMatchObject({ status: "expired", head: log.head() });
   });
 
-  it("pages a caller that names no limit at the default, and refuses one past the maximum", async () => {
+  it("pages a caller that names no limit at the default, and refuses a limit past one consumer buffer", async () => {
     // The suite's own log retains only a small window, so the default is exercised against a log roomy enough to hold more than one default page.
     const roomy = createRcSessionEventLog({ generation: GENERATION, capacity: DOOR_EVENT_BUFFER_EVENTS + 1 });
     for (let at = 0; at < DOOR_EVENT_BUFFER_EVENTS + 1; at += 1) {
@@ -93,7 +93,8 @@ describe("the session events surface of the typed API", () => {
       const page = await mounted.client.rcSessions.eventsPage({});
       expect(page.status === "ok" ? page.events.length : undefined).toBe(DOOR_EVENT_BUFFER_EVENTS);
       expect(page).toMatchObject({ status: "ok", more: true });
-      await expect(mounted.client.rcSessions.eventsPage({ limit: RC_SESSION_EVENT_LOG_CAPACITY + 1 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      expect(await mounted.client.rcSessions.eventsPage({ limit: DOOR_EVENT_BUFFER_EVENTS })).toMatchObject({ status: "ok", more: true });
+      await expect(mounted.client.rcSessions.eventsPage({ limit: DOOR_EVENT_BUFFER_EVENTS + 1 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
     } finally {
       await mounted.close();
     }
