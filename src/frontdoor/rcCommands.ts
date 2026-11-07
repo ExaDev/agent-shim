@@ -81,12 +81,8 @@ export function formatRcSessionStatus(report: RcStatusReport): string[] {
     if (identification !== undefined) {
       lines.push(`  session: ${identification}`);
     }
-    if (status.workerState === undefined && status.workerStateUnavailable === undefined && status.workerIdleSeconds === undefined) {
-      lines.push("  worker: not observed");
-    } else {
-      const idle = status.workerIdleSeconds === undefined ? "idle unknown" : `idle ${String(status.workerIdleSeconds.value)} s as of ${new Date(status.workerIdleSeconds.observedAt).toISOString()}`;
-      lines.push(`  worker: ${formatRcWorkerState(status.workerState, status.workerStateUnavailable)}, ${idle}`);
-    }
+    const idle = status.workerIdleSeconds === undefined ? "idle unknown" : `idle ${String(status.workerIdleSeconds.value)} s as of ${new Date(status.workerIdleSeconds.observedAt).toISOString()}`;
+    lines.push(`  worker: ${formatRcWorkerState(status.workerState, status.workerStateUnavailable)}, ${idle}`);
     if (status.pending.length === 0) {
       lines.push("  pending: none");
     } else {

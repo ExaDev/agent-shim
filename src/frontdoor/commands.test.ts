@@ -155,7 +155,7 @@ describe("frontdoor rc", () => {
     expect(formatRcSessionStatus(tracked([]))).toEqual(["no Remote Control sessions observed or registered"]);
     expect(formatRcSessionStatus(tracked([{ id: "cse_1", createdAt, lastSeenAt: createdAt, workerState: undefined, workerStateUnavailable: undefined, workerIdleSeconds: undefined, pending: [] }]))).toEqual([
       "cse_1  created 1970-01-01T00:00:01.000Z  last seen 1970-01-01T00:00:01.000Z",
-      "  worker: not observed",
+      "  worker: state unknown, idle unknown",
       "  pending: none",
     ]);
     expect(
@@ -191,11 +191,11 @@ describe("frontdoor rc", () => {
     expect(lines).toEqual([
       "cse_1  created 1970-01-01T00:00:01.000Z  last seen 1970-01-01T00:00:01.000Z",
       '  session: name "fix the thing"  identity work  model claude-opus-4  pid 4001  cwd "/repo"',
-      "  worker: not observed",
+      "  worker: state unknown, idle unknown",
       "  pending: none",
       "cse_2  created 1970-01-01T00:00:01.000Z  last seen 1970-01-01T00:00:01.000Z",
       "  session: pid 4002",
-      "  worker: not observed",
+      "  worker: state unknown, idle unknown",
       "  pending: none",
     ]);
   });
