@@ -154,7 +154,7 @@ export interface LaunchDecision {
   readonly identitySource: IdentityDecisionSource;
   /** The pool pick behind `identity`, when the launch selected a pool. */
   readonly pool?: LaunchPoolDecision;
-  /** True when `CLAUDE_CONFIG_DIR` was already set, so no identity was resolved and no farm was managed. */
+  /** True when `CLAUDE_CONFIG_DIR` was already set and nothing on the command line named an identity, so no identity was resolved and no farm was managed. An identity named on the command line outranks the variable and leaves this false. */
   readonly configDirEscapeHatch: boolean;
   /** The configuration directory the child runs with: the identity's own, or the one the caller named. Absent when none is set. */
   readonly configDir?: string;

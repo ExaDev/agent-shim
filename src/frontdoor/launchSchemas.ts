@@ -35,6 +35,7 @@ const LaunchDecisionSchema = z.strictObject({
   identityId: z.string().optional(),
   identitySource: z.enum(IDENTITY_DECISION_SOURCES),
   pool: LaunchPoolDecisionSchema.optional(),
+  /** True when `CLAUDE_CONFIG_DIR` was already set and nothing on the command line named an identity; an identity named there outranks the variable and leaves it false. */
   configDirEscapeHatch: z.boolean(),
   configDir: z.string().optional(),
   configProfile: z.string().optional(),
