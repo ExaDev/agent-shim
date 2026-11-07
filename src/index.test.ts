@@ -308,6 +308,7 @@ describe("library surface", () => {
       "createRcSelfHostSurface",
       "createRcSessionEventLog",
       "createRcSessionEventsApiRouter",
+      "createRcSessionRegistryReader",
       "createRcSessionTracker",
       "createRcStreamHub",
       "createSseParser",
@@ -381,6 +382,7 @@ describe("library surface", () => {
       "rcObserverAsPassthrough",
       "rcRateLimitInfoOf",
       "rcSelfHostFromEnv",
+      "rcStatusWithRegistry",
       "rcWebFetchAllowsPrivateFromEnv",
       "readActiveIdentity",
       "readCodexAccount",
@@ -460,6 +462,7 @@ describe("library surface", () => {
       "updateProvider",
       "useIdentity",
       "watchedInstallEntry",
+      "withRegisteredSessionFacts",
       "writeDirectoryRules",
     ]);
   });
