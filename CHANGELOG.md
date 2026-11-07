@@ -1,3 +1,33 @@
+## [11.88.1](https://github.com/ExaDev/agent-shim/compare/v11.88.0...v11.88.1) (2026-11-07)
+
+### Bug Fixes
+
+* drop a provider's own bypass list and leave the person's empty values alone ([b2033a3](https://github.com/ExaDev/agent-shim/commit/b2033a32efd14ff8c2127a3253714742c24c0446))
+* drop what a parent launcher injected from a nested launch ([24a7e88](https://github.com/ExaDev/agent-shim/commit/24a7e88809e07c5ba7482b83cece7a37b14cbc25))
+* judge the ambient-credential guard in check and doctor as a launch does ([d8809cd](https://github.com/ExaDev/agent-shim/commit/d8809cd592c93077ea5e0f1b29108835f601d580))
+* let an identity named on the command line outrank an inherited CLAUDE_CONFIG_DIR ([b18a715](https://github.com/ExaDev/agent-shim/commit/b18a715870d037c53efd77ff37920c5c7d50ec0a))
+* make check say whether a launch would take the escape hatch ([f3ed9be](https://github.com/ExaDev/agent-shim/commit/f3ed9be48a99c39e7918947c4a05b5144e1b72f4))
+* record exactly what a launcher injects, and nothing it withheld ([ffef2a9](https://github.com/ExaDev/agent-shim/commit/ffef2a9df69edfcb4c2de2e79a8198515e8aa233))
+* say an overridden CLAUDE_CONFIG_DIR once per supervised launch ([a68e908](https://github.com/ExaDev/agent-shim/commit/a68e908472387679318345e0e21b843ede0fd1ad))
+* stop filtering CLAUDE_CONFIG_DIR out of headless identity launches ([4b853a0](https://github.com/ExaDev/agent-shim/commit/4b853a0ce9398a9e4bf4431974614032337c28e6))
+* tell doctor's warning about a bare launch how to avoid the refusal ([b06e923](https://github.com/ExaDev/agent-shim/commit/b06e92348094dc59256791b92e4eea2fe23b9783))
+* warn in doctor that a bare launch is refused for an injected credential ([dd29957](https://github.com/ExaDev/agent-shim/commit/dd299575a9db0cab747a4eb5229f9dff210977fe))
+
+### Code Refactoring
+
+* compare the superseded directory through the filesystem port ([980d344](https://github.com/ExaDev/agent-shim/commit/980d34471953c95ccc99b3214833faf5681526ee))
+
+### Documentation
+
+* correct what LaunchDecision.configDirEscapeHatch reports ([93553c4](https://github.com/ExaDev/agent-shim/commit/93553c43c04d823b499adedf25ae0c62dbd509f4))
+* say a launch in its own identity's directory is otherwise a normal launch ([b651338](https://github.com/ExaDev/agent-shim/commit/b651338885a454dc31e8927d097834abaca0c150))
+* state what the injection marker holds and how large it can grow ([9ffde1f](https://github.com/ExaDev/agent-shim/commit/9ffde1f076d8e07769d0a6073b5428645bc6078a))
+
+### Tests
+
+* cover the escape hatch against a command-line identity ([edcba61](https://github.com/ExaDev/agent-shim/commit/edcba611c27b77a34c79d5dc53eda294249faadf))
+* pin the escape-hatch and env-sourced credential cases of a nested launch ([c6878d9](https://github.com/ExaDev/agent-shim/commit/c6878d9f5e96475a53d323c904458cff2a5469de))
+
 ## [11.88.0](https://github.com/ExaDev/agent-shim/compare/v11.87.5...v11.88.0) (2026-11-07)
 
 ### Features
