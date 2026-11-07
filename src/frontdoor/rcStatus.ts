@@ -106,9 +106,12 @@ export type RcStatusResolver = (sessionId?: string) => Promise<RcStatusReport>;
 export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
   const held = new Map<string, HeldRead>();
   let heldRegistry: { readonly at: number; readonly registry: ReadonlyMap<string, RcRegisteredSession> } | undefined;
-  // The registry read lists and reads every record across every identity's directory and checks each record's process, all synchronously on the door's event loop, and a status is polled (the web client asks every few seconds), so the read is made at most once per `RC_IDLE_EXPIRY_MS` and its answer reused between: a session that registers, exits or is renamed shows within one bound, the span after which the door already treats its own observations of a session as stale.
-  const registryOf = (now: number): ReadonlyMap<string, RcRegisteredSession> => {
-    if (heldRegistry === undefined || now - heldRegistry.at >= RC_IDLE_EXPIRY_MS) {
+  // The registry read lists and reads every record across every identity's directory and checks each record's process, all synchronously on the door's event loop, and a status is polled (the web client asks every few seconds), so the read is made at most once per `RC_IDLE_EXPIRY_MS` and its answer reused between: a session that exits or is renamed shows within one bound, the span after which the door already treats its own observations of a session as stale.
+  // The hold is read again, once for the request, when it cannot be right: a named session it does not list (the session may have registered since), or a tracked session created after the hold was taken (it cannot be in a read made before it existed, and would go unnamed until the bound lapsed). Each session triggers the second case once, since the read it triggers is later than the session; a name asked for that no registry lists costs one read per request.
+  const registryOf = (now: number, sessionId: string | undefined): ReadonlyMap<string, RcRegisteredSession> => {
+    const previous = heldRegistry;
+    const refresh = previous === undefined || now - previous.at >= RC_IDLE_EXPIRY_MS || (sessionId !== undefined && !previous.registry.has(sessionId)) || deps.statusOf(sessionId).some((status) => status.createdAt > previous.at);
+    if (heldRegistry === undefined || refresh) {
       heldRegistry = { at: now, registry: deps.registry() };
     }
     return heldRegistry.registry;
@@ -147,7 +150,7 @@ export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
       }
     }
     const unavailable = new Map<string, string>();
-    const registry = registryOf(now);
+    const registry = registryOf(now, sessionId);
     const statusesOf = (id: string | undefined): readonly RcTrackedSessionStatus[] => withRegisteredSessionFacts(withIdentityNames(deps.statusOf(id), deps.identityNameOf), registry);
     const trackedBefore = statusesOf(sessionId);
     const trackedIds = new Set(trackedBefore.map((status) => status.id));

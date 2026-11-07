@@ -448,13 +448,57 @@ describe("the Remote Control status enriched from the session registry", () => {
       now: () => now,
     });
     await resolve();
-    await resolve(QUIET_SESSION_ID);
+    await resolve();
     now += RC_IDLE_EXPIRY_MS - 1;
     await resolve();
     expect(registryReads).toBe(1);
     now += 1;
     await resolve();
     expect(registryReads).toBe(2);
+  });
+
+  /** A resolver over a registry the test edits between calls, counting each read of it, on a clock the test advances; the tracker shares the clock so a session's creation is ordered against the registry hold. */
+  const registryWorld = () => {
+    const world = { now: CLOCK_START_MS, reads: 0, registry: new Map<string, RcRegisteredSession>() };
+    const tracker = createRcSessionTracker({ now: () => world.now, idleMs: RC_IDLE_EXPIRY_MS });
+    const resolve = createRcStatusResolver({
+      statusOf: tracker.statusOf,
+      noteReadWorkerState: tracker.noteReadWorkerState,
+      credentialOf: tracker.credentialOf,
+      registry: () => {
+        world.reads += 1;
+        return world.registry;
+      },
+      identityNameOf: () => undefined,
+      persistedCredentialOf: () => undefined,
+      backends: { service: async () => await Promise.resolve({ ok: false as const, message: "no read in this test" }) },
+      now: () => world.now,
+    });
+    return { world, tracker, resolve };
+  };
+
+  it("finds a session that registered after the registry was held when it is asked for by id, reading the registry once more for that request", async () => {
+    const { world, resolve } = registryWorld();
+    expect((await resolve()).unobserved).toEqual([]);
+    world.registry = new Map([registeredAs(OBSERVED_SESSION_ID)]);
+    expect((await resolve(OBSERVED_SESSION_ID)).unobserved.map((session) => session.id)).toEqual([OBSERVED_SESSION_ID]);
+    expect(world.reads).toBe(2);
+    // An id the registry still does not list costs one read per request, never more.
+    const readsBefore = world.reads;
+    await resolve(QUIET_SESSION_ID);
+    expect(world.reads).toBe(readsBefore + 1);
+  });
+
+  it("names a session that began crossing the door after the registry was held, and holds the registry again for sessions that were already there", async () => {
+    const { world, tracker, resolve } = registryWorld();
+    await resolve();
+    world.now += 1;
+    exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: OAUTH_BEARER }, { status: HTTP_STATUS.ok, body: JSON.stringify({ session: { id: QUIET_SESSION_ID } }) });
+    world.registry = new Map([[QUIET_SESSION_ID, { localSessionId: LOCAL_SESSION_ID, pid: REGISTERED_PID, name: "fresh session" }]]);
+    expect((await statusesOf(resolve))[0]?.name).toBe("fresh session");
+    expect(world.reads).toBe(2);
+    await resolve();
+    expect(world.reads).toBe(2);
   });
 
   it("reports the identity a session's requests carried under its current name, and none once that identity is gone", async () => {
