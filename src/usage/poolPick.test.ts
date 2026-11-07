@@ -210,6 +210,30 @@ describe("rankPoolGraph", () => {
     expect(ranking.pick).toMatchObject({ identity: "kept" });
   });
 
+  it("picks the pay-per-use seat whose spend is recorded over one that bills by use but has never been routed", () => {
+    // A usage-based Enterprise seat reads as pay-per-use from its account metadata alone, so a seat with no usage recorded must not rank ahead of one whose extra-usage meter is on record.
+    const seat = (identity: string, providers: Record<string, unknown>): [string, string] => [
+      snapshotPath(identity),
+      JSON.stringify({ schemaVersion: 1, identity, updatedAt: iso(-HOUR_MS), account: { organizationRateLimitTier: "default_claude_max_20x", userRateLimitTier: "default_claude_zero" }, providers }),
+    ];
+    const seen = iso(-HOUR_MS);
+    const recorded = { anthropic: { lastRequestAt: seen, lastStatus: 200, rateLimit: { observedAt: seen, headers: {}, unified: { overageStatus: "allowed", overageUtilization: 0.58, overageResetsAt: iso(SIX_DAYS_MS) } } } };
+    const { ranking } = rankPoolGraph({
+      fs: createFakeFarmFs(Object.fromEntries([seat("never-routed", {}), seat("recorded", recorded)])),
+      paths,
+      pools: { subs: { identities: ["never-routed", "recorded"] } },
+      poolName: "subs",
+      nowMs: FAKE_NOW_MS,
+      resuming: false,
+      identityIdOf: (name) => name,
+    });
+    expect(ranking.candidates.map((candidate) => [candidate.identity, candidate.class])).toEqual([
+      ["recorded", "pay-per-use"],
+      ["never-routed", "pay-per-use"],
+    ]);
+    expect(ranking.pick).toMatchObject({ identity: "recorded" });
+  });
+
   it("refuses a nested member naming a pool that is not defined", () => {
     expect(() => graph({ outer: { identities: ["pool:nope"] } }, "outer", {})).toThrow(PoolGraphError);
     expect(() => graph({ outer: { identities: ["pool:nope"] } }, "outer", {})).toThrow('names a pool that is not defined');

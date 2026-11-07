@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { Candidate } from "../usage/pick";
+import { rankPool, type Candidate } from "../usage/pick";
 import type { AccountMetadata, UsageSnapshot } from "../usage/schema";
 import { decisionRows, farmRow, noteRow, pinnedVersionRow, routingRows } from "./launchReport";
 import type { ReportRow } from "./ports";
@@ -231,6 +231,14 @@ describe("decisionRows explaining a pool pick", () => {
       "   b reason one; b reason two",
     ]);
     expect(rows[1]?.detail).toBe("b reason one");
+  });
+
+  it("says a pick on an account known to bill by use, with no usage recorded, is billed by use and untracked", () => {
+    const { candidates, pick } = rankPool({ members: [{ identity: "seat", records: [], account: { organizationRateLimitTier: "default_claude_max_20x", userRateLimitTier: "default_claude_zero" } }], nowMs: NOW_MS, resuming: false });
+    const rows = decisionRows({ ...NONE, identity: "seat", pool: { name: "subs", reasons: pick?.reasons ?? [] }, ranking: candidates });
+
+    expect(rows[1]?.detail).toBe("billed by use (no plan allowance)");
+    expect(rows[1]?.notes).toEqual(["1. seat [pay-per-use] (picked)", "   billed by use (no plan allowance); no usage recorded yet, so its spend is not tracked (turn on trackUsage for it)"]);
   });
 
   it("adds no notes when the launch does not ask for the ranking", () => {

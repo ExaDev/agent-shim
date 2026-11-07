@@ -73,7 +73,7 @@ export interface RankPoolInput {
   readonly preference?: "score" | "listed";
 }
 
-/** In pick order. `scored` has usable quota data; `unknown` has none (never recorded, or unreadable); `pay-per-use` bills by use instead of drawing on a plan; `ineligible` is refused right now. */
+/** In pick order. `scored` has usable quota data; `unknown` has none and no plan known to bill by use (never recorded, or unreadable); `pay-per-use` bills by use instead of drawing on a plan, whether or not any usage is recorded; `ineligible` is refused right now. */
 type CandidateClass = "scored" | "unknown" | "pay-per-use" | "ineligible";
 
 const CLASS_ORDER: Readonly<Record<CandidateClass, number>> = { scored: 0, unknown: 1, "pay-per-use": 2, ineligible: 3 };
@@ -91,6 +91,8 @@ export interface Candidate {
   readonly runsDryAtMs?: number;
   /** The fraction of the extra-usage allowance still unspent, for a `pay-per-use` member whose only budget is that allowance (an Enterprise account). A member reporting none ranks as having all of it: no cap is known to bind. */
   readonly headroom?: number;
+  /** True for a `pay-per-use` member with no usage recorded: its account metadata says it bills by use, but its extra-usage meter has never been read, so its spend is invisible to `agent-shim usage` and its headroom is unknown rather than full. It ranks behind every `pay-per-use` member whose allowance is on record. */
+  readonly usageUnrecorded?: boolean;
   /** When an `ineligible` candidate can be used again. */
   readonly blockedUntilMs?: number;
   /** When the exhausted plan window of a `pay-per-use` candidate that is only on extra usage because its plan ran out resets, so a launch can hold for it rather than spend. Absent for a candidate that bills by use with no plan allowance. */
@@ -289,6 +291,10 @@ function assessIdentity(member: PoolMember, nowMs: number): Assessment {
   const state = member.snapshot?.providers[ANTHROPIC_PROVIDER];
   const unified = unifiedOf(state);
   if (member.snapshot === undefined || state === undefined || unified === undefined) {
+    // A plan known from account metadata to bill by use is a class of its own whether or not usage is on record: ranking it `unknown` would put it ahead of every `pay-per-use` member and spend a billed account silently.
+    if (plan.kind === "pay-per-use") {
+      return { candidate: { ...base, class: "pay-per-use", usageUnrecorded: true, reasons: [...planReasons, "no usage recorded yet, so its spend is not tracked (turn on trackUsage for it)"] } };
+    }
     return { candidate: { ...base, class: "unknown", reasons: ["no usage recorded yet, so its quota is unknown (turn on trackUsage for it)", ...planReasons] } };
   }
   const observedAgo = state.rateLimit === undefined ? "" : ` (last seen ${formatAge(nowMs - Date.parse(state.rateLimit.observedAt))} ago)`;
@@ -383,9 +389,9 @@ function poolFactsOf(member: PoolMember, nowMs: number, resuming: boolean, stick
 /**
  * Ranks `members` for a launch.
  *
- * A member is `ineligible` while a window of its plan, or a refusal it last hit, still binds; it is `unknown` without recorded quota, `pay-per-use` when its usage bills by use, and otherwise `scored`. Scored members order by how much plan-size-weighted quota would expire unused per hour of runway, with any whose five-hour window would run dry at the observed pace (their own, or the person's pace on another member rescaled by plan size) or whose seven-day window would run dry at its own observed pace placed behind those that would not. The member last picked for this directory then moves to the front if it still serves on plan quota and is not projected to run dry, and either the launch resumes a conversation or its prompt cache is still warm; a resumed conversation that cannot keep its member re-ranks and continues on the pick, with the move named in `movedOff`.
+ * A member is `ineligible` while a window of its plan, or a refusal it last hit, still binds; it is `pay-per-use` when its usage bills by use (including an account whose metadata says so and that has no usage recorded yet), `unknown` without recorded quota and no such plan, and otherwise `scored`. Scored members order by how much plan-size-weighted quota would expire unused per hour of runway, with any whose five-hour window would run dry at the observed pace (their own, or the person's pace on another member rescaled by plan size) or whose seven-day window would run dry at its own observed pace placed behind those that would not. The member last picked for this directory then moves to the front if it still serves on plan quota and is not projected to run dry, and either the launch resumes a conversation or its prompt cache is still warm; a resumed conversation that cannot keep its member re-ranks and continues on the pick, with the move named in `movedOff`.
  *
- * How members are ordered depends on `preference`. The default, "score", is the order above: class first, then feasibility, then score, with ties by name. "listed" keeps the order of `members`, which callers build in pool member order, so member order, not class, decides: an `unknown` (no usage recorded) or `pay-per-use` member can be picked before a later `scored` one, which is the list owner's stated preference, and a `scored` member that is not feasible keeps its place and its reason line rather than being demoted. In both modes the pick is the first non-`ineligible` candidate, `earliestReturn` still reports the soonest returning refused member, and the sticky-pick promotion applies unchanged.
+ * How members are ordered depends on `preference`. The default, "score", is the order above: class first, then feasibility, then (among members that bill by use) those whose usage is recorded before those whose is not, then headroom, then score, with ties by name. "listed" keeps the order of `members`, which callers build in pool member order, so member order, not class, decides: an `unknown` (no usage recorded) or `pay-per-use` member can be picked before a later `scored` one, which is the list owner's stated preference, and a `scored` member that is not feasible keeps its place and its reason line rather than being demoted. In both modes the pick is the first non-`ineligible` candidate, `earliestReturn` still reports the soonest returning refused member, and the sticky-pick promotion applies unchanged.
  */
 export function rankPool(input: RankPoolInput): PoolRanking {
   const { members, nowMs } = input;
@@ -468,6 +474,7 @@ export function rankPool(input: RankPoolInput): PoolRanking {
             CLASS_ORDER[left.class] - CLASS_ORDER[right.class] ||
             Number(left.policyDemoted ?? false) - Number(right.policyDemoted ?? false) ||
             Number(right.feasible) - Number(left.feasible) ||
+            Number(left.usageUnrecorded ?? false) - Number(right.usageUnrecorded ?? false) ||
             (right.headroom ?? 1) - (left.headroom ?? 1) ||
             (right.score ?? 0) - (left.score ?? 0) ||
             left.identity.localeCompare(right.identity),

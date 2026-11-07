@@ -493,6 +493,50 @@ describe("rankPool", () => {
     expect(overage.candidates[0]?.class).toBe("pay-per-use");
   });
 
+  describe("a member whose plan is known to bill by use but has no usage recorded", () => {
+    const ZERO_TIER = "default_claude_zero";
+
+    it("is pay-per-use, not unknown, and still says its usage is not recorded", () => {
+      const [candidate] = rank([member("fresh", undefined, ZERO_TIER)]).candidates;
+      expect(candidate).toMatchObject({ class: "pay-per-use", feasible: true });
+      expect(candidate?.reasons[0]).toBe("billed by use (no plan allowance)");
+      expect(candidate?.reasons.join(" ")).toContain("trackUsage");
+    });
+
+    it("ranks behind an unknown subscription member and a scored one, like any member that bills by use", () => {
+      const ranking = rank([
+        member("fresh", undefined, ZERO_TIER),
+        member("unknown-subscription", undefined),
+        member("scored", { seven: { utilization: U50, resetsInMs: DAY_MS } }),
+      ]);
+      expect(order(ranking)).toEqual(["scored", "unknown-subscription", "fresh"]);
+    });
+
+    it("never outranks a pay-per-use member whose allowance is measured, whatever is left of it", () => {
+      const ranking = rank([
+        member("fresh", undefined, ZERO_TIER),
+        member("measured", { overage: "allowed", overageMeter: { utilization: U95, resetsInMs: DAY_MS } }, ZERO_TIER),
+        member("unmetered", { overage: "allowed" }, ZERO_TIER),
+      ]);
+      expect(order(ranking)).toEqual(["unmetered", "measured", "fresh"]);
+    });
+
+    it("is picked when it is the only member that can serve, so its launch is the first to record usage", () => {
+      const ranking = rank([member("refused", { five: { status: "rejected", resetsInMs: HOUR_MS } }), member("fresh", undefined, ZERO_TIER)]);
+      expect(ranking.pick).toMatchObject({ identity: "fresh", class: "pay-per-use" });
+    });
+
+    it("stays unknown when its snapshot cannot be read, since the read error says nothing about the plan", () => {
+      const ranking = rank([{ identity: "broken", records: [], account: { organizationRateLimitTier: ZERO_TIER }, readError: "schema version 2" }]);
+      expect(ranking.candidates[0]).toMatchObject({ class: "unknown" });
+    });
+
+    it("keeps the pool's own order in listed preference", () => {
+      const ranking = rank([member("fresh", undefined, ZERO_TIER), member("measured", { overage: "allowed", overageMeter: { utilization: U10, resetsInMs: DAY_MS } }, ZERO_TIER)], { preference: "listed" });
+      expect(order(ranking)).toEqual(["fresh", "measured"]);
+    });
+  });
+
   describe("an account metered only by extra usage", () => {
     it("refuses a member whose allowance is rejected until it resets, naming the allowance", () => {
       const ranking = rank([member("capped", { overage: "rejected", overageMeter: { utilization: FULL, resetsInMs: DAY_MS } })]);
