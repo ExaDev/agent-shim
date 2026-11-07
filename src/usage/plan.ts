@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { AccountMetadata } from "./schema";
+import type { AccountMetadata, ProviderQuota } from "./schema";
 
 /**
  * What an account's plan means for picking it: a subscription with a capacity relative to the smallest paid tier, or an account billed by use.
@@ -52,4 +52,11 @@ export function planOf(account: AccountMetadata | undefined): PlanClass {
     return { kind: "subscription", capacity: Number(multiplier), recognised: true, ...tierField };
   }
   return { kind: "subscription", capacity: 1, recognised: BASE_TIER.test(tier), ...tierField };
+}
+
+/**
+ * The plan a launch through a provider draws on, classified from the level the provider's own usage endpoint reported (read with the same tier shapes as a Claude login's, since the endpoint's text is as free). The Claude login's tier is never consulted: it sizes the Claude account, which a provider launch does not spend. A provider that reports no level is a subscription of unrecognised size, counted as 1.
+ */
+export function planOfProviderQuota(quota: Readonly<Pick<ProviderQuota, "level">> | undefined): PlanClass {
+  return planOf(quota?.level === undefined ? undefined : { organizationRateLimitTier: quota.level });
 }

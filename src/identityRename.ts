@@ -21,7 +21,7 @@ import { namesMovedPath, placesThroughRealParent, repointedSources, type MovedPa
 import type { LayoutPaths } from "./paths";
 import { listProviders, providerJsonPath } from "./providersStore";
 import { ANTHROPIC_PROVIDER } from "./usage/middleware";
-import { FIVE_HOUR_WINDOW_MS } from "./usage/pick";
+import { FIVE_HOUR_WINDOW_MS } from "./usage/windowLengths";
 import { readUsageLog, readUsageSnapshot, snapshotPath, UsageSnapshotError } from "./usage/read";
 import { UsageSnapshotSchema } from "./usage/schema";
 import { claudeCodeKeychainService, keychainHasItem } from "./usage/signIn";

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { USAGE_SCHEMA_VERSION, type UsageSnapshot } from "../usage/schema";
 import { QUOTA_EXPIRING_EVENT_SOURCE, USAGE_EVENT_SOURCE, usageChangeEventOf, type DoorEvent } from "./eventSchemas";
 import { createDoorEventHub } from "./eventHub";
-import { FIVE_HOUR_WINDOW_MS } from "../usage/pick";
+import { FIVE_HOUR_WINDOW_MS } from "../usage/windowLengths";
 import { createQuotaExpiringPublisher, QUOTA_EXPIRING_WINDOW_FRACTION } from "./quotaExpiringEvents";
 
 /** Where the fake clock starts, in epoch milliseconds, so reset instants are named as offsets from it. */

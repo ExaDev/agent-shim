@@ -1,6 +1,6 @@
 import { QUOTA_EXPIRING_EVENT_SOURCE, USAGE_EVENT_SOURCE, UsageChangeEventSchema, type QuotaExpiringEvent } from "./eventSchemas";
 import type { DoorEventHub } from "./eventHub";
-import { FIVE_HOUR_WINDOW_MS, SEVEN_DAY_WINDOW_MS } from "../usage/pick";
+import { FIVE_HOUR_WINDOW_MS, SEVEN_DAY_WINDOW_MS } from "../usage/windowLengths";
 import type { UsageSnapshot } from "../usage/schema";
 
 /**

@@ -1,4 +1,4 @@
-import { FIVE_HOUR_WINDOW_MS, SEVEN_DAY_WINDOW_MS } from "../../../usage/pick";
+import { FIVE_HOUR_WINDOW_MS, SEVEN_DAY_WINDOW_MS } from "../../../usage/windowLengths";
 import type { BarCell } from "../../barGrid";
 import { leadingGraphemes } from "../../graphemes";
 import { packLines, SEPARATOR } from "../../headerLayout";
