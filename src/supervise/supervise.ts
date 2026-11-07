@@ -338,7 +338,7 @@ function signalExit(signal: NodeJS.Signals): number {
 /**
  * Compacts a session as `identity`, between children, holding the identity's compaction slot for as long as it takes. A failure is reported and the session resumes as it was. A signal to the launcher abandons the compaction and returns the signal, which ends the supervisor.
  */
-async function compactSession(deps: Readonly<SupervisorDeps>, compaction: CompactionDeps, slot: CompactionSlot, identity: string, sessionId: string, conversationId: string = sessionId): Promise<NodeJS.Signals | undefined> {
+async function compactSession(deps: Readonly<SupervisorDeps>, compaction: CompactionDeps, slot: CompactionSlot, identity: string, sessionId: string, conversationId: string = sessionId): Promise<{ readonly signal: NodeJS.Signals | undefined; readonly completed: boolean }> {
   const abort = new AbortController();
   const interrupted: { signal: NodeJS.Signals | undefined } = { signal: undefined };
   const stopHandlers = (["SIGINT", "SIGHUP", "SIGTERM"] as const).map((signal) =>
@@ -347,8 +347,10 @@ async function compactSession(deps: Readonly<SupervisorDeps>, compaction: Compac
       abort.abort();
     }),
   );
+  let completed = false;
   try {
     const result = await compaction.compact({ identity: memberName(deps, identity), sessionId: conversationId, cwd: deps.cwd }, abort.signal);
+    completed = true;
     deps.lifecycle?.({ kind: "compaction", phase: "after_move", outcome: result.kind });
     if (result.kind === "unchanged") {
       deps.log.info(`agent-shim: session ${sessionId} was left as it was: ${result.reason}`);
@@ -367,9 +369,9 @@ async function compactSession(deps: Readonly<SupervisorDeps>, compaction: Compac
     }
     slot.release();
   }
-  // Whatever came of it, the session is not asked again on this member: a compaction that found nothing to do would otherwise be tried at every change to the snapshot.
-  compaction.markCompacted(sessionId, true);
-  return interrupted.signal;
+  // An unchanged result is complete: retrying it at every snapshot change would repeat a compaction with nothing to do. A failed attempt remains eligible for a later retry.
+  if (completed) compaction.markCompacted(sessionId, true);
+  return { signal: interrupted.signal, completed };
 }
 
 /**
@@ -422,10 +424,10 @@ export async function supervise(deps: Readonly<SupervisorDeps>, first: Supervise
         // A session compacted during its stay on the member it leaves has already had its context made small; one refused before that is compacted here, since its context is written on the new member whatever it costs.
         const slot = compactedOnOld ? undefined : compaction.acquire(outcome.to);
         if (slot !== undefined) {
-          const interrupted = await compactSession(deps, compaction, slot, outcome.to, plan.sessionId, outcome.conversationId);
-          compactedHere = outcome.conversationId;
-          if (interrupted !== undefined) {
-            return signalExit(interrupted);
+          const result = await compactSession(deps, compaction, slot, outcome.to, plan.sessionId, outcome.conversationId);
+          if (result.completed) compactedHere = outcome.conversationId;
+          if (result.signal !== undefined) {
+            return signalExit(result.signal);
           }
         } else {
           deps.lifecycle?.({ kind: "compaction", phase: "after_move", outcome: "not_attempted" });

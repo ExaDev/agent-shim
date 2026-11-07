@@ -640,7 +640,30 @@ describe("sanitised supervisor lifecycle", () => {
     await settle();
     expect(events).toContainEqual({ kind: "compaction", phase: "after_move", outcome: "failed" });
     expect(events).toContainEqual({ kind: "child_started", childPid: 1001 });
+    expect(c.markCompacted).not.toHaveBeenCalledWith(FIRST.sessionId, true);
+    w.quotaHit = () => undefined;
+    w.watchers.get("spare")?.();
+    await settle();
+    expect(c.liveCompact).toHaveBeenCalled();
     expect(JSON.stringify(events)).not.toContain("private compaction detail");
+    w.children[1]?.exitWith(0);
+    await done;
+  });
+
+  it("does not retry destination compaction that found nothing to do", async () => {
+    const w = world();
+    const c = compactionWorld();
+    c.compact.mockResolvedValue({ kind: "unchanged", reason: "nothing to compact" });
+    const done = supervise({ ...w.deps, compaction: c.deps }, FIRST);
+    await settle();
+    w.quotaHit = () => HIT;
+    w.watchers.get("work")?.();
+    await settle();
+    expect(c.markCompacted).toHaveBeenCalledWith(FIRST.sessionId, true);
+    w.quotaHit = () => undefined;
+    w.watchers.get("spare")?.();
+    await settle();
+    expect(c.liveCompact).not.toHaveBeenCalled();
     w.children[1]?.exitWith(0);
     await done;
   });
