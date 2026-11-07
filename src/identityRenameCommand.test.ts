@@ -295,6 +295,19 @@ describe("identity rename", () => {
     expect(unboundedCalls).toEqual([]);
   });
 
+  it("identity remove whose Keychain cache delete fails still names a self-hosted identity's leftover login, in the one failure", async () => {
+    addIdentity(paths, "lab");
+    const labDir = path.join(paths.identitiesDir, "lab");
+    fs.writeFileSync(path.join(labDir, RC_SELF_HOST_MINT_MARKER), `${JSON.stringify({ mintedAt: new Date(NOW_MS).toISOString() })}\n`);
+    keychain.seed(claudeCodeKeychainService(labDir), "alex", "a-made-up-login");
+    keychainDeleteFails = true;
+    expect(await run(["identity", "remove", "lab", "--yes"])).toBe(EXIT_FAILURE);
+    const printed = out.join("\n");
+    expect(printed).toContain('Removed identity "lab", but could not delete its cached credential');
+    expect(printed).toContain(`security delete-generic-password -s '${claudeCodeKeychainService(labDir)}' -a 'alex'`);
+    expect(identityIdOf(paths, "lab")).toBeUndefined();
+  });
+
   it("keeps the removed id reserved until the CLI deletes its Keychain cache", async () => {
     seed();
     let refusal: unknown;

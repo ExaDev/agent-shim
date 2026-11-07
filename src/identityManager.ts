@@ -478,8 +478,9 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
         requireNoUnfinishedRenameNaming(paths, name, "remove");
         const id = requireIdentityId(paths, name);
         await confirmRemoval(deps, options.yes, `identity "${name}", its directory ${identityDirectory(paths, id)}, and ${REMOVED_STATE}`);
-        const warnings: string[] = [];
-        withIdentityNamesLock(paths, realIdentityNamesLockPorts, () => {
+        // A cache delete that fails is held until the leftover check has run, so the one failure names both; the check runs after the lock is released, so a slow Keychain never holds the names lock.
+        let cacheFailure: KeychainCacheDeleteError | undefined;
+        const selfHostedDir = withIdentityNamesLock(paths, realIdentityNamesLockPorts, () => {
           // Read before the directory goes: the removal leaves every Claude Code login item, and for an identity the self-hosted mint wrote into, a leftover one is named afterwards.
           const configDir = identityDirectory(paths, id);
           const selfHosted = isSelfHostMinted(renamePorts.fs, configDir);
@@ -490,14 +491,18 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
             try {
               renamePorts.credentialCache.port.remove("keychain", identityCacheKey(removed));
             } catch (error: unknown) {
-              if (error instanceof KeychainCacheDeleteError) {
-                throw error.afterRemoving(name);
+              if (!(error instanceof KeychainCacheDeleteError)) {
+                throw error;
               }
-              throw error;
+              cacheFailure = error.afterRemoving(name);
             }
           }
-          warnings.push(...leftoverWarnings(selfHostedLoginLeftover({ run: renamePorts.lookupRun, platform: renamePorts.platform }, selfHosted ? configDir : undefined)));
+          return selfHosted ? configDir : undefined;
         });
+        const warnings = leftoverWarnings(selfHostedLoginLeftover({ run: renamePorts.lookupRun, platform: renamePorts.platform }, selfHostedDir));
+        if (cacheFailure !== undefined) {
+          throw cacheFailure.withNotes(warnings);
+        }
         reportMutation(options.json, { action: "removed", kind: "identity", name, ...(warnings.length === 0 ? {} : { warnings }) }, () => {
           console.log(`Removed identity "${name}".`);
           for (const warning of warnings) {

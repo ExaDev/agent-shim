@@ -269,26 +269,40 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
           .handler(async ({ input }) => {
             requireConfirmation(input.confirm, `identity "${input.name}", its directory, and ${REMOVED_STATE}`);
             const lock = guarded(() => acquireIdentityNamesLock(paths, nonWaitingIdentityNamesLockPorts));
+            // A cache delete that fails is held until the leftover check has run, so the one failure names both; the check runs after the lock is released, so a slow Keychain never holds the names lock.
+            let cacheFailure: KeychainCacheDeleteError | undefined;
+            let selfHostedDir: string | undefined;
             try {
               // Read before the directory goes: the removal leaves every Claude Code login item, and for an identity the self-hosted mint wrote into, a leftover one is named in the answer.
               // The lookup does not throw for an unknown name: the removal's own checks (an unfinished rename holding the name, a launch using it) give their refusals first, and an unknown name gets its own error from the removal.
               const idBefore = guarded(() => identityIdOf(paths, input.name));
               const configDir = idBefore === undefined ? undefined : identityDirectory(paths, idBefore);
-              const selfHostedDir = configDir !== undefined && isSelfHostMinted(deps.fs, configDir) ? configDir : undefined;
+              selfHostedDir = configDir !== undefined && isSelfHostMinted(deps.fs, configDir) ? configDir : undefined;
               const id = guarded(() => removeIdentityWithLockHeld(paths, input.name, nonWaitingIdentityNamesLockPorts));
               // The Keychain store's cached credential is forgotten too, through the runner that does not block the event loop; an item that is not there is no failure, and any other leaves the entry behind, so it is reported (the identity itself is removed by then).
               if (deps.keychain.platform === "darwin") {
                 const owner = identityCacheKey(id);
                 const { status } = await deps.keychain.runAsync("security", keychainCacheDeleteArgs(owner));
-                guarded(() => {
+                try {
                   requireKeychainCacheDeleted(owner, status, input.name);
-                });
+                } catch (error: unknown) {
+                  if (!(error instanceof KeychainCacheDeleteError)) {
+                    throw error;
+                  }
+                  cacheFailure = error;
+                }
               }
-              const warnings = leftoverWarnings(await guardedAsync(async () => await resolveWithAsyncRuns((run) => selfHostedLoginLeftover({ run, platform: deps.keychain.platform }, selfHostedDir), deps.keychain.runAsync)));
-              return { action: "removed" as const, kind: "identity" as const, name: input.name, ...(warnings.length === 0 ? {} : { warnings: [...warnings] }) };
             } finally {
               lock.release();
             }
+            const warnings = leftoverWarnings(await guardedAsync(async () => await resolveWithAsyncRuns((run) => selfHostedLoginLeftover({ run, platform: deps.keychain.platform }, selfHostedDir), deps.keychain.runAsync)));
+            if (cacheFailure !== undefined) {
+              const failure = cacheFailure.withNotes(warnings);
+              guarded(() => {
+                throw failure;
+              });
+            }
+            return { action: "removed" as const, kind: "identity" as const, name: input.name, ...(warnings.length === 0 ? {} : { warnings: [...warnings] }) };
           }),
         use: route("/rest/config/identity/use", "Select the active identity")
           .input(ConfigNameInputSchema)

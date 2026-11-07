@@ -263,6 +263,26 @@ describe("config.identity.remove and the credential the Keychain store caches", 
     expect(failure).not.toMatchObject({ code: "NOT_FOUND" });
   });
 
+  it("answers a removal whose cache delete fails with the failure, and in it names a self-hosted identity's leftover login too", async () => {
+    addIdentity(paths, "lab");
+    const labDir = path.join(paths.identitiesDir, "lab");
+    fs.writeFileSync(path.join(labDir, RC_SELF_HOST_MINT_MARKER), `${JSON.stringify({ mintedAt: "2026-01-01T00:00:00.000Z" })}\n`);
+    const keychain = createFakeKeychain();
+    keychain.seed(claudeCodeKeychainService(labDir), "alex", "a-made-up-login");
+    const runAsync: AsyncRun = async (command, args) => await Promise.resolve(args[0] === "delete-generic-password" ? { status: LOCKED_KEYCHAIN_STATUS, stdout: "", stderr: "" } : keychain.run.run(command, args));
+    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" }, fs: realFarmFs }), {
+      context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
+    }).config;
+    const failure: unknown = await api.identity.remove({ name: "lab", confirm: true }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(failure).toMatchObject({ code: "INTERNAL_SERVER_ERROR" });
+    expect(failure).toHaveProperty("message", expect.stringContaining('Removed identity "lab", but could not delete its cached credential'));
+    expect(failure).toHaveProperty("message", expect.stringContaining(`security delete-generic-password -s '${claudeCodeKeychainService(labDir)}' -a 'alex'`));
+    expect(fs.existsSync(labDir)).toBe(false);
+  });
+
   it("answers a removal whose leftover check meets a locked Keychain as removed, with the warning, not as a retryable failure", async () => {
     addIdentity(paths, "lab");
     fs.writeFileSync(path.join(paths.identitiesDir, "lab", RC_SELF_HOST_MINT_MARKER), `${JSON.stringify({ mintedAt: "2026-01-01T00:00:00.000Z" })}\n`);

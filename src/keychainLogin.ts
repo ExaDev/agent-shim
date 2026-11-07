@@ -157,21 +157,27 @@ export function keychainCacheEntryExists(keychain: KeychainProbe, owner: string)
 
 /** Raised when `security` could not delete the cached credential the Keychain store keeps for an owner: the entry is still there, so the message names the command that deletes it. */
 export class KeychainCacheDeleteError extends CliError {
-  /** `removedIdentity` names the identity `identity remove` (or the door's `config.identity.remove`) had already removed when the delete failed, so the message says that the removal itself is done and only the entry is left. */
+  /** `removedIdentity` names the identity `identity remove` (or the door's `config.identity.remove`) had already removed when the delete failed, so the message says that the removal itself is done and only the entry is left. `notes` are further sentences about what the removal left behind, which the one failure carries so none is lost. */
   constructor(
     readonly owner: string,
     readonly status: number | null,
-    removedIdentity?: string,
+    readonly removedIdentity?: string,
+    readonly notes: readonly string[] = [],
   ) {
     super(
-      `${removedIdentity === undefined ? "Could not delete" : `Removed identity "${removedIdentity}", but could not delete its`} cached credential ${removedIdentity === undefined ? `for ${owner} ` : `(${owner}) `}from the Keychain: security exited ${statusPhrase(status)}. It is still there; delete it with \`${keychainDeleteCommand(KEYCHAIN_CACHE_SERVICE, owner)}\`.`,
+      `${removedIdentity === undefined ? "Could not delete" : `Removed identity "${removedIdentity}", but could not delete its`} cached credential ${removedIdentity === undefined ? `for ${owner} ` : `(${owner}) `}from the Keychain: security exited ${statusPhrase(status)}. It is still there; delete it with \`${keychainDeleteCommand(KEYCHAIN_CACHE_SERVICE, owner)}\`.${notes.map((note) => ` ${note}`).join("")}`,
     );
     this.name = "KeychainCacheDeleteError";
   }
 
   /** The same failure, said as one met after identity `name` was removed. */
   afterRemoving(name: string): KeychainCacheDeleteError {
-    return new KeychainCacheDeleteError(this.owner, this.status, name);
+    return new KeychainCacheDeleteError(this.owner, this.status, name, this.notes);
+  }
+
+  /** The same failure, carrying `notes` as well: what else the removal left behind, for a removal that fails after its leftover check was still owed. */
+  withNotes(notes: readonly string[]): KeychainCacheDeleteError {
+    return new KeychainCacheDeleteError(this.owner, this.status, this.removedIdentity, [...this.notes, ...notes]);
   }
 }
 
