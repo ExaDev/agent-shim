@@ -125,6 +125,8 @@ export interface PrepareLaunchParams {
   readonly hold?: HoldPort;
   /** Whether an identity has a stored login Claude Code can use (a Keychain item or a credentials file). Absent when the caller cannot ask, in which case a launch assumes it does. */
   readonly hasStoredLogin?: (identity: string) => boolean;
+  /** Whether Claude Code can authenticate with the login an identity has stored, asked only for an identity that has one (`claudeBin` is the binary the launch would run). Undefined when it cannot be determined, and then the stored login is assumed good. Absent when the caller cannot ask. */
+  readonly hasUsableLogin?: (identity: string, claudeBin: string) => boolean | undefined;
 }
 
 /** Inputs to `runLauncher`: a launch's inputs plus the port that spawns the child. */
@@ -548,12 +550,23 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean, onRecorded
         ...(parsedArgv.delay === undefined ? {} : { delay: parsedArgv.delay }),
       },
     });
-    // Remote Control is a claude.ai feature and needs the identity's own login. A provider session does not: the door attaches the provider's credential. So a provider launch on an identity with no stored login runs without Remote Control instead of failing at its first turn with "Not logged in".
-    const loginlessProvider =
-      requestedFlags.remoteControl && selectedProvider !== undefined && farmIdentity !== undefined && identityDecision.name !== undefined && params.hasStoredLogin?.(farmIdentity) === false ? { identity: identityDecision.name, provider: selectedProvider.name } : undefined;
+    // Remote Control is a claude.ai feature and needs the identity's own login. A provider session does not: the door attaches the provider's credential. So a provider launch on an identity whose login is missing, or stored but no longer usable (expired and not refreshable), runs without Remote Control instead of failing at its first turn with "Not logged in" or an expired-login error.
+    const loginlessProvider = (() => {
+      if (!requestedFlags.remoteControl || selectedProvider === undefined || farmIdentity === undefined || identityDecision.name === undefined) {
+        return undefined;
+      }
+      const stored = params.hasStoredLogin?.(farmIdentity);
+      if (stored === false) {
+        return { identity: identityDecision.name, provider: selectedProvider.name, why: "has no stored login" };
+      }
+      if (stored === true && params.hasUsableLogin?.(farmIdentity, discovered.path) === false) {
+        return { identity: identityDecision.name, provider: selectedProvider.name, why: "has a stored login that is no longer usable" };
+      }
+      return undefined;
+    })();
     const notes: string[] = [];
     if (loginlessProvider !== undefined) {
-      notes.push(`${loginlessProvider.identity} has no stored login, so Remote Control is off; provider ${loginlessProvider.provider} runs without it`);
+      notes.push(`${loginlessProvider.identity} ${loginlessProvider.why}, so Remote Control is off; provider ${loginlessProvider.provider} runs without it`);
     }
     const flags = loginlessProvider === undefined ? requestedFlags : { ...requestedFlags, remoteControl: false };
 
