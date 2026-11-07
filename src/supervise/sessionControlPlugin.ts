@@ -21,9 +21,7 @@ export interface SessionControlPlugin {
 /** Creates the in-process control plugin used by one supervised launch. */
 export function stageSessionControlPlugin(): SessionControlPlugin {
   const directory = mkdtempSync(path.join(tmpdir(), "agent-shim-control-"));
-  const ready = path.join(directory, "ready.json");
-  const requests = path.join(directory, "requests");
-  const results = path.join(directory, "results");
+  const { ready, requests, results } = sessionControlPluginPaths(directory);
   try {
     mkdirSync(path.join(directory, ".claude-plugin"), { mode: 0o700 });
     mkdirSync(path.join(directory, "hooks"), { mode: 0o700 });
@@ -39,18 +37,24 @@ export function stageSessionControlPlugin(): SessionControlPlugin {
   }
 }
 
+/** The paths a plugin staged at `directory` listens on, for a caller (the front door) that knows only the directory the registry's control record names. */
+export function sessionControlPluginPaths(directory: string): Pick<SessionControlPlugin, "directory" | "ready" | "requests" | "results"> {
+  return { directory, ready: path.join(directory, "ready.json"), requests: path.join(directory, "requests"), results: path.join(directory, "results") };
+}
+
 /** Builds the plugin source with its per-launch paths encoded as JavaScript strings. */
 function pluginSource(ready: string, requests: string, results: string): string {
-  return `export function register(on) {
-  const REQUESTS = ${JSON.stringify(requests)};
-  const RESULTS = ${JSON.stringify(results)};
+  // Every helper that takes the plugin API object is declared at the module's top level: Claude Code's loader (2.1.319) refuses a module that passes it to a function declared anywhere else, and loads nothing of the module.
+  return `const REQUESTS = ${JSON.stringify(requests)};
+const RESULTS = ${JSON.stringify(results)};
+function compacted(id, value) {
+  return { id, ...(typeof value?.skip === 'string' ? { kind: 'unchanged', skip: value.skip } : { kind: 'compacted', tokensBefore: value?.tokensBefore, tokensAfter: value?.tokensAfter }) };
+}
+async function resultNames($) {
+  return new Set((await $.fs.list(RESULTS)).map((entry) => entry.name));
+}
+export function register(on) {
   let running = false;
-  function compacted(id, value) {
-    return { id, ...(typeof value?.skip === 'string' ? { kind: 'unchanged', skip: value.skip } : { kind: 'compacted', tokensBefore: value?.tokensBefore, tokensAfter: value?.tokensAfter }) };
-  }
-  async function resultNames($) {
-    return new Set((await $.fs.list(RESULTS)).map((entry) => entry.name));
-  }
   on('classic.PostCompact', async ($, event, next) => {
     const answer = await next(event);
     $.clock.after(0, async () => {
@@ -97,7 +101,7 @@ function pluginSource(ready: string, requests: string, results: string): string 
             throw new Error('the request names no operation this plugin performs');
           }
         } catch (error) {
-          response = { id: item.id, error: String(error) };
+          response = { id: item.id, error: error instanceof Error ? error.message : String(error) };
         }
         await $.fs.write(RESULTS + '/' + name, JSON.stringify(response));
       } finally {
