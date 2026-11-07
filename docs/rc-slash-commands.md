@@ -59,7 +59,7 @@ Each verb picks its route per session:
 - **Self-hosted** (`route: "self-hosted"`): the door serves Remote Control itself and no supervisor owns the session. The door is the service there, so it writes the slash command into its own conversation as a person's app (`web_claude_ai`, the app its own browser page is) and reads the worker's answer off the stream, matched by command and exact arguments and by a manual compaction's `compact_boundary`. It fails at once if the worker passes the command to its model as a peer's message.
 - **Neither**: refused, naming the reason. The door has no in-process channel into the session, and the real service delivers the door's writes as a peer's, which the door will not change by claiming to be a person's app on a service it does not run.
 
-Verbs on one session run one at a time, in the order they were asked. Each waits for the session's answer up to `--wait-ms` (`waitMs`): by default the supervisor's own bound on one compaction, and at most 2147483647 ms, the largest delay Node's timers accept; the typed API's client waits for response headers for that long too. A caller that disconnects aborts the wait.
+Verbs on one session run one at a time, in the order they were asked. Each waits for the session's answer up to `--wait-ms` (`waitMs`): by default the supervisor's own bound on one compaction, and at most 2147483647 ms, the largest delay Node's timers accept; the typed API's client waits for a verb's response headers for that wait plus undici's own five-minute default (capped at the same limit), and keeps the default for every other procedure. A caller that disconnects aborts the wait.
 
 ## Which sessions get which
 

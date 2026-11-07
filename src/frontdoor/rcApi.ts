@@ -9,6 +9,7 @@ import { BodyLimitPlugin, RPCHandler } from "@orpc/server/node";
 import { Agent, fetch as undiciFetch } from "undici";
 
 import packageJson from "../../package.json";
+import { COMPACT_TIMEOUT_MS } from "../supervise/compactTimeout";
 import { HTTP_STATUS } from "../codex/http";
 import { isLiveCapability } from "./capability";
 import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
@@ -428,10 +429,38 @@ export function createRcApiNodeHandler(deps: RcApiDeps): PrePipelineApi {
 /** The typed API's client as the `frontdoor rc` verbs use it: every call presents the control token, over TLS trusting only the CA file the door's own state names. */
 export type RcApiClient = RouterClient<RcApiRouter>;
 
+/** undici's own default wait for response headers, which every procedure of the door's typed API answers well within except the goal and compaction verbs, which answer only once the session has. */
+const DEFAULT_HEADERS_TIMEOUT_MS = 300_000;
+
+/** The procedures whose answer waits on a session, as the RPC link addresses them under the mount prefix. */
+const SESSION_COMMAND_PROCEDURES: readonly string[] = ["rc/goalGet", "rc/goalSet", "rc/goalClear", "rc/compact", "rc/compactWithInstructions"];
+
+/**
+ * How long one call may wait for response headers: undici's default for every procedure but the ones that wait on a session, which get the wait they asked for (their `waitMs`, or the verbs' own default) plus that same default, so a door that has hung still fails the call once the session's wait has passed. Capped at the largest delay a timer accepts.
+ */
+export function headersTimeoutOf(url: string, body: Buffer | undefined): number {
+  if (!SESSION_COMMAND_PROCEDURES.some((procedure) => url.endsWith(`${RC_ORPC_PATH_PREFIX}/${procedure}`))) {
+    return DEFAULT_HEADERS_TIMEOUT_MS;
+  }
+  // The RPC protocol carries a procedure's input as `{"json": <input>}`, which the link itself serialised.
+  const parsed: unknown = body === undefined ? undefined : JSON.parse(body.toString("utf8"));
+  const waitMs = typeof parsed === "object" && parsed !== null && "json" in parsed && typeof parsed.json === "object" && parsed.json !== null && "waitMs" in parsed.json && typeof parsed.json.waitMs === "number" ? parsed.json.waitMs : COMPACT_TIMEOUT_MS;
+  return Math.min(waitMs + DEFAULT_HEADERS_TIMEOUT_MS, RC_SESSION_COMMAND_MAX_WAIT_MS);
+}
+
 /** Builds the link every client of the door's typed API dials through: the door's address under the mount prefix, the per-generation control token on every call, and TLS trusting only the CA the door's own state names. */
 export function frontDoorApiLink(port: number, ca: string, token: string) {
-  // One dispatcher for the link's lifetime, trusting only the door's CA, so a process merely holding the port cannot answer as the door (the same trust rule the bespoke transport applies). Its wait for response headers is the longest wait a goal or compaction verb may take, because those procedures answer only once the session has (undici's own default, five minutes, would cut a longer compaction off while the door still waits for it).
-  const dispatcher = new Agent({ connect: { ca }, headersTimeout: RC_SESSION_COMMAND_MAX_WAIT_MS });
+  // One dispatcher per header timeout the link's calls need, each trusting only the door's CA, so a process merely holding the port cannot answer as the door (the same trust rule the bespoke transport applies). Almost every call shares the default one; a goal or compaction verb gets one whose wait for headers covers the session's wait (`headersTimeoutOf`).
+  const dispatchers = new Map<number, Agent>();
+  const dispatcherFor = (headersTimeout: number): Agent => {
+    const existing = dispatchers.get(headersTimeout);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const created = new Agent({ connect: { ca }, headersTimeout });
+    dispatchers.set(headersTimeout, created);
+    return created;
+  };
   return new RPCLink({
     origin: `https://127.0.0.1:${String(port)}`,
     url: RC_ORPC_PATH_PREFIX,
@@ -444,7 +473,7 @@ export function frontDoorApiLink(port: number, ca: string, token: string) {
         method: request.method,
         headers: [...request.headers],
         ...(body === undefined ? {} : { body }),
-        dispatcher,
+        dispatcher: dispatcherFor(headersTimeoutOf(request.url, body)),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
       return new Response(answered.body, { status: answered.status, statusText: answered.statusText, headers: [...answered.headers] });
