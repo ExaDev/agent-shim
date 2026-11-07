@@ -1,11 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
 
 import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, type RcSessionTracker } from "./rcSessions";
 import type { RcRegisteredSession } from "./rcSessionRegistry";
 import { createRcStatusResolver, type RcStatusResolver } from "./rcStatus";
-import { readRcWorkerState, type RcDialAnswer, type RcEventDial, type RcObservedCredential } from "./rcWrites";
+import { RC_WORKER_READ_TIMEOUT_MS, readRcWorkerState, type RcDialAnswer, type RcEventDial, type RcObservedCredential } from "./rcWrites";
 
 /** Made-up session ids of the protocol's shape. */
 const QUIET_SESSION_ID = "cse_00000000-0000-4000-8000-000000000001";
@@ -223,6 +223,32 @@ describe("the Remote Control status when traffic crosses the door while a read i
     const report = await resolverOf(tracker, racing, { registered: [registeredAs(OBSERVED_SESSION_ID)], persisted: { [OBSERVED_SESSION_ID]: persisted } })();
     expect(report.unobserved).toEqual([]);
     expect(report.statuses.map((status) => [status.id, status.workerState?.value, status.workerState?.source])).toEqual([[OBSERVED_SESSION_ID, "requires_action", "read"]]);
+  });
+});
+
+describe("the Remote Control status against a host that hangs", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("answers at the read's deadline with the hung session's timeout and every other session's state", async () => {
+    vi.useFakeTimers();
+    const tracker = trackerWith(QUIET_SESSION_ID, REFUSED_SESSION_ID);
+    const { dial } = readingDial({ [QUIET_SESSION_ID]: workerRecord("idle") });
+    const hanging: RcEventDial = {
+      ...dial,
+      readWorker: async (sessionId, headers, signal) => (sessionId === REFUSED_SESSION_ID ? await new Promise<never>(() => undefined) : await dial.readWorker(sessionId, headers, signal)),
+    };
+    let report: Awaited<ReturnType<RcStatusResolver>> | undefined;
+    void resolverOf(tracker, hanging)().then((answer) => {
+      report = answer;
+    });
+    await vi.advanceTimersByTimeAsync(RC_WORKER_READ_TIMEOUT_MS - 1);
+    expect(report).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    const byId = new Map(report?.statuses.map((status) => [status.id, status]));
+    expect(byId.get(QUIET_SESSION_ID)?.workerState?.value).toBe("idle");
+    expect(byId.get(REFUSED_SESSION_ID)?.workerStateUnavailable).toContain("did not answer the worker state read");
   });
 });
 
