@@ -13,6 +13,7 @@ import { createDoorApiNodeHandler } from "./controlApi";
 import { createDoorEventHub, rcFanoutOnDoorHub } from "./eventHub";
 import { createRcSessionTracker, RC_IDLE_EXPIRY_MS, type RcSessionTracker } from "./rcSessions";
 import type { RcStreamEvent } from "./rcSchemas";
+import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog } from "./rcEventLog";
 import { createRcEventFanout } from "./rcStream";
 import type { FrontDoorStatus } from "./status";
 import { buildLayoutPaths } from "../paths";
@@ -80,6 +81,8 @@ const EXPECTED_REST_PATHS = [
   "/rest/rc/pending",
   "/rest/rc/read-file",
   "/rest/rc/send",
+  "/rest/rc/session-events",
+  "/rest/rc/session-events/page",
   "/rest/rc/sessions",
   "/rest/rc/set-model",
   "/rest/rc/set-permission-mode",
@@ -173,6 +176,7 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
       mcpOAuthCallbackUrl: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" }),
       teleport: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS }),
       fanout,
+      sessionEvents: createRcSessionEventLog({ generation: "00000000-0000-4000-8000-0000000000ee", capacity: RC_SESSION_EVENT_LOG_CAPACITY }),
       usageSnapshots: () => [],
       usageSnapshotOf: () => undefined,
       liveRateLimits: () => [],
@@ -338,7 +342,17 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
     interface Operation { "x-agent-shim-read-only"?: boolean; requestBody?: { content?: Record<string, { schema?: unknown }> }; responses?: Record<string, { content?: Record<string, { schema?: unknown }> }> }
     const parsed = JSON.parse(doc.text) as { paths: Record<string, Record<string, Operation>> };
     // An empty schema or `anyOf: [{}, {not: {}}]` is what a document generated without schemas carries; every JSON response must describe a real shape instead.
-    const isUnconstrained = (schema: unknown): boolean => typeof schema !== "object" || schema === null || !("type" in schema || "properties" in schema || "$ref" in schema || "items" in schema || "enum" in schema || "const" in schema);
+    // A union (a discriminated answer such as the session events page) is constrained exactly when every member is, which still rejects the `anyOf: [{}, {not: {}}]` placeholder since its first member is empty.
+    const isUnconstrained = (schema: unknown): boolean => {
+      if (typeof schema !== "object" || schema === null) {
+        return true;
+      }
+      const members = "anyOf" in schema ? schema.anyOf : "oneOf" in schema ? schema.oneOf : undefined;
+      if (Array.isArray(members)) {
+        return members.length === 0 || members.some((member: unknown) => isUnconstrained(member));
+      }
+      return !("type" in schema || "properties" in schema || "$ref" in schema || "items" in schema || "enum" in schema || "const" in schema);
+    };
     const operations = Object.values(parsed.paths).flatMap((byMethod) => Object.values(byMethod));
     expect(operations.length).toBeGreaterThan(0);
     for (const operation of operations) {

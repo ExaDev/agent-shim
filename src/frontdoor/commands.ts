@@ -55,9 +55,11 @@ import { collectPoolPick } from "../poolPickReport";
 import { resolveClaudeLaunchAsync } from "../launchWiring";
 import { readPools } from "../poolStore";
 import { listUsageSnapshots, readUsageSnapshot } from "../usage/read";
-import type { UsageSnapshot } from "../usage/schema";import { createDoorApiNodeHandler } from "./controlApi";
+import type { UsageSnapshot } from "../usage/schema";
+import { createDoorApiNodeHandler } from "./controlApi";
 import { createDoorHealthPublisher } from "./doorHealthEvents";
 import { createDoorEventHub, rcFanoutOnDoorHub } from "./eventHub";
+import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog } from "./rcEventLog";
 import { USAGE_EVENT_SOURCE, usageEventPublisher } from "./eventSchemas";
 import { createQuotaExpiringPublisher } from "./quotaExpiringEvents";
 import { createLiveSessionRegistry } from "./liveSessionRegistry";
@@ -239,7 +241,9 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
 
   // The Remote Control session record: one per door process, in memory only, fed by every resolved route's served exchanges. Wrapping the resolver (rather than any one listener) is what lets whichever pipeline serves a `/v1/code/sessions` exchange observe it, and the wrapper is inert for every path outside the Remote Control prefix. The client credential and the stream's sequence cursor are the two parts that must outlive the process (a session outlives any one door generation, only client-half calls state the OAuth bearer, and a generation that lost the cursor would re-read the stream from its head), so both are persisted per session in one owner-only file and read back by whichever generation needs them.
   const rcCredentialStore = createRcCredentialStore(realFarmFs, paths.frontdoorRcCredentialsDir);
-  const rcTracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS, credentialStore: rcCredentialStore });
+  // The door's session event log: every transition the tracker files (a session appearing or ending, a worker state change, a pending request born or retired), in one cursor-ordered window the typed API's `rcSessions.events` stream and `rcSessions.eventsPage` read, so one subscription follows every session. Its generation id makes a cursor from a previous door process fail loudly instead of reading as a position in this one.
+  const rcSessionEvents = createRcSessionEventLog({ generation: randomUUID(), capacity: RC_SESSION_EVENT_LOG_CAPACITY });
+  const rcTracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS, credentialStore: rcCredentialStore, onTransition: rcSessionEvents.append });
   // The door's event backbone: one publisher/subscriber spine for every door-wide source, serving the typed API's `events.subscribe`. The Remote Control client read stream is its first publisher (through the wrap below, which moves nothing about how RC events flow) and the launch lifecycle is its first door-native one, fed by the supervisor's tick from the session registry; the usage source publishes every snapshot the store writes, the door health source the supervisor's own transitions, and the expiring-quota source the windows the supervisor's tick sees entering their final span (kept fresh by the usage source's own events, seeded from the snapshot directory).
   const doorEvents = createDoorEventHub();
   // The usage source's publisher, registered here so the store (created below) can hand it every snapshot it writes, and the expiring-quota checker that reads those same snapshots off the backbone rather than the disk.
@@ -608,6 +612,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
             mcpOAuthCallbackUrl: rcMcpOAuthCallbackUrl,
             teleport: rcTeleport,
             fanout: rcFanout,
+            sessionEvents: rcSessionEvents,
             ...controlDeps,
             ...lifecycleAndCodexDeps,
             keychain: doorKeychainProbe(process.platform),
