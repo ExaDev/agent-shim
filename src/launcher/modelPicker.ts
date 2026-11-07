@@ -5,6 +5,7 @@ import { CLAUDE_TIERS, type ClaudeTier, type ModelsConfig, type PickerModel, typ
 import { CONTEXT_MARKER_1M, withoutContextMarker } from "../models/identity";
 import { FAMILY_PREFIX, accountRefsOf, buildFamilies, expandFamilyMembers, familyMode, sharedFamilies } from "../models/families";
 import { expandMembers } from "../modelsStore";
+import { TIER_ENV_VARIABLES } from "../models/tiers";
 
 type Tier = ClaudeTier;
 
@@ -26,14 +27,6 @@ const TIER_BEHAVES_AS: Readonly<Record<Tier, string>> = Object.freeze({
   opus: "claude-opus-5-5",
   sonnet: "claude-sonnet-5-5",
   haiku: "claude-haiku-5-5",
-});
-
-/** The environment variable a provider's own `env` block uses to name the model a tier reaches. */
-const TIER_ENV_VARIABLES: Readonly<Record<Tier, string>> = Object.freeze({
-  fable: "ANTHROPIC_DEFAULT_FABLE_MODEL",
-  opus: "ANTHROPIC_DEFAULT_OPUS_MODEL",
-  sonnet: "ANTHROPIC_DEFAULT_SONNET_MODEL",
-  haiku: "ANTHROPIC_DEFAULT_HAIKU_MODEL",
 });
 
 /** One `/model` row, in the shape Claude Code's `modelPicker` setting takes. `model` is sent verbatim; `label` and `description` are what the row shows. */

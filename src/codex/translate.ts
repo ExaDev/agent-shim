@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
 
+import { claudeTierOf } from "../models/tiers";
+
 import {
   CODEX_DEFAULT_EFFORT,
   CODEX_DEFAULT_LOGIN,
   CODEX_DEFAULT_MODEL,
   CODEX_DEFAULT_TIER_MODELS,
-  CLAUDE_TIERS,
   type CodexEffort,
   type CodexLogin,
   type CodexProviderConfig,
@@ -101,8 +102,7 @@ export function mapModel(requested: string, config: ResolvedCodexConfig): string
   if (requested.startsWith("gpt-")) {
     return requested;
   }
-  const lower = requested.toLowerCase();
-  const tier = CLAUDE_TIERS.find((candidate) => lower.includes(candidate));
+  const tier = claudeTierOf(requested);
   return tier === undefined ? config.defaultModel : config.models[tier];
 }
 
