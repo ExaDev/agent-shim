@@ -17,7 +17,7 @@ import type { RcRateLimitInfo } from "./rcSchemas";
 import { mintRcSelfHostCredential, type RcSelfHostMintResult } from "./rcSelfHostMint";
 import { RC_GOAL_CLEAR_WORDS, RC_SESSION_COMMAND_MAX_WAIT_MS, RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "./rcSessionCommands";
 import type { RcQuestionSelection } from "./rcQuestions";
-import { RC_PENDING_SUMMARY_EXCERPT_CHARS, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
+import { rcExcerpt, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
 import { RC_CONTEXT_USAGE_DETAILS, RC_PERMISSION_MODES, RC_READ_FILE_ENCODINGS, isRcContextUsageDetail, isRcPermissionMode, isRcReadFileEncoding, type RcEventWriteResult } from "./rcWrites";
 import type { RcStreamEvent } from "./rcSchemas";
 
@@ -82,6 +82,9 @@ export function formatRcSessionStatus(statuses: readonly RcSessionStatus[]): str
         lines.push(...formatRcPendingList([pending]).map((line) => `    ${line}`));
       }
     }
+    if (status.pendingDropped !== undefined) {
+      lines.push(`  pending dropped: ${String(status.pendingDropped)} request(s) not listed (the per-session cap, or an id the protocol does not mint)`);
+    }
   }
   return lines;
 }
@@ -94,7 +97,7 @@ export function formatRcPendingList(pending: readonly RcPendingRequestSummary[])
   return pending.flatMap((request) => {
     const observed = `observed ${new Date(request.observedAt).toISOString()}`;
     if (request.questions === undefined) {
-      return [`${request.sessionId}  ${request.requestId}  ${request.type}${request.summary === "" ? "" : `  ${request.summary}`}  ${observed}`];
+      return [`${request.sessionId}  ${request.requestId}  ${request.type}${request.summary === "" ? "" : `  ${request.summary}`}  ${observed}${request.oversized === true ? "  [oversized: only this summary is held; answer it in the session]" : ""}`];
     }
     return [
       `${request.sessionId}  ${request.requestId}  question  ${observed}`,
@@ -139,11 +142,6 @@ export function parseRcChoiceFlags(choose: readonly string[], other: readonly st
     choices.push(selections);
   }
   return { choices };
-}
-
-/** One excerpt kept to the log-detail budget this surface already applies, marked when it was cut. */
-function eventExcerpt(text: string): string {
-  return text.length <= RC_PENDING_SUMMARY_EXCERPT_CHARS ? text : `${text.slice(0, RC_PENDING_SUMMARY_EXCERPT_CHARS)}...`;
 }
 
 /** The percent scale, the one unit a whole-percentage rendering divides by. */
@@ -204,7 +202,7 @@ export function formatRcRateLimitInfo(info: RcRateLimitInfo): string {
 export function formatRcStreamEvent(event: RcStreamEvent): string {
   const { envelope } = event;
   const rateLimit = rcRateLimitInfoOf(event);
-  const sketch = rateLimit !== undefined ? `  ${formatRcRateLimitInfo(rateLimit)}` : envelope.payload === undefined ? "" : `  ${eventExcerpt(JSON.stringify(envelope.payload))}`;
+  const sketch = rateLimit !== undefined ? `  ${formatRcRateLimitInfo(rateLimit)}` : envelope.payload === undefined ? "" : `  ${rcExcerpt(JSON.stringify(envelope.payload))}`;
   return `${event.session}  ${envelope.event_type}  sequence_num ${String(envelope.sequence_num)}  source ${envelope.source}${sketch}`;
 }
 

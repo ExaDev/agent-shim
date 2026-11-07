@@ -517,6 +517,9 @@ function isRcSessionStatus(value: unknown): value is RcSessionStatus {
   if ("workerState" in value && value.workerState !== undefined && !isRcWorkerFact(value.workerState, (candidate) => typeof candidate === "string")) {
     return false;
   }
+  if ("pendingDropped" in value && value.pendingDropped !== undefined && typeof value.pendingDropped !== "number") {
+    return false;
+  }
   if ("workerIdleSeconds" in value && value.workerIdleSeconds !== undefined && !isRcWorkerFact(value.workerIdleSeconds, (candidate) => typeof candidate === "number")) {
     return false;
   }
