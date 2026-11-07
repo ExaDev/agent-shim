@@ -1,4 +1,5 @@
 import type { CredentialTargetVar } from "../config/schema";
+import { launchEnvironment } from "./injected";
 
 /**
  * The environment variables that authenticate Claude Code directly from the process environment, ahead of any stored identity credential. If any of these is set, every identity would silently authenticate as the same key/token/backend while it's set — defeating the entire premise of separate identities. Order here is also lookup order: `detectAmbientCredential` reports the first one found.
@@ -108,4 +109,25 @@ export function evaluateAmbientCredentialGuard(
     variable: detected.variable,
     message: formatAmbientCredentialGuardMessage(detected.variable, params.identityName),
   };
+}
+
+/** What `doctor` reports about the ambient-credential guard: its severity and message. */
+export interface AmbientCredentialFinding {
+  readonly severity: "pass" | "warn";
+  readonly message: string;
+}
+
+/**
+ * The guard as `doctor` reports it, judged as a launch that names an identity judges it: what a parent launcher injected into this session is not ambient. A bare launch from a session that has `CLAUDE_CONFIG_DIR` set takes the escape hatch and keeps the session's environment, so it is refused for a credential a launcher injected; when that is the only difference the finding warns of it, naming the launch it concerns.
+ */
+export function ambientCredentialFinding(env: Readonly<Record<string, string | undefined>>): AmbientCredentialFinding {
+  const named = detectAmbientCredential(launchEnvironment(env, false));
+  if (named !== undefined) {
+    return { severity: "warn", message: formatAmbientCredentialGuardMessage(named.variable) };
+  }
+  const bare = env.CLAUDE_CONFIG_DIR === undefined || env.CLAUDE_CONFIG_DIR === "" ? undefined : detectAmbientCredential(env);
+  if (bare !== undefined) {
+    return { severity: "warn", message: `${bare.variable} was set in this session by the launcher that started it. A launch that names an identity drops it, but a launch naming none keeps the session's CLAUDE_CONFIG_DIR and environment and is refused.` };
+  }
+  return { severity: "pass", message: "No ambient-credential environment variable is set." };
 }

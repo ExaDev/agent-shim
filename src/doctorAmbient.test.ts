@@ -16,6 +16,13 @@ describe("runDoctor: ambient-credential inside a session another launch started"
     expect(finding?.severity).toBe("pass");
   });
 
+  it("warns that a launch naming no identity is refused, when the session also carries the directory its launcher set", () => {
+    const [finding] = findingsFor(runDoctor(baseParams({ env: { ...injected("oauth-work-token"), CLAUDE_CONFIG_DIR: "/inherited/session" } })), "ambient-credential");
+    expect(finding?.severity).toBe("warn");
+    expect(finding?.message).toContain("CLAUDE_CODE_OAUTH_TOKEN was set in this session by the launcher that started it");
+    expect(finding?.message).toContain("naming none");
+  });
+
   it("still warns for a credential the person set in its place", () => {
     const [finding] = findingsFor(runDoctor(baseParams({ env: injected("set-by-the-person") })), "ambient-credential");
     expect(finding?.severity).toBe("warn");
