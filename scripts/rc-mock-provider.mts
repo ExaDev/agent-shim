@@ -93,6 +93,9 @@ const toolSearchDriver = process.env.RC_MOCK_TOOLSEARCH === "1";
 const webFetchDriver = process.env.RC_MOCK_WEBFETCH === "1";
 const mcpAuthDriver = process.env.RC_MOCK_MCPAUTH === "1";
 const subagentDriver = process.env.RC_MOCK_SUBAGENT === "1";
+const textDriver = process.env.RC_MOCK_TEXT === "1";
+/** What the plain-text driver answers every request with: one sentence that names the driver, so a transcript or a compaction summary built from it is recognisable as the rig's. */
+const TEXT_DRIVER_ANSWER = "the rig's plain-text driver answered this turn";
 /** The URL the web-fetch driver tells the CLI to fetch: a real public page by default, because the CLI rewrites any http URL to https before it reaches the door's proxy, so the rig's loopback stand-ins cannot serve it and the public internet is the honest target. */
 const WEBFETCH_URL = process.env.RC_MOCK_WEBFETCH_URL ?? "https://example.com/";
 
@@ -410,6 +413,19 @@ function messageFor(body: MessagesRequest): { id: string; type: "message"; role:
         { type: "tool_use", id: `toolu_mock_${String(Date.now())}`, name: "WebFetch", input: { url: WEBFETCH_URL, prompt: "Describe what this page says." } },
       ],
       stop_reason: "tool_use",
+      stop_sequence: null,
+      usage: usage(),
+    };
+  }
+  if (textDriver) {
+    // The slash-command walk: every request is answered with plain text and no tool call, so a turn the CLI starts for a command (the compaction summary, the turn a goal starts, the goal check after it) ends at once and the command's own events are the only thing the walk raises.
+    return {
+      id: `msg_mock_${String(Date.now())}`,
+      type: "message",
+      role: "assistant",
+      model: body.model,
+      content: [{ type: "text", text: TEXT_DRIVER_ANSWER }],
+      stop_reason: "end_turn",
       stop_sequence: null,
       usage: usage(),
     };
