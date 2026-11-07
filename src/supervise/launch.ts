@@ -26,10 +26,11 @@ import { markHooksSettings } from "./marks";
 import { createIdentityMover, createMover } from "./move";
 import { createRealCompactor } from "./realCompact";
 import { realSignalPort, realSupervisedSpawnPort, realTimerPort, realWatchDirectory, realWatchExistingDirectory, resetTerminal } from "./realPorts";
-import { readModelMove, readSessionState, registerSupervised, removeModelMove, stateDirOf, unregisterSupervised } from "./registry";
+import { readModelMove, readSessionState, registerSupervised, removeModelMove, unregisterSupervised } from "./registry";
 import { stopHooksFinished } from "./stopSummary";
 import { stageSupervisedSettings } from "./settings";
 import { supervise, type CompactionDeps } from "./supervise";
+import { watchSessionFiles } from "./watchSession";
 
 /**
  * Whether a launch on `pool` is run under the supervisor: the pool resumes on a spent quota and the arguments start a session. A claude subcommand (`plugin install`, `auth status`) starts none, so there is no conversation to move to another member and the supervisor's `--session-id` would be rejected as an unknown option.
@@ -166,44 +167,12 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
       watchChanges: (identity, onChange) => {
         const stopPlugin = plugin === undefined ? undefined : realWatchExistingDirectory(plugin.directory, (filename) => filename === "ready.json", "the compaction plugin", log)(onChange);
         const stopSnapshot = realWatchDirectory(paths.usageSnapshotsDir, (filename) => filename === `${identity}.json`, `${identity}'s usage`, log)(onChange);
-        let watchedDir: string | undefined;
-        let stopTranscripts: (() => void) | undefined;
-        let transcriptWarning = "";
-        const watchTranscript = (): void => {
-          const transcript = readSessionState(realFarmFs, paths, pool, first.sessionId)?.transcriptPath;
-          const directory = transcript === undefined ? undefined : path.dirname(transcript);
-          if (compaction === undefined || directory === watchedDir) {
-            return;
-          }
-          stopTranscripts?.();
-          watchedDir = undefined;
-          stopTranscripts = undefined;
-          if (directory !== undefined && realFarmFs.lstat(directory) !== undefined) {
-            try {
-              stopTranscripts = realWatchExistingDirectory(directory, (filename) => filename.endsWith(".jsonl"), "the session transcripts", log)(onChange);
-              watchedDir = directory;
-              transcriptWarning = "";
-            } catch (error) {
-              const warning = `agent-shim: could not watch the session transcripts: ${error instanceof Error ? error.message : String(error)}`;
-              if (warning !== transcriptWarning) {
-                transcriptWarning = warning;
-                log.warn(warning);
-              }
-            }
-          }
-        };
-        // A state change can name a new transcript after /clear; watch its directory before checking for the later Stop summary.
-        const stopState = realWatchDirectory(stateDirOf(paths, pool), (filename) => filename.endsWith(".json"), "the pool's sessions", log)(() => {
-          watchTranscript();
-          onChange();
-        });
-        watchTranscript();
+        const stopSession = watchSessionFiles({ paths, pool, sessionId: first.sessionId, watchTranscript: compaction !== undefined, fs: realFarmFs, log, watch: { directory: realWatchDirectory, existingDirectory: realWatchExistingDirectory } })(onChange);
         if (plugin !== undefined && nativeCompactionReady(plugin)) queueMicrotask(onChange);
         return () => {
           stopPlugin?.();
           stopSnapshot();
-          stopState();
-          stopTranscripts?.();
+          stopSession();
         };
       },
       quotaHit: (identity, sessionId, sinceMs) => quotaHitOf(realFarmFs, paths, identity, sessionId, sinceMs, farm.now()),
