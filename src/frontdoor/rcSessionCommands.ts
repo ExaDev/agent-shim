@@ -1,5 +1,8 @@
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { COMPACT_TIMEOUT_MS } from "../supervise/compactTimeout";
 import type { CompactionResult } from "../supervise/realCompact";
+import { RESULT_POLL_MS } from "../supervise/sessionControl";
 import { activeGoalOfTranscript, type TranscriptGoal } from "../supervise/sessionGoal";
 import { runSelfHostedSlashCommand, type RcSelfHostCommandDeps } from "./rcSelfHostCommands";
 
@@ -204,6 +207,19 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
     return { ok: true, report: activeGoalOfTranscript(text) };
   };
 
+  /**
+   * The supervised session's goal once `holds` is true of it, re-reading the transcript at the plugin's own result cadence until it is or the verb's signal ends: the plugin reports the command run once `$.command.run` resolves, and the transcript row that records its effect can land a moment after. When the signal ends first, the last read is returned, and the caller reports that it does not show the change.
+   */
+  const settledGoal = async (sessionId: string, target: RcSupervisedTarget, signal: AbortSignal, holds: (goal: RcGoal | null) => boolean): Promise<RcSessionCommandResult<RcGoal | null>> => {
+    for (;;) {
+      const read = transcriptGoal(sessionId, target);
+      if (!read.ok || holds(read.report) || signal.aborted) {
+        return read;
+      }
+      await sleep(RESULT_POLL_MS);
+    }
+  };
+
   const waitOf = (options: RcSessionCommandOptions): number | undefined => options.waitMs;
 
   return {
@@ -244,7 +260,7 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
             return before;
           }
           await target.runGoal(trimmed, signal, waitMs);
-          const after = transcriptGoal(sessionId, target);
+          const after = await settledGoal(sessionId, target, signal, (goal) => goal?.condition === trimmed);
           if (!after.ok) {
             return after;
           }
@@ -273,7 +289,7 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
             return { ok: true, report: { route: "supervised", cleared: null } };
           }
           await target.runGoal("clear", signal, waitMs);
-          const after = transcriptGoal(sessionId, target);
+          const after = await settledGoal(sessionId, target, signal, (goal) => goal === null);
           if (!after.ok) {
             return after;
           }
