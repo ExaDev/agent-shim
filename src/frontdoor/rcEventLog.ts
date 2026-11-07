@@ -335,41 +335,46 @@ export function followRcSessionEvents(log: RcSessionEventLog, input: Readonly<{ 
 /** The follower's loop, from a start `followRcSessionEvents` has already fixed. */
 async function* followAfter(log: RcSessionEventLog, since: string, session: string | undefined, signal: AbortSignal | undefined): AsyncGenerator<RcSessionEvent, void> {
   let cursor = since;
+  let onAbort = (): void => undefined;
   const aborted = new Promise<void>((resolve) => {
-    signal?.addEventListener("abort", () => {
-      resolve();
-    }, { once: true });
+    onAbort = resolve;
   });
-  for (;;) {
-    signal?.throwIfAborted();
-    // Whether the log was closed before this read: a follower returns only after one read that found nothing more, so an event appended just before the close is still delivered.
-    const closedBeforeRead = log.closed();
-    // The wake is registered before the read, so an event appended between the read and the wait can never be slept past.
-    let detach = (): void => undefined;
-    const woken = new Promise<void>((resolve) => {
-      detach = log.onAppend(resolve);
-    });
-    try {
-      const read = log.read({ since: cursor, ...(session === undefined ? {} : { session }) });
-      if (read.status === "expired") {
-        throw new RcSessionEventCursorExpiredError(read.message, read.head);
-      }
-      if (read.events.length === 0) {
-        cursor = read.cursor;
-        if (closedBeforeRead) {
-          return;
+  // Removed when the follower ends, however it ends, so a long-lived signal shared by many followers does not collect one listener per follower.
+  signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    for (;;) {
+      signal?.throwIfAborted();
+      // Whether the log was closed before this read: a follower returns only after one read that found nothing more, so an event appended just before the close is still delivered.
+      const closedBeforeRead = log.closed();
+      // The wake is registered before the read, so an event appended between the read and the wait can never be slept past.
+      let detach = (): void => undefined;
+      const woken = new Promise<void>((resolve) => {
+        detach = log.onAppend(resolve);
+      });
+      try {
+        const read = log.read({ since: cursor, ...(session === undefined ? {} : { session }) });
+        if (read.status === "expired") {
+          throw new RcSessionEventCursorExpiredError(read.message, read.head);
         }
-        await Promise.race([woken, aborted]);
-        continue;
+        if (read.events.length === 0) {
+          cursor = read.cursor;
+          if (closedBeforeRead) {
+            return;
+          }
+          await Promise.race([woken, aborted]);
+          continue;
+        }
+        for (const event of read.events) {
+          yield event;
+          cursor = event.cursor;
+        }
+        // A filtered read may have passed events of other sessions after the last one it yielded; resuming after the read's own cursor never rescans them.
+        cursor = read.cursor;
+      } finally {
+        detach();
       }
-      for (const event of read.events) {
-        yield event;
-        cursor = event.cursor;
-      }
-      // A filtered read may have passed events of other sessions after the last one it yielded; resuming after the read's own cursor never rescans them.
-      cursor = read.cursor;
-    } finally {
-      detach();
     }
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
   }
 }
