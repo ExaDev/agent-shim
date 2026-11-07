@@ -16,6 +16,7 @@ import {
   type CaMaterial,
   type ConnectEffects,
   type ConnectLimits,
+  type ConnectLocalSurface,
 } from "./connect";
 import { realConnectEffects, realRcEventDial, realRcStreamDial } from "./connectEffects";
 import { rcObserverAsPassthrough, type RcSessionTracker } from "./rcSessions";
@@ -68,10 +69,10 @@ export async function settled<T>(value: T): Promise<T> {
   return await Promise.resolve(value);
 }
 
-/** Connects through the proxy the way curl or undici would: CONNECT, then TLS presenting only the given CA as trust. */
-export async function connectThroughProxy(port: number, host: string, caPem: string): Promise<tls.TLSSocket> {
+/** Connects through the proxy the way curl or undici would: CONNECT presenting `capability` (a live launch's, by default the world's own), then TLS presenting only the given CA as trust. */
+export async function connectThroughProxy(port: number, host: string, caPem: string, capability: string = TEST_CAPABILITY): Promise<tls.TLSSocket> {
   const raw = net.connect(port, "127.0.0.1");
-  raw.write(`CONNECT ${host}:443 HTTP/1.1\r\nHost: ${host}:443\r\n${proxyAuthorizationFor(TEST_CAPABILITY)}\r\n\r\n`);
+  raw.write(`CONNECT ${host}:443 HTTP/1.1\r\nHost: ${host}:443\r\n${proxyAuthorizationFor(capability)}\r\n\r\n`);
   const head = await new Promise<string>((resolve, reject) => {
     let buffer = "";
     function onData(chunk: Buffer): void {
@@ -167,7 +168,7 @@ export function makeTlsWorld(
     readonly limits?: Partial<ConnectLimits>;
     readonly isLiveCapability?: (token: string) => boolean;
     readonly capture?: ConnectCapture;
-    readonly refusesBlindTunnel?: (capability: string) => boolean;
+    readonly localSurface?: ConnectLocalSurface;
     readonly tapHosts?: readonly string[];
     readonly transparent?: { readonly port: number; readonly capability: string };
     readonly rc?: { readonly tracker: RcSessionTracker; readonly onExchangeSettled?: () => void };
@@ -373,7 +374,7 @@ export function makeTlsWorld(
               }),
           limits: { ...CONNECT_LIMITS, ...options.limits },
           ...(options.capture === undefined ? {} : { capture: options.capture }),
-          ...(options.refusesBlindTunnel === undefined ? {} : { refusesBlindTunnel: options.refusesBlindTunnel }),
+          ...(options.localSurface === undefined ? {} : { localSurface: options.localSurface }),
         },
         effects,
         { preferredPort: undefined },

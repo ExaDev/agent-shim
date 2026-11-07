@@ -21,8 +21,17 @@ function world(): ReturnType<typeof createFakeFarmFs> {
   });
 }
 
-const check = (minted: string | undefined): ((capability: string) => boolean) =>
-  createRcSelfHostLaunchCheck({ fs: world(), sessionsDir: "/state/frontdoor/sessions", launchesDir: "/state/launches", identitiesDir: "/state/identities", mintedIdentityId: () => minted });
+/** The minted record's credential fields, whose values the check never reads. */
+const RECORD_FIELDS = { accessToken: "sk-ant-oat1", refreshToken: "refresh", organizationUuid: "11111111-1111-4111-8111-111111111111", accountUuid: "22222222-2222-4222-8222-222222222222" };
+
+const check = (minted: string | undefined, record: "none" | "legacy" | "current" = "current"): ((capability: string) => boolean) =>
+  createRcSelfHostLaunchCheck({
+    fs: world(),
+    sessionsDir: "/state/frontdoor/sessions",
+    launchesDir: "/state/launches",
+    identitiesDir: "/state/identities",
+    mintedRecord: () => (record === "none" ? undefined : record === "legacy" ? RECORD_FIELDS : { ...RECORD_FIELDS, ...(minted === undefined ? {} : { identityId: minted }) }),
+  });
 
 describe("which launches the self-hosted mode owns", () => {
   it("owns the launch running the minted identity, by its id whatever it is now named, and no other launch", () => {
@@ -31,7 +40,12 @@ describe("which launches the self-hosted mode owns", () => {
   });
 
   it("owns nothing while nothing is minted, and nothing for a capability no launch holds", () => {
-    expect(check(undefined)("cap-self-hosted")).toBe(false);
+    expect(check(undefined, "none")("cap-self-hosted")).toBe(false);
     expect(check("id-rig")("cap-unknown")).toBe(false);
+  });
+
+  it("fails closed for a mint that names no identity: every launch is the mode's", () => {
+    expect(check(undefined, "legacy")("cap-native")).toBe(true);
+    expect(check(undefined, "legacy")("cap-unknown")).toBe(true);
   });
 });

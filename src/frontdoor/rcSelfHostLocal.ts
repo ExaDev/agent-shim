@@ -3,7 +3,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { HTTP_STATUS } from "../codex/http";
 import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
 import type { RcSelfHostCredentialRecord } from "./rcSelfHost";
-import { rcSelfHostOfflineAnswer, rcSelfHostOwnsPresentation } from "./rcSelfHostOffline";
+import { isRcSessionFamilyPath, rcSelfHostOfflineAnswer } from "./rcSelfHostOffline";
+import { PROVIDER_HEADER, internalHeaderValue } from "./route";
 
 /**
  * The local answers of the self-hosted Remote Control service: the non-`/v1/` calls the CLI makes around activation (the feature eval, the profile, the token validation, the telemetry no-ops) and the control-plane host's OAuth refresh, served straight onto the connect surface's plain responses because they ride no routed pipeline. Split out of `rcSelfHost.ts` so each file stays a readable size, exactly as the client channels, the compatibility family and the conversation family were split out before it; the surface hands this module's product straight back as its own `local` surface.
@@ -66,6 +67,9 @@ export interface RcSelfHostLocalDeps {
   readonly credentialRecord: () => RcSelfHostCredentialRecord | undefined;
   /** Reads one request's whole body as text, refusing a body past the shared control cap by rejecting. */
   readonly readBody: (request: IncomingMessage, capBytes: number) => Promise<string>;
+  /** Whether the launch holding a tunnel's capability is a self-hosted session's (see `rcSelfHostLaunches.ts`): handed to the connect surface, which decides by it which requests reach this surface at all. */
+  readonly ownsLaunch: (capability: string) => boolean;
+  /** Where the surface writes one line per call it answers in place of a real host, and per refusal it makes; absent, nothing is logged. */
   readonly log?: (line: string) => void;
 }
 
@@ -73,10 +77,12 @@ export interface RcSelfHostLocalDeps {
 export interface RcSelfHostLocal {
   /** The hosts whose terminated sessions this surface needs parsed as HTTP (the control-plane host, normally byte-tapped). */
   readonly parsesHost: (host: string) => boolean;
-  /** Serves one request locally; resolves false when the request is not the mode's (a native session's credential) or is a `/v1/` path on the API host, which the routed pipeline serves, so routing or piping continues unchanged. */
+  /** Whether the launch holding a tunnel's capability is a self-hosted session's. */
+  readonly ownsLaunch: (capability: string) => boolean;
+  /**
+   * Serves one request of a self-hosted session (the connect surface calls it for no other): everything except what the routed pipeline must serve, which resolves false so routing continues unchanged. That is the Remote Control session family on the API host, and every `/v1/` path of a provider session (it carries its provider's internal header), whose inference the resolver sends to that provider; every other path on either host is answered here, so nothing of a self-hosted session reaches a real host.
+   */
   readonly serve: (host: string, request: IncomingMessage, response: ServerResponse) => Promise<boolean>;
-  /** Whether a websocket upgrade is the mode's by the credential it presents, in which case the connect surface refuses it instead of relaying it to the real host: this surface serves no upgrade, so a self-hosted session's upgrade has nowhere on this machine to go and must not go anywhere else. */
-  readonly claimsUpgrade: (request: IncomingMessage) => boolean;
 }
 
 /** Answers one JSON body on the connect surface's plain response shape; the local answers ride no pipeline. */
@@ -97,13 +103,17 @@ export function createRcSelfHostLocal(deps: RcSelfHostLocalDeps): RcSelfHostLoca
   };
   return {
     parsesHost: (host: string): boolean => host === RC_SELF_HOST_OAUTH_HOST,
-    claimsUpgrade: (request: IncomingMessage): boolean => rcSelfHostOwnsPresentation(request.headers, deps.credentialRecord()?.accessToken),
+    ownsLaunch: deps.ownsLaunch,
     serve: async (host: string, request: IncomingMessage, response: ServerResponse): Promise<boolean> => {
       const method = (request.method ?? "").toUpperCase();
       const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
-      // A native session's own credential is that session's business: forwarded exactly as with the mode off, so a door serving the mode still serves every other login's header-borne calls. The token refresh below carries its credential in the body instead, so it presents nothing here and is always the mode's (ExaDev/agent-shim#732).
-      if (!rcSelfHostOwnsPresentation(request.headers, deps.credentialRecord()?.accessToken)) {
-        return false;
+      const minted = deps.credentialRecord();
+      if (minted !== undefined && minted.identityId === undefined) {
+        // A mint from before the identity's id was recorded attributes every launch to the mode (see `rcSelfHostLaunches.ts`), so nothing is served until the identity is minted again.
+        request.resume();
+        deps.log?.(`rc selfhost: refused ${method} ${pathname}: the minted credential names no identity; mint it again`);
+        answerServerJson(response, HTTP_SERVICE_UNAVAILABLE, { type: "error", error: { type: "api_error", message: "the front door's self-hosted Remote Control credential was minted before the door recorded its identity, so no launch can be told apart from it; run agent-shim frontdoor rc selfhost mint <identity> again" } });
+        return true;
       }
       if (host === RC_SELF_HOST_OAUTH_HOST) {
         if (method === "POST" && pathname === "/v1/oauth/token") {
@@ -171,8 +181,7 @@ export function createRcSelfHostLocal(deps: RcSelfHostLocalDeps): RcSelfHostLoca
         answerServerJson(response, HTTP_STATUS.ok, {});
         return true;
       }
-      // The API host's `/v1/` paths are the routed pipeline's, which serves the session family and hands every other self-hosted `/v1/` call to the same offline answers.
-      if (pathname.startsWith("/v1/")) {
+      if (pathname.startsWith("/v1/") && (isRcSessionFamilyPath(pathname) || internalHeaderValue(request.headers, PROVIDER_HEADER) !== undefined)) {
         return false;
       }
       answerOffline(method, pathname, request, response);

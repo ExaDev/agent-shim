@@ -7,7 +7,7 @@ import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
 import { RC_SOURCE_CLIENT, RC_SOURCE_WORKER, pageOfRcChannel, serveRcClientChannels, serveRcCompatSessions, withClientPlatform } from "./rcSelfHostEndpoints";
 import { RC_CONVERSATIONS_PATH_PREFIX, newRcSelfHostConversation, serveRcConversations } from "./rcSelfHostConversations";
 import { createRcSelfHostLocal, type RcSelfHostLocal } from "./rcSelfHostLocal";
-import { rcSelfHostOfflineAnswer, rcSelfHostOwnsPresentation } from "./rcSelfHostOffline";
+import { rcSelfHostOfflineAnswer } from "./rcSelfHostOffline";
 import { RC_WEB_FETCH_MAX_BYTES, type RcWebFetcher } from "./rcWebFetch";
 import type { FrontDoorRoute, RoutedRequest, RoutedResponse } from "./route";
 import type { RcStreamEnvelope } from "./rcSchemas";
@@ -17,7 +17,7 @@ import type { RcStreamEnvelope } from "./rcSchemas";
  *
  * The protocol spoken is exactly the one the door already speaks as a client, which is what makes this honest: every path, envelope, sequence rule and resume pair below is the shape the merged client-half machinery (`rcSessions.ts`, `rcStream.ts`, `connectEffects.ts`) dials the real host with, cross-checked against the CLI source (the 2.1.88 source-map dump behind the issue's spike) and live 2.1.289 envelopes captured through the interception rig. The transport is version-unstable (CCRv1 websocket to CCRv2 SSE plus POST within the 2.1.x line), so this surface pins what the rig's pinned CLI speaks and must be re-verified on upgrades; that standing caveat is issue #207's own.
  *
- * Division of the surface: the session family (`/v1/code/sessions...` and the `/v1/sessions` compatibility list) rides the routed pipeline as a `FrontDoorRoute`, so it flows through the same admission and middleware as any routed request and, above all, through the same observation wrapper that feeds the tracker (the door's own client half learns each session's credential precisely because the create is observed like any other exchange). The non-`/v1/` answers the CLI needs around activation (feature eval, profile, telemetry no-ops) and the OAuth refresh on the control-plane host have no pipeline to ride, so they are served by `local`, which the connect surface consults before routing or piping; that surface also takes over the control-plane host's terminated session as ordinary HTTP (it is normally byte-tapped) because answering `/v1/oauth/token` requires parsing it. Every other call a self-hosted session sends on those hosts (the start-up reads, the connector lists, the artifacts service) is answered from `rcSelfHostOffline.ts` on whichever half it arrives at, the route for a `/v1/` path and `local` for the rest, so nothing carrying the minted credential is ever forwarded to a real host.
+ * Division of the surface: the session family (`/v1/code/sessions...` and the `/v1/sessions` compatibility list) rides the routed pipeline as a `FrontDoorRoute`, so it flows through the same admission and middleware as any routed request and, above all, through the same observation wrapper that feeds the tracker (the door's own client half learns each session's credential precisely because the create is observed like any other exchange). The non-`/v1/` answers the CLI needs around activation (feature eval, profile, telemetry no-ops) and the OAuth refresh on the control-plane host have no pipeline to ride, so they are served by `local`, which the connect surface consults before routing or piping; that surface also takes over the control-plane host's terminated session as ordinary HTTP (it is normally byte-tapped) because answering `/v1/oauth/token` requires parsing it. Every other call a self-hosted session sends on those hosts (the start-up reads, the connector lists, the artifacts service) is answered by `local` from `rcSelfHostOffline.ts`, and the connect surface hands `local` every request of a session the launch check (`ownsLaunch`) attributes to the mode, so nothing a self-hosted session sends is forwarded to a real host.
  *
  * Above the sessions sits the conversation, the native service's own keying as observed through two bridged TUIs holding two distinct `cse_` ids over one live conversation (#238's finding): the event log and its sequence space belong to the conversation, and the `cse_` sessions are attachments to it. A create that names no conversation mints a fresh one, so the single-session shape every door-observed CLI runs keeps exactly its previous behaviour under a wrapper; a create that names one attaches to it, and every write through either attachment numbers in the one shared space and fans to every stream the conversation holds, each worker's own writes excepted (feeding a worker its own writes back would loop its REPL, while the other attachment's worker writes are the other client's half of the conversation, exactly what a second TUI joins to see). No observed wire shape names the link: the create body, the bridge answer and every envelope the captures and the 2.1.289 bundle show carry no conversation id, so the linking vocabulary here (the create body's `conversation` field, the `conv_` id prefix, the session rows' `conversation_id`, and the `/v1/code/conversations` family a sessionless client reads, writes and subscribes through) is this door's own design, named as such; should the real service's shape ever surface, these are the pieces to realign.
  *
@@ -285,6 +285,8 @@ export interface RcSelfHostDeps {
   readonly webFetch: RcWebFetcher;
   /** A real search backend for the worker's web-search proxy, when one is wired; while undefined the proxy answers the clear refusal naming that no backend serves this door. */
   readonly webSearch?: RcWebSearchBackend;
+  /** Whether the launch holding a CONNECT tunnel's capability is a self-hosted session's (`createRcSelfHostLaunchCheck` in production): the one discriminator the connect surface decides every request, upgrade and blind tunnel of the mode by. */
+  readonly ownsLaunch: (capability: string) => boolean;
   readonly log?: (line: string) => void;
 }
 
@@ -336,8 +338,6 @@ export interface RcSelfHostSurface {
   readonly route: FrontDoorRoute;
   /** The connect surface's local answers: which hosts it takes over as HTTP, and the requests it answers itself. */
   readonly local: RcSelfHostLocal;
-  /** Whether one request is a self-hosted session's by the credential it presents (see `rcSelfHostOffline.ts`): the predicate the route resolver hands this surface's route every such `/v1/` request by, so none rides the pass-through to the real API. */
-  readonly owns: (headers: Readonly<IncomingHttpHeaders>) => boolean;
   /** Stops the service's timers and retires every open stream. The sessions themselves are unreachable the moment the door drops them. */
   readonly close: () => void;
 }
@@ -935,12 +935,11 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
     },
   };
 
-  const local = createRcSelfHostLocal({ now: deps.now, credentialRecord: deps.credentialRecord, readBody, ...(deps.log === undefined ? {} : { log: deps.log }) });
+  const local = createRcSelfHostLocal({ now: deps.now, credentialRecord: deps.credentialRecord, readBody, ownsLaunch: deps.ownsLaunch, ...(deps.log === undefined ? {} : { log: deps.log }) });
 
   return {
     route,
     local,
-    owns: (headers) => rcSelfHostOwnsPresentation(headers, deps.credentialRecord()?.accessToken),
     close: () => {
       clearInterval(timer);
       clearInterval(keepalive);
