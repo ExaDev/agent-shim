@@ -49,6 +49,20 @@ export function rcSelfHostEventDial(resolve: () => RcDialTarget | undefined, mak
   };
 }
 
+/**
+ * Why the door's own self-hosted surface is not bound, from the one input that decides whether it ever will be: `AGENT_SHIM_TRANSPARENT_SURFACE` as the door started with it. Unset or not a port, it never binds; set to a port, the listener has not bound it yet or could not.
+ */
+export function selfHostSurfaceUnboundReason(transparentSurface: string | undefined): string {
+  const port = transparentSurface === undefined ? Number.NaN : Number(transparentSurface);
+  if (transparentSurface === undefined) {
+    return "AGENT_SHIM_TRANSPARENT_SURFACE is not set, so the door has no surface of its own to write to";
+  }
+  if (!Number.isInteger(port) || port <= 0) {
+    return `AGENT_SHIM_TRANSPARENT_SURFACE is "${transparentSurface}", which is not a port, so the door has no surface of its own to write to`;
+  }
+  return `the door's transparent surface on port ${String(port)} is not bound: its listener has not started yet or could not bind the port (the door's log says which)`;
+}
+
 /** What a person's-app write needs: the client half's credential accessors and id minting, and the self-hosted dial in place of the general one. */
 export type RcPersonWriteDeps = Omit<RcInjectDeps, "dial"> & { readonly dial: RcSelfHostEventDial };
 
