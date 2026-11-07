@@ -97,7 +97,8 @@ export function formatRcPendingList(pending: readonly RcPendingRequestSummary[])
   return pending.flatMap((request) => {
     const observed = `observed ${new Date(request.observedAt).toISOString()}`;
     if (request.questions === undefined) {
-      return [`${request.sessionId}  ${request.requestId}  ${request.type}${request.summary === "" ? "" : `  ${request.summary}`}  ${observed}${request.oversized === true ? "  [oversized: only this summary is held; answer it in the session]" : ""}`];
+      const mark = request.unanswerable !== undefined ? `  [a question the door cannot answer: ${request.unanswerable}; answer it in the session]` : request.oversized === true ? "  [oversized: only this summary is held; answer it in the session]" : "";
+      return [`${request.sessionId}  ${request.requestId}  ${request.type}${request.summary === "" ? "" : `  ${request.summary}`}  ${observed}${mark}`];
     }
     return [
       `${request.sessionId}  ${request.requestId}  question  ${observed}`,

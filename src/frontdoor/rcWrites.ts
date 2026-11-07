@@ -353,6 +353,9 @@ export interface RcAnswerDeps {
  */
 function questionAnswerInput(deps: RcAnswerDeps, sessionId: string, pending: RcPendingRequestSummary, decision: RcAnswerDecision): { readonly input: Record<string, unknown> } | { readonly error: string } | undefined {
   const { questions } = pending;
+  if (pending.unanswerable !== undefined) {
+    return { error: `control request ${pending.requestId} is a question the door cannot answer (${pending.unanswerable}), so it cannot write an answer the worker would read correctly; answer it in the session itself` };
+  }
   if (pending.oversized === true) {
     return { error: `control request ${pending.requestId} was past the door's parse cap, so the door holds only its summary and cannot write an answer the worker would read correctly; answer it in the session itself` };
   }

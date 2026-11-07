@@ -43,6 +43,7 @@ export const RcPendingRequestSummarySchema = z.strictObject({
   summary: z.string(),
   questions: z.readonly(z.array(RcPendingQuestionSchema)).optional(),
   oversized: z.literal(true).optional(),
+  unanswerable: z.string().optional(),
   observedAt: z.number(),
 });
 
@@ -153,7 +154,7 @@ export const RcSendInputSchema = z.strictObject({
 });
 
 /** One selection for one question: an option's label, its one-based number in the order the question lists its options, or free text in place of an option. */
-const RcQuestionSelectionSchema = z.union([z.string().min(1), z.int().positive(), z.strictObject({ text: z.string().min(1) })]);
+const RcQuestionSelectionSchema = z.union([z.string().min(1), z.int().positive(), z.strictObject({ text: z.string().refine((text) => text.trim() !== "", { message: "free text must not be blank" }) })]);
 
 /**
  * The choices that answer a pending question: one list of selections per question, in the order the request asked them. A single-select question takes exactly one selection, a multi-select question one or more; the operation checks them against the observed options.

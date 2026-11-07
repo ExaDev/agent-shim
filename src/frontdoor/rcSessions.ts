@@ -141,6 +141,8 @@ interface RcPendingRequestRecord {
   readonly summary: string;
   /** Whether the request's payload was past `RC_REQUEST_PARSE_CAP_BYTES`, so only its summary is held: a question this large is listed without its questions and cannot be answered here. */
   readonly oversized: boolean;
+  /** Why a question request cannot be answered through the door (malformed, past a bound, a repeated question or label, or past the parse cap), so the answer path refuses it rather than approving it without answers; absent for an answerable question and for every other request. */
+  readonly unanswerable: string | undefined;
   /** The questions a `can_use_tool` request for the question dialog puts to the user, parsed from its input; absent for every other request. */
   readonly questions: readonly RcPendingQuestion[] | undefined;
   /** The `can_use_tool` request's input exactly as the worker sent it, which an answer to a question carries back with its answers added; absent for every other request. Memory only, never listed. */
@@ -161,6 +163,8 @@ export interface RcPendingRequestSummary {
   readonly questions?: readonly RcPendingQuestion[];
   /** Present and true when the request's payload was past the door's parse cap: only its summary is held, so a question listed this way shows no questions and cannot be answered through the door. */
   readonly oversized?: true;
+  /** Present when the request is the question dialog but the door cannot answer it (why, in words): answer it in the session instead. */
+  readonly unanswerable?: string;
   /** When the request was observed, in epoch milliseconds from the injected clock. */
   readonly observedAt: number;
 }
@@ -375,8 +379,11 @@ function payloadEventsOf(body: string): readonly Record<string, unknown>[] {
  */
 function pendingOfControlRequestPayload(payload: Record<string, unknown>): Omit<RcPendingRequestRecord, "sessionId" | "observedAt"> | undefined {
   const parsed = fullPendingOfControlRequestPayload(payload);
-  // A request body is already bounded by the parse cap, but a stream envelope is not: one past the cap keeps its summary (itself an excerpt) and drops what would hold the payload whole.
-  return parsed !== undefined && JSON.stringify(payload).length > RC_REQUEST_PARSE_CAP_BYTES ? { ...parsed, questions: undefined, toolInput: undefined, oversized: true } : parsed;
+  // A request body is already bounded by the parse cap, but a stream envelope is not: one whose serialised payload is past the cap in UTF-8 bytes keeps its summary (itself an excerpt) and drops what would hold the payload whole.
+  if (parsed === undefined || Buffer.byteLength(JSON.stringify(payload), "utf8") <= RC_REQUEST_PARSE_CAP_BYTES) {
+    return parsed;
+  }
+  return { ...parsed, questions: undefined, toolInput: undefined, oversized: true, unanswerable: parsed.unanswerable ?? (parsed.questions === undefined ? undefined : `the request is past the door's parse cap of ${String(RC_REQUEST_PARSE_CAP_BYTES)} bytes`) };
 }
 
 /** The pending record of one `control_request` payload, every field held whole. */
@@ -394,18 +401,24 @@ function fullPendingOfControlRequestPayload(payload: Record<string, unknown>): O
   // `can_use_tool` is the approval the surface exists to answer, so its summary names the tool and sketches the input; every other subtype is recorded by type with a bounded sketch of whatever it carried.
   let summary = "";
   let questions: readonly RcPendingQuestion[] | undefined;
+  let unanswerable: string | undefined;
   let toolInput: Record<string, unknown> | undefined;
   if (subtype === "can_use_tool") {
     const toolName = nonEmptyString(request, "tool_name");
     const input = request === undefined ? undefined : request.input;
     summary = input === undefined ? (toolName ?? "unknown tool") : `${toolName ?? "unknown tool"} ${rcExcerpt(JSON.stringify(input))}`;
     // The question dialog rides this same subtype, its tool name telling it apart from an approval; its input is kept whole because the answer carries it back.
-    questions = rcQuestionsOfToolRequest(toolName, input);
-    toolInput = questions !== undefined && isRecord(input) ? input : undefined;
+    const parsedQuestions = rcQuestionsOfToolRequest(toolName, input);
+    if (parsedQuestions !== undefined && "questions" in parsedQuestions) {
+      questions = parsedQuestions.questions;
+      toolInput = isRecord(input) ? input : undefined;
+    } else if (parsedQuestions !== undefined) {
+      unanswerable = parsedQuestions.unanswerable;
+    }
   } else if (request !== undefined) {
     summary = rcExcerpt(JSON.stringify(request));
   }
-  return { requestId, type, summary, questions, toolInput, oversized: false };
+  return { requestId, type, summary, questions, unanswerable, toolInput, oversized: false };
 }
 
 /** The request id one worker `control_cancel_request` payload withdraws: the worker's own retraction of a request it resolved itself (answered or dismissed in its terminal), sent right after its own `control_response`. Only `request_id` names it: the payload's `uuid` is the cancel event's own id (observed on 2.1.319), not the request's, so the fallback the response parser keeps would name nothing pending here. */
@@ -773,7 +786,7 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
   };
 
   const summaryOf = ({ id, createdAt, lastSeenAt }: RcSessionRecord): RcSessionSummary => ({ id, createdAt, lastSeenAt });
-  const pendingSummaryOf = ({ sessionId, requestId, type, summary, questions, oversized, observedAt }: RcPendingRequestRecord): RcPendingRequestSummary => ({ sessionId, requestId, type, summary, ...(questions === undefined ? {} : { questions }), ...(oversized ? { oversized: true } : {}), observedAt });
+  const pendingSummaryOf = ({ sessionId, requestId, type, summary, questions, unanswerable, oversized, observedAt }: RcPendingRequestRecord): RcPendingRequestSummary => ({ sessionId, requestId, type, summary, ...(questions === undefined ? {} : { questions }), ...(oversized ? { oversized: true } : {}), ...(unanswerable === undefined ? {} : { unanswerable }), observedAt });
   const sortedEntries = (): readonly RcSessionRecord[] => [...entries.values()].sort((left, right) => left.createdAt - right.createdAt || (left.id < right.id ? -1 : 1));
   const pendingSorted = (entry: RcSessionRecord): readonly RcPendingRequestSummary[] => [...entry.pending.values()].sort((left, right) => left.observedAt - right.observedAt || (left.requestId < right.requestId ? -1 : 1)).map(pendingSummaryOf);
 

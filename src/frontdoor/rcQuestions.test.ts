@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { RC_QUESTION_TOOL_NAME, rcQuestionsOfToolRequest, resolveRcQuestionAnswers, type RcPendingQuestion } from "./rcQuestions";
+import { RC_QUESTION_FIELD_MAX_CHARS, RC_QUESTION_OPTIONS_MAX, RC_QUESTIONS_MAX, RC_QUESTION_TOOL_NAME, rcQuestionsOfToolRequest, resolveRcQuestionAnswers, type RcPendingQuestion } from "./rcQuestions";
 
 /** The first question's options, shared by the observed input and the parsed form. */
 const QUESTION_ONE_OPTIONS = [{ label: "Postgres", description: "relational" }, { label: "SQLite", description: "embedded" }];
@@ -29,21 +29,35 @@ function answerErrorOf(choices: Parameters<typeof resolveRcQuestionAnswers>[1]):
 
 describe("parsing the question dialog out of a can_use_tool request", () => {
   it("reads every question with its header, selection kind and options", () => {
-    expect(rcQuestionsOfToolRequest(RC_QUESTION_TOOL_NAME, INPUT)).toEqual(QUESTIONS);
+    expect(rcQuestionsOfToolRequest(RC_QUESTION_TOOL_NAME, INPUT)).toEqual({ questions: QUESTIONS });
   });
 
   it("reads an absent multiSelect as single-select, and omits an absent header and description", () => {
-    expect(rcQuestionsOfToolRequest(RC_QUESTION_TOOL_NAME, { questions: [{ question: "Q?", options: [{ label: "A" }] }] })).toEqual([{ question: "Q?", multiSelect: false, options: [{ label: "A" }] }]);
+    expect(rcQuestionsOfToolRequest(RC_QUESTION_TOOL_NAME, { questions: [{ question: "Q?", options: [{ label: "A" }] }] })).toEqual({ questions: [{ question: "Q?", multiSelect: false, options: [{ label: "A" }] }] });
   });
 
-  it("is not a question for any other tool, and not one this surface can answer when any question is malformed or has no options", () => {
+  it("is not a question for any other tool", () => {
     expect(rcQuestionsOfToolRequest("Bash", INPUT)).toBeUndefined();
     expect(rcQuestionsOfToolRequest(undefined, INPUT)).toBeUndefined();
-    expect(rcQuestionsOfToolRequest(RC_QUESTION_TOOL_NAME, { questions: [] })).toBeUndefined();
-    expect(rcQuestionsOfToolRequest(RC_QUESTION_TOOL_NAME, { questions: [{ question: "Q?", options: [] }] })).toBeUndefined();
-    expect(rcQuestionsOfToolRequest(RC_QUESTION_TOOL_NAME, { questions: [...INPUT.questions, { question: "", options: [{ label: "A" }] }] })).toBeUndefined();
-    expect(rcQuestionsOfToolRequest(RC_QUESTION_TOOL_NAME, { questions: [{ question: "Q?", options: [{ label: "" }] }] })).toBeUndefined();
-    expect(rcQuestionsOfToolRequest(RC_QUESTION_TOOL_NAME, "not an object")).toBeUndefined();
+  });
+
+  it("marks the question dialog unanswerable, saying why, when any question is malformed, repeated, past a bound or has a repeated label", () => {
+    const unanswerable = (input: unknown): string => {
+      const parsed = rcQuestionsOfToolRequest(RC_QUESTION_TOOL_NAME, input);
+      return parsed !== undefined && "unanswerable" in parsed ? parsed.unanswerable : "answerable";
+    };
+    const long = "x".repeat(RC_QUESTION_FIELD_MAX_CHARS + 1);
+    expect(unanswerable({ questions: [] })).toContain("names no questions");
+    expect(unanswerable("not an object")).toContain("names no questions");
+    expect(unanswerable({ questions: [{ question: "Q?", options: [] }] })).toContain("no options");
+    expect(unanswerable({ questions: [...INPUT.questions, { question: "", options: [{ label: "A" }] }] })).toContain("no text");
+    expect(unanswerable({ questions: [{ question: "Q?", options: [{ label: "" }] }] })).toContain("no label");
+    expect(unanswerable({ questions: [INPUT.questions[0], INPUT.questions[0]] })).toContain("twice");
+    expect(unanswerable({ questions: [{ question: "Q?", options: [{ label: "A" }, { label: "A" }] }] })).toContain('option "A" twice');
+    expect(unanswerable({ questions: [{ question: long, options: [{ label: "A" }] }] })).toContain(`past ${String(RC_QUESTION_FIELD_MAX_CHARS)} characters`);
+    expect(unanswerable({ questions: [{ question: "Q?", options: [{ label: "A", description: long }] }] })).toContain(`past ${String(RC_QUESTION_FIELD_MAX_CHARS)} characters`);
+    expect(unanswerable({ questions: Array.from({ length: RC_QUESTIONS_MAX + 1 }, (_, index) => ({ question: `Q${String(index)}?`, options: [{ label: "A" }] })) })).toContain(`more than ${String(RC_QUESTIONS_MAX)} questions`);
+    expect(unanswerable({ questions: [{ question: "Q?", options: Array.from({ length: RC_QUESTION_OPTIONS_MAX + 1 }, (_, index) => ({ label: `L${String(index)}` })) }] })).toContain(`more than ${String(RC_QUESTION_OPTIONS_MAX)} options`);
   });
 });
 
@@ -67,6 +81,7 @@ describe("resolving a caller's choices into the tool's answers", () => {
     expect(answerErrorOf([[DATABASE_OPTIONS + 1], ["lint"]])).toContain(`question 1 has no option ${String(DATABASE_OPTIONS + 1)}`);
     expect(answerErrorOf([[0], ["lint"]])).toContain("has no option 0");
     expect(resolveRcQuestionAnswers(QUESTIONS, [["SQLite"], [{ text: "" }]])).toEqual({ error: "question 2's free-text answer is empty" });
+    expect(resolveRcQuestionAnswers(QUESTIONS, [["SQLite"], [{ text: "   " }]])).toEqual({ error: "question 2's free-text answer is empty" });
     expect(resolveRcQuestionAnswers(QUESTIONS, [["SQLite"], ["lint", 1]])).toEqual({ error: 'question 2 chose "lint" twice' });
   });
 });
