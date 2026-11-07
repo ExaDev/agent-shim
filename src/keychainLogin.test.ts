@@ -12,6 +12,8 @@ const TOO_LARGE_FOR_ANY_FORM = 4000;
 const TOO_LARGE_FOR_HEX = 2000;
 /** How many leading hex digits of the secret the fake tool's error text quotes, a fragment of a word that a whole-form scrubber would not catch. */
 const QUOTED_FRAGMENT_DIGITS = 24;
+/** A failure `security` gives that is not an item it cannot find, as a locked Keychain gives. */
+const LOCKED_KEYCHAIN_STATUS = 51;
 const FROM_DIR = "/example/identities/work";
 const TO_DIR = "/example/identities/client";
 const FROM_SERVICE = claudeCodeKeychainService(FROM_DIR);
@@ -301,6 +303,13 @@ describe("the self-hosted mint's Keychain checks, which refuse and never delete"
     expect(() => {
       requireNoClaudeCodeLoginForMint({ run: { run }, platform: "darwin" }, LAB_DIR, "lab", login);
     }).toThrow(KeychainLoginError);
+  });
+
+  it("reports a Keychain that cannot be asked at removal as a note saying the identity was removed, never as a failure", () => {
+    const locked = { run: (): { status: number; stdout: string; stderr: string } => ({ status: LOCKED_KEYCHAIN_STATUS, stdout: "", stderr: "User interaction is not allowed." }) };
+    const note = selfHostedLoginLeftover({ run: locked, platform: "darwin" }, LAB_DIR, true, TEST_CLAUDE_LOGIN);
+    expect(note).toContain("The identity was removed, but the Keychain could not be checked");
+    expect(note).toContain(LAB_SERVICE);
   });
 
   it("names a self-hosted identity's leftover login on removal without deleting it, and says nothing for an unmarked identity or off macOS", () => {

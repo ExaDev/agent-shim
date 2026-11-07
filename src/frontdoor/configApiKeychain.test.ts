@@ -246,6 +246,19 @@ describe("config.identity.remove and the credential the Keychain store caches", 
     expect(await api.identity.remove({ name: "work", confirm: true })).toEqual({ action: "removed", kind: "identity", name: "work" });
   });
 
+  it("answers a removal whose leftover check meets a locked Keychain as removed, with the warning, not as a retryable failure", async () => {
+    addIdentity(paths, "lab");
+    fs.writeFileSync(path.join(paths.identitiesDir, "lab", RC_SELF_HOST_MINT_MARKER), `${JSON.stringify({ mintedAt: "2026-01-01T00:00:00.000Z" })}\n`);
+    const runAsync: AsyncRun = async (_command, args) => await Promise.resolve(args[0] === "find-generic-password" ? { status: LOCKED_KEYCHAIN_STATUS, stdout: "", stderr: "" } : { status: 0, stdout: "", stderr: "" });
+    const api = createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths, keychain: { runAsync, platform: "darwin" }, fs: realFarmFs, claudeLogin: TEST_CLAUDE_LOGIN }), {
+      context: { headers: { authorization: `Bearer ${TOKEN}` }, afterResponse: () => undefined },
+    }).config;
+    const removed = await api.identity.remove({ name: "lab", confirm: true });
+    expect(removed.action).toBe("removed");
+    expect(removed.warnings?.join("\n")).toContain("The identity was removed, but the Keychain could not be checked");
+    expect(fs.existsSync(path.join(paths.identitiesDir, "lab"))).toBe(false);
+  });
+
   it("asks nothing about a self-hosted identity's login off macOS", async () => {
     addIdentity(paths, "lab");
     fs.writeFileSync(path.join(paths.identitiesDir, "lab", RC_SELF_HOST_MINT_MARKER), `${JSON.stringify({ mintedAt: "2026-01-01T00:00:00.000Z" })}\n`);

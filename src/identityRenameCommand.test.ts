@@ -38,6 +38,8 @@ describe("identity rename", () => {
   let cacheRemovals: string[];
   /** When true, deleting from the Keychain store fails as a locked Keychain makes it. */
   let keychainDeleteFails: boolean;
+  /** When true, every Keychain lookup fails as a locked Keychain makes it, which says nothing about whether an item is there. */
+  let keychainFindLocked: boolean;
   let duringCacheRemoval: (() => void) | undefined;
   const keychain = createFakeKeychain();
 
@@ -49,6 +51,7 @@ describe("identity rename", () => {
     sessions = [];
     cacheRemovals = [];
     keychainDeleteFails = false;
+    keychainFindLocked = false;
     duringCacheRemoval = undefined;
     keychain.items.clear();
     keychain.calls.length = 0;
@@ -82,7 +85,7 @@ describe("identity rename", () => {
     return {
       fs: realFarmFs,
       credentialCache: { port: cache, platform: "darwin" },
-      run: keychain.run,
+      run: { run: (command, args, input) => (keychainFindLocked && args[0] === "find-generic-password" ? { status: LOCKED_KEYCHAIN_STATUS, stdout: "", stderr: "" } : keychain.run.run(command, args, input)) },
       platform: "darwin",
       home: "/example/home",
       sameDirectory,
@@ -263,6 +266,17 @@ describe("identity rename", () => {
     expect(await run(["identity", "remove", "work", "--yes"])).toBe(0);
     expect(keychain.items.has(claudeCodeKeychainService(path.join(paths.identitiesDir, "work")))).toBe(true);
     expect(warnings).toEqual([]);
+  });
+
+  it("identity remove of a self-hosted identity on a Keychain that cannot be asked still reports the removal, with the warning", async () => {
+    addIdentity(paths, "lab");
+    const labDir = path.join(paths.identitiesDir, "lab");
+    fs.writeFileSync(path.join(labDir, RC_SELF_HOST_MINT_MARKER), `${JSON.stringify({ mintedAt: new Date(NOW_MS).toISOString() })}\n`);
+    keychain.seed(claudeCodeKeychainService(labDir), "alex", "a-made-up-login");
+    keychainFindLocked = true;
+    expect(await run(["identity", "remove", "lab", "--yes"])).toBe(0);
+    expect(out.join("\n")).toContain('Removed identity "lab".');
+    expect(warnings.join("\n")).toContain("The identity was removed, but the Keychain could not be checked");
   });
 
   it("keeps the removed id reserved until the CLI deletes its Keychain cache", async () => {
