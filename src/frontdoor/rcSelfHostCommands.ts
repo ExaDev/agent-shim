@@ -1,6 +1,7 @@
+import { realRcEventDial, type RcDialTarget } from "./connectEffects";
 import type { RcStreamEvent } from "./rcSchemas";
 import type { RcEventFanout } from "./rcStream";
-import type { RcEventWriteResult } from "./rcWrites";
+import { injectRcUserMessage, type RcEventDial, type RcEventWriteResult, type RcInjectDeps } from "./rcWrites";
 
 /**
  * Slash commands on the door's own self-hosted Remote Control surface: the route the goal and compaction verbs take for a session no supervisor owns when the door serves Remote Control itself (`rcSessionCommands.ts` chooses the route).
@@ -16,10 +17,56 @@ export const RC_PERSON_CLIENT_PLATFORM = "web_claude_ai";
 /** The one platform value a command write may carry. */
 export type RcPersonClientPlatform = typeof RC_PERSON_CLIENT_PLATFORM;
 
+/** The brand only `rcSelfHostEventDial` puts on a dial: not exported, so no other code can make a value of the type. */
+const SELF_HOST_DIAL: unique symbol = Symbol("the door's own self-hosted surface");
+
+/** The loopback names a dial to the door's own surface may name; anything else is another machine, the real API host above all. */
+const LOOPBACK_HOSTS: readonly string[] = ["127.0.0.1", "::1", "localhost"];
+
+/**
+ * A dial that reaches the door's own self-hosted surface and nothing else: the one dial a command written as a person's app may ride. Unlike the client half's other dials (`lateRcEventDial`), which fall back to the real API host while no target is resolved, this one refuses: a write whose target is not resolved, or resolves to anything but a loopback address, is never sent.
+ */
+export interface RcSelfHostEventDial {
+  readonly [SELF_HOST_DIAL]: true;
+  readonly writeEvents: RcEventDial["writeEvents"];
+}
+
+/** Builds the dial to the door's own self-hosted surface over `resolve`, the late-bound target of that surface (its transparent port, once bound); `makeDial` is the real event dial in production and a fake in tests. */
+export function rcSelfHostEventDial(resolve: () => RcDialTarget | undefined, makeDial: (target: RcDialTarget) => RcEventDial = realRcEventDial): RcSelfHostEventDial {
+  let built: { readonly for: RcDialTarget; readonly dial: RcEventDial } | undefined;
+  return {
+    [SELF_HOST_DIAL]: true,
+    writeEvents: async (sessionId, headers, body) => {
+      const target = resolve();
+      if (target === undefined) {
+        throw new Error("the door's self-hosted surface is not bound, so a command written as a person's app has nowhere to go but the real API host, and is not sent");
+      }
+      if (!LOOPBACK_HOSTS.includes(target.host)) {
+        throw new Error(`the door's self-hosted surface resolved to ${target.host}, which is not this machine, so a command written as a person's app is not sent there`);
+      }
+      if (built?.for !== target) {
+        built = { for: target, dial: makeDial(target) };
+      }
+      return await built.dial.writeEvents(sessionId, headers, body);
+    },
+  };
+}
+
+/** What a person's-app write needs: the client half's credential accessors and id minting, and the self-hosted dial in place of the general one. */
+export type RcPersonWriteDeps = Omit<RcInjectDeps, "dial"> & { readonly dial: RcSelfHostEventDial };
+
+/** Writes one user message into a session on the door's own surface as the person's app `RC_PERSON_CLIENT_PLATFORM` names: the only write that names a platform other than the observed one, and it can ride only the self-hosted dial. */
+async function writeRcPersonMessage(deps: RcPersonWriteDeps, sessionId: string, text: string): Promise<RcEventWriteResult> {
+  const refuseTeleport = async (): Promise<never> => await Promise.reject(new Error("a person's-app write sends user events only"));
+  return await injectRcUserMessage({ ...deps, dial: { writeEvents: deps.dial.writeEvents, writeTeleportEvents: refuseTeleport } }, sessionId, text, RC_PERSON_CLIENT_PLATFORM);
+}
+
 /** Everything the self-hosted route needs, injected so it runs against fakes in unit tests. */
 export interface RcSelfHostCommandDeps {
-  /** Writes one user message into the session under the person's platform, to the door's own surface. */
-  readonly inject: (sessionId: string, text: string, clientPlatform: RcPersonClientPlatform) => Promise<RcEventWriteResult>;
+  /** What writing a command as a person's app needs, its dial the door's own surface alone. */
+  readonly personWrite: RcPersonWriteDeps;
+  /** Why the door's own surface cannot take a command now (it is not bound, as when the door runs self-hosted without a transparent surface), or undefined when it can. */
+  readonly unavailable: () => string | undefined;
   /** The client attachment's fan-out, on which the worker's answer arrives. */
   readonly fanout: RcEventFanout;
   /** The Claude Code version the session's worker last reported in a `system/init`, or undefined when none has been observed. */
@@ -200,7 +247,7 @@ export async function runSelfHostedSlashCommand<C extends RcSelfHostCommand>(dep
     const answered = new Promise<Outcome<ReportOf<C>>>((resolve) => {
       settle = resolve;
     });
-    const written = await deps.inject(sessionId, text, RC_PERSON_CLIENT_PLATFORM);
+    const written = await writeRcPersonMessage(deps.personWrite, sessionId, text);
     if (!written.ok) {
       return written;
     }

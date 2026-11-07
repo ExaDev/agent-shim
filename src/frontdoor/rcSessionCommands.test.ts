@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { CompactionResult } from "../supervise/realCompact";
-import type { RcSelfHostCommandDeps } from "./rcSelfHostCommands";
+import { rcSelfHostEventDial, type RcSelfHostCommandDeps } from "./rcSelfHostCommands";
 import { RC_GOAL_CONDITION_MAX_CHARS, RC_SESSION_COMMAND_VERIFIED_VERSIONS, createRcSessionCommands, type RcSessionCommandDeps, type RcSupervisedTarget } from "./rcSessionCommands";
 import { createRcEventFanout } from "./rcStream";
 
@@ -69,14 +69,19 @@ function supervisedWorld(options: Readonly<{ version?: string; transcript?: stri
   return { deps, ran, instructed, transcript };
 }
 
-/** A self-hosted session with no supervisor, whose inject records what it was asked and whose worker answers nothing. */
-function selfHostedWorld(version: string | undefined) {
+/** A self-hosted session with no supervisor, whose self-hosted dial records each write and whose surface answers 500; `unavailable` is the surface's refusal, when it gives one. */
+function selfHostedWorld(version: string | undefined, unavailable?: string) {
   const written: string[] = [];
-  const selfHost: RcSelfHostCommandDeps = {
-    inject: async (_sessionId, text) => {
-      written.push(text);
-      return await Promise.resolve({ ok: false, message: "the self-hosted surface refused the write" });
+  const dial = rcSelfHostEventDial(() => ({ host: "127.0.0.1", port: 47_592 }), () => ({
+    writeEvents: async (_sessionId, _headers, body) => {
+      written.push(body);
+      return await Promise.resolve({ status: 500, body: "the self-hosted surface refused the write" });
     },
+    writeTeleportEvents: async () => await Promise.reject(new Error("unused")),
+  }));
+  const selfHost: RcSelfHostCommandDeps = {
+    personWrite: { credentialOf: () => ({ authorization: "Bearer sk-ant-oat", anthropicVersion: undefined, anthropicClientPlatform: "claude_code_cli" }), noteSequenceNums: () => undefined, newUuid: () => "00000000-0000-4000-8000-000000000001", dial },
+    unavailable: () => unavailable,
     fanout: createRcEventFanout(),
     versionOf: () => version,
     setTimer: () => () => undefined,
@@ -183,8 +188,15 @@ describe("goal and compaction control over Remote Control, by route", () => {
     expect(unknown.written).toEqual([]);
     const verified = selfHostedWorld(VERIFIED_VERSION);
     const delivered = await createRcSessionCommands(verified.deps).goalClear(SESSION);
-    expect(delivered).toEqual({ ok: false, message: "the self-hosted surface refused the write" });
-    expect(verified.written).toEqual(["/goal clear"]);
+    expect(delivered).toEqual({ ok: false, message: "the API answered HTTP 500 to the injected event: the self-hosted surface refused the write" });
+    expect(verified.written.map((body) => body.includes('"content":"/goal clear"'))).toEqual([true]);
+  });
+
+  it("refuses an unsupervised session when the door self-hosts but its own surface is unbound, naming why, and writes nothing", async () => {
+    const unbound = selfHostedWorld(VERIFIED_VERSION, "AGENT_SHIM_TRANSPARENT_SURFACE is not set");
+    const refused = await createRcSessionCommands(unbound.deps).goalSet(SESSION, "tests pass");
+    expect(refused.ok ? "" : refused.message).toContain("cannot take a command: AGENT_SHIM_TRANSPARENT_SURFACE is not set");
+    expect(unbound.written).toEqual([]);
   });
 
   it("refuses a session neither route reaches with the reason, and an unknown one as unknown", async () => {
