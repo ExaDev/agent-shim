@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 
 import { applyAgentTaskEvent, type LiveTask, type LiveTaskBook } from "../agents/liveTasks";
@@ -71,7 +72,7 @@ export const RC_PENDING_PER_SESSION_MAX = 64;
 export const RC_REQUEST_ID_MAX_CHARS = 128;
 
 /**
- * How many retired request ids one session remembers. A retired id is kept so a late duplicate of its `control_request` (a stream replay after the door's own answer) is not re-listed; the window is twice the pending cap, so it holds a full pending set that retired together plus as many again that retired before it, and the oldest tombstone is forgotten first. A duplicate arriving after its tombstone was forgotten is filed as a new request, and a dropped id forgotten the same way is counted as dropped again.
+ * How many ids each of a session's two records of requests the door will not list again holds: the retired ids (requests that stopped awaiting an answer) and the dropped ids (requests refused at a cap, kept in a record of their own so a flood of them cannot push an answered request's id out). A retired id is kept so a late duplicate of its `control_request` (a stream replay after the door's own answer) is not re-listed; the window is twice the pending cap, so it holds a full pending set that retired together plus as many again that retired before it, and the oldest id is forgotten first. A duplicate arriving after its id was forgotten is filed as a new request, and a dropped id forgotten the same way is counted as dropped again.
  */
 export const RC_RETIRED_TOMBSTONES_MAX = 2 * RC_PENDING_PER_SESSION_MAX;
 
@@ -107,8 +108,10 @@ interface RcSessionRecord {
   anthropicClientPlatform: string | undefined;
   /** The session's control requests awaiting an answer, keyed by the id a `control_response` must echo. An entry lives exactly as long as the worker waits on it: until a `control_response` answers it, the worker withdraws it with a `control_cancel_request`, an accepted registration names `idle` or a new worker epoch, or the session itself expires. The worker sets no deadline of its own, so time alone never retires an entry. */
   readonly pending: Map<string, RcPendingRequestRecord>;
-  /** The ids of the control requests that stopped awaiting an answer (and of requests the door counted as dropped), in the order they were remembered, oldest first, bounded by `RC_RETIRED_TOMBSTONES_MAX`. The same request crosses the door on the worker's event write and again on the client read stream, and a stream replay can repeat it later still; remembering the id is what stops a later copy from birthing a request already answered, since no deadline bounds when that copy can arrive. */
+  /** The ids of the control requests that stopped awaiting an answer, in the order they were remembered, oldest first, bounded by `RC_RETIRED_TOMBSTONES_MAX`. The same request crosses the door on the worker's event write and again on the client read stream, and a stream replay can repeat it later still; remembering the id is what stops a later copy from birthing a request already answered, since no deadline bounds when that copy can arrive. */
   readonly retired: Set<string>;
+  /** The ids of the requests the door counted as dropped (past the pending cap or the id length cap), oldest first and bounded by `RC_RETIRED_TOMBSTONES_MAX`, so the same request seen again, on either channel, is not counted twice. An id past `RC_REQUEST_ID_MAX_CHARS` is held as a digest of itself, since holding the id is what the cap refuses. */
+  readonly dropped: Set<string>;
   /** The worker state the latest worker registration named, with when that exchange was observed. */
   workerState: RcWorkerFact<string> | undefined;
   /** The idle the latest heartbeat carried, with when that exchange was observed. */
@@ -506,6 +509,24 @@ function parseRcRequestBody(kind: RcRequestBodyKind, body: string): RcRequestBod
   return { controlRequests, answeredRequestIds, withdrawnRequestIds, idleSeconds: undefined, workerStatus: undefined, workerEpoch: undefined, payloads };
 }
 
+/** Adds one key to a record of ids kept oldest first, forgetting the oldest once `RC_RETIRED_TOMBSTONES_MAX` are held, so the record stays bounded however long the session lives. */
+function rememberBounded(record: Set<string>, key: string): void {
+  // A Set keeps insertion order, so the first key is the oldest remembered; re-remembering a key moves it to the newest end.
+  record.delete(key);
+  record.add(key);
+  if (record.size > RC_RETIRED_TOMBSTONES_MAX) {
+    const [oldest] = record;
+    if (oldest !== undefined) {
+      record.delete(oldest);
+    }
+  }
+}
+
+/** The key a dropped request's id is remembered under: the id itself, or for one past `RC_REQUEST_ID_MAX_CHARS` a SHA-256 digest of it (64 hex characters, within the cap), so the record never holds more than the cap per entry. */
+function droppedKeyOf(requestId: string): string {
+  return requestId.length <= RC_REQUEST_ID_MAX_CHARS ? requestId : createHash("sha256").update(requestId).digest("hex");
+}
+
 /** Creates the tracker. One per door process; everything it holds dies with it. */
 export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTracker {
   const entries = new Map<string, RcSessionRecord>();
@@ -513,15 +534,7 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
   let observationSequence = 0;
   /** Remembers one request id as no longer to be listed, forgetting the oldest remembered id once the window is full, so the record stays bounded however long the session lives. */
   const rememberRetired = (entry: RcSessionRecord, requestId: string): void => {
-    // A Set keeps insertion order, so the first id is the oldest remembered; re-remembering an id moves it to the newest end.
-    entry.retired.delete(requestId);
-    entry.retired.add(requestId);
-    if (entry.retired.size > RC_RETIRED_TOMBSTONES_MAX) {
-      const [oldest] = entry.retired;
-      if (oldest !== undefined) {
-        entry.retired.delete(oldest);
-      }
-    }
+    rememberBounded(entry.retired, requestId);
   };
   /** Retires one pending request, telling the sink only when it was still pending, so a request answered twice (on the stream and on the worker's own write) retires once. */
   const retirePending = (entry: RcSessionRecord, requestId: string, reason: RcPendingRetireReason): void => {
@@ -534,7 +547,8 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
    * Files one observed control request, telling the sink only of a request not already pending, since the same request is observed both on the worker's event write and on the client read stream. A request that already retired is not filed again (its later copy is the same request, not a new one), and a request already pending keeps the instant it was first observed, so the oldest-first order is the order the worker asked in. A request is counted as dropped instead of stored when its id is not one the protocol mints or the session already holds the pending cap.
    */
   const addPending = (entry: RcSessionRecord, request: Omit<RcPendingRequestRecord, "sessionId" | "observedAt" | "observedSequence">, now: number): void => {
-    if (entry.retired.has(request.requestId)) {
+    const droppedKey = droppedKeyOf(request.requestId);
+    if (entry.retired.has(request.requestId) || entry.dropped.has(droppedKey)) {
       return;
     }
     const already = entry.pending.get(request.requestId);
@@ -543,13 +557,9 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
       return;
     }
     if (request.requestId.length > RC_REQUEST_ID_MAX_CHARS || entry.pending.size >= RC_PENDING_PER_SESSION_MAX) {
-      // Counted once: the id is remembered as retired, so a replay of the same request does not count it again. An id past the length cap is not remembered, since holding it is what the cap refuses.
-      if (!entry.retired.has(request.requestId)) {
-        entry.droppedPending += 1;
-        if (request.requestId.length <= RC_REQUEST_ID_MAX_CHARS) {
-          rememberRetired(entry, request.requestId);
-        }
-      }
+      // Counted once: the id is remembered as dropped, so a replay of the same request, on either channel, does not count it again.
+      entry.droppedPending += 1;
+      rememberBounded(entry.dropped, droppedKey);
       return;
     }
     observationSequence += 1;
@@ -581,7 +591,7 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
 
   /** Begins describing one session. Only for an id the tracker does not hold: an entry is never replaced, so a session appears once and every appearance is matched by one ending. */
   const birth = (id: string, facts: Readonly<{ oauthAuthorization: string | undefined; anthropicVersion: string | undefined; anthropicClientPlatform: string | undefined; identity: string | undefined }>): RcSessionRecord => {
-    const record: RcSessionRecord = { id, createdAt: deps.now(), lastSeenAt: deps.now(), ...facts, pending: new Map(), retired: new Set(), workerState: undefined, workerIdleSeconds: undefined, model: undefined, cwd: undefined, sequenceNum: undefined, liveTasks: new Map(), workerEpoch: undefined, droppedPending: 0, answering: new Set() };
+    const record: RcSessionRecord = { id, createdAt: deps.now(), lastSeenAt: deps.now(), ...facts, pending: new Map(), retired: new Set(), dropped: new Set(), workerState: undefined, workerIdleSeconds: undefined, model: undefined, cwd: undefined, sequenceNum: undefined, liveTasks: new Map(), workerEpoch: undefined, droppedPending: 0, answering: new Set() };
     entries.set(id, record);
     deps.onTransition?.({ kind: "session-appeared", session: id, at: record.createdAt });
     return record;
