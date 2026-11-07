@@ -32,16 +32,16 @@ export interface RcStatusReport {
 /**
  * Where a session's worker state is read from, chosen per session, so one door serves every kind of Remote Control session at once:
  *
- * - `selfHosted`: the door's own self-hosted Remote Control service, present only when the door runs it. A session it holds was created against the door itself (a launch with no Anthropic login, or one whose inference goes to a third-party provider), so the service's own state is the truth, read in process: no credential is needed, and no request crosses the door's transparent surface to be observed as the session's traffic. These reads are live and are never held.
+ * - `selfHosted`: the door's own self-hosted Remote Control service, present only when the door runs it. A session it owns was created against the door itself (a launch with no Anthropic login, or one whose inference goes to a third-party provider), so the service's own state is the truth, read in process: no request crosses the door's transparent surface to be observed as the session's traffic. A session is owned when the service holds it or when its credential is the one the service minted, so a door restart or a retirement leaves a session answered with the service's own reason and never sent to the real service. These reads are live and are never held.
  * - `service`: the real Remote Control service, for a session created against claude.ai (a native Anthropic login, or a provider launch that still holds one), read with the session's observed or persisted OAuth credential (`readRcWorkerState` over a dial to the real API host, never the door's own surface).
  *
  * A session the self-hosted service does not hold and for which the door has no OAuth credential cannot be read from either, and is reported with the reason.
  */
 export interface RcWorkerStateBackends {
   readonly selfHosted?: {
-    /** Whether the self-hosted service holds the session. */
-    readonly holds: (sessionId: string) => boolean;
-    /** The service's own worker state for a session it holds (`RcSelfHostSurface.readWorkerState`). */
+    /** Whether the session is the self-hosted service's: it holds it, or the credential is the one the service minted (`RcSelfHostSurface.ownsSession`). */
+    readonly owns: (sessionId: string, authorization: string | undefined) => boolean;
+    /** The service's own worker state for a session it owns, or its reason for holding none, such as a session it has since retired (`RcSelfHostSurface.readWorkerState`). */
     readonly read: (sessionId: string) => RcWorkerStateReadResult;
   };
   /** Reads one session's worker state from the real service with the credential `credentialOf` holds for it. */
@@ -152,7 +152,7 @@ export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
         trackedBefore
           .filter((status) => status.workerState === undefined)
           .map(async (status) => {
-            if (deps.backends.selfHosted?.holds(status.id) === true) {
+            if (deps.backends.selfHosted?.owns(status.id, deps.credentialOf(status.id)?.authorization) === true) {
               const read = deps.backends.selfHosted.read(status.id);
               if (read.ok) {
                 deps.noteReadWorkerState(status.id, read.workerStatus, deps.now());
@@ -177,7 +177,7 @@ export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
       Promise.all(
         registered.map(async (session): Promise<RcUnobservedSession> => {
           const base = { id: session.id, localSessionId: session.localSessionId, pid: session.pid };
-          if (deps.backends.selfHosted?.holds(session.id) === true) {
+          if (deps.backends.selfHosted?.owns(session.id, deps.persistedCredentialOf(session.id)?.authorization) === true) {
             const read = deps.backends.selfHosted.read(session.id);
             return read.ok
               ? { ...base, reason: SELF_HOSTED_QUIET_REASON, workerState: { value: read.workerStatus, observedAt: deps.now(), source: "read" }, workerStateUnavailable: undefined }

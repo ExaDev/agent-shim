@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
 import { serveRouted } from "./pipeline";
-import { RC_SELF_HOST_KEEPALIVE_MS, createRcSelfHostSurface, type RcSelfHostCredentialRecord, type RcWebSearchBackend } from "./rcSelfHost";
+import { RC_SELF_HOST_KEEPALIVE_MS, createRcSelfHostSurface, rcSelfHostedChoiceOf, type RcSelfHostCredentialRecord, type RcWebSearchBackend } from "./rcSelfHost";
 import { RC_WEB_FETCH_MAX_BYTES, type RcWebFetchOutcome, type RcWebFetcher } from "./rcWebFetch";
 import { createRcCredentialStore } from "./rcCredentialStore";
 import { createFakeFarmFs, followsLaunchFlag } from "../test-helpers";
@@ -350,14 +350,24 @@ describe("the self-hosted Remote Control session family", () => {
     const world = await makeWorld();
     worlds.push(world);
     const { id, workerJwt } = await createSession(world);
-    expect(world.surface.holdsSession(id)).toBe(true);
-    expect(world.surface.holdsSession("cse_00000000-0000-4000-8000-0000000000ff")).toBe(false);
+    expect(world.surface.ownsSession(id, undefined)).toBe(true);
     expect(world.surface.readWorkerState(id)).toEqual({ ok: false, message: expect.stringContaining("its worker has not reported one") as unknown });
     const read = await call(world.port, "GET", `/v1/code/sessions/${id}/worker`, undefined, { authorization: `Bearer ${workerJwt}` });
     expect((JSON.parse(read.body) as { worker: { worker_status: unknown } }).worker.worker_status).toBeNull();
     await call(world.port, "PUT", `/v1/code/sessions/${id}/worker`, { worker_status: "requires_action", worker_epoch: 1 }, { authorization: `Bearer ${workerJwt}` });
     expect(world.surface.readWorkerState(id)).toEqual({ ok: true, workerStatus: "requires_action" });
     expect(world.surface.readWorkerState("cse_00000000-0000-4000-8000-0000000000ff")).toEqual({ ok: false, message: expect.stringContaining("holds no session cse_00000000-0000-4000-8000-0000000000ff") as unknown });
+  });
+
+  it("owns a session it holds whatever credential is presented, and a session it does not hold only for the credential it minted", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const { id } = await createSession(world);
+    const unknown = "cse_00000000-0000-4000-8000-0000000000ff";
+    expect(world.surface.ownsSession(id, "Bearer sk-ant-oat2")).toBe(true);
+    const choose = rcSelfHostedChoiceOf(world.surface);
+    const presented: readonly Record<string, string>[] = [{ authorization: `Bearer ${MINTED_OAUTH_TOKEN}` }, { authorization: `bearer ${MINTED_OAUTH_TOKEN}` }, { authorization: "Bearer sk-ant-oat2" }, { authorization: MINTED_OAUTH_TOKEN }, {}];
+    expect(presented.map((headers) => choose(unknown, headers))).toEqual([true, true, false, false, false]);
   });
 
   it("answers a stale worker epoch with the protocol's own conflict status and header", async () => {

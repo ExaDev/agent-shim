@@ -55,14 +55,19 @@ export interface RcEventDial {
 }
 
 /**
- * A dial that chooses its backend per session: the door's own self-hosted Remote Control service for a session it holds (one created against the door itself, with no Anthropic login), and the real service for every other session (one created against claude.ai). One door serves both kinds at once, so a door in self-hosted mode still reaches a claude.ai session's real service, and never sends a self-hosted session's writes to claude.ai.
+ * Whether a call belongs to the door's own self-hosted Remote Control service rather than the real one, decided from the session and the headers the call would carry (`RcSelfHostSurface.ownsSession`). The headers matter because the credential says whose a session is even when the service holds nothing of it any longer.
  */
-export function perSessionRcEventDial(holdsSelfHosted: (sessionId: string) => boolean, selfHosted: RcEventDial, service: RcEventDial): RcEventDial {
-  const dialOf = (sessionId: string): RcEventDial => (holdsSelfHosted(sessionId) ? selfHosted : service);
+export type RcSelfHostedChoice = (sessionId: string, headers: Readonly<Record<string, string>>) => boolean;
+
+/**
+ * A dial that chooses its backend per call: the door's own self-hosted Remote Control service for a session that is its (one created against the door itself, with no Anthropic login, or one carrying the credential the service minted), and the real service for every other session (one created against claude.ai). One door serves both kinds at once, so a door in self-hosted mode still reaches a claude.ai session's real service, and never sends a credential the self-hosted service would accept to claude.ai.
+ */
+export function perSessionRcEventDial(isSelfHosted: RcSelfHostedChoice, selfHosted: RcEventDial, service: RcEventDial): RcEventDial {
+  const dialOf = (sessionId: string, headers: Readonly<Record<string, string>>): RcEventDial => (isSelfHosted(sessionId, headers) ? selfHosted : service);
   return {
-    writeEvents: async (sessionId, headers, body) => await dialOf(sessionId).writeEvents(sessionId, headers, body),
-    writeTeleportEvents: async (sessionId, headers, body) => await dialOf(sessionId).writeTeleportEvents(sessionId, headers, body),
-    readWorker: async (sessionId, headers, signal) => await dialOf(sessionId).readWorker(sessionId, headers, signal),
+    writeEvents: async (sessionId, headers, body) => await dialOf(sessionId, headers).writeEvents(sessionId, headers, body),
+    writeTeleportEvents: async (sessionId, headers, body) => await dialOf(sessionId, headers).writeTeleportEvents(sessionId, headers, body),
+    readWorker: async (sessionId, headers, signal) => await dialOf(sessionId, headers).readWorker(sessionId, headers, signal),
   };
 }
 

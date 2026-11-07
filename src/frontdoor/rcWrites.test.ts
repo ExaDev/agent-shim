@@ -998,4 +998,30 @@ describe("the per-session choice of write dial", () => {
     await dial.readWorker(selfHostedId, {}, new AbortController().signal);
     expect(calls).toEqual([`self-hosted events ${selfHostedId}`, `service events ${SESSION_ID}`, `service teleport ${SESSION_ID}`, `self-hosted worker ${selfHostedId}`]);
   });
+
+  it("decides from the headers a call carries as well as from the session, so a local credential never reaches the real service", async () => {
+    const calls: string[] = [];
+    const recording = (backend: string): RcEventDial => ({
+      writeEvents: async () => {
+        calls.push(`${backend} events`);
+        return await Promise.resolve({ status: HTTP_STATUS.ok, body: "{}" });
+      },
+      writeTeleportEvents: async () => {
+        calls.push(`${backend} teleport`);
+        return await Promise.resolve({ status: HTTP_STATUS.ok, body: "{}" });
+      },
+      readWorker: async () => {
+        calls.push(`${backend} worker`);
+        return await Promise.resolve({ status: HTTP_STATUS.ok, body: "{}" });
+      },
+    });
+    const local = { authorization: "Bearer local-minted" };
+    // The service holds no session at all (a restarted door), yet the credential is the one it minted.
+    const dial = perSessionRcEventDial((_id, headers) => headers.authorization === local.authorization, recording("self-hosted"), recording("service"));
+    await dial.writeEvents(SESSION_ID, local, "{}");
+    await dial.writeTeleportEvents(SESSION_ID, local, "{}");
+    await dial.readWorker(SESSION_ID, local, new AbortController().signal);
+    await dial.readWorker(SESSION_ID, { authorization: "Bearer other" }, new AbortController().signal);
+    expect(calls).toEqual(["self-hosted events", "self-hosted teleport", "self-hosted worker", "service worker"]);
+  });
 });

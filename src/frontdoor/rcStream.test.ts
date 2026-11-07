@@ -685,5 +685,11 @@ describe("the per-session choice of stream dial", () => {
     await expect(dial.openStream(serviceId, {}, undefined, new AbortController().signal)).rejects.toThrow("not opened");
     await expect(dial.openStream(selfHostedId, {}, undefined, new AbortController().signal)).rejects.toThrow("not opened");
     expect(calls).toEqual([`self-hosted presence ${selfHostedId}`, `service mark_read ${serviceId}`, `service stream ${serviceId}`, `self-hosted stream ${selfHostedId}`]);
+    // A credential the service minted routes to it whichever session id it travels with: the service may have restarted, and the real host must never see the credential.
+    const byCredential = perSessionRcStreamDial((_id, headers) => headers.authorization === "Bearer local-minted", recording("self-hosted"), recording("service"));
+    calls.length = 0;
+    await byCredential.markRead(serviceId, { authorization: "Bearer local-minted" }, undefined);
+    await byCredential.markRead(serviceId, { authorization: "Bearer other" }, undefined);
+    expect(calls).toEqual([`self-hosted mark_read ${serviceId}`, `service mark_read ${serviceId}`]);
   });
 });

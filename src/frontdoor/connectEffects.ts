@@ -284,14 +284,20 @@ const NO_CHUNKS: AsyncIterable<Uint8Array> = {
   }),
 };
 
+/** The refusal a late-targeted dial makes before its target is bound. The target is the door's own surface, so the only other place a call could go is the real API host, which a credential the door's own service would accept must never reach. */
+const UNBOUND_TARGET_MESSAGE = "the door's own Remote Control surface is not serving yet, so the call was refused rather than sent to the real API host";
+
 /**
- * A write dial whose target is resolved at call time rather than construction: the self-hosted Remote Control mode points the door's client half at the door's own transparent surface, whose port is known only once the connect listener has bound, and every other caller keeps the construction-time target (or the default real host when the resolver has nothing yet). The underlying dial is built once per resolved target and reused, so the connection pooling a dial exists for is preserved.
+ * A write dial whose target is resolved at call time rather than construction: the self-hosted Remote Control mode points the door's client half at the door's own transparent surface, whose port is known only once the connect listener has bound. A call made while the resolver has no target yet is refused, never sent to the default real host: this dial exists only for the door's own surface, and what it carries is the door's own credential. The underlying dial is built once per resolved target and reused, so the connection pooling a dial exists for is preserved.
  */
 export function lateRcEventDial(resolve: () => RcDialTarget | undefined): RcEventDial {
-  let built: { readonly for: RcDialTarget | undefined; readonly dial: RcEventDial } | undefined;
+  let built: { readonly for: RcDialTarget; readonly dial: RcEventDial } | undefined;
   const dialFor = (): RcEventDial => {
     const target = resolve();
-    if (built === undefined || built.for !== target) {
+    if (target === undefined) {
+      throw new Error(UNBOUND_TARGET_MESSAGE);
+    }
+    if (built?.for !== target) {
       built = { for: target, dial: realRcEventDial(target) };
     }
     return built.dial;
@@ -304,13 +310,16 @@ export function lateRcEventDial(resolve: () => RcDialTarget | undefined): RcEven
 }
 
 /**
- * The stream dial's own late-targeted sibling, for the same reason: the self-hosted mode's attachment stream dials the door's own transparent surface once its port is bound.
+ * The stream dial's own late-targeted sibling, for the same reason and with the same refusal: the self-hosted mode's attachment stream dials the door's own transparent surface once its port is bound.
  */
 export function lateRcStreamDial(resolve: () => RcDialTarget | undefined): RcStreamDial {
-  let built: { readonly for: RcDialTarget | undefined; readonly dial: RcStreamDial } | undefined;
+  let built: { readonly for: RcDialTarget; readonly dial: RcStreamDial } | undefined;
   const dialFor = (): RcStreamDial => {
     const target = resolve();
-    if (built === undefined || built.for !== target) {
+    if (target === undefined) {
+      throw new Error(UNBOUND_TARGET_MESSAGE);
+    }
+    if (built?.for !== target) {
       built = { for: target, dial: realRcStreamDial(target) };
     }
     return built.dial;

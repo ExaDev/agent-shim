@@ -1,5 +1,5 @@
 import { HTTP_STATUS } from "../codex/http";
-import type { RcObservedCredential } from "./rcWrites";
+import type { RcObservedCredential, RcSelfHostedChoice } from "./rcWrites";
 import type { RcStreamEnvelope, RcStreamEvent } from "./rcSchemas";
 
 /**
@@ -173,13 +173,13 @@ export interface RcStreamDial {
   readonly openStream: (sessionId: string, headers: Readonly<Record<string, string>>, resume: { readonly fromSequenceNum: number } | undefined, signal: AbortSignal) => Promise<RcStreamAnswer>;
 }
 
-/** The stream dial's per-session backend choice, for the same reason as `perSessionRcEventDial`: a session the door's own self-hosted service holds attaches to it, and every other session to the real service. */
-export function perSessionRcStreamDial(holdsSelfHosted: (sessionId: string) => boolean, selfHosted: RcStreamDial, service: RcStreamDial): RcStreamDial {
-  const dialOf = (sessionId: string): RcStreamDial => (holdsSelfHosted(sessionId) ? selfHosted : service);
+/** The stream dial's per-call backend choice, for the same reason as `perSessionRcEventDial`: a session that is the door's own self-hosted service's, or that carries the credential it minted, attaches to it, and every other session to the real service. */
+export function perSessionRcStreamDial(isSelfHosted: RcSelfHostedChoice, selfHosted: RcStreamDial, service: RcStreamDial): RcStreamDial {
+  const dialOf = (sessionId: string, headers: Readonly<Record<string, string>>): RcStreamDial => (isSelfHosted(sessionId, headers) ? selfHosted : service);
   return {
-    announcePresence: async (sessionId, headers, clientId, clear) => await dialOf(sessionId).announcePresence(sessionId, headers, clientId, clear),
-    markRead: async (sessionId, headers, eventId) => await dialOf(sessionId).markRead(sessionId, headers, eventId),
-    openStream: async (sessionId, headers, resume, signal) => await dialOf(sessionId).openStream(sessionId, headers, resume, signal),
+    announcePresence: async (sessionId, headers, clientId, clear) => await dialOf(sessionId, headers).announcePresence(sessionId, headers, clientId, clear),
+    markRead: async (sessionId, headers, eventId) => await dialOf(sessionId, headers).markRead(sessionId, headers, eventId),
+    openStream: async (sessionId, headers, resume, signal) => await dialOf(sessionId, headers).openStream(sessionId, headers, resume, signal),
   };
 }
 
