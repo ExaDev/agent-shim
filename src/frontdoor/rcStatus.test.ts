@@ -14,6 +14,8 @@ const REFUSED_SESSION_ID = "cse_00000000-0000-4000-8000-000000000003";
 /** Where the fake clock starts, so the expected timestamps are the constants the tests name. */
 const CLOCK_START_MS = 1_000;
 const OAUTH_BEARER = "Bearer sk-ant-oat";
+/** The same session's bearer after its client refreshed it, built from the base value so the source holds no literal token-shaped string for the repository's secret-redaction filter to rewrite. */
+const REFRESHED_OAUTH_BEARER = `${OAUTH_BEARER}-refreshed`;
 
 /** Drives one exchange through the tracker the way the door's adapters do: request facts, the request body, then the response. */
 function exchange(tracker: RcSessionTracker, request: Readonly<{ method: string; url: string; authorization?: string; requestBody?: string; identity?: string }>, respondWith: Readonly<{ status: number; body?: string }>): void {
@@ -154,7 +156,7 @@ describe("the Remote Control status with worker states read from the service", (
     expect((await statusesOf(resolve, REFUSED_SESSION_ID))[0]?.workerStateUnavailable).toContain("HTTP 401");
     expect(reads.filter((id) => id === REFUSED_SESSION_ID)).toHaveLength(1);
     // The session's client refreshes its bearer, which the door observes: the held 401 described the old one, so the next status reads again at once.
-    exchange(tracker, { method: "POST", url: `/v1/code/sessions/${REFUSED_SESSION_ID}/client/presence`, authorization: "Bearer sk-ant-REDACTED" }, { status: HTTP_STATUS.ok });
+    exchange(tracker, { method: "POST", url: `/v1/code/sessions/${REFUSED_SESSION_ID}/client/presence`, authorization: REFRESHED_OAUTH_BEARER }, { status: HTTP_STATUS.ok });
     await resolve();
     expect(reads.filter((id) => id === REFUSED_SESSION_ID)).toHaveLength(2);
   });
