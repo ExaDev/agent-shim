@@ -1,3 +1,10 @@
+## [11.87.4](https://github.com/ExaDev/agent-shim/compare/v11.87.3...v11.87.4) (2026-11-07)
+
+### Bug Fixes
+
+* attribute quota moves to their upstream route ([7b95cff](https://github.com/ExaDev/agent-shim/commit/7b95cff70d82532f96adc39475d58eeb51f01ca6))
+* retry failed destination compaction ([54f197c](https://github.com/ExaDev/agent-shim/commit/54f197c0cb75c78b0be2a8eef099fa97219f52dd))
+
 ## [11.87.3](https://github.com/ExaDev/agent-shim/compare/v11.87.2...v11.87.3) (2026-11-07)
 
 ### Bug Fixes
