@@ -78,6 +78,27 @@ describe("the captured 2.1.319 question exchange", () => {
     expect(body === undefined ? undefined : JSON.parse(body)).toEqual({ events: [{ payload: { type, response } }] });
   });
 
+  it("builds exactly the free-text answer the CLI accepted: typed text in place of a single-select pick, and added to a multi-select one", async () => {
+    const { tracker } = trackerWithSession();
+    tracker.fileStreamEvent(SESSION_ID, envelopeOf(fixture.freeTextQuestion));
+    const written: string[] = [];
+    const dial: RcEventDial = {
+      writeEvents: async (_sessionId, _headers, body) => {
+        written.push(body);
+        return await Promise.resolve({ status: HTTP_STATUS.ok, body: JSON.stringify({ results: [{ sequence_num: 1 }] }) });
+      },
+      writeTeleportEvents: async () => await Promise.reject(new Error("the answer path never teleports")),
+    };
+    const credentialOf = () => ({ authorization: "Bearer sk-ant-oat", anthropicVersion: undefined, anthropicClientPlatform: undefined });
+    const freeTextId = fixture.freeTextQuestion.payload.request_id;
+    // The selections the live session was answered with: `--other 1:CockroachDB --choose 2:lint --other "2:fmt check"`.
+    const result = await answerRcControlRequest({ credentialOf, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, pendingToolInputOf: tracker.pendingToolInputOf, claimPending: tracker.claimPending, noteSequenceNums: tracker.noteSequenceNums, dial }, SESSION_ID, freeTextId, { approve: true, message: undefined, choices: [[{ text: "CockroachDB" }], ["lint", { text: "fmt check" }]] });
+    expect(result.ok).toBe(true);
+    const [body] = written;
+    const { type, response } = fixture.freeTextAnswer.payload;
+    expect(body === undefined ? undefined : JSON.parse(body)).toEqual({ events: [{ payload: { type, response } }] });
+  });
+
   it("retires the question on the captured dismissal: the worker's own deny, then its control_cancel_request", () => {
     const { tracker } = trackerWithSession();
     tracker.fileStreamEvent(SESSION_ID, envelopeOf(fixture.dismissedQuestion));

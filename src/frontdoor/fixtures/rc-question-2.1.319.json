@@ -1,6 +1,6 @@
 {
   "cliVersion": "2.1.319",
-  "source": "frontdoor rc watch --json on a self-hosted rig session driven by scripts/rc-mock-provider.mts with RC_MOCK_QUESTION=1; ids replaced by placeholders",
+  "source": "frontdoor rc watch --json on self-hosted rig sessions driven by scripts/rc-mock-provider.mts with RC_MOCK_QUESTION=1 (the free-text pair on the isolated lab, scripts/rc-self-host-lab.mts); ids replaced by placeholders",
   "question": {
     "event_id": "00000000-0000-4000-8000-000000000001",
     "event_type": "control_request",
@@ -211,5 +211,124 @@
       "uuid": "00000000-0000-4000-8000-000000000007"
     },
     "created_at": "2026-11-07T09:58:30.129Z"
+  },
+  "freeTextQuestion": {
+    "event_id": "00000000-0000-4000-8000-000000000008",
+    "event_type": "control_request",
+    "sequence_num": 35,
+    "source": "worker",
+    "payload": {
+      "type": "control_request",
+      "request_id": "00000000-0000-4000-8000-000000000009",
+      "request": {
+        "subtype": "can_use_tool",
+        "tool_name": "AskUserQuestion",
+        "display_name": "AskUserQuestion",
+        "input": {
+          "questions": [
+            {
+              "question": "Which database should the rig proof use?",
+              "header": "Database",
+              "options": [
+                {
+                  "label": "Postgres",
+                  "description": "the relational choice"
+                },
+                {
+                  "label": "SQLite",
+                  "description": "the embedded choice"
+                }
+              ],
+              "multiSelect": false
+            },
+            {
+              "question": "Which rig checks should run?",
+              "header": "Checks",
+              "options": [
+                {
+                  "label": "lint",
+                  "description": "the style check"
+                },
+                {
+                  "label": "typecheck",
+                  "description": "the type check"
+                },
+                {
+                  "label": "test",
+                  "description": "the unit suite"
+                }
+              ],
+              "multiSelect": true
+            }
+          ]
+        },
+        "tool_use_id": "toolu_mock_1",
+        "description": "",
+        "requires_user_interaction": true
+      },
+      "session_id": "cse_00000000-0000-4000-8000-000000000000",
+      "uuid": "00000000-0000-4000-8000-000000000008"
+    },
+    "created_at": "2026-11-07T17:37:10.145Z"
+  },
+  "freeTextAnswer": {
+    "event_id": "00000000-0000-4000-8000-000000000010",
+    "event_type": "control_response",
+    "sequence_num": 41,
+    "source": "client",
+    "payload": {
+      "type": "control_response",
+      "response": {
+        "subtype": "success",
+        "request_id": "00000000-0000-4000-8000-000000000009",
+        "response": {
+          "behavior": "allow",
+          "updatedInput": {
+            "questions": [
+              {
+                "question": "Which database should the rig proof use?",
+                "header": "Database",
+                "options": [
+                  {
+                    "label": "Postgres",
+                    "description": "the relational choice"
+                  },
+                  {
+                    "label": "SQLite",
+                    "description": "the embedded choice"
+                  }
+                ],
+                "multiSelect": false
+              },
+              {
+                "question": "Which rig checks should run?",
+                "header": "Checks",
+                "options": [
+                  {
+                    "label": "lint",
+                    "description": "the style check"
+                  },
+                  {
+                    "label": "typecheck",
+                    "description": "the type check"
+                  },
+                  {
+                    "label": "test",
+                    "description": "the unit suite"
+                  }
+                ],
+                "multiSelect": true
+              }
+            ],
+            "answers": {
+              "Which database should the rig proof use?": "CockroachDB",
+              "Which rig checks should run?": "lint, fmt check"
+            }
+          }
+        }
+      },
+      "server_received_wall_ms": 1794073031443
+    },
+    "created_at": "2026-11-07T17:37:11.443Z"
   }
 }
