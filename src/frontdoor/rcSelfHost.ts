@@ -340,6 +340,8 @@ export interface RcSelfHostSurface {
    * The worker state this service holds for one of its sessions, for the door's status read. In self-hosted mode the service is the door itself, so the read asks it in process rather than dialling the door's own transparent surface: that dial would be observed like any client's traffic (giving a dead session a fresh record and a fresh liveness on every status poll), and the surface's worker routes admit only the worker's own JWT, never the client credential the read carries.
    */
   readonly readWorkerState: (sessionId: string) => RcWorkerStateReadResult;
+  /** Whether this service holds the session: one created against it and not yet archived or retired. */
+  readonly holdsSession: (sessionId: string) => boolean;
 }
 
 /** Creates the self-hosted Remote Control service. One per door process; everything it holds dies with it. */
@@ -938,6 +940,7 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
   return {
     route,
     local,
+    holdsSession: (sessionId) => sessions.has(sessionId),
     readWorkerState: (sessionId) => {
       const session = sessions.get(sessionId);
       if (session === undefined) {

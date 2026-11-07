@@ -31,7 +31,7 @@ export function testStatusResolver(tracker: RcSessionTracker, registered: Readon
     registry: () => new Map([...registered, [UNOBSERVED_TEST_SESSION_ID, { localSessionId: UNOBSERVED_TEST_LOCAL_SESSION_ID, pid: UNOBSERVED_TEST_PID }]]),
     identityNameOf: (id) => id,
     persistedCredentialOf: (sessionId) => (sessionId === UNOBSERVED_TEST_SESSION_ID ? { authorization: "Bearer test-oauth", anthropicVersion: undefined, anthropicClientPlatform: undefined } : undefined),
-    readWorkerState: async (sessionId, credentialOf) => await readRcWorkerState({ credentialOf, dial: readOnlyDial }, sessionId),
+    backends: { service: async (sessionId, credentialOf) => await readRcWorkerState({ credentialOf, dial: readOnlyDial }, sessionId) },
     now: () => Date.now(),
   });
 }

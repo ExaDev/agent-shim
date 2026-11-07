@@ -4,7 +4,7 @@ import { HTTP_STATUS } from "../codex/http";
 
 import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, type RcSessionTracker } from "./rcSessions";
 import type { RcRegisteredSession } from "./rcSessionRegistry";
-import { createRcStatusResolver, type RcStatusResolver } from "./rcStatus";
+import { createRcStatusResolver, type RcStatusResolver, type RcWorkerStateBackends } from "./rcStatus";
 import { RC_WORKER_READ_TIMEOUT_MS, readRcWorkerState, type RcDialAnswer, type RcEventDial, type RcObservedCredential } from "./rcWrites";
 
 /** Made-up session ids of the protocol's shape. */
@@ -61,12 +61,13 @@ function readingDial(answers: Readonly<Record<string, RcDialAnswer>>): { readonl
 
 const workerRecord = (workerStatus: string): RcDialAnswer => ({ status: HTTP_STATUS.ok, body: JSON.stringify({ worker: { session_id: "x", worker_epoch: 1, worker_status: workerStatus, external_metadata: {} } }) });
 
-/** What a resolver under test is built over beyond the tracker and the dial: the registry, the identity names, the persisted credentials and the clock, each defaulting to nothing registered, nothing persisted and a fixed instant. */
+/** What a resolver under test is built over beyond the tracker and the dial: the registry, the identity names, the persisted credentials, the clock and the self-hosted backend, each defaulting to nothing registered, no identity names, nothing persisted, a fixed instant and no self-hosted service. */
 interface ResolverWorld {
   readonly registered?: ReadonlyMap<string, RcRegisteredSession>;
   readonly identityNames?: Readonly<Record<string, string>>;
   readonly persisted?: Readonly<Record<string, RcObservedCredential>>;
   readonly now?: () => number;
+  readonly selfHosted?: RcWorkerStateBackends["selfHosted"];
 }
 
 const resolverOf = (tracker: RcSessionTracker, dial: RcEventDial, world: ResolverWorld = {}): RcStatusResolver =>
@@ -77,7 +78,7 @@ const resolverOf = (tracker: RcSessionTracker, dial: RcEventDial, world: Resolve
     registry: () => world.registered ?? new Map(),
     identityNameOf: (id) => world.identityNames?.[id],
     persistedCredentialOf: (sessionId) => world.persisted?.[sessionId],
-    readWorkerState: async (sessionId, credentialOf) => await readRcWorkerState({ credentialOf, dial }, sessionId),
+    backends: { ...(world.selfHosted === undefined ? {} : { selfHosted: world.selfHosted }), service: async (sessionId, credentialOf) => await readRcWorkerState({ credentialOf, dial }, sessionId) },
     now: world.now ?? (() => CLOCK_START_MS),
   });
 
@@ -383,7 +384,7 @@ describe("the Remote Control status enriched from the session registry", () => {
       },
       identityNameOf: () => undefined,
       persistedCredentialOf: () => undefined,
-      dial: readingDial({}).dial,
+      backends: { service: async () => await Promise.reject(new Error("a tracked session with an observed state needs no read")) },
       now: () => CLOCK_START_MS,
     });
     const [status] = await statusesOf(resolve);
@@ -399,5 +400,87 @@ describe("the Remote Control status enriched from the session registry", () => {
     expect(named[0]?.identity).toBe("work");
     const gone = await statusesOf(resolverOf(tracker, dial, { identityNames: {} }));
     expect(gone[0]?.identity).toBeUndefined();
+  });
+});
+
+describe("the Remote Control status across the three kinds of session, each read from its own backend", () => {
+  /** A self-hosted backend holding the named sessions with the named states (a held session with no state yet maps to undefined), recording what it was asked. */
+  const selfHostedWith = (states: Readonly<Record<string, string | undefined>>) => {
+    const asked: string[] = [];
+    return {
+      asked,
+      selfHosted: {
+        holds: (id: string) => id in states,
+        read: (id: string) => {
+          asked.push(id);
+          const state = states[id];
+          return state === undefined ? { ok: false as const, message: `the self-hosted Remote Control service holds no worker state for session ${id}` } : { ok: true as const, workerStatus: state };
+        },
+      },
+    };
+  };
+  const persisted = { authorization: OAUTH_BEARER, anthropicVersion: undefined, anthropicClientPlatform: undefined };
+
+  it("reads a native or provider session (created against claude.ai, holding an OAuth bearer) from the real service, even beside a self-hosted service", async () => {
+    const tracker = trackerWith(QUIET_SESSION_ID);
+    const { dial, reads } = readingDial({ [QUIET_SESSION_ID]: workerRecord("running") });
+    const { selfHosted, asked } = selfHostedWith({});
+    const [status] = await statusesOf(resolverOf(tracker, dial, { selfHosted }));
+    expect(status?.workerState).toEqual({ value: "running", observedAt: CLOCK_START_MS, source: "read" });
+    expect(reads).toEqual([QUIET_SESSION_ID]);
+    expect(asked).toEqual([]);
+  });
+
+  it("reads a self-hosted session (no Anthropic login at all) from the door's own service in process, with no credential and no dial", async () => {
+    // The self-hosted CLI presents the minted credential, never an observed claude.ai bearer, so the service backend could not read it.
+    const tracker = createRcSessionTracker({ now: () => CLOCK_START_MS, idleMs: RC_IDLE_EXPIRY_MS });
+    exchange(tracker, { method: "POST", url: `/v1/code/sessions/${QUIET_SESSION_ID}/worker/heartbeat`, authorization: "Bearer eyJhbGciOiJFUzI1NiJ9.worker.jwt" }, { status: HTTP_STATUS.ok });
+    const { dial, reads } = readingDial({});
+    const { selfHosted, asked } = selfHostedWith({ [QUIET_SESSION_ID]: "requires_action", [OBSERVED_SESSION_ID]: "idle" });
+    const report = await resolverOf(tracker, dial, { selfHosted, registered: new Map([registeredAs(OBSERVED_SESSION_ID)]) })();
+    expect(report.statuses[0]?.workerState).toEqual({ value: "requires_action", observedAt: CLOCK_START_MS, source: "read" });
+    // A registered self-hosted session the tracker has let go of is still read, from the service that holds it, without any credential.
+    expect(report.unobserved).toEqual([
+      { id: OBSERVED_SESSION_ID, localSessionId: LOCAL_SESSION_ID, pid: REGISTERED_PID, reason: expect.stringContaining("self-hosted Remote Control service still holds it") as unknown, workerState: { value: "idle", observedAt: CLOCK_START_MS, source: "read" }, workerStateUnavailable: undefined },
+    ]);
+    expect(reads).toEqual([]);
+    expect(asked.sort()).toEqual([QUIET_SESSION_ID, OBSERVED_SESSION_ID].sort());
+  });
+
+  it("never holds a self-hosted read, so the next status sees the service's current state", async () => {
+    const tracker = trackerWith();
+    const { dial } = readingDial({});
+    const states: Record<string, string | undefined> = { [OBSERVED_SESSION_ID]: "running" };
+    const resolve = resolverOf(tracker, dial, { selfHosted: selfHostedWith(states).selfHosted, registered: new Map([registeredAs(OBSERVED_SESSION_ID)]) });
+    expect((await resolve()).unobserved[0]?.workerState?.value).toBe("running");
+    states[OBSERVED_SESSION_ID] = "idle";
+    expect((await resolve()).unobserved[0]?.workerState?.value).toBe("idle");
+  });
+
+  it("reports a self-hosted session whose worker has reported no state with the service's reason", async () => {
+    const tracker = trackerWith();
+    const { dial } = readingDial({});
+    const { unobserved } = await resolverOf(tracker, dial, { selfHosted: selfHostedWith({ [OBSERVED_SESSION_ID]: undefined }).selfHosted, registered: new Map([registeredAs(OBSERVED_SESSION_ID)]) })();
+    expect(unobserved[0]?.workerState).toBeUndefined();
+    expect(unobserved[0]?.workerStateUnavailable).toContain("holds no worker state");
+  });
+
+  it("reports a session neither backend can read (the self-hosted service does not hold it, and no OAuth credential exists) as never observed, without asking either", async () => {
+    const tracker = trackerWith();
+    const { dial, reads } = readingDial({});
+    const { selfHosted, asked } = selfHostedWith({});
+    const { unobserved } = await resolverOf(tracker, dial, { selfHosted, registered: new Map([registeredAs(OBSERVED_SESSION_ID)]) })();
+    expect(unobserved[0]?.reason).toContain("no self-hosted Remote Control service of the door holds it");
+    expect(unobserved[0]?.workerStateUnavailable).toContain("holds no credential");
+    expect(reads).toEqual([]);
+    expect(asked).toEqual([]);
+  });
+
+  it("reads a session the self-hosted service does not hold but a door generation persisted an OAuth credential for from the real service", async () => {
+    const tracker = trackerWith();
+    const { dial, reads } = readingDial({ [OBSERVED_SESSION_ID]: workerRecord("idle") });
+    const { unobserved } = await resolverOf(tracker, dial, { selfHosted: selfHostedWith({}).selfHosted, registered: new Map([registeredAs(OBSERVED_SESSION_ID)]), persisted: { [OBSERVED_SESSION_ID]: persisted } })();
+    expect(unobserved[0]?.workerState?.value).toBe("idle");
+    expect(reads).toEqual([OBSERVED_SESSION_ID]);
   });
 });

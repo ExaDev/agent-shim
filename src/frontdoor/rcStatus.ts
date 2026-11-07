@@ -29,6 +29,25 @@ export interface RcStatusReport {
   readonly unobserved: readonly RcUnobservedSession[];
 }
 
+/**
+ * Where a session's worker state is read from, chosen per session, so one door serves every kind of Remote Control session at once:
+ *
+ * - `selfHosted`: the door's own self-hosted Remote Control service, present only when the door runs it. A session it holds was created against the door itself (a launch with no Anthropic login, or one whose inference goes to a third-party provider), so the service's own state is the truth, read in process: no credential is needed, and no request crosses the door's transparent surface to be observed as the session's traffic. These reads are live and are never held.
+ * - `service`: the real Remote Control service, for a session created against claude.ai (a native Anthropic login, or a provider launch that still holds one), read with the session's observed or persisted OAuth credential (`readRcWorkerState` over a dial to the real API host, never the door's own surface).
+ *
+ * A session the self-hosted service does not hold and for which the door has no OAuth credential cannot be read from either, and is reported with the reason.
+ */
+export interface RcWorkerStateBackends {
+  readonly selfHosted?: {
+    /** Whether the self-hosted service holds the session. */
+    readonly holds: (sessionId: string) => boolean;
+    /** The service's own worker state for a session it holds (`RcSelfHostSurface.readWorkerState`). */
+    readonly read: (sessionId: string) => RcWorkerStateReadResult;
+  };
+  /** Reads one session's worker state from the real service with the credential `credentialOf` holds for it. */
+  readonly service: (sessionId: string, credentialOf: (id: string) => RcObservedCredential | undefined) => Promise<RcWorkerStateReadResult>;
+}
+
 /** Everything the status read needs: the tracker's accessors, the registry read, the persisted credentials, the worker state read and a clock. */
 export interface RcStatusDeps {
   readonly statusOf: RcSessionTracker["statusOf"];
@@ -41,10 +60,8 @@ export interface RcStatusDeps {
   readonly identityNameOf: (id: string) => string | undefined;
   /** The credential a door generation persisted for a session it observed (`RcCredentialStore.read`), the only credential the door can hold for a session it has no record of. */
   readonly persistedCredentialOf: (sessionId: string) => RcObservedCredential | undefined;
-  /**
-   * Reads one session's worker state with the credential `credentialOf` holds for it. Against the real service this is `readRcWorkerState` over the door's dial; in self-hosted mode the door is the service, and the read asks the self-hosted surface in process (`RcSelfHostSurface.readWorkerState`), since a dial would loop back into the door's own transparent surface and be observed as client traffic.
-   */
-  readonly readWorkerState: (sessionId: string, credentialOf: (id: string) => RcObservedCredential | undefined) => Promise<RcWorkerStateReadResult>;
+  /** The two backends a session's worker state can come from, chosen per session (`RcWorkerStateBackends`). */
+  readonly backends: RcWorkerStateBackends;
   /** The clock the reuse bound is measured on. */
   readonly now: () => number;
 }
@@ -52,9 +69,12 @@ export interface RcStatusDeps {
 /** The reason an unobserved session whose create an earlier door generation (or this one, before the record expired) observed has no record now. */
 const QUIET_REASON = `the front door holds no record of this session: none of its traffic has crossed the door within the last ${String(RC_IDLE_EXPIRY_MS / MS_PER_SECOND)} s (it has been quiet since this door started or since its record expired, or its traffic now reaches the service by another route). A door generation observed its create, so its worker state is read with the credential persisted then`;
 
+/** The reason an unobserved session the door's own self-hosted service holds has no tracker record. */
+const SELF_HOSTED_QUIET_REASON = `the front door's tracker holds no record of this session: none of its traffic has crossed the door within the last ${String(RC_IDLE_EXPIRY_MS / MS_PER_SECOND)} s. The door's self-hosted Remote Control service still holds it, so its worker state is that service's own`;
+
 /** The reason an unobserved session whose create no door generation observed has no record, and no worker state either. */
 const NEVER_OBSERVED_REASON =
-  "the front door has never observed this session: it registered with the Remote Control service without its create crossing any door generation on this machine (it was launched without routing through the front door, or before the door was serving), so the door holds no record and no credential for it";
+  "the front door has never observed this session: it registered with the Remote Control service without its create crossing any door generation on this machine (it was launched without routing through the front door, or before the door was serving),, so the door holds no record and no credential for it, and no self-hosted Remote Control service of the door holds it either";
 
 /** The message for an unobserved session's missing worker state when the door holds no credential to read it with. */
 function noCredentialMessage(sessionId: string): string {
@@ -94,7 +114,7 @@ export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
     if (previous !== undefined && previous.authorization === authorization && stands(previous, deps.now())) {
       return previous;
     }
-    const read: HeldRead = { authorization, requestedAt: deps.now(), result: deps.readWorkerState(sessionId, credentialOf), settledAt: undefined };
+    const read: HeldRead = { authorization, requestedAt: deps.now(), result: deps.backends.service(sessionId, credentialOf), settledAt: undefined };
     held.set(sessionId, read);
     void read.result.then(() => {
       read.settledAt = deps.now();
@@ -124,6 +144,15 @@ export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
         trackedBefore
           .filter((status) => status.workerState === undefined)
           .map(async (status) => {
+            if (deps.backends.selfHosted?.holds(status.id) === true) {
+              const read = deps.backends.selfHosted.read(status.id);
+              if (read.ok) {
+                deps.noteReadWorkerState(status.id, read.workerStatus, deps.now());
+              } else {
+                unavailable.set(status.id, read.message);
+              }
+              return;
+            }
             const holding = heldRead(status.id, deps.credentialOf);
             const read = await holding.result;
             if (read.ok) {
@@ -140,6 +169,12 @@ export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
       Promise.all(
         registered.map(async (session): Promise<RcUnobservedSession> => {
           const base = { id: session.id, localSessionId: session.localSessionId, pid: session.pid };
+          if (deps.backends.selfHosted?.holds(session.id) === true) {
+            const read = deps.backends.selfHosted.read(session.id);
+            return read.ok
+              ? { ...base, reason: SELF_HOSTED_QUIET_REASON, workerState: { value: read.workerStatus, observedAt: deps.now(), source: "read" }, workerStateUnavailable: undefined }
+              : { ...base, reason: SELF_HOSTED_QUIET_REASON, workerState: undefined, workerStateUnavailable: read.message };
+          }
           if (deps.persistedCredentialOf(session.id)?.authorization === undefined) {
             return { ...base, reason: NEVER_OBSERVED_REASON, workerState: undefined, workerStateUnavailable: noCredentialMessage(session.id) };
           }

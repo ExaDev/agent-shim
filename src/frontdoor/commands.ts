@@ -525,6 +525,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       const authority = loadCa();
       // The write operations the control routes and the typed API both carry out: the door itself dials the real API host over its interception-proof agent, using the observed credential, which is why the CLI never dials the API directly. A confirmed write advances the session's sequence cursor through the tracker, so a stream resume continues after the door's own events too. In the self-hosted mode the dial's target is resolved per call so it names the door's own surface once that has bound.
       const rcDial = rcSelfHost ? lateRcEventDial(rcSelfHostDialTarget) : realRcEventDial();
+      // The real API host's dial, whatever the mode: the status read's service backend, for sessions created against claude.ai.
+      const rcServiceDial = rcSelfHost ? realRcEventDial() : rcDial;
       const rcInject = async (sessionId: string, text: string) =>
         await injectRcUserMessage({ credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial, newUuid: randomUUID }, sessionId, text);
       // The status the control routes and the typed API serve: the tracker's, with the worker state of any session that has none read from the service on the same dial and credential as the writes, and every session registered on this machine (in the shared Claude home's registry or any identity's) that the tracker holds no record of.
@@ -536,11 +538,11 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         registry: createRcSessionRegistryReader({ fs: realRcSessionRegistryFs, identities: () => rcRegistryIdentitiesOf(paths), isRunning: realIsProcessAlive }),
         identityNameOf: usageEventNames.nameOf,
         persistedCredentialOf: rcCredentialStore.read,
-        // Self-hosted, the door is the service, so its surface answers in process; otherwise the read dials the API host like the writes.
-        readWorkerState:
-          rcSelfHostSurface === undefined
-            ? async (sessionId, credentialOf) => await readRcWorkerState({ credentialOf, dial: rcDial }, sessionId)
-            : async (sessionId) => await Promise.resolve(rcSelfHostSurface.readWorkerState(sessionId)),
+        // Chosen per session: a session the door's own self-hosted service holds is read from it in process, and any other is read from the real service with its OAuth credential, over a dial to the real API host even in self-hosted mode (where the writes' dial points at the door's own surface, which would observe the read as the session's traffic).
+        backends: {
+          ...(rcSelfHostSurface === undefined ? {} : { selfHosted: { holds: rcSelfHostSurface.holdsSession, read: rcSelfHostSurface.readWorkerState } }),
+          service: async (sessionId, credentialOf) => await readRcWorkerState({ credentialOf, dial: rcServiceDial }, sessionId),
+        },
         now: () => Date.now(),
       });
       const rcAnswer = async (sessionId: string, requestId: string, decision: RcAnswerDecision) =>

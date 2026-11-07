@@ -239,7 +239,7 @@ describe("Remote Control observation and injection over the connect surface", ()
         await settle();
         expect(readTracker.statusOf(RC_TEST_SESSION_ID)[0]?.workerState).toBeUndefined();
 
-        const resolve = createRcStatusResolver({ statusOf: readTracker.statusOf, noteReadWorkerState: readTracker.noteReadWorkerState, credentialOf: readTracker.credentialOf, registry: () => new Map(), identityNameOf: () => undefined, persistedCredentialOf: () => undefined, readWorkerState: async (sessionId, credentialOf) => await readRcWorkerState({ credentialOf, dial: rcDial }, sessionId), now: () => Date.now() });
+        const resolve = createRcStatusResolver({ statusOf: readTracker.statusOf, noteReadWorkerState: readTracker.noteReadWorkerState, credentialOf: readTracker.credentialOf, registry: () => new Map(), identityNameOf: () => undefined, persistedCredentialOf: () => undefined, backends: { service: async (sessionId, credentialOf) => await readRcWorkerState({ credentialOf, dial: rcDial }, sessionId) }, now: () => Date.now() });
         const {
           statuses: [status],
         } = await resolve(RC_TEST_SESSION_ID);

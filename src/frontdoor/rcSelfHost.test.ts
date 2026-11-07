@@ -350,6 +350,8 @@ describe("the self-hosted Remote Control session family", () => {
     const world = await makeWorld();
     worlds.push(world);
     const { id, workerJwt } = await createSession(world);
+    expect(world.surface.holdsSession(id)).toBe(true);
+    expect(world.surface.holdsSession("cse_00000000-0000-4000-8000-0000000000ff")).toBe(false);
     expect(world.surface.readWorkerState(id)).toEqual({ ok: false, message: expect.stringContaining("its worker has not reported one") as unknown });
     const read = await call(world.port, "GET", `/v1/code/sessions/${id}/worker`, undefined, { authorization: `Bearer ${workerJwt}` });
     expect((JSON.parse(read.body) as { worker: { worker_status: unknown } }).worker.worker_status).toBeNull();
