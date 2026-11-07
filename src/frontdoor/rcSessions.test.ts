@@ -439,6 +439,14 @@ describe("the Remote Control pending-request lifecycle", () => {
       // A stream replay of the dropped request is the same request, so it is not counted again.
       ask(tracker, `req-${String(RC_PENDING_PER_SESSION_MAX)}`, RC_PENDING_PER_SESSION_MAX + 2);
       expect(tracker.statusOf()[0]?.pendingDropped).toBe(2);
+      // The worker's own event write carries the same request on the other channel, and is not counted again either.
+      exchange(tracker, {
+        method: "POST",
+        url: `/v1/code/sessions/${SESSION_ID}/worker/events`,
+        authorization: "Bearer b",
+        requestBody: JSON.stringify({ worker_epoch: 1, events: [{ payload: { type: "control_request", request_id: `req-${String(RC_PENDING_PER_SESSION_MAX)}`, request: { subtype: "can_use_tool", tool_name: "AskUserQuestion", input: {} } } }] }),
+      }).respond(HTTP_STATUS.ok);
+      expect(tracker.statusOf()[0]?.pendingDropped).toBe(2);
     });
 
     it("marks a request past the parse cap as oversized, holding its summary only", () => {
