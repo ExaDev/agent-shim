@@ -81,7 +81,7 @@ import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, isRcSessionExchange, observi
 import { targetRefs } from "../models/targets";
 import { createRcStatusResolver } from "./rcStatus";
 import { rcRegistryDirsOf, readRcRegisteredSessions } from "./rcRegistry";
-import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
+import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, readRcWorkerState, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
 import type { RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
@@ -529,7 +529,11 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
             isProcessAlive: realIsProcessAlive,
           }),
         persistedCredentialOf: rcCredentialStore.read,
-        dial: rcDial,
+        // Self-hosted, the door is the service, so its surface answers in process; otherwise the read dials the API host like the writes.
+        readWorkerState:
+          rcSelfHostSurface === undefined
+            ? async (sessionId, credentialOf) => await readRcWorkerState({ credentialOf, dial: rcDial }, sessionId)
+            : async (sessionId) => await Promise.resolve(rcSelfHostSurface.readWorkerState(sessionId)),
         now: () => Date.now(),
       });
       const rcAnswer = async (sessionId: string, requestId: string, decision: RcAnswerDecision) =>

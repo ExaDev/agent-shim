@@ -1,7 +1,7 @@
 import { HTTP_STATUS } from "../codex/http";
 import type { RcSessionTracker } from "./rcSessions";
 import { createRcStatusResolver, type RcStatusResolver } from "./rcStatus";
-import type { RcDialAnswer, RcEventDial } from "./rcWrites";
+import { readRcWorkerState, type RcDialAnswer, type RcEventDial } from "./rcWrites";
 
 /** A made-up registered session the tracker under test never holds, with its local id and registering process. */
 export const UNOBSERVED_TEST_SESSION_ID = "cse_00000000-0000-4000-8000-0000000000dd";
@@ -29,7 +29,7 @@ export function testStatusResolver(tracker: RcSessionTracker): RcStatusResolver 
     credentialOf: tracker.credentialOf,
     registered: () => [{ id: UNOBSERVED_TEST_SESSION_ID, localSessionId: UNOBSERVED_TEST_LOCAL_SESSION_ID, pid: UNOBSERVED_TEST_PID }],
     persistedCredentialOf: (sessionId) => (sessionId === UNOBSERVED_TEST_SESSION_ID ? { authorization: "Bearer test-oauth", anthropicVersion: undefined, anthropicClientPlatform: undefined } : undefined),
-    dial: readOnlyDial,
+    readWorkerState: async (sessionId, credentialOf) => await readRcWorkerState({ credentialOf, dial: readOnlyDial }, sessionId),
     now: () => Date.now(),
   });
 }

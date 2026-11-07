@@ -5,7 +5,7 @@ import { HTTP_STATUS } from "../codex/http";
 import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, type RcSessionTracker } from "./rcSessions";
 import type { RcRegisteredSession } from "./rcRegistry";
 import { createRcStatusResolver, type RcStatusResolver } from "./rcStatus";
-import type { RcDialAnswer, RcEventDial, RcObservedCredential } from "./rcWrites";
+import { readRcWorkerState, type RcDialAnswer, type RcEventDial, type RcObservedCredential } from "./rcWrites";
 
 /** Made-up session ids of the protocol's shape. */
 const QUIET_SESSION_ID = "cse_00000000-0000-4000-8000-000000000001";
@@ -75,7 +75,7 @@ const resolverOf = (tracker: RcSessionTracker, dial: RcEventDial, world: Resolve
     credentialOf: tracker.credentialOf,
     registered: () => world.registered ?? [],
     persistedCredentialOf: (sessionId) => world.persisted?.[sessionId],
-    dial,
+    readWorkerState: async (sessionId, credentialOf) => await readRcWorkerState({ credentialOf, dial }, sessionId),
     now: world.now ?? (() => CLOCK_START_MS),
   });
 
