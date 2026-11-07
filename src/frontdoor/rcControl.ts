@@ -3,7 +3,8 @@ import * as https from "node:https";
 
 import { HTTP_STATUS } from "../codex/http";
 import { isLiveCapability } from "./capability";
-import type { RcPendingRequestSummary, RcSessionStatus, RcSessionSummary } from "./rcSessions";
+import { RC_WORKER_STATE_SOURCES, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
+import type { RcStatusReport, RcStatusResolver, RcUnobservedSession } from "./rcStatus";
 import { RC_CONTEXT_USAGE_DETAILS, RC_PERMISSION_MODES, RC_READ_FILE_ENCODINGS, isRcContextUsageDetail, isRcPermissionMode, isRcReadFileEncoding, rcSessionNotObservedMessage, type RcAnswerDecision, type RcContextUsageDetail, type RcEventWriteResult, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
 
 /** The SDK's own permission modes as one readable list, so a body refused for a bad mode names exactly what is permitted. */
@@ -34,8 +35,8 @@ export interface RcControlHandlerDeps {
   readonly expectedToken: string;
   /** The observed sessions as the tracker lists them. */
   readonly list: () => readonly RcSessionSummary[];
-  /** The observed sessions as the tracker reports their status, filtered to one when named. */
-  readonly statusOf: (sessionId?: string) => readonly RcSessionStatus[];
+  /** The status report, filtered to one session when named: the tracked sessions, each with a worker state or the reason it has none, and the registered sessions the door holds no record of (`createRcStatusResolver`). */
+  readonly statusOf: RcStatusResolver;
   /** The control requests awaiting an answer, filtered to one session when named. */
   readonly pendingOf: (sessionId?: string) => readonly RcPendingRequestSummary[];
   /** The inject operation, already wired to the tracker and the door's API-host dial. */
@@ -306,12 +307,21 @@ export function createRcControlHandler(deps: RcControlHandlerDeps): (request: In
           return;
         }
         const session = url.searchParams.get("session") ?? undefined;
-        // A named session that is not tracked is refused rather than answered as empty, so a mistyped id never reads as "observed, nothing pending".
-        if (session !== undefined && !deps.statusOf(session).some((entry) => entry.id === session)) {
+        // A named session the read knows nothing of is refused rather than answered as empty, so a mistyped id never reads as "observed, nothing pending": the status knows the tracked and the registered sessions, the pending list the tracked ones alone.
+        if (url.pathname === statusPath) {
+          const report = await deps.statusOf(session);
+          if (session !== undefined && report.statuses.length === 0 && report.unobserved.length === 0) {
+            answerJson(response, HTTP_STATUS.notFound, { error: rcSessionNotObservedMessage(session) } satisfies ControlErrorBody);
+            return;
+          }
+          answerJson(response, HTTP_STATUS.ok, report);
+          return;
+        }
+        if (session !== undefined && !deps.list().some((entry) => entry.id === session)) {
           answerJson(response, HTTP_STATUS.notFound, { error: rcSessionNotObservedMessage(session) } satisfies ControlErrorBody);
           return;
         }
-        answerJson(response, HTTP_STATUS.ok, url.pathname === statusPath ? { statuses: deps.statusOf(session) } : { pending: deps.pendingOf(session) });
+        answerJson(response, HTTP_STATUS.ok, { pending: deps.pendingOf(session) });
         return;
       }
       if (url.pathname === injectPath) {
@@ -490,6 +500,11 @@ function isRcWorkerFact(value: unknown, valueIs: (candidate: unknown) => boolean
   return valueIs(value.value) && typeof value.observedAt === "number";
 }
 
+/** Whether one value is a worker state fact as this surface defines it: a worker fact whose value is a string, with the source that says whether the door observed the state or read it. */
+function isRcWorkerStateFact(value: unknown): boolean {
+  return isRcWorkerFact(value, (candidate) => typeof candidate === "string") && typeof value === "object" && value !== null && "source" in value && RC_WORKER_STATE_SOURCES.some((source) => source === value.source);
+}
+
 /** Whether one value is a session status as this surface defines it: a summary plus the worker facts and the pending list. The worker facts may be absent, since a door that observed none serialises no field for them. */
 function isRcSessionStatus(value: unknown): value is RcSessionStatus {
   if (!isRcSessionSummary(value)) {
@@ -498,13 +513,33 @@ function isRcSessionStatus(value: unknown): value is RcSessionStatus {
   if (!("pending" in value) || !Array.isArray(value.pending)) {
     return false;
   }
-  if ("workerState" in value && value.workerState !== undefined && !isRcWorkerFact(value.workerState, (candidate) => typeof candidate === "string")) {
+  if ("workerState" in value && value.workerState !== undefined && !isRcWorkerStateFact(value.workerState)) {
+    return false;
+  }
+  if ("workerStateUnavailable" in value && value.workerStateUnavailable !== undefined && typeof value.workerStateUnavailable !== "string") {
     return false;
   }
   if ("workerIdleSeconds" in value && value.workerIdleSeconds !== undefined && !isRcWorkerFact(value.workerIdleSeconds, (candidate) => typeof candidate === "number")) {
     return false;
   }
   return value.pending.every((candidate) => isRcPendingRequestSummary(candidate));
+}
+
+/** Whether one value is an unobserved registered session as this surface defines it: its ids, process and reason, with the worker state fact or the reason it has none, either of which may be absent. */
+function isRcUnobservedSession(value: unknown): value is RcUnobservedSession {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  if (!("id" in value) || !("localSessionId" in value) || !("pid" in value) || !("reason" in value)) {
+    return false;
+  }
+  if (typeof value.id !== "string" || typeof value.localSessionId !== "string" || typeof value.pid !== "number" || typeof value.reason !== "string") {
+    return false;
+  }
+  if ("workerState" in value && value.workerState !== undefined && !isRcWorkerStateFact(value.workerState)) {
+    return false;
+  }
+  return !("workerStateUnavailable" in value) || value.workerStateUnavailable === undefined || typeof value.workerStateUnavailable === "string";
 }
 
 /** Whether one value is a pending control request as this surface defines it, narrowed field by field rather than asserted. */
@@ -559,8 +594,8 @@ function requestIdOfBody(body: string): string | undefined {
 export interface FrontDoorRcControl {
   /** The observed sessions, oldest-created first. Throws with the door's verbose reason when the list cannot be had. */
   readonly listSessions: () => Promise<readonly RcSessionSummary[]>;
-  /** The observed sessions' status, oldest-created first and filtered to one when named. Throws with the door's verbose reason when the read cannot be had, including a named session the door has not observed. */
-  readonly statusOf: (sessionId?: string) => Promise<readonly RcSessionStatus[]>;
+  /** The status report, filtered to one session when named: the tracked sessions oldest-created first, and the registered sessions the door holds no record of. Throws with the door's verbose reason when the read cannot be had, including a named session the door neither tracks nor finds registered. */
+  readonly statusOf: (sessionId?: string) => Promise<RcStatusReport>;
   /** The control requests awaiting an answer, oldest-observed first and filtered to one session when named. Throws with the door's verbose reason when the read cannot be had. */
   readonly pendingOf: (sessionId?: string) => Promise<readonly RcPendingRequestSummary[]>;
   /** Injects one prompt, returning the sequence numbers the real service assigned or the verbose failure. */
@@ -630,7 +665,7 @@ export function frontDoorRcControl(transport: RcControlTransport, token: string)
     }
     return sessions;
   };
-  const statusesOf = (answer: RcControlAnswer, what: string): readonly RcSessionStatus[] => {
+  const statusReportOf = (answer: RcControlAnswer, what: string): RcStatusReport => {
     if (answer.status !== HTTP_STATUS.ok) {
       throw new Error(`${what} failed (HTTP ${String(answer.status)}): ${controlErrorOf(answer.body) ?? answer.body}`);
     }
@@ -640,17 +675,24 @@ export function frontDoorRcControl(transport: RcControlTransport, token: string)
     } catch {
       throw new Error(`${what}: the door's answer was not JSON: ${answer.body}`);
     }
-    if (typeof parsed !== "object" || parsed === null || !("statuses" in parsed) || !Array.isArray(parsed.statuses)) {
-      throw new Error(`${what}: the door's answer named no status list: ${answer.body}`);
+    if (typeof parsed !== "object" || parsed === null || !("statuses" in parsed) || !Array.isArray(parsed.statuses) || !("unobserved" in parsed) || !Array.isArray(parsed.unobserved)) {
+      throw new Error(`${what}: the door's answer named no status report: ${answer.body}`);
     }
     const statuses: RcSessionStatus[] = [];
     for (const value of parsed.statuses) {
       if (!isRcSessionStatus(value)) {
-        throw new Error(`${what}: the door's answer named no status list: ${answer.body}`);
+        throw new Error(`${what}: the door's answer named no status report: ${answer.body}`);
       }
       statuses.push(value);
     }
-    return statuses;
+    const unobserved: RcUnobservedSession[] = [];
+    for (const value of parsed.unobserved) {
+      if (!isRcUnobservedSession(value)) {
+        throw new Error(`${what}: the door's answer named no status report: ${answer.body}`);
+      }
+      unobserved.push(value);
+    }
+    return { statuses, unobserved };
   };
   const pendingOfAnswer = (answer: RcControlAnswer, what: string): readonly RcPendingRequestSummary[] => {
     if (answer.status !== HTTP_STATUS.ok) {
@@ -696,7 +738,7 @@ export function frontDoorRcControl(transport: RcControlTransport, token: string)
     listSessions: async () =>
       sessionsOf(await listAnswerOf(`${CONTROL_PATH_PREFIX}/sessions`, "listing the door's Remote Control sessions"), "listing the door's Remote Control sessions"),
     statusOf: async (sessionId) =>
-      statusesOf(await listAnswerOf(`${CONTROL_PATH_PREFIX}/status${sessionQuery(sessionId)}`, "reading the door's Remote Control session status"), "reading the door's Remote Control session status"),
+      statusReportOf(await listAnswerOf(`${CONTROL_PATH_PREFIX}/status${sessionQuery(sessionId)}`, "reading the door's Remote Control session status"), "reading the door's Remote Control session status"),
     pendingOf: async (sessionId) =>
       pendingOfAnswer(await listAnswerOf(`${CONTROL_PATH_PREFIX}/pending${sessionQuery(sessionId)}`, "listing the door's pending Remote Control control requests"), "listing the door's pending Remote Control control requests"),
     sendPrompt: async (sessionId, text) =>

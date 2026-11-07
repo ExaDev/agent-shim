@@ -88,8 +88,8 @@ interface RcSessionRecord {
   anthropicClientPlatform: string | undefined;
   /** The session's control requests awaiting an answer, keyed by the id a `control_response` must echo. An entry lives exactly until it is answered or its deadline passes. */
   readonly pending: Map<string, RcPendingRequestRecord>;
-  /** The worker state the latest worker registration named, with when that exchange was observed. */
-  workerState: RcWorkerFact<string> | undefined;
+  /** The worker state the latest worker registration named, with when that exchange was observed, or the state the service answered a read with (`RcWorkerStateFact.source` says which). */
+  workerState: RcWorkerStateFact | undefined;
   /** The idle the latest heartbeat carried, with when that exchange was observed. */
   workerIdleSeconds: RcWorkerFact<number> | undefined;
   /** The highest sequence number the door has seen for this session, from the client read stream's envelopes or from its own confirmed writes: the value a stream resume continues after. */
@@ -128,14 +128,31 @@ export interface RcWorkerFact<T> {
   readonly observedAt: number;
 }
 
-/** One observed session as the status surface reports it: the list summary plus what the worker's own exchanges carried and the requests awaiting an answer, never the credential. */
-export interface RcSessionStatus extends RcSessionSummary {
-  /** The worker state the latest worker registration (`PUT /{id}/worker`) named, when one was observed. */
-  readonly workerState: RcWorkerFact<string> | undefined;
+/** How the door came to know a worker state: from a request body that crossed it (`observed`), or from the service's answer to the door's own `GET /v1/code/sessions/{id}/worker` (`read`). */
+export const RC_WORKER_STATE_SOURCES = ["observed", "read"] as const;
+
+/** One way the door came to know a worker state. */
+export type RcWorkerStateSource = (typeof RC_WORKER_STATE_SOURCES)[number];
+
+/** The worker state fact: the state, the instant the door learnt it, and whether it saw the state change cross it or asked the service for it. A read fact is the service's answer at `observedAt`, so a state change that crossed the door afterwards replaces it with an observed one. */
+export interface RcWorkerStateFact extends RcWorkerFact<string> {
+  readonly source: RcWorkerStateSource;
+}
+
+/** One observed session as the tracker reports it: the list summary plus what the worker's own exchanges carried (or a read filled in) and the requests awaiting an answer, never the credential. */
+export interface RcTrackedSessionStatus extends RcSessionSummary {
+  /** The worker state the latest worker registration (`PUT /{id}/worker`) named, or the service's answer to a read when none was observed; undefined until one of those happened. */
+  readonly workerState: RcWorkerStateFact | undefined;
   /** The idle the latest heartbeat carried, when one was observed. */
   readonly workerIdleSeconds: RcWorkerFact<number> | undefined;
   /** The session's control requests awaiting an answer, oldest-observed first. */
   readonly pending: readonly RcPendingRequestSummary[];
+}
+
+/** One observed session as the status surface reports it: the tracker's status plus, when the session has no worker state and the door could not read one, why. */
+export interface RcSessionStatus extends RcTrackedSessionStatus {
+  /** Why the session has no worker state: no state was observed and the door could not read one from the service (no usable credential, or the service's answer was a failure). Undefined whenever `workerState` is present. */
+  readonly workerStateUnavailable: string | undefined;
 }
 
 /** One observed session as the control surface lists it: the identification and timing only, never the credential. */
@@ -182,10 +199,12 @@ export interface RcSessionTracker {
   readonly observeExchange: (request: RcObservedRequest) => RcExchangeObserver | undefined;
   /** Every live entry, idle ones expired first, sorted oldest-created first. */
   readonly list: () => readonly RcSessionSummary[];
-  /** Every live entry as the status surface reports it, with the same sweeping and order as `list`, filtered to one session when named. */
-  readonly statusOf: (sessionId?: string) => readonly RcSessionStatus[];
+  /** Every live entry as the tracker holds it, with the same sweeping and order as `list`, filtered to one session when named. The worker state is whatever was observed or already read: reading a missing one from the service is the status resolver's job (`createRcStatusResolver`) (`rcStatus.ts`), since this accessor is synchronous. */
+  readonly statusOf: (sessionId?: string) => readonly RcTrackedSessionStatus[];
   /** Every control request awaiting an answer, deadline-expired ones dropped first, oldest-observed first, filtered to one session when named. */
   readonly pendingOf: (sessionId?: string) => readonly RcPendingRequestSummary[];
+  /** Files the worker state the service answered a read with, only while the session is tracked and has no state yet: a state that crossed the door while the read was in flight is the fresher fact and is kept. */
+  readonly noteReadWorkerState: (sessionId: string, workerStatus: string) => void;
   /** The observed credential and protocol headers for one session, the client-half writes' accessor: present only while the session is tracked, and never surfaced anywhere a summary, log or capture goes. */
   readonly credentialOf: (sessionId: string) => RcObservedCredential | undefined;
   /** Advances the session's sequence cursor to the highest number named, which every confirmed client-half write calls with the numbers the real service assigned its events. */
@@ -511,7 +530,7 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
         entryNow.workerIdleSeconds = { value: factsOfBody.idleSeconds, observedAt: now };
       }
       if (factsOfBody.workerStatus !== undefined) {
-        entryNow.workerState = { value: factsOfBody.workerStatus, observedAt: now };
+        entryNow.workerState = { value: factsOfBody.workerStatus, observedAt: now, source: "observed" };
       }
     };
 
@@ -594,6 +613,13 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
         }
       }
       return { authorization: entry.oauthAuthorization, anthropicVersion: entry.anthropicVersion, anthropicClientPlatform: entry.anthropicClientPlatform };
+    },
+    noteReadWorkerState: (sessionId, workerStatus) => {
+      const entry = entries.get(sessionId);
+      if (entry === undefined || entry.workerState !== undefined) {
+        return;
+      }
+      entry.workerState = { value: workerStatus, observedAt: deps.now(), source: "read" };
     },
     noteSequenceNums: (sessionId, sequenceNums) => {
       const entry = entries.get(sessionId);

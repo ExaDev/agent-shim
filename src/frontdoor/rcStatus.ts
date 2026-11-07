@@ -1,0 +1,140 @@
+import type { RcRegisteredSession } from "./rcRegistry";
+import { RC_IDLE_EXPIRY_MS, type RcSessionStatus, type RcSessionTracker, type RcWorkerStateFact } from "./rcSessions";
+import { readRcWorkerState, type RcEventDial, type RcObservedCredential, type RcWorkerStateReadResult } from "./rcWrites";
+
+/**
+ * The Remote Control status read: the tracker's synchronous status, with the worker state of every session that has none filled in from the service, plus every session that registered with the Remote Control service on this machine but that the door holds no record of. A session's state is observed only when a worker state update crosses the door while its record exists, so a session whose last state change predates the door (or whose record expired and was recreated by a heartbeat) would otherwise report nothing until its next change, however long that is; and a session none of whose traffic has crossed the door within the tracker's idle bound has no record at all, so it would be missing from the status entirely. The service holds the state, so the door asks it, on the same dial and with the same credential as its client-half writes, and marks every answer as read rather than observed.
+ */
+
+
+/** Milliseconds in a second, for stating the idle bound in a reason a person reads. */
+const MS_PER_SECOND = 1_000;
+
+/** One session that registered with the Remote Control service on this machine (its Claude Code registry record names a bridge) but that the door's tracker holds no record of, with the worker state the door could read for it or why it could not. */
+export interface RcUnobservedSession {
+  /** The Remote Control session id, in the `cse_` form. */
+  readonly id: string;
+  /** The local Claude Code session id the registry record names. */
+  readonly localSessionId: string;
+  /** The process that registered the session. */
+  readonly pid: number;
+  /** Why the door holds no record of the session. */
+  readonly reason: string;
+  /** The worker state the service answered a read with, always `source: "read"`; undefined when no read succeeded. */
+  readonly workerState: RcWorkerStateFact | undefined;
+  /** Why there is no worker state: the door holds no credential for the session, or the read failed. Undefined whenever `workerState` is present. */
+  readonly workerStateUnavailable: string | undefined;
+}
+
+/** The whole status answer: every tracked session's status, and every registered session the tracker does not hold. */
+export interface RcStatusReport {
+  /** The sessions the tracker holds, oldest-created first, each with a worker state or the reason it has none. */
+  readonly statuses: readonly RcSessionStatus[];
+  /** The sessions registered on this machine that the tracker does not hold, sorted by id. */
+  readonly unobserved: readonly RcUnobservedSession[];
+}
+
+/** Everything the status read needs: the tracker's accessors, the registry read, the persisted credentials, the dial and a clock. */
+export interface RcStatusDeps {
+  readonly statusOf: RcSessionTracker["statusOf"];
+  readonly noteReadWorkerState: RcSessionTracker["noteReadWorkerState"];
+  /** The live credential of a tracked session (the tracker's accessor, which adopts a persisted one when it observed none itself). */
+  readonly credentialOf: RcSessionTracker["credentialOf"];
+  /** The sessions registered with the Remote Control service on this machine (`readRcRegisteredSessions`). */
+  readonly registered: () => readonly RcRegisteredSession[];
+  /** The credential a door generation persisted for a session it observed (`RcCredentialStore.read`), the only credential the door can hold for a session it has no record of. */
+  readonly persistedCredentialOf: (sessionId: string) => RcObservedCredential | undefined;
+  /** The dial to the real API host. */
+  readonly dial: RcEventDial;
+  /** The clock the reuse bound is measured on. */
+  readonly now: () => number;
+}
+
+/** The reason an unobserved session whose create an earlier door generation (or this one, before the record expired) observed has no record now. */
+function quietReason(): string {
+  return `the front door holds no record of this session: none of its traffic has crossed the door within the last ${String(RC_IDLE_EXPIRY_MS / MS_PER_SECOND)} s (it has been quiet since this door started or since its record expired, or its traffic now reaches the service by another route). A door generation observed its create, so its worker state is read with the credential persisted then`;
+}
+
+/** The reason an unobserved session whose create no door generation observed has no record, and no worker state either. */
+function neverObservedReason(): string {
+  return "the front door has never observed this session: it registered with the Remote Control service without its create crossing any door generation on this machine (it was launched without routing through the front door, or before the door was serving), so the door holds no record and no credential for it";
+}
+
+/** The message for an unobserved session's missing worker state when the door holds no credential to read it with. */
+function noCredentialMessage(sessionId: string): string {
+  return `the front door holds no credential for session ${sessionId}, so it cannot read its worker state from the service; reconnecting Remote Control through the door lets it observe the create and the credential`;
+}
+
+/**
+ * One read's answer, with when it was made. An answer stands in for a fresh one, for `RC_IDLE_EXPIRY_MS`, wherever nothing on the tracker can hold it: a failed read of a tracked session, and any read of an unobserved one. A status is polled (the web client asks on a short timer), so without a bound every poll would cost one service request per such session; the bound is the tracker's own idle expiry, the span after which the door already treats a session's last observed facts as stale.
+ */
+interface HeldRead {
+  readonly at: number;
+  readonly result: RcWorkerStateReadResult;
+}
+
+/** The status read the door's surfaces serve, holding the reads the tracker cannot (`RC_IDLE_EXPIRY_MS`). */
+export type RcStatusResolver = (sessionId?: string) => Promise<RcStatusReport>;
+
+/**
+ * Creates the status read. Every call answers the tracked sessions (filtered to one when named) and the unobserved registered ones (filtered the same way). Reads for the sessions that lack a state run concurrently, and a failed read is reported on its own session (`workerStateUnavailable`) without costing the others theirs, so one session the service refuses never hides the rest. A tracked session's successful read is filed on the tracker, so the next status finds it already there; a failed one, and every read of an unobserved session, is held for `RC_IDLE_EXPIRY_MS` and then made again.
+ */
+export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
+  const held = new Map<string, HeldRead>();
+  const heldRead = async (sessionId: string, credentialOf: (id: string) => RcObservedCredential | undefined): Promise<RcWorkerStateReadResult> => {
+    const now = deps.now();
+    const previous = held.get(sessionId);
+    if (previous !== undefined && now - previous.at < RC_IDLE_EXPIRY_MS) {
+      return previous.result;
+    }
+    const result = await readRcWorkerState({ credentialOf, dial: deps.dial }, sessionId);
+    held.set(sessionId, { at: now, result });
+    return result;
+  };
+
+  return async (sessionId) => {
+    const now = deps.now();
+    // A held read past its bound is dropped, so the map holds only the sessions still being asked about.
+    for (const [id, read] of held) {
+      if (now - read.at >= RC_IDLE_EXPIRY_MS) {
+        held.delete(id);
+      }
+    }
+    const unavailable = new Map<string, string>();
+    const tracked = deps.statusOf(sessionId);
+    const trackedIds = new Set(tracked.map((status) => status.id));
+    const registered = deps.registered().filter((session) => (sessionId === undefined || session.id === sessionId) && !trackedIds.has(session.id));
+    const [, unobserved] = await Promise.all([
+      Promise.all(
+        tracked
+          .filter((status) => status.workerState === undefined)
+          .map(async (status) => {
+            const read = await heldRead(status.id, deps.credentialOf);
+            if (read.ok) {
+              // A tracked session's state is filed on its record, so the held failure (if any) has nothing left to stand in for.
+              held.delete(status.id);
+              deps.noteReadWorkerState(status.id, read.workerStatus);
+            } else {
+              unavailable.set(status.id, read.message);
+            }
+          }),
+      ),
+      Promise.all(
+        registered.map(async (session): Promise<RcUnobservedSession> => {
+          const base = { id: session.id, localSessionId: session.localSessionId, pid: session.pid };
+          if (deps.persistedCredentialOf(session.id)?.authorization === undefined) {
+            return { ...base, reason: neverObservedReason(), workerState: undefined, workerStateUnavailable: noCredentialMessage(session.id) };
+          }
+          const read = await heldRead(session.id, deps.persistedCredentialOf);
+          const at = held.get(session.id)?.at ?? now;
+          return read.ok
+            ? { ...base, reason: quietReason(), workerState: { value: read.workerStatus, observedAt: at, source: "read" }, workerStateUnavailable: undefined }
+            : { ...base, reason: quietReason(), workerState: undefined, workerStateUnavailable: read.message };
+        }),
+      ),
+    ]);
+    // Re-read after the filing, so a state that crossed the door while the reads were in flight is the one reported, and a session that expired meanwhile is no longer listed.
+    const statuses = deps.statusOf(sessionId).map((status) => ({ ...status, workerStateUnavailable: status.workerState === undefined ? unavailable.get(status.id) : undefined }));
+    return { statuses, unobserved };
+  };
+}

@@ -11,10 +11,10 @@ import { readGlobalConfig } from "../configProfilesStore";
 import { FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES, type Job } from "../config/schema";
 import { parseDuration } from "../resolve/conditions";
 import { codexHome, collectCodexStatus, createCodexRoutePorts, runCodexLogout } from "../codex/commands";
-import type { LayoutPaths } from "../paths";
+import { resolveClaudeHome, type LayoutPaths } from "../paths";
 import { realSessionFs } from "../agents/realFs";
 import { collectSessionList, showSession } from "../agents/sessions";
-import { identityDirectoryOfName, listIdentities } from "../identityStore";
+import { identityDirectory, identityDirectoryOfName, listIdentities, listIdentityDirectories } from "../identityStore";
 import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessAlive, realIsProcessRunning, realRunningAmong, realAsyncCredentialPort, realOwnExecutablePath, selfInvocation, spawnDetachedSupervisor, spawnSelfDetached } from "../realPorts";
 import { createHeadroomKeeper } from "../headroom/keeper";
 import { HEADROOM_POLL_MS } from "../headroom/supervisor";
@@ -79,6 +79,8 @@ import { readRcSelfHostRecord } from "./rcSelfHostMint";
 import { realRcWebFetch, rcWebFetchAllowsPrivateFromEnv } from "./rcWebFetch";
 import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, isRcSessionExchange, observingRoutedRoute } from "./rcSessions";
 import { targetRefs } from "../models/targets";
+import { createRcStatusResolver } from "./rcStatus";
+import { rcRegistryDirsOf, readRcRegisteredSessions } from "./rcRegistry";
 import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
 import type { RoutedRequest } from "./route";
@@ -515,6 +517,21 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       const rcDial = rcSelfHost ? lateRcEventDial(rcSelfHostDialTarget) : realRcEventDial();
       const rcInject = async (sessionId: string, text: string) =>
         await injectRcUserMessage({ credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial, newUuid: randomUUID }, sessionId, text);
+      // The status the control routes and the typed API serve: the tracker's, with the worker state of any session that has none read from the service on the same dial and credential as the writes, and every session registered on this machine (in the shared Claude home's registry or any identity's) that the tracker holds no record of.
+      const rcStatusOf = createRcStatusResolver({
+        statusOf: rcTracker.statusOf,
+        noteReadWorkerState: rcTracker.noteReadWorkerState,
+        credentialOf: rcTracker.credentialOf,
+        registered: () =>
+          readRcRegisteredSessions({
+            fs: realFarmFs,
+            registryDirs: () => rcRegistryDirsOf([resolveClaudeHome(), ...listIdentityDirectories(paths).names.map((id) => identityDirectory(paths, id))]),
+            isProcessAlive: realIsProcessAlive,
+          }),
+        persistedCredentialOf: rcCredentialStore.read,
+        dial: rcDial,
+        now: () => Date.now(),
+      });
       const rcAnswer = async (sessionId: string, requestId: string, decision: RcAnswerDecision) =>
         await answerRcControlRequest({ credentialOf: rcTracker.credentialOf, pendingOf: (id) => rcTracker.pendingOf(id), completePending: rcTracker.completePending, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial }, sessionId, requestId, decision);
       const rcControlRequestDeps = { credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial, newUuid: randomUUID };
@@ -584,12 +601,12 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         },
         log,
         mintLeaf(authority, LOOPBACK_LEAF_NAMES, new Date()),
-        createRcControlHandler({ expectedToken: rcControlToken, list: rcTracker.list, statusOf: rcTracker.statusOf, pendingOf: rcTracker.pendingOf, inject: rcInject, answer: rcAnswer, interrupt: rcInterrupt, setModel: rcSetModel, setPermissionMode: rcSetPermissionMode, endSession: rcEndSession, getUsage: rcGetUsage, getContextUsage: rcGetContextUsage, readFile: rcReadFile, fileSuggestions: rcFileSuggestions, keepAlive: rcKeepAlive, mcpStatus: rcMcpStatus, mcpReconnect: rcMcpReconnect, mcpAuthenticate: rcMcpAuthenticate, mcpOAuthCallbackUrl: rcMcpOAuthCallbackUrl, teleport: rcTeleport }),
+        createRcControlHandler({ expectedToken: rcControlToken, list: rcTracker.list, statusOf: rcStatusOf, pendingOf: rcTracker.pendingOf, inject: rcInject, answer: rcAnswer, interrupt: rcInterrupt, setModel: rcSetModel, setPermissionMode: rcSetPermissionMode, endSession: rcEndSession, getUsage: rcGetUsage, getContextUsage: rcGetContextUsage, readFile: rcReadFile, fileSuggestions: rcFileSuggestions, keepAlive: rcKeepAlive, mcpStatus: rcMcpStatus, mcpReconnect: rcMcpReconnect, mcpAuthenticate: rcMcpAuthenticate, mcpOAuthCallbackUrl: rcMcpOAuthCallbackUrl, teleport: rcTeleport }),
         [
           createDoorApiNodeHandler({
             expectedToken: rcControlToken,
             paths,
-            statusOf: rcTracker.statusOf,
+            statusOf: rcStatusOf,
             pendingOf: rcTracker.pendingOf,
             inject: rcInject,
             answer: rcAnswer,

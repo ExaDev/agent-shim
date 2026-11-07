@@ -8,12 +8,13 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { realFarmFs } from "../realPorts";
 import { CONNECT_INTERCEPT_HOST, LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial } from "./connect";
-import { KEYGEN_TIMEOUT_MS, RC_TEST_SEQUENCE_NUM, RC_TEST_SESSION_ID, HTTP_OK, SETTLE_MS, TEST_CAPABILITY, connectRedirected, connectThroughProxy, makeTlsWorld, requestOn, settle } from "./connectTestWorld";
+import { KEYGEN_TIMEOUT_MS, RC_TEST_READ_WORKER_STATUS, RC_TEST_SEQUENCE_NUM, RC_TEST_SESSION_ID, HTTP_OK, SETTLE_MS, TEST_CAPABILITY, connectRedirected, connectThroughProxy, makeTlsWorld, requestOn, settle } from "./connectTestWorld";
 import { createRcApiNodeHandler, frontDoorRcApiClient } from "./rcApi";
 import { createRcControlHandler, frontDoorRcControl, realRcControlTransport, type RcControlTransport } from "./rcControl";
 import { createRcCredentialStore } from "./rcCredentialStore";
 import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, type RcSessionTracker } from "./rcSessions";
 import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcEventDial, type RcEventWriteResult, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
+import { createRcStatusResolver } from "./rcStatus";
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
 import type { RcStreamEvent } from "./rcSchemas";
 import { createFrontDoorServer } from "./server";
@@ -206,6 +207,43 @@ describe("Remote Control observation and injection over the connect surface", ()
   );
 
   it(
+    "reads the worker state of a session whose state never crossed the door from the API host, on the door's own dial with the observed credential",
+    async () => {
+      const readTracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS });
+      const world = makeTlsWorld(ca, upstreamCa, { rc: { tracker: readTracker } });
+      const { connectPort, rcDial, close } = await world.start();
+      try {
+        const secure = await connectThroughProxy(connectPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+        // The session's create and a heartbeat cross the door, but no worker state update does: the state the tracker can observe is empty.
+        await postOn(secure, "/v1/code/sessions", CREATE_BEARER, JSON.stringify({ bridge: {} }));
+        await postOn(secure, `/v1/code/sessions/${RC_TEST_SESSION_ID}/worker/heartbeat`, HEARTBEAT_BEARER, JSON.stringify({ session_id: RC_TEST_SESSION_ID, idle_seconds: RC_TEST_IDLE_SECONDS }));
+        await settle();
+        expect(readTracker.statusOf(RC_TEST_SESSION_ID)[0]?.workerState).toBeUndefined();
+
+        const resolve = createRcStatusResolver({ statusOf: readTracker.statusOf, noteReadWorkerState: readTracker.noteReadWorkerState, credentialOf: readTracker.credentialOf, registered: () => [], persistedCredentialOf: () => undefined, dial: rcDial, now: () => Date.now() });
+        const {
+          statuses: [status],
+        } = await resolve(RC_TEST_SESSION_ID);
+        expect(status?.workerState).toEqual({ value: RC_TEST_READ_WORKER_STATUS, observedAt: expect.any(Number) as unknown, source: "read" });
+        expect(status?.workerStateUnavailable).toBeUndefined();
+
+        // The API host received the documented read: a GET of the session's worker record, with the observed OAuth bearer and protocol headers (never the heartbeat's worker JWT), addressed by the API host's name.
+        const read = world.upstreamRequests.find((seen) => seen.url === `/v1/code/sessions/${RC_TEST_SESSION_ID}/worker`);
+        expect(read?.method).toBe("GET");
+        expect(read?.body).toBe("");
+        expect(read?.headers.authorization).toBe(CREATE_BEARER);
+        expect(read?.headers["anthropic-version"]).toBe(VERSION);
+        expect(read?.headers["anthropic-client-platform"]).toBe(PLATFORM);
+        expect(read?.headers.host).toBe(CONNECT_INTERCEPT_HOST);
+        secure.destroy();
+      } finally {
+        await close();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
     "exposes the observed session and the inject operation over the control surface",
     async () => {
       const world = makeTlsWorld(ca, upstreamCa, { rc: { tracker } });
@@ -214,7 +252,7 @@ describe("Remote Control observation and injection over the connect surface", ()
         createRcControlHandler({
           expectedToken: CONTROL_TOKEN,
           list: tracker.list,
-          statusOf: (sessionId?: string) => tracker.statusOf(sessionId),
+          statusOf: async (sessionId?: string) => Promise.resolve({ statuses: tracker.statusOf(sessionId).map((status) => ({ ...status, workerStateUnavailable: undefined })), unobserved: [] }),
           pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
           inject: async (sessionId, text) => await injectRcUserMessage({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial: rcDial, newUuid: () => "uuid-e2e-control" }, sessionId, text),
           answer: async (sessionId, requestId, decision) => await answerRcControlRequest({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, dial: rcDial }, sessionId, requestId, decision),
@@ -275,7 +313,7 @@ describe("Remote Control observation and injection over the connect surface", ()
         createRcControlHandler({
           expectedToken: CONTROL_TOKEN,
           list: tracker.list,
-          statusOf: (sessionId?: string) => tracker.statusOf(sessionId),
+          statusOf: async (sessionId?: string) => Promise.resolve({ statuses: tracker.statusOf(sessionId).map((status) => ({ ...status, workerStateUnavailable: undefined })), unobserved: [] }),
           pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
           inject: async (sessionId, text) => await injectRcUserMessage({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial: rcDial, newUuid: () => "uuid-e2e-answer" }, sessionId, text),
           answer,
@@ -315,7 +353,7 @@ describe("Remote Control observation and injection over the connect surface", ()
         const client = frontDoorRcControl(loopbackTransport(address.port), CONTROL_TOKEN);
 
         // The status the door already observes: the worker's own registration and heartbeat, and the request awaiting an answer.
-        const statuses = await client.statusOf(RC_TEST_SESSION_ID);
+        const { statuses } = await client.statusOf(RC_TEST_SESSION_ID);
         expect(statuses.map((status) => status.id)).toEqual([RC_TEST_SESSION_ID]);
         expect(statuses[0]?.workerState?.value).toBe("WORKER_STATUS_RUNNING");
         expect(statuses[0]?.workerIdleSeconds?.value).toBe(RC_TEST_IDLE_SECONDS);
@@ -379,7 +417,7 @@ describe("Remote Control observation and injection over the connect surface", ()
         createRcControlHandler({
           expectedToken: CONTROL_TOKEN,
           list: tracker.list,
-          statusOf: (sessionId?: string) => tracker.statusOf(sessionId),
+          statusOf: async (sessionId?: string) => Promise.resolve({ statuses: tracker.statusOf(sessionId).map((status) => ({ ...status, workerStateUnavailable: undefined })), unobserved: [] }),
           pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
           inject: async (sessionId, text) => await injectRcUserMessage({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial: rcDial, newUuid: () => "uuid-e2e-control" }, sessionId, text),
           answer: async (sessionId, requestId, decision) => await answerRcControlRequest({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, dial: rcDial }, sessionId, requestId, decision),
@@ -452,7 +490,7 @@ describe("Remote Control observation and injection over the connect surface", ()
       const controlDeps = {
         expectedToken: CONTROL_TOKEN,
         list: tracker.list,
-        statusOf: (sessionId?: string) => tracker.statusOf(sessionId),
+        statusOf: async (sessionId?: string) => Promise.resolve({ statuses: tracker.statusOf(sessionId).map((status) => ({ ...status, workerStateUnavailable: undefined })), unobserved: [] }),
         pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
         inject: rcInject,
         answer: rcAnswer,

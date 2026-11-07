@@ -317,13 +317,13 @@ describe("the Remote Control session status", () => {
     exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer b", requestBody: JSON.stringify({ session_id: SESSION_ID, worker_epoch: 1, supports_heartbeat_probe: true, current_interval_seconds: 20, idle_seconds: 7 }) }).respond(HTTP_STATUS.ok);
     const status = tracker.statusOf()[0];
     expect(status?.id).toBe(SESSION_ID);
-    expect(status?.workerState).toEqual({ value: "WORKER_STATUS_RUNNING", observedAt: CLOCK_START_MS });
+    expect(status?.workerState).toEqual({ value: "WORKER_STATUS_RUNNING", observedAt: CLOCK_START_MS, source: "observed" });
     expect(status?.workerIdleSeconds).toEqual({ value: 7, observedAt: CLOCK_START_MS + HEARTBEAT_INTERVAL_MS });
     expect(status?.pending).toEqual([]);
     advance(HEARTBEAT_INTERVAL_MS);
     exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer b", requestBody: JSON.stringify({ idle_seconds: 27 }) }).respond(HTTP_STATUS.ok);
     expect(tracker.statusOf()[0]?.workerIdleSeconds).toEqual({ value: 27, observedAt: CLOCK_START_MS + 2 * HEARTBEAT_INTERVAL_MS });
-    expect(tracker.statusOf()[0]?.workerState).toEqual({ value: "WORKER_STATUS_RUNNING", observedAt: CLOCK_START_MS });
+    expect(tracker.statusOf()[0]?.workerState).toEqual({ value: "WORKER_STATUS_RUNNING", observedAt: CLOCK_START_MS, source: "observed" });
     expect(tracker.statusOf("cse_00000000-0000-4000-8000-0000000000ff")).toEqual([]);
   });
 
@@ -331,6 +331,36 @@ describe("the Remote Control session status", () => {
     const { tracker } = trackerWithClock();
     exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer b" }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
     expect(tracker.statusOf()).toEqual([{ id: SESSION_ID, createdAt: CLOCK_START_MS, lastSeenAt: CLOCK_START_MS, workerState: undefined, workerIdleSeconds: undefined, pending: [] }]);
+  });
+
+  it("files a worker state the service answered a read with, marked as read, when none was observed", () => {
+    const { tracker, advance } = trackerWithClock();
+    exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer b" }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
+    advance(HEARTBEAT_INTERVAL_MS);
+    tracker.noteReadWorkerState(SESSION_ID, "idle");
+    expect(tracker.statusOf()[0]?.workerState).toEqual({ value: "idle", observedAt: CLOCK_START_MS + HEARTBEAT_INTERVAL_MS, source: "read" });
+  });
+
+  it("keeps an observed worker state over a read that arrives after it", () => {
+    const { tracker } = trackerWithClock();
+    exchange(tracker, { method: "PUT", url: WORKER_PATH, authorization: "Bearer b", requestBody: JSON.stringify({ worker_status: "running" }) }).respond(HTTP_STATUS.ok);
+    tracker.noteReadWorkerState(SESSION_ID, "idle");
+    expect(tracker.statusOf()[0]?.workerState).toEqual({ value: "running", observedAt: CLOCK_START_MS, source: "observed" });
+  });
+
+  it("replaces a read worker state with the next observed one", () => {
+    const { tracker, advance } = trackerWithClock();
+    exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer b", requestBody: JSON.stringify({ idle_seconds: 1 }) }).respond(HTTP_STATUS.ok);
+    tracker.noteReadWorkerState(SESSION_ID, "idle");
+    advance(HEARTBEAT_INTERVAL_MS);
+    exchange(tracker, { method: "PUT", url: WORKER_PATH, authorization: "Bearer b", requestBody: JSON.stringify({ worker_status: "requires_action" }) }).respond(HTTP_STATUS.ok);
+    expect(tracker.statusOf()[0]?.workerState).toEqual({ value: "requires_action", observedAt: CLOCK_START_MS + HEARTBEAT_INTERVAL_MS, source: "observed" });
+  });
+
+  it("files no read state for a session the tracker does not hold", () => {
+    const { tracker } = trackerWithClock();
+    tracker.noteReadWorkerState(SESSION_ID, "idle");
+    expect(tracker.statusOf()).toEqual([]);
   });
 });
 

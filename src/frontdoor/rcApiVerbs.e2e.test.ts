@@ -38,7 +38,7 @@ describe("the wider control-verb family on the door's typed API, end to end over
     const doorApi = createRcApiNodeHandler({
       expectedToken: CONTROL_TOKEN,
       list: () => [],
-      statusOf: () => [],
+      statusOf: async () => Promise.resolve({ statuses: [], unobserved: [] }),
       pendingOf: () => [],
       inject: async (session, text) => note("inject", [session, text]),
       answer: async (session, request, decision) => note("answer", [session, request, decision]),
@@ -121,7 +121,7 @@ describe("the wider control-verb family on the door's typed API, end to end over
     const surface = createRcApiNodeHandler({
       expectedToken: CONTROL_TOKEN,
       list: () => [],
-      statusOf: () => [],
+      statusOf: async () => Promise.resolve({ statuses: [], unobserved: [] }),
       pendingOf: () => [],
       inject: async () => await Promise.resolve({ ok: false, message: "unexercised" }),
       answer: async () => await Promise.resolve({ ok: false, message: "unexercised" }),

@@ -9,6 +9,7 @@ import { buildLayoutPaths } from "../paths";
 import { FAKE_UID, createFakeFarmFs, fakeSocketTrust } from "../test-helpers";
 import { RC_IDLE_EXPIRY_MS, RC_PENDING_SUMMARY_EXCERPT_CHARS, createRcSessionTracker } from "./rcSessions";
 import type { FrontDoorRoute, RoutedRequest } from "./route";
+import type { RcStatusReport } from "./rcStatus";
 import { formatRcPendingList, formatRcRateLimitInfo, formatRcSelfHostMint, formatRcSessionList, formatRcSessionStatus, formatRcStreamEvent, frontDoorRcApiFromState, frontDoorRcControlFromState } from "./rcCommands";
 import { rcObservingResolver, realStatOwnExecutable } from "./commands";
 import { collectFrontDoorStatus, formatFrontDoorStatus } from "./status";
@@ -142,28 +143,67 @@ describe("frontdoor rc", () => {
 
   it("formats the session status, the worker facts, and the pending requests, with plain lines for what was never observed", () => {
     const createdAt = 1_000;
-    expect(formatRcSessionStatus([])).toEqual(["no Remote Control sessions observed"]);
-    expect(formatRcSessionStatus([{ id: "cse_1", createdAt, lastSeenAt: createdAt, workerState: undefined, workerIdleSeconds: undefined, pending: [] }])).toEqual([
+    const tracked = (statuses: RcStatusReport["statuses"]): RcStatusReport => ({ statuses, unobserved: [] });
+    expect(formatRcSessionStatus(tracked([]))).toEqual(["no Remote Control sessions observed or registered"]);
+    expect(formatRcSessionStatus(tracked([{ id: "cse_1", createdAt, lastSeenAt: createdAt, workerState: undefined, workerStateUnavailable: undefined, workerIdleSeconds: undefined, pending: [] }]))).toEqual([
       "cse_1  created 1970-01-01T00:00:01.000Z  last seen 1970-01-01T00:00:01.000Z",
-      "  worker: not observed",
+      "  worker: state unknown, idle unknown",
       "  pending: none",
     ]);
     expect(
-      formatRcSessionStatus([
-        {
-          id: "cse_1",
-          createdAt,
-          lastSeenAt: createdAt + ONE_HEARTBEAT_MS,
-          workerState: { value: "WORKER_STATUS_RUNNING", observedAt: createdAt },
-          workerIdleSeconds: { value: 7, observedAt: createdAt + ONE_HEARTBEAT_MS },
-          pending: [{ sessionId: "cse_1", requestId: "req_1", type: "can_use_tool", summary: 'Bash {"command":"pnpm test"}', observedAt: createdAt }],
-        },
-      ]),
+      formatRcSessionStatus(
+        tracked([
+          {
+            id: "cse_1",
+            createdAt,
+            lastSeenAt: createdAt + ONE_HEARTBEAT_MS,
+            workerState: { value: "WORKER_STATUS_RUNNING", observedAt: createdAt, source: "observed" },
+            workerStateUnavailable: undefined,
+            workerIdleSeconds: { value: 7, observedAt: createdAt + ONE_HEARTBEAT_MS },
+            pending: [{ sessionId: "cse_1", requestId: "req_1", type: "can_use_tool", summary: 'Bash {"command":"pnpm test"}', observedAt: createdAt }],
+          },
+        ]),
+      ),
     ).toEqual([
       "cse_1  created 1970-01-01T00:00:01.000Z  last seen 1970-01-01T00:00:01.020Z",
       "  worker: state WORKER_STATUS_RUNNING since 1970-01-01T00:00:01.000Z, idle 7 s as of 1970-01-01T00:00:01.020Z",
       "  pending:",
       '    cse_1  req_1  can_use_tool  Bash {"command":"pnpm test"}  observed 1970-01-01T00:00:01.000Z',
+    ]);
+  });
+
+  it("says whether a worker state was read from the service, and why one could not be", () => {
+    const createdAt = 1_000;
+    const base = { id: "cse_1", createdAt, lastSeenAt: createdAt, workerIdleSeconds: undefined, pending: [] };
+    expect(formatRcSessionStatus({ statuses: [{ ...base, workerState: { value: "idle", observedAt: createdAt, source: "read" }, workerStateUnavailable: undefined }], unobserved: [] })).toEqual([
+      "cse_1  created 1970-01-01T00:00:01.000Z  last seen 1970-01-01T00:00:01.000Z",
+      "  worker: state idle as read from the service at 1970-01-01T00:00:01.000Z, idle unknown",
+      "  pending: none",
+    ]);
+    expect(formatRcSessionStatus({ statuses: [{ ...base, workerState: undefined, workerStateUnavailable: "the API answered HTTP 403 to the worker state read" }], unobserved: [] })).toEqual([
+      "cse_1  created 1970-01-01T00:00:01.000Z  last seen 1970-01-01T00:00:01.000Z",
+      "  worker: state unknown: the API answered HTTP 403 to the worker state read, idle unknown",
+      "  pending: none",
+    ]);
+  });
+
+  it("lists each registered session the door holds no record of after the tracked ones, with why and its worker state", () => {
+    const unobserved = { id: "cse_2", localSessionId: "local-2", pid: 42, reason: "the front door has never observed this session" };
+    expect(
+      formatRcSessionStatus({
+        statuses: [],
+        unobserved: [
+          { ...unobserved, workerState: undefined, workerStateUnavailable: "the front door holds no credential for session cse_2" },
+          { ...unobserved, id: "cse_3", workerState: { value: "idle", observedAt: 1_000, source: "read" }, workerStateUnavailable: undefined },
+        ],
+      }),
+    ).toEqual([
+      "cse_2  unobserved  local session local-2  pid 42",
+      "  reason: the front door has never observed this session",
+      "  worker: state unknown: the front door holds no credential for session cse_2",
+      "cse_3  unobserved  local session local-2  pid 42",
+      "  reason: the front door has never observed this session",
+      "  worker: state idle as read from the service at 1970-01-01T00:00:01.000Z",
     ]);
   });
 

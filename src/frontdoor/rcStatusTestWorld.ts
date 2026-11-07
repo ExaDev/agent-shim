@@ -1,0 +1,35 @@
+import { HTTP_STATUS } from "../codex/http";
+import type { RcSessionTracker } from "./rcSessions";
+import { createRcStatusResolver, type RcStatusResolver } from "./rcStatus";
+import type { RcDialAnswer, RcEventDial } from "./rcWrites";
+
+/** A made-up registered session the tracker under test never holds, with its local id and registering process. */
+export const UNOBSERVED_TEST_SESSION_ID = "cse_00000000-0000-4000-8000-0000000000dd";
+const UNOBSERVED_TEST_LOCAL_SESSION_ID = "00000000-0000-4000-8000-0000000000aa";
+const UNOBSERVED_TEST_PID = 4242;
+
+/** The worker state every read in this world answers with. */
+export const TEST_READ_WORKER_STATUS = "idle";
+
+/** A dial whose worker read answers every session with the protocol's documented worker record, and which refuses every write: the status read only ever reads. */
+const readOnlyDial: RcEventDial = {
+  writeEvents: async () => await Promise.reject(new Error("a status read never writes events")),
+  writeTeleportEvents: async () => await Promise.reject(new Error("a status read never writes teleport events")),
+  readWorker: async (sessionId): Promise<RcDialAnswer> =>
+    await Promise.resolve({ status: HTTP_STATUS.ok, body: JSON.stringify({ worker: { session_id: sessionId, worker_epoch: 1, worker_status: TEST_READ_WORKER_STATUS, external_metadata: {} } }) }),
+};
+
+/**
+ * The real status resolver over a tracker, with one registered session the tracker does not hold (`UNOBSERVED_TEST_SESSION_ID`) whose create a door generation persisted a credential for, and a dial answering every worker read with `TEST_READ_WORKER_STATUS`: the world the surfaces' tests serve their status from, so each answer passes through the real resolver and the real output schema.
+ */
+export function testStatusResolver(tracker: RcSessionTracker): RcStatusResolver {
+  return createRcStatusResolver({
+    statusOf: tracker.statusOf,
+    noteReadWorkerState: tracker.noteReadWorkerState,
+    credentialOf: tracker.credentialOf,
+    registered: () => [{ id: UNOBSERVED_TEST_SESSION_ID, localSessionId: UNOBSERVED_TEST_LOCAL_SESSION_ID, pid: UNOBSERVED_TEST_PID }],
+    persistedCredentialOf: (sessionId) => (sessionId === UNOBSERVED_TEST_SESSION_ID ? { authorization: "Bearer test-oauth", anthropicVersion: undefined, anthropicClientPlatform: undefined } : undefined),
+    dial: readOnlyDial,
+    now: () => Date.now(),
+  });
+}

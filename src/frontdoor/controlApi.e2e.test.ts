@@ -118,7 +118,7 @@ describe("the door's typed API with the control plane mounted beside Remote Cont
       expectedToken: CONTROL_TOKEN,
       paths: buildLayoutPaths("/nonexistent/agent-shim-config-api-unexercised"),
       list: tracker.list,
-      statusOf: (sessionId?: string) => tracker.statusOf(sessionId),
+      statusOf: async (sessionId?: string) => Promise.resolve({ statuses: tracker.statusOf(sessionId).map((status) => ({ ...status, workerStateUnavailable: undefined })), unobserved: [] }),
       pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
       inject: unexercised,
       answer: unexercised,
