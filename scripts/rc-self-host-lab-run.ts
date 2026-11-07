@@ -18,7 +18,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { buildLayoutPaths } from "../src/paths";
-import { labBaseEnv, labLaunchVariables, labPaneCommand, labPaneState, labRefusal, labSessionId, nonLoopbackSockets, parseLabDoorState, PINNED_CLAUDE_VERSION, readLabCapture, shellQuote } from "./rc-self-host-lab-core";
+import { gitEgressIn, labBaseEnv, labLaunchVariables, labPaneCommand, labPaneState, labRefusal, labSessionId, nonLoopbackSockets, parseLabDoorState, PINNED_CLAUDE_VERSION, readLabCapture, shellQuote } from "./rc-self-host-lab-core";
 
 const USAGE = "usage: node scripts/rc-self-host-lab.mts up|check|down --dir <lab-dir> [--claude-version <v>] [--keep]";
 
@@ -38,6 +38,11 @@ const PANE_ROWS = 50;
 const MOCK_TOKEN_BYTES = 16;
 /** Owner-only file mode for the lab's token and provider file. */
 const PRIVATE_FILE_MODE = 0o600;
+
+/** Where the launcher looks for installed Claude Code versions, relative to HOME (`defaultVersionsDir` in `src/versionDiscovery.ts`). */
+const LAUNCHER_VERSIONS_PATH = path.join(".local", "share", "claude", "versions");
+/** The CLI's debug log inside the lab directory. */
+const DEBUG_LOG_FILE = "claude-debug.txt";
 
 /** How often the lab polls the pane, the logs and the state file while it waits: a person-scale cadence, since every wait is on a process start. */
 const POLL_MS = 1_000;
@@ -228,6 +233,13 @@ function check(state: LabState): boolean {
     clean = false;
     console.error(`rc-self-host-lab: no capture at ${capturePath}; the lab door never recorded anything, so nothing can be said to have stayed local`);
   }
+  const cloned = gitEgressIn(readIfExists(path.join(path.dirname(state.home), DEBUG_LOG_FILE)));
+  if (cloned.length === 0) {
+    console.log("git check: clean (the CLI's debug log names no repository git reached)");
+  } else {
+    clean = false;
+    console.error(`rc-self-host-lab: LEAK: the CLI's git reached ${cloned.join(", ")}`);
+  }
   const pids = [state.doorPid, state.cliPid, state.mockPid].filter(isAlive).flatMap(withDescendants);
   if (pids.length > 0) {
     // lsof exits 1 when it finds no network file at all, which for these pids means no socket to report: the outcome a clean lab can have.
@@ -255,12 +267,17 @@ async function up(options: Options): Promise<boolean> {
   }
   const home = path.join(options.dir, "home");
   const claudeHome = path.join(options.dir, "claude-home");
+  const userHome = path.join(options.dir, "user-home");
   const work = path.join(options.dir, "work");
   for (const directory of [home, claudeHome, work]) {
     fs.mkdirSync(directory, { recursive: true });
   }
+  // The launcher finds Claude Code versions under HOME, and the lab's HOME is its own, so the operator's installed versions are linked in read-only terms: the one thing of the operator's the lab's home holds.
+  const versionsLink = path.join(userHome, LAUNCHER_VERSIONS_PATH);
+  fs.mkdirSync(path.dirname(versionsLink), { recursive: true });
+  fs.symlinkSync(path.join(os.homedir(), LAUNCHER_VERSIONS_PATH), versionsLink);
   const paths = buildLayoutPaths(home);
-  const env = labBaseEnv(process.env, { home, claudeHome });
+  const env = labBaseEnv(process.env, { home, claudeHome, userHome });
   const socket = `rc-lab-${path.basename(options.dir)}`;
   const agentShim = (args: readonly string[]): string => run(process.execPath, [CLI_BUNDLE, ...args], env);
 
@@ -282,7 +299,7 @@ async function up(options: Options): Promise<boolean> {
   const mockPid = panePid(socket, MOCK_SESSION, env);
 
   const transparentPort = await freePort();
-  const debugLog = path.join(options.dir, "claude-debug.txt");
+  const debugLog = path.join(options.dir, DEBUG_LOG_FILE);
   const paneCommand = labPaneCommand(labLaunchVariables(transparentPort), [process.execPath, CLI_BUNDLE, "run", `@${LAB_IDENTITY}`, "--claude-version", options.claudeVersion, "--provider", LAB_PROVIDER, "--remote-control", "--debug-file", debugLog]);
   tmux(socket, ["new-session", "-d", "-s", CLI_SESSION, "-x", String(PANE_COLUMNS), "-y", String(PANE_ROWS), "-c", work, paneCommand], env);
   const cliPid = panePid(socket, CLI_SESSION, env);
@@ -347,7 +364,7 @@ async function stopTree(root: number, what: string): Promise<void> {
 
 async function down(options: Options): Promise<boolean> {
   const state = readState(options.dir);
-  const env = labBaseEnv(process.env, { home: state.home, claudeHome: path.join(options.dir, "claude-home") });
+  const env = labBaseEnv(process.env, { home: state.home, claudeHome: path.join(options.dir, "claude-home"), userHome: path.join(options.dir, "user-home") });
   const clean = check(state);
   await stopTree(state.cliPid, "the CLI");
   await stopTree(state.mockPid, "the mock provider");

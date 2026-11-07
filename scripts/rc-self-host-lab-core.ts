@@ -5,7 +5,7 @@
 /**
  * The only variables a lab process inherits from the environment that runs the lab: enough for a shell, the toolchains on `PATH` and a terminal, and nothing that names an account, a configuration directory, a proxy or a credential. Everything else is left behind on purpose: an inherited `CLAUDE_CONFIG_DIR` makes the launched CLI run as the operator's real login (ExaDev/agent-shim#725), an inherited `HTTPS_PROXY` would route the CLI around the lab door, and the session running the lab carries provider keys of its own.
  */
-export const LAB_INHERITED_VARIABLES: readonly string[] = ["HOME", "PATH", "USER", "LOGNAME", "SHELL", "LANG", "TERM", "TMPDIR"];
+export const LAB_INHERITED_VARIABLES: readonly string[] = ["PATH", "USER", "LOGNAME", "SHELL", "LANG", "TERM", "TMPDIR"];
 
 /**
  * The Claude Code version the lab runs unless told otherwise: the release the self-hosted surface's protocol and the isolation work were verified against. A pin the machine does not have installed fails the launch loudly rather than falling back to another version.
@@ -18,6 +18,8 @@ export interface LabEnvInputs {
   readonly home: string;
   /** The empty directory the lab's farm treats as `~/.claude` (`AGENT_SHIM_CLAUDE_HOME`), inside the lab directory, so no farm entry can point into the operator's real one. */
   readonly claudeHome: string;
+  /** The lab's own `HOME`, inside the lab directory: the CLI reads user-level files (`~/.claude/CLAUDE.md`, `~/.ssh`, `~/.gitconfig`) from `HOME` whatever its configuration directory, so the operator's are out of reach only under a home of the lab's own. */
+  readonly userHome: string;
 }
 
 /**
@@ -44,7 +46,7 @@ export function labRefusal(operator: Readonly<Record<string, string | undefined>
 }
 
 /**
- * The environment every lab process starts with: the inherited minimum, the lab's own `AGENT_SHIM_HOME` and `AGENT_SHIM_CLAUDE_HOME`, and a terminal type the CLI renders against. `CLAUDE_CONFIG_DIR` is never in it, whatever the operator's environment holds.
+ * The environment every lab process starts with: the inherited minimum, the lab's own `HOME`, `AGENT_SHIM_HOME` and `AGENT_SHIM_CLAUDE_HOME`, git's SSH transport disabled, and a terminal type the CLI renders against. `CLAUDE_CONFIG_DIR` is never in it, whatever the operator's environment holds.
  */
 export function labBaseEnv(operator: Readonly<Record<string, string | undefined>>, inputs: LabEnvInputs): Record<string, string> {
   const env: Record<string, string> = {};
@@ -55,8 +57,12 @@ export function labBaseEnv(operator: Readonly<Record<string, string | undefined>
     }
   }
   env.TERM = "xterm-256color";
+  env.HOME = inputs.userHome;
   env.AGENT_SHIM_HOME = inputs.home;
   env.AGENT_SHIM_CLAUDE_HOME = inputs.claudeHome;
+  // Git over SSH ignores HTTPS_PROXY, so the CLI's plugin marketplace clone (git@github.com) would dial out around the door: every SSH transport is replaced by one that fails before connecting, and git never prompts for what it lacks.
+  env.GIT_SSH_COMMAND = "false";
+  env.GIT_TERMINAL_PROMPT = "0";
   return env;
 }
 
@@ -202,4 +208,11 @@ export function nonLoopbackSockets(lsofFields: string): readonly string[] {
     .filter((line) => line.startsWith("n"))
     .map((line) => line.slice(1))
     .filter((name) => !name.split("->").every(isLocalEndpoint));
+}
+
+/**
+ * The repositories the CLI's debug log says it cloned or fetched (`git clone succeeded: <url>`, the line Claude Code writes after its plugin marketplace clone): git dials its remote itself, around the door and its capture, and a clone is over before a socket check could see it, so a success here is traffic that left the machine.
+ */
+export function gitEgressIn(debugLog: string): readonly string[] {
+  return [...debugLog.matchAll(/git (?:clone|fetch|pull) succeeded: (\S+)/g)].flatMap((match) => (match[1] === undefined ? [] : [match[1]]));
 }

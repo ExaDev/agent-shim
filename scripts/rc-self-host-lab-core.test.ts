@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { labBaseEnv, labLaunchVariables, labPaneCommand, labPaneState, labRefusal, labSessionId, nonLoopbackSockets, parseLabDoorState, readLabCapture, shellQuote } from "./rc-self-host-lab-core";
+import { gitEgressIn, labBaseEnv, labLaunchVariables, labPaneCommand, labPaneState, labRefusal, labSessionId, nonLoopbackSockets, parseLabDoorState, readLabCapture, shellQuote } from "./rc-self-host-lab-core";
 
 /** Ports and a pid with no meaning beyond being told apart in the assertions. */
 const TRANSPARENT_PORT = 4321;
@@ -12,8 +12,8 @@ const line = (record: Record<string, unknown>): string => JSON.stringify({ ts: "
 
 describe("the lab's environment", () => {
   it("keeps only the inherited minimum and the lab's own home, never the operator's configuration directory, proxy or credentials", () => {
-    const env = labBaseEnv({ HOME: "/h", PATH: "/bin", CLAUDE_CONFIG_DIR: "/real", HTTPS_PROXY: "http://x", ANTHROPIC_API_KEY: "k", AGENT_SHIM_HOME: "/real-home" }, { home: "/lab/home", claudeHome: "/lab/claude-home" });
-    expect(env).toEqual({ HOME: "/h", PATH: "/bin", TERM: "xterm-256color", AGENT_SHIM_HOME: "/lab/home", AGENT_SHIM_CLAUDE_HOME: "/lab/claude-home" });
+    const env = labBaseEnv({ HOME: "/h", PATH: "/bin", CLAUDE_CONFIG_DIR: "/real", HTTPS_PROXY: "http://x", ANTHROPIC_API_KEY: "k", AGENT_SHIM_HOME: "/real-home" }, { home: "/lab/home", claudeHome: "/lab/claude-home", userHome: "/lab/user-home" });
+    expect(env).toEqual({ HOME: "/lab/user-home", PATH: "/bin", TERM: "xterm-256color", AGENT_SHIM_HOME: "/lab/home", AGENT_SHIM_CLAUDE_HOME: "/lab/claude-home", GIT_SSH_COMMAND: "false", GIT_TERMINAL_PROMPT: "0" });
   });
 
   it("starts the door in self-hosted mode with its capture on, its transparent surface on the given port, and nothing of ~/.claude shared", () => {
@@ -63,6 +63,12 @@ describe("the lab's leak check", () => {
   it("refuses a capture it cannot read instead of calling it clean", () => {
     expect(() => readLabCapture("not json\n")).toThrow("capture line 1 is not JSON");
     expect(() => readLabCapture("[1]\n")).toThrow("capture line 1 is not a JSON object");
+  });
+
+  it("names every repository the CLI's debug log says git reached", () => {
+    const log = ["2026 [DEBUG] git clone: url=git@github.example:o/r.git ref=default", "2026 [DEBUG] git clone succeeded: git@github.example:o/r.git", "2026 [DEBUG] git clone failed: x"].join("\n");
+    expect(gitEgressIn(log)).toEqual(["git@github.example:o/r.git"]);
+    expect(gitEgressIn("")).toEqual([]);
   });
 
   it("names every socket off this machine in lsof's field output, and none that is loopback or listening", () => {
