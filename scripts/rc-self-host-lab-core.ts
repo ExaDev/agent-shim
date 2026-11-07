@@ -115,7 +115,7 @@ function text(value: unknown): string {
 }
 
 /**
- * Reads the door's capture (`logs/frontdoor-capture.jsonl`, one JSON object per line) for anything that left the machine. A `request` record is a piped exchange to an intercepted host's real upstream (the door records one only for a request it forwards), a `stream` record is a tapped host's channel or a relayed upgrade, both pumped to the real host, and a `connect` record with `intercepted: false` is a blind tunnel to some other host; each is a leak, with no exemption, since a self-hosted session's door refuses every blind tunnel (a `connect-refused` record, reported but nothing dialled). A `connect` record for an intercepted host is the tunnel the door terminates itself, and an `upgrade` record is an upgrade's arrival (a refused one is recorded too, and a relayed one also leaves a `stream` record), so neither is. A line that is not a JSON object is an error rather than a skip: a capture the check cannot read cannot be said to be clean.
+ * Reads the door's capture (`logs/frontdoor-capture.jsonl`, one JSON object per line) for anything that left the machine. A `request` record is a piped exchange to an intercepted host's real upstream (the door records one only for a request it forwards), a `routed-forward` record a request the routed pipeline's pass-through sent to the real API, a `stream` record is a tapped host's channel or a relayed upgrade, both pumped to the real host, and a `connect` record with `intercepted: false` is a blind tunnel to some other host; each is a leak, with no exemption, since a self-hosted session's door refuses every blind tunnel (a `connect-refused` record, reported but nothing dialled). A `connect` record for an intercepted host is the tunnel the door terminates itself, and an `upgrade` record is an upgrade's arrival (a refused one is recorded too, and a relayed one also leaves a `stream` record), so neither is. A line that is not a JSON object is an error rather than a skip, and so is a capture with no records at all, since a door that served a session always records its tunnels: a capture the check cannot read, or one the door never wrote to, cannot be said to be clean.
  */
 export function readLabCapture(capture: string): LabCaptureVerdict {
   const leaks: LabLeak[] = [];
@@ -135,8 +135,8 @@ export function readLabCapture(capture: string): LabCaptureVerdict {
       throw new Error(`capture line ${String(index + 1)} is not a JSON object`);
     }
     records += 1;
-    if (parsed.kind === "request") {
-      leaks.push({ kind: "forwarded", detail: `${text(parsed.method)} ${text(parsed.url)}` });
+    if (parsed.kind === "request" || parsed.kind === "routed-forward") {
+      leaks.push({ kind: "forwarded", detail: `${text(parsed.method)} ${text(parsed.url)}${parsed.kind === "routed-forward" ? " (routed pass-through)" : ""}` });
     } else if (parsed.kind === "stream") {
       leaks.push({ kind: "forwarded", detail: `stream to ${text(parsed.host)}` });
     } else if (parsed.kind === "connect" && parsed.intercepted === false) {
@@ -144,6 +144,9 @@ export function readLabCapture(capture: string): LabCaptureVerdict {
     } else if (parsed.kind === "connect-refused") {
       refusedTunnels.push(`${text(parsed.host)}:${text(parsed.port)}`);
     }
+  }
+  if (records === 0) {
+    throw new Error("the capture holds no records; the lab door never recorded the session, so nothing can be said to have stayed local");
   }
   return { records, leaks, refusedTunnels };
 }

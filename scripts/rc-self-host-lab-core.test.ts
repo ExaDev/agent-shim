@@ -50,6 +50,7 @@ describe("the lab's leak check", () => {
       line({ kind: "stream", id: 2, host: "platform.claude.com" }),
       line({ kind: "connect", host: "downloads.example.test", port: TLS_PORT, intercepted: false }),
       line({ kind: "connect-refused", host: "refused.example.test", port: TLS_PORT }),
+      line({ kind: "routed-forward", method: "GET", url: "/v1/mcp_servers", headers: {} }),
     ].join("\n");
     const verdict = readLabCapture(capture);
     expect(verdict.refusedTunnels).toEqual([`refused.example.test:${String(TLS_PORT)}`]);
@@ -57,12 +58,14 @@ describe("the lab's leak check", () => {
       { kind: "forwarded", detail: "GET /api/claude_code_grove" },
       { kind: "forwarded", detail: "stream to platform.claude.com" },
       { kind: "tunnel", detail: "downloads.example.test:443" },
+      { kind: "forwarded", detail: "GET /v1/mcp_servers (routed pass-through)" },
     ]);
   });
 
   it("refuses a capture it cannot read instead of calling it clean", () => {
     expect(() => readLabCapture("not json\n")).toThrow("capture line 1 is not JSON");
     expect(() => readLabCapture("[1]\n")).toThrow("capture line 1 is not a JSON object");
+    expect(() => readLabCapture("")).toThrow("the capture holds no records");
   });
 
   it("names every repository the CLI's debug log says git reached", () => {
