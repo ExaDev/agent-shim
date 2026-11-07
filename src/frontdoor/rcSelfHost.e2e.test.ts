@@ -140,6 +140,12 @@ const SESSION_EVENTS_GENERATION = "00000000-0000-4000-8000-0000000000f1";
 /** Every upstream dial the connect surface made, by kind: a piped forward, a relayed upgrade's TLS dial, or a blind tunnel's TCP dial. The isolation case asserts this stays empty for every call a self-hosted session makes, and its control proves a native credential still lands here. */
 const upstreamDials: string[] = [];
 
+/** Whether the world attributes a redirected connection's peer process to a self-hosted launch; a case about a native peer behind a redirect clears it and restores it. */
+let redirectedPeerIsSelfHosted = true;
+
+/** Where a tap's upstream dial lands while a case wants the tapped bytes: a loopback stand-in for the real host that records every byte it receives. Undefined, a tap's dial is refused like every other. */
+let tapStandIn: { readonly port: number } | undefined;
+
 describe("the self-hosted Remote Control mode end to end", () => {
   let ca: CaMaterial;
   let surface: ReturnType<typeof createRcSelfHostSurface>;
@@ -175,6 +181,8 @@ describe("the self-hosted Remote Control mode end to end", () => {
       // The real production fetch dial, with the private-address refusal lifted because this world's fetch targets are loopback stand-ins the test itself starts.
       webFetch: realRcWebFetch({ allowPrivate: true }),
       ownsLaunch: (capability) => capability === SELF_HOSTED_CAPABILITY,
+      // A redirected connection's peer is a self-hosted session's unless a case says otherwise: every redirected connection in this world is the test's own, attributed by this switch.
+      ownsPeer: async () => await Promise.resolve(redirectedPeerIsSelfHosted),
     });
     sessionEvents = createRcSessionEventLog({ generation: SESSION_EVENTS_GENERATION, capacity: RC_SESSION_EVENT_LOG_CAPACITY });
     tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: 45_000, onTransition: sessionEvents.append, onClose: sessionEvents.close });
@@ -677,20 +685,69 @@ describe("the self-hosted Remote Control mode end to end", () => {
     redirected.destroy();
     expect(upstreamDials).toEqual([]);
 
-    // A native launch's credential-less calls on both hosts, and its token refresh with its own credential in the body, reach the real hosts exactly as sent.
+    // A native launch's credential-less call on the API host reaches the real host exactly as sent; its control-plane session (its token refresh included) is the byte tap, covered by its own case.
     const nativeApi = await connectThroughProxy(connectHandle.port, CONNECT_INTERCEPT_HOST, ca.certPem, NATIVE_CAPABILITY);
     expect((await requestOn(nativeApi, rawRequest("GET", "/mcp-registry/v0/servers?limit=1", {}))).statusLine).toContain(String(FORWARDED_STATUS));
     nativeApi.destroy();
+    expect(upstreamDials).toEqual(["forward GET /mcp-registry/v0/servers?limit=1"]);
+  }, TEST_TIMEOUT_MS);
+
+  it("forwards a native peer's redirected calls exactly as sent, its token refresh with its body intact, and answers a self-hosted peer's locally", async () => {
+    upstreamDials.length = 0;
     const nativeRefreshBody = JSON.stringify({ grant_type: "refresh_token", refresh_token: "native-refresh-token", client_id: "native-client" });
-    const nativePlatform = await connectThroughProxy(connectHandle.port, "platform.claude.com", ca.certPem, NATIVE_CAPABILITY);
-    expect((await requestOn(nativePlatform, rawRequest("GET", "/api/organizations", {}))).statusLine).toContain(String(FORWARDED_STATUS));
-    nativePlatform.destroy();
-    const nativeRefreshSocket = await connectThroughProxy(connectHandle.port, "platform.claude.com", ca.certPem, NATIVE_CAPABILITY);
-    const nativeRefresh = await requestOn(nativeRefreshSocket, rawRequest("POST", "/v1/oauth/token", { "Content-Type": "application/json" }, nativeRefreshBody));
-    nativeRefreshSocket.destroy();
-    expect(nativeRefresh.statusLine).toContain(String(FORWARDED_STATUS));
-    expect(nativeRefresh.body).toBe(nativeRefreshBody);
-    expect(upstreamDials).toEqual(["forward GET /mcp-registry/v0/servers?limit=1", "forward GET /api/organizations", "forward POST /v1/oauth/token"]);
+    const received: Buffer[] = [];
+    const standIn = net.createServer((socket) => {
+      socket.on("data", (chunk: Buffer) => {
+        received.push(chunk);
+      });
+    });
+    await new Promise<void>((resolve) => {
+      standIn.listen(0, "127.0.0.1", () => {
+        resolve();
+      });
+    });
+    const standInAddress = standIn.address();
+    if (standInAddress === null || typeof standInAddress === "string") {
+      throw new Error("the stand-in reported no port");
+    }
+    redirectedPeerIsSelfHosted = false;
+    tapStandIn = { port: standInAddress.port };
+    try {
+      // A native peer's control-plane session is the byte tap, as with the mode off: its token refresh reaches the (stand-in) real host exactly as the client sent it, body and all.
+      const refreshSocket = await connectRedirected(transparentPort, "platform.claude.com", ca.certPem);
+      const refreshRequest = rawRequest("POST", "/v1/oauth/token", { "Content-Type": "application/json" }, nativeRefreshBody);
+      refreshSocket.write(refreshRequest);
+      await waitUntil(() => Buffer.concat(received).toString("utf8") === refreshRequest);
+      refreshSocket.destroy();
+      const directorySocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+      expect((await requestOn(directorySocket, rawRequest("GET", "/mcp-registry/v0/servers", {}))).statusLine).toContain(String(FORWARDED_STATUS));
+      directorySocket.destroy();
+    } finally {
+      redirectedPeerIsSelfHosted = true;
+      tapStandIn = undefined;
+      standIn.close();
+    }
+    expect(upstreamDials).toEqual(["tls platform.claude.com", "forward GET /mcp-registry/v0/servers"]);
+    const selfHosted = await connectRedirected(transparentPort, "platform.claude.com", ca.certPem);
+    const minted = await requestOn(selfHosted, rawRequest("POST", "/v1/oauth/token", { "Content-Type": "application/json" }, JSON.stringify({ grant_type: "refresh_token", refresh_token: RECORD.refreshToken })));
+    selfHosted.destroy();
+    expect(JSON.parse(minted.body)).toMatchObject({ access_token: MINTED_OAUTH_TOKEN });
+    expect(upstreamDials).toHaveLength(2);
+  }, TEST_TIMEOUT_MS);
+
+  it("taps a native launch's control-plane session byte for byte, and parses only a self-hosted launch's", async () => {
+    upstreamDials.length = 0;
+    const native = await connectThroughProxy(connectHandle.port, "platform.claude.com", ca.certPem, NATIVE_CAPABILITY);
+    native.write("GET /api/organizations HTTP/1.1\r\nHost: platform.claude.com\r\n\r\n");
+    await waitUntil(() => upstreamDials.length > 0);
+    native.destroy();
+    // A tap dials the real host over TLS and pumps bytes; a parsed session would have forwarded the request.
+    expect(upstreamDials).toEqual(["tls platform.claude.com"]);
+    upstreamDials.length = 0;
+    const selfHosted = await connectThroughProxy(connectHandle.port, "platform.claude.com", ca.certPem, SELF_HOSTED_CAPABILITY);
+    expect((await requestOn(selfHosted, rawRequest("GET", "/api/organizations", {}))).statusLine).toContain(String(HTTP_STATUS.notFound));
+    selfHosted.destroy();
+    expect(upstreamDials).toEqual([]);
   }, TEST_TIMEOUT_MS);
 
   it("refuses every upgrade of a self-hosted session whatever it presents, and relays a native launch's", async () => {
@@ -813,7 +870,15 @@ function recordingUpstreamDials(effects: ConnectEffects): ConnectEffects {
     },
     connectTlsUpstream: async (host) => {
       upstreamDials.push(`tls ${host}`);
-      return Promise.reject(new Error(`the e2e world dials no real host, and ${host} was asked for`));
+      const standIn = tapStandIn;
+      if (standIn === undefined) {
+        throw new Error(`the e2e world dials no real host, and ${host} was asked for`);
+      }
+      return await new Promise<net.Socket>((resolve) => {
+        const socket = net.connect(standIn.port, "127.0.0.1", () => {
+          resolve(socket);
+        });
+      });
     },
     connectTcp: async (host) => {
       upstreamDials.push(`tcp ${host}`);

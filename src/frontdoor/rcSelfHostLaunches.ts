@@ -21,25 +21,70 @@ export interface RcSelfHostLaunchDeps {
   readonly mintedRecord: () => RcSelfHostCredentialRecord | undefined;
 }
 
-/** Builds the check: whether the launch presenting `capability` runs the identity the door's credential was minted into. */
-export function createRcSelfHostLaunchCheck(deps: RcSelfHostLaunchDeps): (capability: string) => boolean {
-  return (capability) => {
+/** The process facts a redirected connection's attribution reads, injected so it runs against fakes in unit tests (`peerProcess.ts` in production). */
+export interface RcSelfHostPeerDeps {
+  /** The pid of the local process whose socket has `port` as its local port, or undefined when it cannot be read. */
+  readonly peerProcessOf: (port: number) => Promise<number | undefined>;
+  /** Every process's parent, or undefined when the table cannot be read. */
+  readonly parentTable: () => Promise<ReadonlyMap<number, number> | undefined>;
+  /** This door's own pid: its own client half dials the transparent surface, and is never a self-hosted session. */
+  readonly doorPid: number;
+}
+
+/** Both decisions the mode is keyed on: a CONNECT tunnel's launch by its capability, and a redirected connection by its peer process. */
+export interface RcSelfHostLaunchCheck {
+  readonly ownsLaunch: (capability: string) => boolean;
+  readonly ownsPeer: (port: number) => Promise<boolean>;
+}
+
+/**
+ * Builds the checks. `ownsLaunch` is whether the launch presenting `capability` runs the identity the door's credential was minted into. `ownsPeer` attributes a redirected connection the same way by its peer: the process holding the connection's client end, then its ancestors up to the launcher, whose launch record names the identity. A peer that is this door, or a process no launcher started (a client run outside agent-shim, with no minted credential of the door's), is not the mode's; a connection whose peer or parentage cannot be read is, so an unattributable connection fails closed.
+ */
+export function createRcSelfHostLaunchCheck(deps: RcSelfHostLaunchDeps & RcSelfHostPeerDeps): RcSelfHostLaunchCheck {
+  /** What the current mint attributes: nothing while there is no mint, every launch for a mint that names no identity, and otherwise the minted identity's id. */
+  const mintedId = (): { readonly kind: "none" } | { readonly kind: "every" } | { readonly kind: "identity"; readonly id: string } => {
     const mint = deps.mintedRecord();
     if (mint === undefined) {
+      return { kind: "none" };
+    }
+    return mint.identityId === undefined ? { kind: "every" } : { kind: "identity", id: mint.identityId };
+  };
+  const launcherRunsMinted = (pid: number, minted: string): boolean => launchIdentitiesOf(deps.fs, deps.launchesDir, pid).some((identityId) => identityId === minted);
+  return {
+    ownsLaunch: (capability) => {
+      const minted = mintedId();
+      if (minted.kind !== "identity") {
+        return minted.kind === "every";
+      }
+      const launch = deps.fs
+        .readdir(deps.sessionsDir)
+        .filter(isSessionRecordName)
+        .map((name) => readFrontDoorSessionRecord(deps.fs, deps.sessionsDir, name))
+        .find((record) => record !== undefined && isLiveCapability(capability, [record.token]));
+      return launch !== undefined && launcherRunsMinted(launch.pid, minted.id);
+    },
+    ownsPeer: async (port) => {
+      const minted = mintedId();
+      if (minted.kind !== "identity") {
+        return minted.kind === "every";
+      }
+      const peer = await deps.peerProcessOf(port);
+      const parents = peer === undefined ? undefined : await deps.parentTable();
+      if (peer === undefined || parents === undefined) {
+        return true;
+      }
+      // Walks from the peer towards the root: the first ancestor with a launch record is the launch the connection belongs to. The walk stops at a pid already seen, so a parent table read mid-change cannot loop it.
+      const seen = new Set<number>();
+      for (let pid: number | undefined = peer; pid !== undefined && pid > 0 && !seen.has(pid); pid = parents.get(pid)) {
+        seen.add(pid);
+        if (pid === deps.doorPid) {
+          return false;
+        }
+        if (launchIdentitiesOf(deps.fs, deps.launchesDir, pid).length > 0) {
+          return launcherRunsMinted(pid, minted.id);
+        }
+      }
       return false;
-    }
-    const minted = mint.identityId;
-    if (minted === undefined) {
-      return true;
-    }
-    const launch = deps.fs
-      .readdir(deps.sessionsDir)
-      .filter(isSessionRecordName)
-      .map((name) => readFrontDoorSessionRecord(deps.fs, deps.sessionsDir, name))
-      .find((record) => record !== undefined && isLiveCapability(capability, [record.token]));
-    if (launch === undefined) {
-      return false;
-    }
-    return launchIdentitiesOf(deps.fs, deps.launchesDir, launch.pid).some((identityId) => identityId === minted);
+    },
   };
 }

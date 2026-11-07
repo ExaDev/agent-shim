@@ -28,13 +28,48 @@ function world(): ReturnType<typeof createFakeFarmFs> {
 /** The minted record's credential fields, whose values the check never reads. */
 const RECORD_FIELDS = { accessToken: "sk-ant-oat1", refreshToken: "refresh", organizationUuid: "11111111-1111-4111-8111-111111111111", accountUuid: "22222222-2222-4222-8222-222222222222" };
 
-const check = (minted: string | undefined, record: "none" | "legacy" | "current" = "current"): ((capability: string) => boolean) =>
+/** The pid of the door in these cases, and of a client process under each launcher, and of a process no launcher started. */
+const DOOR_PID = 4000;
+const SELF_HOSTED_CLIENT_PID = 5101;
+const NATIVE_CLIENT_PID = 5102;
+const OUTSIDE_PID = 5200;
+/** The shell each self-hosted client runs under, between it and its launcher. */
+const SHELL_PID = 5301;
+/** The process tree the peer cases read: each launcher's client a grandchild through a shell, and the outside process under init. */
+const PARENTS: ReadonlyMap<number, number> = new Map([
+  [SELF_HOSTED_CLIENT_PID, SHELL_PID],
+  [SHELL_PID, SELF_HOSTED_PID],
+  [SELF_HOSTED_PID, 1],
+  [NATIVE_CLIENT_PID, NATIVE_PID],
+  [NATIVE_PID, 1],
+  [OUTSIDE_PID, 1],
+  [DOOR_PID, 1],
+]);
+/** The made-up local ports of each redirected connection's client end, and one no process holds. */
+const SELF_HOSTED_PORT = 6101;
+const NATIVE_PORT = 6102;
+const OUTSIDE_PORT = 6200;
+const DOOR_PORT = 6000;
+const UNHELD_PORT = 6999;
+/** Which pid holds the client end on each made-up port. */
+const PORT_OWNERS: ReadonlyMap<number, number> = new Map([
+  [SELF_HOSTED_PORT, SELF_HOSTED_CLIENT_PID],
+  [NATIVE_PORT, NATIVE_CLIENT_PID],
+  [OUTSIDE_PORT, OUTSIDE_PID],
+  [DOOR_PORT, DOOR_PID],
+]);
+
+const checks = (minted: string | undefined, record: "none" | "legacy" | "current" = "current", tables: Readonly<{ parents?: ReadonlyMap<number, number> | undefined }> = { parents: PARENTS }): ReturnType<typeof createRcSelfHostLaunchCheck> =>
   createRcSelfHostLaunchCheck({
     fs: world(),
     sessionsDir: "/state/frontdoor/sessions",
     launchesDir: "/state/launches",
     mintedRecord: () => (record === "none" ? undefined : record === "legacy" ? RECORD_FIELDS : { ...RECORD_FIELDS, ...(minted === undefined ? {} : { identityId: minted }) }),
+    peerProcessOf: async (port) => await Promise.resolve(PORT_OWNERS.get(port)),
+    parentTable: async () => await Promise.resolve(tables.parents),
+    doorPid: DOOR_PID,
   });
+const check = (minted: string | undefined, record: "none" | "legacy" | "current" = "current"): ((capability: string) => boolean) => checks(minted, record).ownsLaunch;
 
 describe("which launches the self-hosted mode owns", () => {
   it("owns the launch running the minted identity, by its id whatever it is now named, and no other launch", () => {
@@ -55,5 +90,24 @@ describe("which launches the self-hosted mode owns", () => {
   it("fails closed for a mint that names no identity: every launch is the mode's", () => {
     expect(check(undefined, "legacy")("cap-native")).toBe(true);
     expect(check(undefined, "legacy")("cap-unknown")).toBe(true);
+  });
+});
+
+describe("which redirected connections the self-hosted mode owns", () => {
+  it("owns a connection whose peer descends from the minted identity's launch, and no other launch's", async () => {
+    expect(await checks("rig").ownsPeer(SELF_HOSTED_PORT)).toBe(true);
+    expect(await checks("rig").ownsPeer(NATIVE_PORT)).toBe(false);
+  });
+
+  it("leaves the door's own client half and a process no launcher started to the ordinary path", async () => {
+    expect(await checks("rig").ownsPeer(DOOR_PORT)).toBe(false);
+    expect(await checks("rig").ownsPeer(OUTSIDE_PORT)).toBe(false);
+  });
+
+  it("fails closed for a connection whose peer or parentage cannot be read, and owns nothing while nothing is minted", async () => {
+    expect(await checks("rig").ownsPeer(UNHELD_PORT)).toBe(true);
+    expect(await checks("rig", "current", { parents: undefined }).ownsPeer(NATIVE_PORT)).toBe(true);
+    expect(await checks(undefined, "none").ownsPeer(UNHELD_PORT)).toBe(false);
+    expect(await checks(undefined, "legacy").ownsPeer(NATIVE_PORT)).toBe(true);
   });
 });

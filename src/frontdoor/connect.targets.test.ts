@@ -53,8 +53,8 @@ describe("requests the connect surface cannot decide or serve", () => {
     async () => {
       const world = makeTlsWorld(ca, upstreamCa, {
         localSurface: {
-          parsesHost: () => false,
           ownsLaunch: () => true,
+          ownsPeer: async () => await Promise.resolve(true),
           serve: async (_host, request) => {
             if (request.url === "/fails") {
               throw new Error("the local surface failed");

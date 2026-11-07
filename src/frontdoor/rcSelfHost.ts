@@ -287,6 +287,8 @@ export interface RcSelfHostDeps {
   readonly webSearch?: RcWebSearchBackend;
   /** Whether the launch holding a CONNECT tunnel's capability is a self-hosted session's (`createRcSelfHostLaunchCheck` in production): the one discriminator the connect surface decides every request, upgrade and blind tunnel of the mode by. */
   readonly ownsLaunch: (capability: string) => boolean;
+  /** The same discriminator for a redirected connection, which carries no capability: whether the process holding its client end (on local port `port`) descends from a self-hosted launch, failing closed when it cannot be read. */
+  readonly ownsPeer: (port: number) => Promise<boolean>;
   readonly log?: (line: string) => void;
 }
 
@@ -935,7 +937,7 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
     },
   };
 
-  const local = createRcSelfHostLocal({ now: deps.now, credentialRecord: deps.credentialRecord, readBody, ownsLaunch: deps.ownsLaunch, ...(deps.log === undefined ? {} : { log: deps.log }) });
+  const local = createRcSelfHostLocal({ now: deps.now, credentialRecord: deps.credentialRecord, readBody, ownsLaunch: deps.ownsLaunch, ownsPeer: deps.ownsPeer, ...(deps.log === undefined ? {} : { log: deps.log }) });
 
   return {
     route,

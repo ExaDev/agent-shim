@@ -39,6 +39,7 @@ async function serveLocal(host: string, record: RcSelfHostCredentialRecord): Pro
       return Buffer.concat(chunks).toString("utf8");
     },
     ownsLaunch: () => true,
+    ownsPeer: async () => await Promise.resolve(true),
   });
   const decisions: Record<string, boolean> = {};
   const server = http.createServer((request, response) => {
