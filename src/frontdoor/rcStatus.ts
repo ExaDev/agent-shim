@@ -71,6 +71,8 @@ function noCredentialMessage(sessionId: string): string {
  * One read, held from the moment it is made: while it is in flight every caller asking about the same session shares it, and once it settles its answer stands in for a fresh one, for `RC_IDLE_EXPIRY_MS` from when it settled, wherever nothing on the tracker can hold it (a failed read of a tracked session, and any read of an unobserved one). A status is polled (the web client asks on a short timer, and several surfaces may ask at once), so without the hold every caller would cost one service request per such session; the bound is the tracker's own idle expiry, the span after which the door already treats a session's last observed facts as stale.
  */
 interface HeldRead {
+  /** The Authorization value the read was made with (undefined when the session held none): an answer describes that credential's view, so a different credential (a refreshed bearer, or one observed for the first time) is a miss, never served the old credential's 401 or "no bearer" answer. */
+  readonly authorization: string | undefined;
   /** When the read was made, which is the instant its answer describes. */
   readonly requestedAt: number;
   /** The read itself, settled or not. */
@@ -91,11 +93,12 @@ export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
   const stands = (read: HeldRead, now: number): boolean => read.settledAt === undefined || now - read.settledAt < RC_IDLE_EXPIRY_MS;
   // The entry is filed before the read is awaited, so a caller arriving while it is in flight shares it rather than making its own. This also bounds the fan-out: each session has at most one read outstanding however many callers ask, and the sessions asked about are the Remote Control sessions on one machine, each a running Claude Code process, so no further concurrency cap is needed.
   const heldRead = (sessionId: string, credentialOf: (id: string) => RcObservedCredential | undefined): HeldRead => {
+    const authorization = credentialOf(sessionId)?.authorization;
     const previous = held.get(sessionId);
-    if (previous !== undefined && stands(previous, deps.now())) {
+    if (previous !== undefined && previous.authorization === authorization && stands(previous, deps.now())) {
       return previous;
     }
-    const read: HeldRead = { requestedAt: deps.now(), result: readRcWorkerState({ credentialOf, dial: deps.dial }, sessionId), settledAt: undefined };
+    const read: HeldRead = { authorization, requestedAt: deps.now(), result: readRcWorkerState({ credentialOf, dial: deps.dial }, sessionId), settledAt: undefined };
     held.set(sessionId, read);
     void read.result.then(() => {
       read.settledAt = deps.now();

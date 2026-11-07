@@ -121,24 +121,35 @@ describe("the Remote Control status with worker states read from the service", (
     expect(reads).toEqual([QUIET_SESSION_ID]);
   });
 
-  it("reports a refused read on its own session with the service's answer, files nothing, still reads the others, and holds the failure for the reuse bound", async () => {
+  it("reports a refused read on its own session with the service's answer, files nothing, still reads the others, and holds the failure only while the credential is unchanged", async () => {
     const tracker = trackerWith(QUIET_SESSION_ID, REFUSED_SESSION_ID);
-    const { dial, reads } = readingDial({ [QUIET_SESSION_ID]: workerRecord("idle"), [REFUSED_SESSION_ID]: { status: HTTP_STATUS.forbidden, body: "organisation mismatch" } });
+    const { dial, reads } = readingDial({ [QUIET_SESSION_ID]: workerRecord("idle"), [REFUSED_SESSION_ID]: { status: HTTP_STATUS.unauthorized, body: "expired" } });
     let now = CLOCK_START_MS;
     const resolve = resolverOf(tracker, dial, { now: () => now });
     const byId = new Map((await statusesOf(resolve)).map((status) => [status.id, status]));
     expect(byId.get(QUIET_SESSION_ID)?.workerState?.value).toBe("idle");
     expect(byId.get(REFUSED_SESSION_ID)?.workerState).toBeUndefined();
-    expect(byId.get(REFUSED_SESSION_ID)?.workerStateUnavailable).toBe(`the API answered HTTP 403 to the worker state read of session ${REFUSED_SESSION_ID}: organisation mismatch`);
+    expect(byId.get(REFUSED_SESSION_ID)?.workerStateUnavailable).toContain("refused the observed Authorization bearer");
     expect(tracker.statusOf(REFUSED_SESSION_ID)[0]?.workerState).toBeUndefined();
-    // Within the bound the held failure answers, still reported, without another request.
-    now += RC_IDLE_EXPIRY_MS - 1;
-    expect((await statusesOf(resolve, REFUSED_SESSION_ID))[0]?.workerStateUnavailable).toContain("HTTP 403");
-    expect(reads.filter((id) => id === REFUSED_SESSION_ID)).toHaveLength(1);
-    // Past it the read is made again.
+    // With the same credential, the held failure answers within the bound, still reported, without another request.
     now += 1;
+    expect((await statusesOf(resolve, REFUSED_SESSION_ID))[0]?.workerStateUnavailable).toContain("HTTP 401");
+    expect(reads.filter((id) => id === REFUSED_SESSION_ID)).toHaveLength(1);
+    // The session's client refreshes its bearer, which the door observes: the held 401 described the old one, so the next status reads again at once.
+    exchange(tracker, { method: "POST", url: `/v1/code/sessions/${REFUSED_SESSION_ID}/client/presence`, authorization: "Bearer sk-ant-REDACTED" }, { status: HTTP_STATUS.ok });
     await resolve();
     expect(reads.filter((id) => id === REFUSED_SESSION_ID)).toHaveLength(2);
+  });
+
+  it("reads at once when a bearer is observed for a session whose held answer was that it had none", async () => {
+    const tracker = createRcSessionTracker({ now: () => CLOCK_START_MS, idleMs: RC_IDLE_EXPIRY_MS });
+    exchange(tracker, { method: "POST", url: `/v1/code/sessions/${QUIET_SESSION_ID}/worker/heartbeat`, authorization: "Bearer eyJhbGciOiJFUzI1NiJ9.worker.jwt" }, { status: HTTP_STATUS.ok });
+    const { dial, reads } = readingDial({ [QUIET_SESSION_ID]: workerRecord("running") });
+    const resolve = resolverOf(tracker, dial);
+    expect((await statusesOf(resolve))[0]?.workerStateUnavailable).toContain("no claude.ai OAuth bearer has been observed");
+    exchange(tracker, { method: "POST", url: `/v1/code/sessions/${QUIET_SESSION_ID}/client/presence`, authorization: OAUTH_BEARER }, { status: HTTP_STATUS.ok });
+    expect((await statusesOf(resolve))[0]?.workerState).toEqual({ value: "running", observedAt: CLOCK_START_MS, source: "read" });
+    expect(reads).toEqual([QUIET_SESSION_ID]);
   });
 
   it("reports a failed dial as the reason, never as an empty state", async () => {
