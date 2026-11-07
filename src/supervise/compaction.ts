@@ -28,13 +28,13 @@ export interface CompactionInput {
 }
 
 /** Whether the session should compact now, and why or why not. */
-export type CompactionDecision = { readonly compact: false; readonly reason: string } | { readonly compact: true; readonly contextTokens: number; readonly reason: string };
+export type CompactionDecision = { readonly compact: false; readonly reason: string } | { readonly compact: true; readonly contextTokens: number; readonly reason: string; readonly conversationId?: string };
 
 const asPercent = (fraction: number): string => `${String(Math.round(fraction * PERCENT))}%`;
 
 /** A session that can be compacted right now: its turn has ended, it has a context, and it has not been compacted on this member. */
 function compactableTokens(state: SessionState | undefined): number | undefined {
-  return state?.mark === "idle" && state.compacted !== true && state.contextTokens !== undefined && state.contextTokens > 0 ? state.contextTokens : undefined;
+  return state?.mark === "idle" && state.unavailable !== true && state.compacted !== true && state.contextTokens !== undefined && state.contextTokens > 0 ? state.contextTokens : undefined;
 }
 
 /** One plan window the identity reports, as it stands now, with the label the reason text gives it. */
@@ -97,5 +97,5 @@ export function decideCompaction(input: Readonly<CompactionInput>): CompactionDe
     return { compact: false, reason: "a larger session on this member compacts first" };
   }
   const reason = triggerReason(input);
-  return reason === undefined ? { compact: false, reason: "the member's quota has not reached the trigger" } : { compact: true, contextTokens: tokens, reason };
+  return reason === undefined ? { compact: false, reason: "the member's quota has not reached the trigger" } : { compact: true, contextTokens: tokens, reason, ...(own?.state?.conversationId === undefined ? {} : { conversationId: own.state.conversationId }) };
 }

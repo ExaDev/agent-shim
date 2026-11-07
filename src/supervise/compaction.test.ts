@@ -56,6 +56,13 @@ function decide(overrides: Readonly<Partial<CompactionInput>>) {
 }
 
 describe("decideCompaction with a utilisation threshold", () => {
+  it("does not compact when a hook could not establish the current conversation", () => {
+    expect(decide({ atUtilisation: 1, sessions: [session("a", idle(BILLED, { unavailable: true }))] }).compact).toBe(false);
+  });
+  it("returns the current conversation after a clear, not the supervisor's launch id", () => {
+    const conversationId = "77777777-7777-4777-8777-777777777777";
+    expect(decide({ atUtilisation: 1, sessions: [session("a", idle(BILLED, { conversationId }))] })).toMatchObject({ compact: true, conversationId });
+  });
   const AT = 85;
   const HIGH = 0.9;
   const LOW = 0.6;

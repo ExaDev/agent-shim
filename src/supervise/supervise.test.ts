@@ -162,6 +162,7 @@ function world(options: Readonly<{ first?: string; ids?: Readonly<Record<string,
     decideRemodel,
     claimModelMove,
     contextTokens: () => CONTEXT_TOKENS,
+    currentConversationId: (sessionId) => sessionId,
     register: (session) => {
       registered.push(session);
     },
@@ -214,6 +215,53 @@ function world(options: Readonly<{ first?: string; ids?: Readonly<Record<string,
 }
 
 describe("supervise", () => {
+  it("waits without claiming a model move or switching identities while the current conversation is unknown", async () => {
+    const w = world();
+    const state: { current: string | undefined } = { current: undefined };
+    const done = supervise({ ...w.deps, currentConversationId: () => state.current }, FIRST);
+    await settle();
+    w.quotaHit = () => HIT;
+    w.watchers.get("work")?.();
+    await settle();
+    expect(w.decideMove).not.toHaveBeenCalled();
+    expect(w.claimModelMove).not.toHaveBeenCalled();
+    expect(w.children[0]?.signals).toEqual([]);
+    expect(w.log.warns.join("\n")).toContain("current conversation is unknown");
+    state.current = SESSION;
+    w.watchers.get("work")?.();
+    await settle();
+    expect(w.decideMove).toHaveBeenCalledTimes(1);
+    w.children[1]?.exitWith(0);
+    await expect(done).resolves.toBe(0);
+  });
+  it("moves and resumes the current conversation after a clear on a quota refusal", async () => {
+    const w = world();
+    const current = "cleared-conversation";
+    const done = supervise({ ...w.deps, currentConversationId: () => current }, FIRST);
+    await settle();
+    w.quotaHit = () => HIT;
+    w.watchers.get("work")?.();
+    await settle();
+    expect(w.decideMove).toHaveBeenCalledWith({ sessionId: SESSION, conversationId: current, from: "work", contextTokens: CONTEXT_TOKENS });
+    expect(w.launches[1]).toMatchObject({ sessionId: SESSION, conversation: "resume", conversationId: current, member: "spare" });
+    w.children[1]?.exitWith(0);
+    await expect(done).resolves.toBe(0);
+  });
+
+  it("moves and resumes the current conversation after a clear on a model pick", async () => {
+    const w = world();
+    const current = "cleared-conversation";
+    w.claimModelMove.mockReturnValueOnce({ to: "spare", model: "glm-5.3" });
+    w.decideRemodel.mockReturnValue({ kind: "move", to: "spare", explanation: "chosen" });
+    const done = supervise({ ...w.deps, currentConversationId: () => current }, FIRST);
+    await settle();
+    w.watchers.get("work")?.();
+    await settle();
+    expect(w.decideRemodel).toHaveBeenCalledWith({ sessionId: SESSION, conversationId: current, from: "work", to: "spare", contextTokens: CONTEXT_TOKENS });
+    expect(w.launches[1]).toMatchObject({ sessionId: SESSION, conversation: "resume", conversationId: current, member: "spare" });
+    w.children[1]?.exitWith(0);
+    await expect(done).resolves.toBe(0);
+  });
   it("holds the session's first child once, after it is prepared and before it starts, and never holds a relaunch", async () => {
     const w = world();
     const done = supervise(w.deps, FIRST);
@@ -324,7 +372,7 @@ describe("supervise", () => {
     w.decideRemodel.mockReturnValue({ kind: "move", to: "spare", explanation: "the picked model runs under spare" });
     w.watchers.get("work")?.();
     await settle();
-    expect(w.decideRemodel).toHaveBeenCalledWith({ sessionId: SESSION, from: "work", to: "spare" });
+    expect(w.decideRemodel).toHaveBeenCalledWith({ sessionId: SESSION, from: "work", to: "spare", contextTokens: CONTEXT_TOKENS });
     expect(w.children[0]?.signals).toEqual(["SIGTERM"]);
     expect(w.released).toEqual(["work"]);
     expect(w.launches[1]).toEqual({ sessionId: SESSION, conversation: "resume", member: "spare", from: "work", model: "glm-5.3" });
@@ -553,6 +601,19 @@ function compactionWorld(decision: CompactionDecision = GO): CompactionWorld {
 }
 
 describe("supervise with compaction", () => {
+  it("compacts and resumes the current conversation after it changes, retaining the launch's registry id", async () => {
+    const w = world();
+    const c = compactionWorld({ ...GO, conversationId: "cleared-conversation" });
+    const done = supervise({ ...w.deps, compaction: c.deps }, FIRST);
+    await settle();
+    w.watchers.get("work")?.();
+    await settle();
+    expect(c.compact).toHaveBeenCalledWith({ identity: "work", sessionId: "cleared-conversation", cwd: "/repo" }, expect.any(AbortSignal));
+    expect(c.markCompacted).toHaveBeenCalledWith(SESSION, true);
+    expect(w.launches[1]).toEqual({ sessionId: SESSION, conversation: "resume", conversationId: "cleared-conversation", member: "work" });
+    w.children[1]?.exitWith(0);
+    await expect(done).resolves.toBe(0);
+  });
   it("stops an idle session whose quota has reached the trigger, compacts it as the same identity and resumes it there", async () => {
     const w = world();
     const c = compactionWorld();
@@ -684,6 +745,18 @@ describe("supervise with compaction", () => {
     w.watchers.get("work")?.();
     await settle();
     expect(w.launches[1]).toEqual({ sessionId: SESSION, conversation: "resume", member: "work", settings: '{"hooks":{}}' });
+    w.children[1]?.exitWith(0);
+    await done;
+  });
+
+  it("keeps the private caller-settings file on relaunch", async () => {
+    const w = world();
+    const c = compactionWorld();
+    const done = supervise({ ...w.deps, compaction: c.deps }, { ...FIRST, settingsFile: "/private/settings.json" });
+    await settle();
+    w.watchers.get("work")?.();
+    await settle();
+    expect(w.launches[1]).toEqual({ sessionId: SESSION, conversation: "resume", member: "work", settingsFile: "/private/settings.json" });
     w.children[1]?.exitWith(0);
     await done;
   });

@@ -10,6 +10,7 @@ import { refreshPools } from "./poolUsageRefresh";
 import { runSupervised, supervisesLaunch } from "./supervise/launch";
 import { prepareLaunch, runLauncher } from "./launcher";
 import { parseLauncherArgv } from "./launcher/argv";
+import { splitExtraFlags } from "./launcher/extraFlags";
 import { IdentityPickerCancelledError } from "./launcher/runPicker";
 import { runNativeLaunch } from "./launcher/native";
 import { decideConfigProfile, decideIdentity, loadIdentity, readActiveIdentity } from "./launcher/identity";
@@ -128,6 +129,7 @@ export async function runClaude(argvOverride?: readonly string[]): Promise<void>
       pools: farm.pools,
       farm: farm.runtime,
       passthrough: nativeArgv.rest,
+      extraFlags: splitExtraFlags(procForDecision.env.CLAUDE_EXTRA_FLAGS),
       // The launch-time update check runs for the first launch only: its notice must not land on the terminal between a stopped child and its relaunch.
       prepare: (launch) => prepareLaunch(launch.member === undefined ? { ...prepareParams, supervised: launch } : { ...prepareParams, update: undefined, supervised: launch }),
       spawnDaemon: spawnDetachedSupervisor,

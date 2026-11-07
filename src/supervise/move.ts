@@ -14,6 +14,8 @@ import { committedContextTokens, liveSupervised, registerSupervised, superviseDi
 /** One session asking to leave the identity it has run out of quota on. */
 export interface MoveRequest {
   readonly sessionId: string;
+  /** The active conversation when it differs from the launch's registry id. */
+  readonly conversationId?: string;
   /** The id of the identity the session is leaving. */
   readonly from: string;
   /** The size in tokens of the conversation's context, when its transcript was read: what the new member must write again. */
@@ -85,7 +87,7 @@ export function createMover(deps: Readonly<MoverDeps>): (request: MoveRequest) =
         cwd: deps.cwd,
         now: deps.now,
         sleep: deps.sleep,
-        passthrough: ["--resume", request.sessionId],
+        passthrough: ["--resume", request.conversationId ?? request.sessionId],
         ...(request.contextTokens === undefined ? {} : { resumeContextTokens: request.contextTokens }),
         ...(Object.keys(committed).length === 0 ? {} : { committedContextTokens: committed }),
         wait: false,
@@ -101,7 +103,7 @@ export function createMover(deps: Readonly<MoverDeps>): (request: MoveRequest) =
       if (pickedId === request.from) {
         return { kind: "stay", reason: `no other member of pool "${pool}" can take it` };
       }
-      const transcript = pickedId === undefined ? undefined : path.join(paths.identitiesDir, pickedId, "projects", projectDirNameOf(deps.cwd), `${request.sessionId}.jsonl`);
+      const transcript = pickedId === undefined ? undefined : path.join(paths.identitiesDir, pickedId, "projects", projectDirNameOf(deps.cwd), `${request.conversationId ?? request.sessionId}.jsonl`);
       if (pickedId === undefined || transcript === undefined || farmFs.lstat(transcript)?.kind !== "file") {
         return { kind: "stay", reason: `${resolution.identity} does not share this conversation's history, so it could not resume it` };
       }
@@ -126,6 +128,8 @@ export function createMover(deps: Readonly<MoverDeps>): (request: MoveRequest) =
 /** One session's request to relaunch under a named identity, as the front door leaves it when the session picks an `acct:` model member. */
 export interface IdentityMoveRequest {
   readonly sessionId: string;
+  /** The active conversation when it differs from the launch's registry id. */
+  readonly conversationId?: string;
   /** The id of the identity the session is leaving. */
   readonly from: string;
   /** The id of the identity the picked model runs under, which the door resolved the `acct:` member's name to. */
@@ -160,7 +164,7 @@ export function createIdentityMover(deps: Readonly<MoverDeps>): (request: Identi
       if (request.to === request.from) {
         return { kind: "stay", reason: `the model already runs under this session's identity` };
       }
-      const transcript = path.join(paths.identitiesDir, request.to, "projects", projectDirNameOf(deps.cwd), `${request.sessionId}.jsonl`);
+      const transcript = path.join(paths.identitiesDir, request.to, "projects", projectDirNameOf(deps.cwd), `${request.conversationId ?? request.sessionId}.jsonl`);
       if (farmFs.lstat(transcript)?.kind !== "file") {
         return { kind: "stay", reason: `${toName} does not share this conversation's history, so it could not resume it` };
       }

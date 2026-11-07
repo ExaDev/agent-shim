@@ -9,6 +9,7 @@ import { liveSupervised, registerSupervised, superviseDirOf, type SupervisedSess
 const CWD = "/work/repo";
 const POOL = "subs";
 const SESSION = "44444444-4444-4444-8444-444444444444";
+const CLEARED = "77777777-7777-4777-8777-777777777777";
 const PID = 4000;
 const SIBLING_PID = 4100;
 const DEAD_PID = 4999;
@@ -77,6 +78,12 @@ function identitySetup(options: Readonly<{ existing?: readonly string[]; visible
 }
 
 describe("the identity mover", () => {
+  it("checks the current conversation's transcript after a clear and keeps the launch registry id", () => {
+    const { farmFs, identityMover } = identitySetup({ visibleTo: [] });
+    farmFs.seed({ [`${paths.identitiesDir}/spare/projects/${projectDirNameOf(CWD)}/${CLEARED}.jsonl`]: "{}\n" });
+    expect(identityMover({ ...request, conversationId: CLEARED, to: "spare" })).toMatchObject({ kind: "move", to: "spare" });
+    expect(liveSupervised(farmFs, paths, POOL, () => true)).toMatchObject([{ sessionId: SESSION }]);
+  });
   it("moves a session onto the named identity and registers it there with the context it carries", () => {
     const { farmFs, identityMover } = identitySetup({});
     expect(identityMover({ ...request, to: "spare" })).toEqual({ kind: "move", to: "spare", explanation: "the picked model runs under spare" });
@@ -100,6 +107,13 @@ describe("the identity mover", () => {
 });
 
 describe("the move coordinator", () => {
+  it("ranks and checks the current conversation after a clear", () => {
+    const { farmFs, calls, mover } = setup({ pick: picks("spare"), visibleTo: [] });
+    farmFs.seed({ [`${paths.identitiesDir}/spare/projects/${projectDirNameOf(CWD)}/${CLEARED}.jsonl`]: "{}\n" });
+    expect(mover({ ...request, conversationId: CLEARED })).toMatchObject({ kind: "move", to: "spare" });
+    expect(calls[0]?.passthrough).toEqual(["--resume", CLEARED]);
+    expect(liveSupervised(farmFs, paths, POOL, () => true)).toMatchObject([{ sessionId: SESSION }]);
+  });
   it("moves the session to the id of the member the ranking named, registers it under that id, and compares the session's own member by id", () => {
     const { farmFs, mover } = setup({ pick: picks("spare"), identities: { "work-2": "work", "spare-1": "spare" }, visibleTo: ["spare-1"] });
     expect(mover({ ...request, from: "work-2" })).toMatchObject({ kind: "move", to: "spare-1" });
