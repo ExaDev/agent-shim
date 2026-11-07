@@ -1,3 +1,15 @@
+## [11.89.0](https://github.com/ExaDev/agent-shim/compare/v11.88.1...v11.89.0) (2026-11-07)
+
+### Features
+
+* **frontdoor:** attribute header-less Remote Control calls to their launch's identity ([e135197](https://github.com/ExaDev/agent-shim/commit/e1351975bab6c40d24fe34c5fe6c2b5774efadbf))
+* **frontdoor:** report name, pid, working directory, model and identity in rc status ([e043d08](https://github.com/ExaDev/agent-shim/commit/e043d089d42941a4eb93f34597b688d0a9acb915)), closes [#721](https://github.com/ExaDev/agent-shim/issues/721)
+
+### Bug Fixes
+
+* **frontdoor:** keep rc status working when an identity or registry entry is unreadable ([397b2aa](https://github.com/ExaDev/agent-shim/commit/397b2aa1565851db9fca059cd7a36895df249fc7))
+* **index:** list the session registry reader in the library surface ([6a625ef](https://github.com/ExaDev/agent-shim/commit/6a625efca77c33cd692fc6bb141f3a9826cb3053))
+
 ## [11.88.1](https://github.com/ExaDev/agent-shim/compare/v11.88.0...v11.88.1) (2026-11-07)
 
 ### Bug Fixes
