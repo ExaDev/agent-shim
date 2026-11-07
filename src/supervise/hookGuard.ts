@@ -20,6 +20,11 @@ function prefixOf(sessionId: string): string {
   return `${sessionId}.hook.`;
 }
 
+/** Whether `filename`, a name in the pool's state directory, is one of `sessionId`'s own: its state file, whose name is `stateFile`, or a hook announcement it left. The directory is shared with every concurrent session, and a name that is another session's, or a lock, is none of its business. */
+export function isSessionStateFile(sessionId: string, stateFile: string, filename: string): boolean {
+  return filename === stateFile || (filename.startsWith(prefixOf(sessionId)) && filename.endsWith(".json"));
+}
+
 /** Whether a hook is still processing or failed before it could safely record its state. */
 export function hooksPending(fs: Pick<FarmFs, "readdir">, paths: LayoutPaths, pool: string, sessionId: string): boolean {
   return fs.readdir(stateDirOf(paths, pool)).some((name) => name.startsWith(prefixOf(sessionId)) && name.endsWith(".json"));
