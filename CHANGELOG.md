@@ -1,3 +1,9 @@
+## [11.87.5](https://github.com/ExaDev/agent-shim/compare/v11.87.4...v11.87.5) (2026-11-07)
+
+### Bug Fixes
+
+* **supervise:** watch only the supervised session's own state and transcript files ([af611a8](https://github.com/ExaDev/agent-shim/commit/af611a8c3b95ba17fb8768236e3718365dfad3c1)), closes [#729](https://github.com/ExaDev/agent-shim/issues/729)
+
 ## [11.87.4](https://github.com/ExaDev/agent-shim/compare/v11.87.3...v11.87.4) (2026-11-07)
 
 ### Bug Fixes
