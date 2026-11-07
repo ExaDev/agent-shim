@@ -3,6 +3,7 @@ import { listIdentities } from "./identityStore";
 import type { buildFarmRuntime } from "./launchWiring";
 import type { ParsedLauncherArgv } from "./launcher/argv";
 import type { IdentityDecision } from "./launcher/identity";
+import { memberProviderResolver } from "./launcher/memberProvider";
 import { promptsIdentityPicker } from "./launcher/pickerPrompt";
 import { runIdentityPicker, type PickerOutcome } from "./launcher/runPicker";
 import type { LayoutPaths } from "./paths";
@@ -15,6 +16,8 @@ interface LaunchPickerParams {
   readonly parsed: ParsedLauncherArgv;
   /** The identity (or pool) the launch resolved before any question. */
   readonly decision: IdentityDecision;
+  /** The environment the launch inherits, which can name a configuration profile. */
+  readonly env: Readonly<Record<string, string | undefined>>;
 }
 
 /**
@@ -32,6 +35,17 @@ export async function pickLaunchIdentity(params: Readonly<LaunchPickerParams>): 
     cwd: params.farm.runtime.cwd,
     now: params.farm.runtime.now,
     identityNames: () => listIdentities(params.paths).flatMap((listing) => ("problem" in listing ? [] : [listing.name])),
+    // The picker ranks on what the launch will spend, so each identity is judged on the provider the launch resolves for it.
+    providerOf: memberProviderResolver({
+      paths: params.paths,
+      fs: realFsPort,
+      env: params.env,
+      cliProvider: params.parsed.provider,
+      ...(params.parsed.configProfile === undefined ? {} : { cliFlagConfigProfile: params.parsed.configProfile }),
+      ...(params.farm.directoryConfigProfile === undefined ? {} : { directoryRuleConfigProfile: params.farm.directoryConfigProfile }),
+      ...(params.farm.globalDefaultConfigProfile === undefined ? {} : { globalDefaultConfigProfile: params.farm.globalDefaultConfigProfile }),
+      loadCascade: (baseConfigProfile) => params.farm.runtime.loadCascade(baseConfigProfile, undefined),
+    }),
     picker: promptsIdentityPicker(realPromptsPort),
   });
 }

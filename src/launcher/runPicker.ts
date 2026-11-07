@@ -5,7 +5,7 @@ import type { LayoutPaths } from "../paths";
 import { isIdentityName } from "../usage/account";
 import { candidateHeading } from "../usage/candidateText";
 import { rankPool, type Candidate, type PoolMember, type StickyPick } from "../usage/pick";
-import { loadPoolMembers, rankPoolGraph, readStickyPick, recordStickyPick, type PoolPickFs } from "../usage/poolPick";
+import { loadPoolMembers, rankPoolGraph, readStickyPick, recordStickyPick, type PoolPickFs, type ProviderOf } from "../usage/poolPick";
 import type { ParsedLauncherArgv } from "./argv";
 import { identityIdResolver, poolNameOf, type IdentityDecision } from "./identity";
 import { accountRows, quotaRows } from "./launchReport";
@@ -52,6 +52,8 @@ export interface RunIdentityPickerParams {
   readonly now: () => number;
   /** Every identity that exists, in the order the picker lists them. */
   readonly identityNames: () => readonly string[];
+  /** The provider a launch of each identity routes through, so the picker ranks and describes each on the quota the launch would spend. Absent when every identity is the Claude account's. */
+  readonly providerOf?: ProviderOf;
   readonly picker: IdentityPickerPort;
 }
 
@@ -70,7 +72,7 @@ function memberTexts(member: Readonly<PoolMember> | undefined, nowMs: number): {
   if (member === undefined) {
     return {};
   }
-  const billing = { login: member.account, snapshot: member.snapshot, provider: undefined, nowMs };
+  const billing = { login: member.account, snapshot: member.snapshot, provider: member.provider, nowMs };
   const account = accountRows(billing)[0]?.value;
   const quotaRow = quotaRows(billing)[0];
   return {
@@ -109,11 +111,12 @@ function poolContext(params: Readonly<RunIdentityPickerParams>, poolName: string
     nowMs,
     resuming,
     identityIdOf,
+    ...(params.providerOf === undefined ? {} : { providerOf: params.providerOf }),
     ...(sticky === undefined ? {} : { sticky }),
   });
   const pick = ranking.pick?.identity;
   const named = [...new Set([...ranking.candidates.map((candidate) => candidate.identity), ...(sticky === undefined ? [] : [sticky.identity])])].filter(isIdentityName);
-  const members = loadPoolMembers(usageFs, paths, named, nowMs, identityIdOf);
+  const members = loadPoolMembers(usageFs, paths, named, nowMs, identityIdOf, params.providerOf);
   const changes = pick !== undefined && sticky !== undefined && sticky.identity !== pick && accountsDiffer(members, sticky.identity, pick);
   return {
     selection: { kind: "pool", outcome: pick === undefined ? "none-eligible" : changes ? "changes-account" : "keeps-account" },
@@ -152,7 +155,7 @@ function poolMessage(reason: PickerReason, poolName: string, pick: string | unde
 /** The context of a launch that is not a pool launch: every identity (ranked in listed order, which marks the refused ones) and every pool, with the named identity highlighted. */
 function identityContext(params: Readonly<RunIdentityPickerParams>, resuming: boolean, nowMs: number): PickerContext {
   const { paths, usageFs } = params;
-  const members = loadPoolMembers(usageFs, paths, params.identityNames(), nowMs, identityIdResolver(paths.identitiesDir, params.fs));
+  const members = loadPoolMembers(usageFs, paths, params.identityNames(), nowMs, identityIdResolver(paths.identitiesDir, params.fs), params.providerOf);
   const { candidates } = rankPool({ members, nowMs, resuming, preference: "listed" });
   const named = params.decision.name;
   const limited = named !== undefined && candidates.some((candidate) => candidate.identity === named && candidate.class === "ineligible");

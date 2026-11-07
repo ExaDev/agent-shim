@@ -66,6 +66,7 @@ interface Setup {
   readonly active?: string;
   readonly picker?: IdentityPickerPort;
   readonly lastRanAs?: string;
+  readonly providerOf?: (identity: string) => string | undefined;
 }
 
 async function run(setup: Setup = {}): Promise<{ readonly outcome: PickerOutcome; readonly requests: readonly PickerRequest[]; readonly farmFs: ReturnType<typeof createFakeFarmFs> }> {
@@ -95,6 +96,7 @@ async function run(setup: Setup = {}): Promise<{ readonly outcome: PickerOutcome
     cwd: farm.cwd,
     now: farm.now,
     identityNames: () => ["personal", "spare", "work"],
+    ...(setup.providerOf === undefined ? {} : { providerOf: setup.providerOf }),
     picker,
   });
   return { outcome, requests, farmFs };
@@ -305,5 +307,35 @@ describe("IdentityPickerCancelledError", () => {
     const error = new IdentityPickerCancelledError();
     expect(error.exitCode).toBe(LAUNCH_CANCELLED_EXIT);
     expect(error.message).toContain("cancelled at the identity picker");
+  });
+});
+
+describe("runIdentityPicker for a launch that spends a provider", () => {
+  /** An identity whose Claude week is spent and whose provider `p` week is open. */
+  function spentClaudeOpenProvider(identity: string): string {
+    const snapshot = JSON.parse(snapshotOf(identity, { utilization: FULL, resetsInMs: SIX_DAYS_MS, status: "rejected" })) as { providers: Record<string, unknown> };
+    snapshot.providers.p = { lastRequestAt: iso(-HOUR_MS), lastStatus: 200, rateLimit: { observedAt: iso(-HOUR_MS), headers: {}, unified: { sevenDay: { utilization: U10, resetsAt: iso(SIX_DAYS_MS) } } } };
+    return JSON.stringify(snapshot);
+  }
+
+  const SEED = { [snapshotPath("work")]: spentClaudeOpenProvider("work"), [snapshotPath("personal")]: spentClaudeOpenProvider("personal") };
+
+  it("asks which identity to run as when every member is refused on the Claude account", async () => {
+    const { requests } = await run({ argv: ["@pool:main"], seed: SEED });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.message).toContain("refused right now");
+  });
+
+  it("does not ask when the provider the launch spends has room, whatever the Claude account has left", async () => {
+    const { outcome, requests } = await run({ argv: ["@pool:main", "--provider", "p"], seed: SEED, providerOf: () => "p" });
+    expect(outcome).toEqual({ kind: "unchanged" });
+    expect(requests).toHaveLength(0);
+  });
+
+  it("lists each member with the provider it was ranked on when asked with --pick", async () => {
+    const { requests } = await run({ argv: ["@pool:main", "--provider", "p", "--pick"], seed: SEED, providerOf: () => "p" });
+    const labels = requests[0]?.entries.map((entry) => entry.label) ?? [];
+    expect(labels).toHaveLength(2);
+    expect(labels.every((label) => label.includes("on provider p"))).toBe(true);
   });
 });
