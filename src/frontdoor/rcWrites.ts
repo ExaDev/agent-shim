@@ -622,6 +622,16 @@ export function buildRcMarkReadBody(eventId: string | undefined): Record<string,
  */
 export const RC_WORKER_READ_TIMEOUT_MS = 5_000;
 
+/**
+ * The most of an API answer's body a worker-state read's failure message quotes. The message is carried in every status answer the read's session appears in (and the web client polls them), so an error page of any size must not be copied into each; a service error document names its cause within its first few hundred characters.
+ */
+export const RC_WORKER_READ_ANSWER_EXCERPT_CHARS = 500;
+
+/** An answer body cut to `RC_WORKER_READ_ANSWER_EXCERPT_CHARS`, with how much was left out. */
+function answerExcerpt(body: string): string {
+  return body.length <= RC_WORKER_READ_ANSWER_EXCERPT_CHARS ? body : `${body.slice(0, RC_WORKER_READ_ANSWER_EXCERPT_CHARS)}... (${String(body.length - RC_WORKER_READ_ANSWER_EXCERPT_CHARS)} more characters)`;
+}
+
 /** Milliseconds in a second, for stating the read's deadline in a message a person reads. */
 const MS_PER_SECOND = 1_000;
 
@@ -693,14 +703,14 @@ export async function readRcWorkerState(deps: RcWorkerReadDeps, sessionId: strin
     return workerReadTimedOut(sessionId);
   }
   if (answer.status === HTTP_STATUS.unauthorized) {
-    return { ok: false, message: staleBearerMessage(answer.body) };
+    return { ok: false, message: staleBearerMessage(answerExcerpt(answer.body)) };
   }
   if (!isSuccessful(answer.status)) {
-    return { ok: false, message: `the API answered HTTP ${String(answer.status)} to the worker state read of session ${sessionId}: ${answer.body}` };
+    return { ok: false, message: `the API answered HTTP ${String(answer.status)} to the worker state read of session ${sessionId}: ${answerExcerpt(answer.body)}` };
   }
   const workerStatus = workerStatusOf(answer.body);
   if (workerStatus === undefined) {
-    return { ok: false, message: `the API answered the worker state read of session ${sessionId} without a worker.worker_status: ${answer.body}` };
+    return { ok: false, message: `the API answered the worker state read of session ${sessionId} without a worker.worker_status: ${answerExcerpt(answer.body)}` };
   }
   return { ok: true, workerStatus };
 }
