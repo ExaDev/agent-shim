@@ -258,7 +258,7 @@ describe("the MCP server over a real door handler", () => {
     observed?.onEnd();
     const questions = [{ question: "Which database?", header: "Database", multiSelect: false, options: [{ label: "Postgres", description: "relational" }, { label: "SQLite" }] }];
     tracker.fileStreamEvent(session, { event_type: "control_request", sequence_num: 1, source: "worker", payload: { type: "control_request", request_id: "req_listed", request: { subtype: "can_use_tool", tool_name: "AskUserQuestion", input: { questions } } } });
-    const client = await connect({ writes: false, remoteControl: true, history: false });
+    const client = await connect({ writes: false, remoteControl: true, history: false, directives: false });
     const listed = await client.callTool({ name: "rc_pending", arguments: { session } });
     expect(listed.isError).not.toBe(true);
     expect(JSON.parse(textOf(listed))).toEqual({ pending: [expect.objectContaining({ sessionId: session, requestId: "req_listed", questions })] });
@@ -266,7 +266,7 @@ describe("the MCP server over a real door handler", () => {
   });
 
   it("answers a question through the rc_answer tool, whose input schema carries the choices", async () => {
-    const client = await connect({ writes: false, remoteControl: true, history: false });
+    const client = await connect({ writes: false, remoteControl: true, history: false, directives: false });
     const tool = (await client.listTools()).tools.find((candidate) => candidate.name === "rc_answer");
     expect(Object.keys(tool?.inputSchema.properties ?? {})).toContain("choices");
     const result = await client.callTool({ name: "rc_answer", arguments: { session: SESSION_ID, request: "req_q", approve: true, choices: [["SQLite"], [1, { text: "fmt" }]] } });
