@@ -14,7 +14,6 @@ import { createCredentialCustody } from "./custody";
 import { CONNECT_INTERCEPT_HOST, CONNECT_INTERCEPT_HOSTS, CONNECT_TAP_HOSTS, createLeafCache, generateCa, startConnectServer, type CaMaterial } from "./connect";
 import { lateRcEventDial, lateRcStreamDial, realConnectEffects, type RcDialTarget } from "./connectEffects";
 import { createProviderRouteResolver } from "./providerRoute";
-import { IDENTITY_HEADER } from "./route";
 import { serveRouted } from "./pipeline";
 import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog, type RcSessionEventLog } from "./rcEventLog";
 import { observingRoutedRoute, createRcSessionTracker, type RcSessionTracker } from "./rcSessions";
@@ -30,6 +29,8 @@ import { connectRedirected, KEYGEN_TIMEOUT_MS, requestOn, TEST_CAPABILITY } from
 
 /** A short fake bearer of the OAuth kind (kept short of the redaction filter's eight-character suffix on purpose). */
 const MINTED_OAUTH_TOKEN = "sk-ant-oat1";
+/** The id of the identity the fake launch runs as, recorded in its registry entry. */
+const RIG_IDENTITY_ID = "rig-identity";
 const RECORD: RcSelfHostCredentialRecord = { accessToken: MINTED_OAUTH_TOKEN, refreshToken: "selfhost-refresh", organizationUuid: "11111111-1111-4111-8111-111111111111", accountUuid: "22222222-2222-4222-8222-222222222222" };
 
 /** How long the e2e waits for a stream frame or an attachment that arrives asynchronously: generous against scheduling noise, short against a hang. */
@@ -198,6 +199,8 @@ describe("the self-hosted Remote Control mode end to end", () => {
       resolveRoute: observingResolver,
       canonicalProvider: (name) => name,
       isLiveToken: (token) => token === TEST_CAPABILITY,
+      // The fake CLI sends no identity header (a Remote Control call carries none), so the identity can only come from the launch the tunnel's capability belongs to.
+      identityOfToken: (token) => (token === TEST_CAPABILITY ? RIG_IDENTITY_ID : undefined),
       headroomDecision: followsLaunchFlag, responseObservers: [],
       now: () => Date.now(),
       headroomSocket: () => undefined,
@@ -269,7 +272,7 @@ describe("the self-hosted Remote Control mode end to end", () => {
     bridgeSocket.destroy();
 
     const registerSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
-    const putWorker = await requestOn(registerSocket, rawRequest("PUT", `/v1/code/sessions/${sessionId}/worker`, { Authorization: `Bearer ${bridge.worker_jwt}`, "Content-Type": "application/json", [IDENTITY_HEADER]: "rig-identity" }, JSON.stringify({ worker_status: "idle", worker_epoch: 1, external_metadata: { pending_action: null, task_summary: null, model: "rig-model" } })));
+    const putWorker = await requestOn(registerSocket, rawRequest("PUT", `/v1/code/sessions/${sessionId}/worker`, { Authorization: `Bearer ${bridge.worker_jwt}`, "Content-Type": "application/json" }, JSON.stringify({ worker_status: "idle", worker_epoch: 1, external_metadata: { pending_action: null, task_summary: null, model: "rig-model" } })));
     expect(putWorker.statusLine).toContain("200");
     registerSocket.destroy();
 
@@ -317,8 +320,8 @@ describe("the self-hosted Remote Control mode end to end", () => {
     expect(pending.find((request) => request.requestId === "req-1")?.type).toBe("can_use_tool");
     // The worker state the registration named is reported too, read from the field the CLI actually sends.
     expect(tracker.statusOf(sessionId)[0]?.workerState?.value).toBe("idle");
-    // The launcher-injected identity header the worker's own requests carry, read by the door's identity step before the route sees the request, and the model the registration's metadata stated, are both reported on the status.
-    expect(tracker.statusOf(sessionId)[0]).toMatchObject({ identity: "rig-identity", model: "rig-model" });
+    // Self-hosted mode (the door is the service): the worker's registration carries no identity header, so the identity is the launch's, found through the capability the tunnel supplied, and the model is the registration metadata's.
+    expect(tracker.statusOf(sessionId)[0]).toMatchObject({ identity: RIG_IDENTITY_ID, model: "rig-model" });
 
     // The door answers the request: the control_response write is served and delivered back to the worker.
     const answered = await answerRcControlRequest({ credentialOf: tracker.credentialOf, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, noteSequenceNums: tracker.noteSequenceNums, dial: writeDial }, sessionId, "req-1", { approve: true, message: undefined });

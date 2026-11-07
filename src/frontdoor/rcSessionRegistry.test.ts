@@ -2,7 +2,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { createRcSessionRegistryReader, rcStatusWithRegistry, withRegisteredSessionFacts, type RcRegisteredSession, type RcSessionRegistryFs } from "./rcSessionRegistry";
+import { createRcSessionRegistryReader, rcStatusWithRegistry, withIdentityNames, withRegisteredSessionFacts, type RcRegisteredSession, type RcSessionRegistryFs } from "./rcSessionRegistry";
 import type { RcSessionStatus } from "./rcSessions";
 
 const CSE_ID = "cse_00000000-0000-4000-8000-000000000001";
@@ -55,6 +55,12 @@ describe("the Claude Code session registry reader", () => {
     const fs = fakeRegistryFs({ "/work/a/sessions/4001.json": entry({ pid: LIVE_PID, cwd: "/repo", name: "fix the thing", bridgeSessionId: BRIDGE_ID }) });
     const reader = createRcSessionRegistryReader({ fs, identities: () => [{ name: "work", configDir: "/work/a" }], isRunning: alive });
     expect(reader()).toEqual(new Map([[CSE_ID, { pid: LIVE_PID, localSessionId: LOCAL_ID, cwd: "/repo", name: "fix the thing", identity: "work" }]]));
+  });
+
+  it("joins an entry whose bridgeSessionId still has the service's own cse_ form, which the CLI leaves unconverted when its conversion gate is off", () => {
+    const fs = fakeRegistryFs({ "/work/a/sessions/4001.json": entry({ pid: LIVE_PID, name: "unconverted", bridgeSessionId: CSE_ID }) });
+    const reader = createRcSessionRegistryReader({ fs, identities: () => [{ name: "work", configDir: "/work/a" }], isRunning: alive });
+    expect(reader()).toEqual(new Map([[CSE_ID, { pid: LIVE_PID, localSessionId: LOCAL_ID, name: "unconverted", identity: "work" }]]));
   });
 
   it("omits the fields an entry does not carry and skips entries with no bridge session, files that are not entries and half-written files", () => {
@@ -169,10 +175,20 @@ describe("rcStatusWithRegistry", () => {
       return new Map([[CSE_ID, { pid: LIVE_PID, localSessionId: LOCAL_ID }]]);
     };
     const statuses = [status(CSE_ID)];
-    const statusOf = rcStatusWithRegistry((sessionId) => statuses.filter((candidate) => sessionId === undefined || candidate.id === sessionId), read);
+    const statusOf = rcStatusWithRegistry((sessionId) => statuses.filter((candidate) => sessionId === undefined || candidate.id === sessionId), read, () => undefined);
     expect(statusOf(OTHER_CSE_ID)).toEqual([]);
     expect(reads).toBe(0);
     expect(statusOf(CSE_ID)[0]?.pid).toBe(LIVE_PID);
     expect(reads).toBe(1);
+  });
+});
+
+describe("withIdentityNames", () => {
+  it("turns the identity id a request carried into the identity's name, and drops an id that names no identity", () => {
+    const names = new Map([["id-work", "work"]]);
+    const result = withIdentityNames([status(CSE_ID, { identity: "id-work" }), status(OTHER_CSE_ID, { identity: "id-gone" }), status("cse_3")], (id) => names.get(id));
+    expect(result[0]?.identity).toBe("work");
+    expect(result[1]).not.toHaveProperty("identity");
+    expect(result[2]).not.toHaveProperty("identity");
   });
 });

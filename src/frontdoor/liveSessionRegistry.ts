@@ -19,6 +19,10 @@ export interface LiveSessionRegistry {
    */
   readonly admits: (token: string) => boolean;
   /**
+   * The id of the identity the launch holding `token` runs as, or undefined when no live launch holds the token or the launch recorded none (a launch from before records carried it). For a token `admits` has already accepted, so the lookup is not itself a capability check; an unknown token triggers one reconcile, as in `admits`.
+   */
+  readonly identityOf: (token: string) => string | undefined;
+  /**
    * Re-reads every record in the directory, replacing what the view holds, and returns the listing it saw (sorted by pid, malformed files skipped, no token in it). The supervisor's tick calls this as its listing, so the registry is read once per tick for both the idle decision and the capabilities.
    */
   readonly rescan: () => readonly FrontDoorSessionSummary[];
@@ -49,6 +53,8 @@ export function createLiveSessionRegistry(ports: LiveSessionRegistryPorts): Live
   /** Every record file the view has read, by file name, with the stat the file had just before it was read: a later stat that differs means the file was rewritten. The record is undefined for a file that is not one, so a listing for an unknown token never parses it again. */
   const known = new Map<string, { readonly stat: Pick<FarmStat, "mtimeMs" | "sizeBytes">; readonly record: FrontDoorSession | undefined }>();
   let tokens: ReadonlySet<string> = new Set();
+  /** The live launches by capability token. */
+  let byToken: ReadonlyMap<string, FrontDoorSession> = new Map();
   /** The records by the session id their requests carry; a record with none is not in it. */
   let bySessionId: ReadonlyMap<string, FrontDoorSession> = new Map();
 
@@ -57,6 +63,7 @@ export function createLiveSessionRegistry(ports: LiveSessionRegistryPorts): Live
   const rebuildIndexes = (): void => {
     const records = [...known.values()].flatMap(({ record }) => (record === undefined ? [] : [record]));
     tokens = new Set(records.map((record) => record.token));
+    byToken = new Map(records.map((record) => [record.token, record] as const));
     bySessionId = new Map(records.flatMap((record) => (record.sessionId === undefined ? [] : [[record.sessionId, record] as const])));
   };
 
@@ -101,6 +108,7 @@ export function createLiveSessionRegistry(ports: LiveSessionRegistryPorts): Live
       }
       return reconcile() && isLiveCapability(token, tokens);
     },
+    identityOf: (token) => (byToken.get(token) ?? (reconcile() ? byToken.get(token) : undefined))?.identity,
     modelsOf: (sessionId) => {
       const held = bySessionId.get(sessionId) ?? (reconcile() ? bySessionId.get(sessionId) : undefined);
       return held?.models;

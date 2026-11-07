@@ -7,7 +7,7 @@ import { createLiveSessionRegistry } from "./liveSessionRegistry";
 import * as state from "./state";
 import path from "node:path";
 import { catalogueCachePath } from "../providerCatalogue";
-import { listFrontDoorDirectRecords, listFrontDoorSessions, MAX_TCP_PORT, pruneMalformedFrontDoorDirectFiles, pruneDeadFrontDoorSessions, readFrontDoorCodexHome, readFrontDoorCodexRecord, readFrontDoorState, removeFrontDoorSession, writeFrontDoorCodexHome, writeFrontDoorSession, writeFrontDoorState } from "./state";
+import { recordOf, listFrontDoorDirectRecords, listFrontDoorSessions, MAX_TCP_PORT, pruneMalformedFrontDoorDirectFiles, pruneDeadFrontDoorSessions, readFrontDoorCodexHome, readFrontDoorCodexRecord, readFrontDoorState, removeFrontDoorSession, writeFrontDoorCodexHome, writeFrontDoorSession, writeFrontDoorState } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 
@@ -92,6 +92,16 @@ describe("front-door session registry", () => {
     const fs = createFakeFarmFs({});
     writeFrontDoorSession(fs, paths.frontdoorSessionsDir, { pid: LIVE, startedAt: 7, token: SECRET_CAPABILITY });
     expect(listFrontDoorSessions(fs, paths.frontdoorSessionsDir)).toEqual([{ pid: LIVE, startedAt: 7 }]);
+  });
+
+  it("keeps the identity a launch recorded in its record, and records none for a launch that stated none", () => {
+    const fs = createFakeFarmFs({});
+    writeFrontDoorSession(fs, paths.frontdoorSessionsDir, { pid: LIVE, startedAt: 7, token: SECRET_CAPABILITY, ...recordOf({ sessionId: "s-1", identity: "id-work" }) });
+    const names = fs.readdir(paths.frontdoorSessionsDir);
+    expect(names).toHaveLength(1);
+    const written: unknown = JSON.parse(fs.readFileUtf8(`${paths.frontdoorSessionsDir}/${names[0] ?? ""}`) ?? "");
+    expect(written).toMatchObject({ sessionId: "s-1", identity: "id-work" });
+    expect(recordOf({ sessionId: "s-2" })).toEqual({ sessionId: "s-2" });
   });
 
   it("never returns the token from a listing, so nothing that prints a session can leak the capability", () => {

@@ -95,7 +95,7 @@ interface RcSessionRecord {
   workerState: RcWorkerFact<string> | undefined;
   /** The idle the latest heartbeat carried, with when that exchange was observed. */
   workerIdleSeconds: RcWorkerFact<number> | undefined;
-  /** The identity the session's most recent request named (the launcher-injected header the door strips), so a session that moved between identities reports the one it runs as now. */
+  /** The identity id the session's most recent request was attributed to: the launcher-injected identity header when the request carried one, else the identity the admitting launch recorded. A Remote Control worker or bridge call carries none of the launcher's custom headers (observed against the self-hosted surface with CLI versions 2.1.289 and 2.1.319), so for those the launch's recorded identity, found through the capability the tunnel supplies, is the source. */
   identity: string | undefined;
   /** The model the session last stated: the worker registration's metadata or the session's init event, whichever came later. */
   model: string | undefined;

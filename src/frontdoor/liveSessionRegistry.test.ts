@@ -198,6 +198,37 @@ describe("live session registry", () => {
     expect(JSON.stringify(listed)).not.toContain("capability-that-must-never-be-listed");
   });
 
+  describe("identity by capability token", () => {
+    it("answers the identity a launch recorded from memory, and none for a launch that recorded none", () => {
+      const { fs, counts, reset } = countedWorld();
+      writeFrontDoorSession(fs, dir, { pid: LIVE, startedAt: 0, token: "a", ...recordOf({ sessionId: "s-live", identity: "id-work" }) });
+      writeFrontDoorSession(fs, dir, { pid: DEAD, startedAt: 0, token: "b", ...recordOf({ sessionId: "s-plain" }) });
+      const registry = createLiveSessionRegistry({ fs, sessionsDir: dir });
+      registry.rescan();
+      reset();
+      expect(registry.identityOf("a")).toBe("id-work");
+      expect(registry.identityOf("b")).toBeUndefined();
+      expect(counts).toEqual({ readdirs: 0, stats: 0, reads: [] });
+    });
+
+    it("finds the identity of a launch that registered since the last rescan on its first lookup", () => {
+      const { fs } = countedWorld();
+      const registry = createLiveSessionRegistry({ fs, sessionsDir: dir });
+      registry.rescan();
+      writeFrontDoorSession(fs, dir, { pid: LATE, startedAt: 1, token: "late-token", ...recordOf({ sessionId: "s-late", identity: "id-late" }) });
+      expect(registry.identityOf("late-token")).toBe("id-late");
+    });
+
+    it("loses a launch's identity with the launch", () => {
+      const { fs } = countedWorld();
+      writeFrontDoorSession(fs, dir, { pid: LIVE, startedAt: 0, token: "a", ...recordOf({ sessionId: "s-live", identity: "id-work" }) });
+      const registry = createLiveSessionRegistry({ fs, sessionsDir: dir });
+      const listed = registry.rescan();
+      registry.forget(pruneDeadFrontDoorSessions(fs, dir, listed, () => false));
+      expect(registry.identityOf("a")).toBeUndefined();
+    });
+  });
+
   describe("models block by session id", () => {
     const BLOCK: ModelsConfig = { virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } };
 

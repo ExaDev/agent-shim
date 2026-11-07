@@ -91,7 +91,14 @@ interface AdmissionRequest {
 }
 
 /** The admission step's verdict: route with these headers, or refuse with this message. */
-type Admission = { readonly ok: true; readonly headers: IncomingHttpHeaders } | { readonly ok: false; readonly message: string };
+type Admission =
+  | {
+      readonly ok: true;
+      readonly headers: IncomingHttpHeaders;
+      /** The identity id the admitting launch runs as, when the admission knows it: it stands for a request that carries no identity header of its own. */
+      readonly identity?: string;
+    }
+  | { readonly ok: false; readonly message: string };
 
 /** One request as a transport hands it to the pipeline, before anything has been identified or routed. */
 export interface PipelineRequest {
@@ -287,7 +294,7 @@ export async function serveRouted(incoming: PipelineRequest, deps: PipelineDeps)
     headers: admission.headers,
     body: request.body,
     signal: request.signal,
-    session: identified.session,
+    session: identified.session.identity === undefined && admission.identity !== undefined ? { ...identified.session, identity: admission.identity } : identified.session,
   };
   const resolution = await deps.resolveRoute(routed);
   if (!resolution.ok) {

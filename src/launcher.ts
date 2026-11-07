@@ -787,7 +787,7 @@ function prepareRegisteredLaunch(params: PrepareLaunchParams, onRecorded: (remov
   const sessionId = params.supervised?.sessionId ?? randomUUID();
   const resolvedModels = decided.models ?? (decided.globalModels === undefined ? undefined : {});
   const sessionModels = isDeepStrictEqual(resolvedModels, decided.globalModels) ? undefined : resolvedModels;
-  const session = { sessionId, ...(sessionModels === undefined ? {} : { models: sessionModels }) };
+  const session = { sessionId, ...(decided.farmIdentity === undefined ? {} : { identity: decided.farmIdentity }), ...(sessionModels === undefined ? {} : { models: sessionModels }) };
   let frontDoor = frontDoorEngaged && frontDoorPort !== undefined ? frontDoorPort.ensure(env.NODE_EXTRA_CA_CERTS, session) : undefined;
   if (frontDoor !== undefined && frontDoorPort !== undefined) {
     let beforePid = frontDoor.supervisorPid;
