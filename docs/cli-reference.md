@@ -195,14 +195,30 @@ claude @<identity> ...                      # the same, once `agent-shim shim en
 
 ### Remote Control session status
 
-`frontdoor rc status`, `GET /rest/rc/status`, the `rc_status` MCP tool and the library's `RcSessionStatus` all report one entry per observed session, and an entry carries `identity`, `model`, `name`, `pid` and `cwd` beside its worker state and pending requests. A field the door has no source for is absent from the entry, never blank or null. The sources are:
+`frontdoor rc status`, `GET /rest/rc/status`, the `rc_status` MCP tool and the library's `RcSessionStatus` all report one entry per observed session, and an entry carries `identity`, `model`, `name`, `pid` and `cwd` beside its worker state and pending requests. A field the door has no source for is absent from the entry, never blank or null. Sessions are addressed by their `cse_` id in every verb (several sessions can share a name), so `rc status` is how a name is mapped to its id.
 
-- `identity`: the launcher-injected identity header on the session's own requests, the latest one winning, so a session moved to another account reports the account it runs as now. When the door saw none, the identity whose own session registry holds the session (see below).
+The sources are:
+
+- `identity`: the identity the launch runs as, shown by name. The door takes the launcher's identity header when a request carries one and otherwise the identity recorded in the launch's front-door registry entry, found through the capability the launch's tunnel presents. The second is the one that matters here: a Remote Control worker or bridge call carries none of the launcher's custom headers (observed with Claude Code 2.1.289 and 2.1.319). A launch from before the entry recorded its identity, and a session that did not come through this machine's door, report none from the door; the registry then contributes one only if an identity has a registry of its own.
 - `model`: the `model` in the worker registration's `external_metadata` or in the session's `init` event, whichever came later.
-- `name`, `pid`: the Claude Code session registry, one file per live session process under `<configuration directory>/sessions`, joined to the door's session by its `bridgeSessionId` (`session_<x>` for the door's `cse_<x>`). An entry whose process has exited is ignored, and of several live entries for one session the most recently updated is read.
+- `name`, `pid`: the Claude Code session registry, one file per live session process under `<configuration directory>/sessions`, joined to the door's session by its `bridgeSessionId`. An entry whose process has exited is ignored, and of several live entries for one session the most recently updated is read.
 - `cwd`: the `cwd` in the session's `init` event, else the registry's.
 
-The registry is read on every status request, through every identity's configuration directory, so an identity added after the door started is searched. Identities share one registry by default (sessions are history, which is shared), so it is read once and says nothing about which identity launched a session in it; only a registry an identity holds on its own contributes an `identity`. A session found in no registry (it runs on another host, has not written its entry yet, or lives in a directory no identity of this door uses) is reported with only what the door itself observed, and a door that observed no `init` event, no registration metadata and no identity header reports none of those either. Sessions are addressed by their `cse_` id in every verb: `rc status` is how a name is mapped to its id.
+The registry is read on every status request, through every identity's configuration directory, so an identity added after the door started is searched. Identities share one registry by default (sessions are history, which is shared), so it is read once and says nothing about which identity launched a session in it. A session found in no registry (it runs on another host, has not written its entry yet, or lives in a directory no identity of this door uses) is reported with only what the door itself observed.
+
+#### Per session kind
+
+The three ways a session reaches Remote Control differ in who plays the service, not in what the status reports. The door's session id is the service's `cse_` id in every kind, and the registry's `bridgeSessionId` is that id with the prefix `session_` in place of `cse_` (a `cse_` form is accepted too, since the CLI returns the service's id unconverted when its conversion is switched off).
+
+| Piece | Native OAuth account (service: claude.ai) | Provider session with OAuth Remote Control (service: claude.ai) | Third-party provider, no Anthropic OAuth (service: the door's self-hosted surface) |
+|---|---|---|---|
+| Session id | `cse_` id from the service's create answer, observed by the door | the same | `cse_` id minted by the door (`rcSelfHost.ts`), the same form |
+| Registry join (name, pid) | `bridgeSessionId` `session_<x>`; every live registry entry with one on the development machine (Claude Code 2.1.319, ids of the service's own 24-character form) matched a session id the door held credentials for | not separately exercised; the CLI writes the same field whichever inference backend it uses | `bridgeSessionId` `session_<x>`, observed against the self-hosted surface with Claude Code 2.1.289 and 2.1.319 in a throwaway rig |
+| Identity | the launch's recorded identity, through the capability; covered by tests, not exercised against the live service | the same | the same: the self-hosted surface is served through the same routes and admission (covered by an end-to-end test); in the rig, the worker's calls were confirmed to carry no identity header |
+| Model, cwd | worker registration metadata and `init` event as the service's worker traffic carries them | the same | the same events, served and stored by the door |
+| Worker state, idle, pending requests | observed on the worker's traffic | the same | the same |
+
+What a kind cannot do is not a status matter: with no Anthropic OAuth there is no claude.ai service behind the door, so a session exists only where the door's self-hosted mode is on (`AGENT_SHIM_FRONTDOOR_RC_SELF_HOST=1`) and its credential has been minted (`frontdoor rc selfhost mint`); the web client at claude.ai cannot reach it, and the door's own web client is the browser surface.
 
 ### `agent-shim configure`: which file it writes to
 

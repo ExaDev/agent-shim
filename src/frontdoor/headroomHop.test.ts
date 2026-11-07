@@ -250,6 +250,7 @@ async function startDoor(options: { readonly files: Record<string, unknown>; rea
     resolveRoute,
     canonicalProvider: (name) => name,
     isLiveToken: (token) => token === LAUNCH_TOKEN,
+    identityOfToken: () => undefined,
     headroomSocket: home.target,
     hopSecret: HOP_SECRET,
     custody: createCredentialCustody(() => randomUUID()),

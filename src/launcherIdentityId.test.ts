@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { discovered, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
+import { discovered, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
 
 /** The fake configuration of an identity renamed without `--move` from `work` to `client`: its identity.json says `client`, in the directory it was created in. */
 const RENAMED = { [`${paths.identitiesDir}/work/identity.json`]: { name: "client", allowAmbientCredential: false } };
@@ -11,6 +11,12 @@ describe("a launch of an identity whose directory is not named after it", () => 
     const env = spawnedEnv(spawn);
     expect(env.CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/work`);
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toContain("x-agent-shim-identity: work");
+  });
+
+  it("records that id in the launch's front-door registry details, so the door attributes the launch's header-less requests to it", () => {
+    const frontdoor = fakeFrontDoorPort();
+    expect(runAndCaptureExit({ paths, fs: fakeFs(RENAMED), spawn: fakeSpawn(), proc: fakeProc({}, ["@client", "--track-usage", "--print"]), log: fakeLog(), resolveClaudeBinary: () => discovered, frontdoor })).toBe(0);
+    expect(frontdoor.sessions()[0]).toMatchObject({ identity: "work" });
   });
 
   it("refuses the identity's former name, which no identity has any more", () => {

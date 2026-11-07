@@ -8,7 +8,7 @@ import { rcObservingResolver } from "./commands";
 import { createCredentialCustody } from "./custody";
 import { NO_ROUTING_SETTING } from "../headroom/routingSetting";
 import { createHeadroomDecision } from "./headroomDecision";
-import { RC_IDLE_EXPIRY_MS, createRcSessionTracker } from "./rcSessions";
+import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, type RcSessionStatus } from "./rcSessions";
 import { createRoutedResponse, serveRouted, type PipelineDeps, type PipelineRequest, type ResponseBodyObserver, type ResponseObserver, type RouteResolution, type RoutedResponseEvent } from "./pipeline";
 import { HEADROOM_FLAG_HEADER, IDENTITY_HEADER, PROVIDER_HEADER, SESSION_HEADER, type FrontDoorRoute, type RoutedRequest, type RoutedResponse  } from "./route";
 
@@ -197,6 +197,29 @@ describe("serveRouted", () => {
     await serveRouted(request, deps({ ok: true, route: recordingRoute() }, observers).deps);
     expect(events).toEqual(["first:test:200:work", "second:text/plain"]);
     expect(response.writtenHead?.status).toBe(HTTP_STATUS.ok);
+  });
+
+  describe("the identity a route sees", () => {
+    /** Serves one request through an admission that names an identity, and returns the identity the route was handed. */
+    async function identityRouteSaw(headers: Readonly<Record<string, string>>, admitted: string | undefined): Promise<string | undefined> {
+      const route = recordingRoute();
+      const { request } = pipelineRequest(headers);
+      const { deps: base } = deps({ ok: true, route });
+      await serveRouted(request, { ...base, admit: () => ({ ok: true, headers: {}, ...(admitted === undefined ? {} : { identity: admitted }) }) });
+      return route.seen[0]?.session.identity;
+    }
+
+    it("is the identity the admitting launch recorded when the request names none, which is how a Remote Control call that carries no custom headers is attributed", async () => {
+      expect(await identityRouteSaw({}, "launch-identity")).toBe("launch-identity");
+    });
+
+    it("is the request's own identity header when it carries one, ahead of the launch's", async () => {
+      expect(await identityRouteSaw({ [IDENTITY_HEADER]: "header-identity" }, "launch-identity")).toBe("header-identity");
+    });
+
+    it("is none when neither the request nor the launch states one", async () => {
+      expect(await identityRouteSaw({}, undefined)).toBeUndefined();
+    });
   });
 
   describe("viaHeadroom on the observed event", () => {
@@ -543,5 +566,33 @@ describe("a session that wants headroom, served through the Remote Control obser
 
   it("still sends a model request over the hop", async () => {
     expect(await serveFlagged("/v1/messages")).toEqual({ status: HTTP_STATUS.badGateway, routeServed: 0, tracked: [] });
+  });
+});
+
+describe("a Remote Control call that carries no identity header, served through the observing resolver", () => {
+  const SESSION = "cse_00000000-0000-4000-8000-000000000002";
+
+  async function statusAfter(admitted: string | undefined, headers: Readonly<Record<string, string>>): Promise<RcSessionStatus | undefined> {
+    const tracker = createRcSessionTracker({ now: () => 0, idleMs: RC_IDLE_EXPIRY_MS });
+    const route = recordingRoute();
+    const { deps: base } = deps({ ok: true, route });
+    const resolveRoute = rcObservingResolver(async () => await Promise.resolve({ ok: true as const, route }), tracker);
+    const { request } = pipelineRequest(headers);
+    await serveRouted({ ...request, url: `/v1/code/sessions/${SESSION}/worker/heartbeat` }, { ...base, resolveRoute, admit: () => ({ ok: true, headers: {}, ...(admitted === undefined ? {} : { identity: admitted }) }) });
+    const status = tracker.statusOf(SESSION)[0];
+    tracker.close();
+    return status;
+  }
+
+  it("is attributed to the identity of the launch whose capability admitted it", async () => {
+    expect((await statusAfter("launch-identity", {}))?.identity).toBe("launch-identity");
+  });
+
+  it("is attributed to its own identity header when it carries one", async () => {
+    expect((await statusAfter("launch-identity", { [IDENTITY_HEADER]: "header-identity" }))?.identity).toBe("header-identity");
+  });
+
+  it("reports no identity when neither the call nor the launch states one", async () => {
+    expect(await statusAfter(undefined, {})).not.toHaveProperty("identity");
   });
 });

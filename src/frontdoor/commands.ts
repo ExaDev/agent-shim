@@ -245,11 +245,6 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
   // The door's session event log: every transition the tracker files (a session appearing or ending, a worker state change, a pending request born or retired), in one cursor-ordered window the typed API's `rcSessions.events` stream and `rcSessions.eventsPage` read, so one subscription follows every session. Its generation id makes a cursor from a previous door process fail loudly instead of reading as a position in this one.
   const rcSessionEvents = createRcSessionEventLog({ generation: randomUUID(), capacity: RC_SESSION_EVENT_LOG_CAPACITY });
   const rcTracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS, credentialStore: rcCredentialStore, onTransition: rcSessionEvents.append, onClose: rcSessionEvents.close });
-  // The status read every Remote Control surface serves: the tracker's observations plus what the Claude Code session registry says (name, process id, working directory), searched across every identity's registry on each read so an identity added after the door started is covered.
-  const rcStatusOf = rcStatusWithRegistry(
-    rcTracker.statusOf,
-    createRcSessionRegistryReader({ fs: realSessionFs, identities: () => listIdentities(paths).map((entry) => ({ name: entry.name, configDir: identityDirectoryOfName(paths, entry.name) })), isRunning: realIsProcessAlive }),
-  );
   // The door's event backbone: one publisher/subscriber spine for every door-wide source, serving the typed API's `events.subscribe`. The Remote Control client read stream is its first publisher (through the wrap below, which moves nothing about how RC events flow) and the launch lifecycle is its first door-native one, fed by the supervisor's tick from the session registry; the usage source publishes every snapshot the store writes, the door health source the supervisor's own transitions, and the expiring-quota source the windows the supervisor's tick sees entering their final span (kept fresh by the usage source's own events, seeded from the snapshot directory).
   const doorEvents = createDoorEventHub();
   // The usage source's publisher, registered here so the store (created below) can hand it every snapshot it writes, and the expiring-quota checker that reads those same snapshots off the backbone rather than the disk.
@@ -260,6 +255,12 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     usagePublisher.publish(event);
   }, usageEventNames.nameOf);
   const quotaExpiring = createQuotaExpiringPublisher(doorEvents, { seed: listUsageSnapshots(realFarmFs, paths.usageSnapshotsDir), now: () => Date.now(), nameOf: usageEventNames.nameOf });
+  // The status read every Remote Control surface serves: the tracker's observations (the identity as its id, turned into the identity's name here) plus what the Claude Code session registry says (name, process id, working directory), searched across every identity's registry on each read so an identity added after the door started is covered.
+  const rcStatusOf = rcStatusWithRegistry(
+    rcTracker.statusOf,
+    createRcSessionRegistryReader({ fs: realSessionFs, identities: () => listIdentities(paths).map((entry) => ({ name: entry.name, configDir: identityDirectoryOfName(paths, entry.name) })), isRunning: realIsProcessAlive }),
+    usageEventNames.nameOf,
+  );
   // The door health publisher, fed by the supervisor's own transitions.
   const doorHealth = createDoorHealthPublisher(doorEvents, () => Date.now(), process.pid);
   // The live quota state, the backbone's first door-native consumer: subscribed to the rc source before any stream can publish, so every rate_limit_event the held client stream files becomes the door's latest per-session rate-limit observation, the state the control plane's `usage.live` read serves beside its snapshot readers.
@@ -486,6 +487,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
   const pipelines = createDoorPipelines({
     resolveRoute,
     isLiveToken,
+    identityOfToken: sessionRegistry.identityOf,
     canonicalProvider,
     responseObservers: [usageMiddleware],
     now: () => Date.now(),

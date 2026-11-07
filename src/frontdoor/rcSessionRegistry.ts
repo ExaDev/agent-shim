@@ -8,10 +8,10 @@ import type { RcSessionStatus } from "./rcSessions";
 /**
  * The Claude Code session registry as the door reads it to say which Remote Control session is which: one JSON file per live session process under `<configuration directory>/sessions`, written by the CLI itself. Only the fields the status surface reports are read (`pid`, `cwd`, `name`, `updatedAt` and the `bridgeSessionId` that joins the entry to the door's session); everything else in the file is ignored, and a file that is not an entry (the `.key` files and the `.tmp-` files of an atomic write that sit beside them) is skipped rather than failed.
  *
- * The join is a prefix swap: the registry's `bridgeSessionId` is `session_<x>` where the door tracks the same session as `cse_<x>`. A session the registry does not hold, because it runs on another host, has not written its entry yet, or has a registry no identity of this door can reach, is reported by the door's own observations alone.
+ * The join is a prefix swap: the registry's `bridgeSessionId` is `session_<x>` where the door tracks the same session as `cse_<x>`. The CLI converts the service's `cse_` id to the `session_` form through a function gated by a feature flag and returns the `cse_` id unchanged when the flag is off (read from the 2.1.309 binary's `lp` and its inverse `Wl`, which accepts both), so an entry carrying either form joins to the same `cse_` id. The id the CLI stores comes from the create answer whichever service gave it, so a session on the door's own self-hosted surface joins exactly as one on the claude.ai service does. A session the registry does not hold, because it runs on another host, has not written its entry yet, or has a registry no identity of this door can reach, is reported by the door's own observations alone.
  */
 
-/** The prefix the registry's `bridgeSessionId` carries. */
+/** The prefix the registry's `bridgeSessionId` carries when the CLI has converted the service's id. */
 const REGISTRY_BRIDGE_PREFIX = "session_";
 
 /** The prefix the door tracks the same session under. */
@@ -36,7 +36,7 @@ export interface RcRegistryIdentity {
 const RegistryEntrySchema = z.looseObject({
   sessionId: z.string().min(1),
   pid: z.int().positive(),
-  bridgeSessionId: z.string().startsWith(REGISTRY_BRIDGE_PREFIX),
+  bridgeSessionId: z.union([z.string().startsWith(REGISTRY_BRIDGE_PREFIX), z.string().startsWith(DOOR_SESSION_PREFIX)]),
   cwd: z.string().optional(),
   name: z.string().optional(),
   updatedAt: z.number().optional(),
@@ -139,7 +139,7 @@ export function createRcSessionRegistryReader(deps: RcSessionRegistryDeps): () =
           },
           updatedAt: updatedAt ?? 0,
         };
-        const id = `${DOOR_SESSION_PREFIX}${bridgeSessionId.slice(REGISTRY_BRIDGE_PREFIX.length)}`;
+        const id = bridgeSessionId.startsWith(REGISTRY_BRIDGE_PREFIX) ? `${DOOR_SESSION_PREFIX}${bridgeSessionId.slice(REGISTRY_BRIDGE_PREFIX.length)}` : bridgeSessionId;
         const kept = chosen.get(id);
         if (kept === undefined || supersedes(candidate, kept)) {
           chosen.set(id, candidate);
@@ -169,10 +169,28 @@ export function withRegisteredSessionFacts(statuses: readonly RcSessionStatus[],
   });
 }
 
+/**
+ * Replaces the identity id the door observed on a session's requests (the id of the identity's directory, which a rename of its name keeps) with the identity's current name, the form the registry and every other surface report. An id that names no identity any longer is dropped: the status then reports no identity, which is what is known.
+ */
+export function withIdentityNames(statuses: readonly RcSessionStatus[], nameOf: (id: string) => string | undefined): readonly RcSessionStatus[] {
+  return statuses.map((status) => {
+    if (status.identity === undefined) {
+      return status;
+    }
+    const { identity: id, ...rest } = status;
+    const name = nameOf(id);
+    return name === undefined ? rest : { ...rest, identity: name };
+  });
+}
+
 /** Wraps the tracker's status read so every answer carries the registry's facts; the registry is read only when there is a status to describe. */
-export function rcStatusWithRegistry(statusOf: (sessionId?: string) => readonly RcSessionStatus[], readRegistry: () => ReadonlyMap<string, RcRegisteredSession>): (sessionId?: string) => readonly RcSessionStatus[] {
+export function rcStatusWithRegistry(
+  statusOf: (sessionId?: string) => readonly RcSessionStatus[],
+  readRegistry: () => ReadonlyMap<string, RcRegisteredSession>,
+  identityNameOf: (id: string) => string | undefined,
+): (sessionId?: string) => readonly RcSessionStatus[] {
   return (sessionId) => {
     const statuses = statusOf(sessionId);
-    return statuses.length === 0 ? statuses : withRegisteredSessionFacts(statuses, readRegistry());
+    return statuses.length === 0 ? statuses : withRegisteredSessionFacts(withIdentityNames(statuses, identityNameOf), readRegistry());
   };
 }
