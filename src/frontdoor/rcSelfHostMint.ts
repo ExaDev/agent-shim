@@ -17,7 +17,7 @@ import { RC_SELF_HOST_SCOPE_LIST } from "./rcSelfHostLocal";
  * Nothing minted is ever returned to a caller or logged: the result names the identity, the organisation and the files, never a token.
  */
 
-/** The file Claude Code keeps its OAuth credential in on Linux and Windows, inside the configuration directory the farm makes of the identity. */
+/** The file Claude Code keeps its OAuth credential in on Linux and Windows, and falls back to on macOS when there is no Keychain item (or its read fails), inside the configuration directory the farm makes of the identity. */
 const CREDENTIALS_FILE = ".credentials.json";
 
 /** The file Claude Code keeps its account block and feature cache in, inside the same directory. */

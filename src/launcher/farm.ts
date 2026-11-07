@@ -235,7 +235,7 @@ export interface CarryOverResult {
 /**
  * Moves an identity's own locally-written state out of a superseded farm and into the new one.
  *
- * This is what makes a whole-directory swap safe at all. The farm root *is* `CLAUDE_CONFIG_DIR`, so it holds more than symlinks: the identity's own `identity.json`, the credentials file Claude Code writes on Linux and Windows, its `.claude.json`, its daemon and runtime state. None of that is shared, none of it is rebuildable, and a swap that simply replaced the directory would destroy all of it.
+ * This is what makes a whole-directory swap safe at all. The farm root *is* `CLAUDE_CONFIG_DIR`, so it holds more than symlinks: the identity's own `identity.json`, the credentials file Claude Code writes on Linux and Windows (and reads as its fallback on macOS), its `.claude.json`, its daemon and runtime state. None of that is shared, none of it is rebuildable, and a swap that simply replaced the directory would destroy all of it.
  *
  * Anything the previous resync built itself is skipped rather than carried: a symlink is a view of the canonical tree with no data of its own, and a directory the manifest records as materialised had its real children adopted into `~/.claude` before the swap ever started. Everything else is real local data and moves across by rename, so a credential file is relocated rather than duplicated — never briefly existing as two copies on disk.
  *
