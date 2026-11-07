@@ -1,5 +1,4 @@
 import { HTTP_STATUS } from "../codex/http";
-import type { RcPersonClientPlatform } from "./rcSelfHostCommands";
 import { isSuccessful, type RcPendingRequestSummary } from "./rcSessions";
 
 /**
@@ -119,7 +118,7 @@ export interface RcInjectDeps {
 }
 
 /** The failure every client-half write returns when the tracker holds no OAuth-kind bearer for the session: only worker calls were observed, and the worker JWT they carry does not authorise the client half. */
-function noOAuthCredentialResult(sessionId: string): RcEventWriteResult {
+export function noOAuthCredentialResult(sessionId: string): RcEventWriteResult {
   return { ok: false, message: `no claude.ai OAuth bearer has been observed for session ${sessionId}: only worker calls crossed this door, and the worker JWT they carry is answered 401 on the client half. Reconnect Remote Control through this door and the create's own bearer will be observed` };
 }
 
@@ -129,7 +128,7 @@ export function rcSessionNotObservedMessage(sessionId: string): string {
 }
 
 /** The headers every client-half write sends, from the observed credential: the observed values replayed verbatim. The authorization is present by construction, since every caller guards on it (the write refuses to go out unauthenticated rather than surface as a confusing 401). */
-function rcWriteHeaders(credential: RcObservedCredential): Record<string, string> {
+export function rcWriteHeaders(credential: RcObservedCredential): Record<string, string> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (credential.authorization !== undefined) {
     headers.authorization = credential.authorization;
@@ -144,9 +143,9 @@ function rcWriteHeaders(credential: RcObservedCredential): Record<string, string
 }
 
 /**
- * Injects one user-message prompt into an observed session: the documented client-half write, `POST /v1/code/sessions/{id}/events`, authenticated by the observed bearer and carrying the observed protocol headers. `clientPlatform`, when named, replaces the observed `anthropic-client-platform` value. Only the goal and compaction verbs name one, and only for a session on the door's own self-hosted surface (`rcSelfHostCommands.ts`): the service stamps that header onto the event as its `client_platform`, which is how the worker tells a person's message (whose slash command it runs) from a peer's, and on its own surface the door is that service. A write to the real service always carries the observed value, so the door never claims there to be an app it is not. The result is the sequence numbers the real service assigned, or a verbose failure. A dial that cannot reach the API host is reported rather than thrown, so a caller with no exception handling still shows the user exactly what failed.
+ * Injects one user-message prompt into an observed session: the documented client-half write, `POST /v1/code/sessions/{id}/events`, authenticated by the observed bearer and carrying the observed protocol headers, the observed `anthropic-client-platform` included, so the door never names an app it is not. The result is the sequence numbers the real service assigned, or a verbose failure. A dial that cannot reach the API host is reported rather than thrown, so a caller with no exception handling still shows the user exactly what failed.
  */
-export async function injectRcUserMessage(deps: RcInjectDeps, sessionId: string, text: string, clientPlatform?: RcPersonClientPlatform): Promise<RcEventWriteResult> {
+export async function injectRcUserMessage(deps: RcInjectDeps, sessionId: string, text: string): Promise<RcEventWriteResult> {
   const credential = deps.credentialOf(sessionId);
   if (credential === undefined) {
     return { ok: false, message: rcSessionNotObservedMessage(sessionId) };
@@ -157,7 +156,7 @@ export async function injectRcUserMessage(deps: RcInjectDeps, sessionId: string,
   const body = JSON.stringify(buildRcEventWriteBody(buildRcUserMessagePayload(deps.newUuid(), sessionId, text)));
   let answer: RcDialAnswer;
   try {
-    answer = await deps.dial.writeEvents(sessionId, clientPlatform === undefined ? rcWriteHeaders(credential) : rcWriteHeaders({ ...credential, anthropicClientPlatform: clientPlatform }), body);
+    answer = await deps.dial.writeEvents(sessionId, rcWriteHeaders(credential), body);
   } catch (error) {
     return { ok: false, message: `the door could not reach the API host to inject into session ${sessionId}: ${error instanceof Error ? error.message : String(error)}` };
   }

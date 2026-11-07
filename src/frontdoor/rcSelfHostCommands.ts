@@ -1,7 +1,7 @@
 import { realRcEventDial, type RcDialTarget } from "./connectEffects";
 import type { RcStreamEvent } from "./rcSchemas";
 import type { RcEventFanout } from "./rcStream";
-import { injectRcUserMessage, type RcEventDial, type RcEventWriteResult, type RcInjectDeps } from "./rcWrites";
+import { buildRcEventWriteBody, buildRcUserMessagePayload, noOAuthCredentialResult, rcEventWriteResultFromAnswer, rcSessionNotObservedMessage, rcWriteHeaders, type RcDialAnswer, type RcEventDial, type RcEventWriteResult, type RcInjectDeps } from "./rcWrites";
 
 /**
  * Slash commands on the door's own self-hosted Remote Control surface: the route the goal and compaction verbs take for a session no supervisor owns when the door serves Remote Control itself (`rcSessionCommands.ts` chooses the route).
@@ -12,10 +12,7 @@ import { injectRcUserMessage, type RcEventDial, type RcEventWriteResult, type Rc
  */
 
 /** The platform the door writes a command under on its own surface: the claude.ai web app, the one person's app the door itself serves (its browser page). */
-export const RC_PERSON_CLIENT_PLATFORM = "web_claude_ai";
-
-/** The one platform value a command write may carry. */
-export type RcPersonClientPlatform = typeof RC_PERSON_CLIENT_PLATFORM;
+const RC_PERSON_CLIENT_PLATFORM = "web_claude_ai";
 
 /** The brand only `rcSelfHostEventDial` puts on a dial: not exported, so no other code can make a value of the type. */
 const SELF_HOST_DIAL: unique symbol = Symbol("the door's own self-hosted surface");
@@ -55,10 +52,27 @@ export function rcSelfHostEventDial(resolve: () => RcDialTarget | undefined, mak
 /** What a person's-app write needs: the client half's credential accessors and id minting, and the self-hosted dial in place of the general one. */
 export type RcPersonWriteDeps = Omit<RcInjectDeps, "dial"> & { readonly dial: RcSelfHostEventDial };
 
-/** Writes one user message into a session on the door's own surface as the person's app `RC_PERSON_CLIENT_PLATFORM` names: the only write that names a platform other than the observed one, and it can ride only the self-hosted dial. */
+/** Writes one user message into a session on the door's own surface as the person's app `RC_PERSON_CLIENT_PLATFORM` names: the client half's user-message write with the observed credential, its platform replaced. It is the only write that names a platform other than the observed one, it can ride only the self-hosted dial, and it is not part of the library, so nothing outside this route can make the door claim an app it is not. */
 async function writeRcPersonMessage(deps: RcPersonWriteDeps, sessionId: string, text: string): Promise<RcEventWriteResult> {
-  const refuseTeleport = async (): Promise<never> => await Promise.reject(new Error("a person's-app write sends user events only"));
-  return await injectRcUserMessage({ ...deps, dial: { writeEvents: deps.dial.writeEvents, writeTeleportEvents: refuseTeleport } }, sessionId, text, RC_PERSON_CLIENT_PLATFORM);
+  const credential = deps.credentialOf(sessionId);
+  if (credential === undefined) {
+    return { ok: false, message: rcSessionNotObservedMessage(sessionId) };
+  }
+  if (credential.authorization === undefined) {
+    return noOAuthCredentialResult(sessionId);
+  }
+  const body = JSON.stringify(buildRcEventWriteBody(buildRcUserMessagePayload(deps.newUuid(), sessionId, text)));
+  let answer: RcDialAnswer;
+  try {
+    answer = await deps.dial.writeEvents(sessionId, rcWriteHeaders({ ...credential, anthropicClientPlatform: RC_PERSON_CLIENT_PLATFORM }), body);
+  } catch (error) {
+    return { ok: false, message: `the door could not write to its own self-hosted surface for session ${sessionId}: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  const result = rcEventWriteResultFromAnswer(answer);
+  if (result.ok) {
+    deps.noteSequenceNums(sessionId, result.sequenceNums);
+  }
+  return result;
 }
 
 /** Everything the self-hosted route needs, injected so it runs against fakes in unit tests. */
