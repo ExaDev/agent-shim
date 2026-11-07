@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { prepareLaunch } from "./launcher";
-import { createFakeFarmFs, discovered, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
+import { FAKE_CLAUDE_HOME, createFakeFarmFs, discovered, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
 
 describe("prepareLaunch decision", () => {
   const plan = (env: Readonly<Record<string, string>>, argv: readonly string[], files: Readonly<Record<string, unknown>> = {}): ReturnType<typeof prepareLaunch> =>
@@ -50,6 +50,24 @@ describe("prepareLaunch decision", () => {
     expect(runAndCaptureExit({ paths, fs: fakeFs({}), spawn, proc: fakeProc(env, ["@work", "--print"]), log, resolveClaudeBinary: () => discovered })).toBe(0);
     expect(spawnedEnv(spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/work`);
     expect(log.warns).toEqual([]);
+  });
+
+  it("syncs the farm of an identity named on the command line even when CLAUDE_CONFIG_DIR is inherited", () => {
+    const fs = createFakeFarmFs({ [`${FAKE_CLAUDE_HOME}/skills/commit/SKILL.md`]: "commit" });
+    const spawn = fakeSpawn();
+
+    runAndCaptureExit({
+      paths,
+      fs: fakeFs({}),
+      spawn,
+      proc: fakeProc({ CLAUDE_CONFIG_DIR: "/somewhere/explicit" }, ["@work"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+      farm: fakeFarm(fs),
+    });
+
+    expect(fs.writes.length).toBeGreaterThan(0);
+    expect(spawnedEnv(spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/work`);
   });
 
   it("keeps the inherited CLAUDE_CONFIG_DIR, silently, when nothing on the command line names an identity", () => {

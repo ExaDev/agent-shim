@@ -220,7 +220,7 @@ describe("runLauncher identity credential", () => {
       paths,
       fs: fakeFs(workWithCredential),
       spawn,
-      proc: fakeProc({ CLAUDE_CONFIG_DIR: "/somewhere/explicit" }, ["@work"]),
+      proc: fakeProc({ CLAUDE_CONFIG_DIR: "/somewhere/explicit", AGENT_SHIM_IDENTITY: "work" }, []),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
       credentials,
@@ -228,5 +228,23 @@ describe("runLauncher identity credential", () => {
 
     expect(credentials.runCommand).not.toHaveBeenCalled();
     expect(spawnedEnv(spawn).CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+  });
+
+  it("applies the credential of an identity named on the command line even when CLAUDE_CONFIG_DIR is inherited, since the identity then owns the directory", () => {
+    const spawn = fakeSpawn();
+    const credentials = fakeCredentials({ command: { stdout: WORK_TOKEN } });
+
+    runAndCaptureExit({
+      paths,
+      fs: fakeFs(workWithCredential),
+      spawn,
+      proc: fakeProc({ CLAUDE_CONFIG_DIR: "/somewhere/explicit" }, ["@work"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+      credentials,
+    });
+
+    expect(credentials.runCommand).toHaveBeenCalled();
+    expect(spawnedEnv(spawn).CLAUDE_CODE_OAUTH_TOKEN).toBe(WORK_TOKEN);
   });
 });
