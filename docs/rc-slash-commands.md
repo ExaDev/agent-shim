@@ -98,4 +98,4 @@ It is rejected because the worker would then trust a value the service never sta
 
 ## Self-hosted mode
 
-The real service sets `client_platform` from the writer's header. The door's self-hosted surface does the same: the header's value, and nothing a writer put into the payload itself.
+The real service sets `client_platform` from the writer's header. The door's self-hosted surface does the same on every client write it serves (the session's event writes, the conversation's, and the teleport channel's): the header's value, and nothing a writer put into the payload itself.
