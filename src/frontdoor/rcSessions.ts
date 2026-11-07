@@ -71,7 +71,7 @@ export const RC_PENDING_PER_SESSION_MAX = 64;
 export const RC_REQUEST_ID_MAX_CHARS = 128;
 
 /**
- * How many retired request ids one session remembers. A retired id is kept so a late duplicate of its `control_request` (a stream replay after the door's own answer) is not re-listed; the window is the pending cap twice over, enough to cover every request that could have been waiting at once plus the same again in flight, and the oldest tombstone is forgotten first.
+ * How many retired request ids one session remembers. A retired id is kept so a late duplicate of its `control_request` (a stream replay after the door's own answer) is not re-listed; the window is twice the pending cap, so it holds a full pending set that retired together plus as many again that retired before it, and the oldest tombstone is forgotten first. A duplicate arriving after its tombstone was forgotten is filed as a new request, and a dropped id forgotten the same way is counted as dropped again.
  */
 export const RC_RETIRED_TOMBSTONES_MAX = 2 * RC_PENDING_PER_SESSION_MAX;
 
@@ -139,7 +139,7 @@ interface RcPendingRequestRecord {
   readonly type: string;
   /** A short human-readable sketch: the tool name and a bounded excerpt of its input for `can_use_tool`. */
   readonly summary: string;
-  /** Whether the request's payload was past `RC_REQUEST_PARSE_CAP_BYTES`, so only its summary is held: a question this large is listed without its questions and cannot be answered here. */
+  /** Whether the request is a question whose payload was past `RC_REQUEST_PARSE_CAP_BYTES`, so only its summary is held: it is listed without its questions and cannot be answered here. Never true for a request that is not a question, which is held whole whatever its size. */
   readonly oversized: boolean;
   /** Why a question request cannot be answered through the door (malformed, past a bound, a repeated question or label, or past the parse cap), so the answer path refuses it rather than approving it without answers; absent for an answerable question and for every other request. */
   readonly unanswerable: string | undefined;
@@ -163,7 +163,7 @@ export interface RcPendingRequestSummary {
   readonly summary: string;
   /** The questions the agent put to the user, in the order it asked them, when the request is the question dialog (a `can_use_tool` request for `AskUserQuestion`); absent for every other request. An answer chooses among exactly these options. */
   readonly questions?: readonly RcPendingQuestion[];
-  /** Present and true when the request's payload was past the door's parse cap: only its summary is held, so a question listed this way shows no questions and cannot be answered through the door. */
+  /** Present and true when the request is a question whose payload was past the door's parse cap: only its summary is held, so it shows no questions and cannot be answered through the door. */
   readonly oversized?: true;
   /** Present when the request is the question dialog but the door cannot answer it (why, in words): answer it in the session instead. */
   readonly unanswerable?: string;
@@ -386,7 +386,7 @@ function pendingOfControlRequestPayload(payload: Record<string, unknown>): Omit<
   if (parsed === undefined || !isQuestion || Buffer.byteLength(JSON.stringify(payload), "utf8") <= RC_REQUEST_PARSE_CAP_BYTES) {
     return parsed;
   }
-  return { ...parsed, questions: undefined, toolInput: undefined, oversized: true, unanswerable: parsed.unanswerable ?? (parsed.questions === undefined ? undefined : `the request is past the door's parse cap of ${String(RC_REQUEST_PARSE_CAP_BYTES)} bytes`) };
+  return { ...parsed, questions: undefined, toolInput: undefined, oversized: true, unanswerable: parsed.unanswerable ?? `the request is past the door's parse cap of ${String(RC_REQUEST_PARSE_CAP_BYTES)} bytes` };
 }
 
 /** The pending record of one `control_request` payload, every field held whole. */

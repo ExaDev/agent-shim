@@ -6,9 +6,11 @@
 export const RC_QUESTION_TOOL_NAME = "AskUserQuestion";
 
 /**
- * The most questions, and the most options per question, one request may carry and still be answered here. The tool's own schema allows four of each; four times that leaves room for the tool to grow while bounding what one listing holds.
+ * The most questions one request may carry and still be answered here. The tool's own schema allows four; four times that leaves room for the tool to grow while bounding what one listing holds.
  */
 export const RC_QUESTIONS_MAX = 16;
+
+/** The most options one question may carry and still be answered here, bounded on the same reasoning as `RC_QUESTIONS_MAX`. */
 export const RC_QUESTION_OPTIONS_MAX = 16;
 
 /**
