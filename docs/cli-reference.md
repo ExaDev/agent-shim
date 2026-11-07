@@ -89,7 +89,7 @@ agent-shim pool list [--json]
 agent-shim pool show <name> [--json]
 agent-shim pool remove <name> [--yes]
 agent-shim pool use <name>                   # the active selection becomes pool:<name>
-agent-shim pool pick <name> [--json]         # the ranking a launch from here would act on; records nothing
+agent-shim pool pick <name> [--provider <name>|--no-provider] [--json]   # the ranking a launch from here would act on, on each member's launch provider; records nothing
 
 agent-shim provider add <name> --display-name <name> (--base-url <url> | --kind codex) (--credential <source>)... [--credential-target <bearer|apiKey>] [--env KEY=VALUE]...
                                               [--codex-default-model <model>] [--codex-model <tier=model>]... [--codex-effort <none|low|medium|high>] [--codex-login <codex-cli|chatgpt-sign-in>]

@@ -29,7 +29,7 @@ src/
     pickerPrompt.ts       # promptsIdentityPicker: the IdentityPickerPort over a single-select prompt
     runPicker.ts          # runIdentityPicker: reads the pool ranking and logins, decides, asks through the port and reports the outcome (unchanged, selected, cancelled)
     guard.ts              # the ambient-credential guard — six guarded vars, empty string counts as unset, the launching identity's own injected token exempt
-    identity.ts           # decideIdentity, decideConfigProfile, loadIdentity
+    identity.ts           # decideIdentity, decideConfigProfile, loadIdentity, and `identityReader`, which answers ids and identities from one read of each file
     flags.ts              # resolveLaunchFlags, buildFlagArgs, buildArgv, buildEnv
     extraFlags.ts         # splitExtraFlags for $CLAUDE_EXTRA_FLAGS
     cascade.ts            # loads and assembles the CascadeInput a real launch needs (profiles, directory rules, .agent-shim.json)
@@ -37,6 +37,7 @@ src/
     farm.ts               # farm resync: plan -> build scratch -> reconcile/carry-over -> atomic swap -> crash recovery
      launchRecords.ts      # the record a launch keeps from before its farm resync until its child has exited, so `identity rename --move` can see a launch that has not spawned yet (a rename of the name alone moves nothing a launch uses, so it does not look)
     pool.ts               # resolves a `pool:<name>` selector to one member at launch (skips members that are not identities, refuses or waits when every member is refused, records the pick)
+    memberProvider.ts     # the provider each pool member's launch would route through (flag, cascade over the member's profile, the member's own declaration), resolved with no credential, so the ranking reads the quota the launch spends
     spawn.ts              # spawnClaude — spawns the real binary, propagates its exit code
   identityManager.ts      # the `identity` noun's commands: add/list/show/set/remove/use/resolve-conflicts, and the interactive wizard
   identityStore.ts        # the identity data layer: read/add/list/change identities and their errors, with no command-line dependencies, exported by the library; every lookup by name goes through the resolver to the identity's id
@@ -77,7 +78,8 @@ src/
     providerQuota.ts        # the adapters for providers that report quota only through their own usage endpoint (z.ai, OpenRouter), and the freshness a pulled quota keeps
     quotaRefresh.ts        # the refresher (throttled, one fetch in flight per identity and provider, failures contained), the provider and credential lookup it fetches with, and the wrapper that triggers it after a recorded request
     preflight.ts            # `effectiveWindow` (a recorded window read at an instant: one past its reset is empty) and the launch-time quota warnings derived from it, by the API's own window statuses rather than a typed threshold
-    plan.ts, pick.ts        # the account plan class (subscription capacity from the rate-limit tier, or pay-per-use) and `rankPool`, the pure ranking of a pool's members: refused members out, remaining quota weighted by plan size per hour to reset, five-hour feasibility, last-pick stickiness, and nested `pool:<name>` entries contributing their own pool's pick or refusal
+    plan.ts, pick.ts        # the account plan class (subscription capacity from the rate-limit tier, or pay-per-use) and `rankPool`, the pure ranking of a pool's members: refused members out, remaining quota weighted by plan size per hour to reset, five-hour feasibility, last-pick stickiness, and nested `pool:<name>` entries contributing their own pool's pick or refusal; a member whose launch spends a provider is read from that provider's slice and sized by its quota level
+    providerWindows.ts, windowLengths.ts   # the plan windows a ranking reads from one provider's slice of a snapshot (its recorded rate-limit state, else the five-hour and seven-day windows of its pulled quota), and the two window lengths they are matched against
     poolPick.ts             # the store-backed side of picking: walks a pool and everything it nests (each pool under its own preference, cycles refused), loads each member's snapshot, login metadata and recent log records for `rankPool`, and keeps the per-directory last-pick record; members of one login (the same account and organisation) are collapsed to the one with the freshest snapshot and the others ranked ineligible as `same login as <name>`
     anchor.ts               # anchors: parsing and formatting `<days>@<HH:MM>[/<zone>]`, and the pure next-and-due arithmetic over an injected zone and clock, daylight saving included
     windowKeeper.ts         # the front door's window keeper: at each anchor that has fallen, opens a five-hour window when none is open, once per anchor, over injected ports
@@ -162,6 +164,7 @@ src/
   doctorReport.ts          # the whole-tree audit (every identity, profile, extends chain, provider, directory rule, config file, binary discoverability and PATH resolution): the pure `runDoctor`, its formatter and `collectDoctorReport`, which reads this machine; no command-line dependencies, exported by the library
   doctorIdentityRecords.ts # the doctor's findings about the identity records themselves: a name two identities claim, an identity whose directory is missing, or present without its identity.json, while a superseded farm holds its record, a rename of the name alone left unfinished, and a name-rename record filed under a name its rename does not give it
   poolPickReport.ts        # the read-only pool ranking `pool pick` and `check` print, with no command-line dependencies
+  poolProviderWiring.ts    # the provider of each pool member's launch on this machine's real files, for the reports that rank a pool without launching (the launcher builds the same resolver, `launcher/memberProvider.ts`, over its own ports)
   claudeShim.ts            # `agent-shim shim enable`/`disable` — the one explicit action that creates/removes a `claude`-named hardlink of the running executable; records claude-shim.json
   update/
     update.ts             # the self-update decision and install: version discovery via the releases/latest redirect, channel detection (which package manager owns this installation), the locked, checksum-verified, atomic binary swap; pure over injected network/filesystem/liveness ports
