@@ -9,12 +9,18 @@ import { buildLayoutPaths } from "../paths";
 import { FAKE_UID, createFakeFarmFs, fakeSocketTrust } from "../test-helpers";
 import { RC_IDLE_EXPIRY_MS, RC_PENDING_SUMMARY_EXCERPT_CHARS, createRcSessionTracker } from "./rcSessions";
 import type { FrontDoorRoute, RoutedRequest } from "./route";
-import { formatRcPendingList, formatRcRateLimitInfo, formatRcSelfHostMint, formatRcSessionList, formatRcSessionStatus, formatRcStreamEvent, frontDoorRcApiFromState, frontDoorRcControlFromState } from "./rcCommands";
+import { formatRcPendingList, formatRcRateLimitInfo, parseRcChoiceFlags, formatRcSelfHostMint, formatRcSessionList, formatRcSessionStatus, formatRcStreamEvent, frontDoorRcApiFromState, frontDoorRcControlFromState } from "./rcCommands";
 import { rcObservingResolver, realStatOwnExecutable } from "./commands";
 import { collectFrontDoorStatus, formatFrontDoorStatus } from "./status";
 import { markFrontDoorDraining, writeFrontDoorDirectRecord, writeFrontDoorSession, writeFrontDoorState } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
+
+/** The refusal `parseRcChoiceFlags` gives for these `--choose` values, or the empty string when it accepted them, so a test asserts on the message itself. */
+function choiceFlagErrorOf(choose: readonly string[]): string {
+  const parsed = parseRcChoiceFlags(choose, []);
+  return "error" in parsed ? parsed.error : "";
+}
 const SUPERVISOR = 10;
 /** The milliseconds in one second, the unit that converts the fixed ISO instants into the unix epoch seconds the payload states. */
 const MS_PER_SECOND = 1_000;
@@ -190,6 +196,42 @@ describe("frontdoor rc", () => {
     expect(formatRcPendingList([{ sessionId: "cse_1", requestId: "req_1", type: "can_use_tool", summary: 'Bash {"command":"pnpm test"}', observedAt: 1_000 }])).toEqual([
       'cse_1  req_1  can_use_tool  Bash {"command":"pnpm test"}  observed 1970-01-01T00:00:01.000Z',
     ]);
+  });
+
+  it("formats a pending question as its numbered questions and options, the numbers rc answer --choose names them by", () => {
+    const question = {
+      sessionId: "cse_1",
+      requestId: "req_q",
+      type: "can_use_tool",
+      summary: "AskUserQuestion {...}",
+      questions: [
+        { question: "Which database?", header: "Database", multiSelect: false, options: [{ label: "Postgres", description: "relational" }, { label: "SQLite" }] },
+        { question: "Which checks?", multiSelect: true, options: [{ label: "lint" }, { label: "test" }] },
+      ],
+      observedAt: 1_000,
+    };
+    expect(formatRcPendingList([question])).toEqual([
+      "cse_1  req_q  question  observed 1970-01-01T00:00:01.000Z",
+      "  1. [Database] Which database?  (choose one)",
+      "     1) Postgres: relational",
+      "     2) SQLite",
+      "  2. Which checks?  (choose one or more)",
+      "     1) lint",
+      "     2) test",
+    ]);
+  });
+
+  it("parses --choose and --other into one list of selections per question, numbers as option numbers and other text as labels", () => {
+    const optionNumber = 3;
+    expect(parseRcChoiceFlags(["2:lint", "1:SQLite", `2:${String(optionNumber)}`], ["2:fmt"])).toEqual({ choices: [["SQLite"], ["lint", optionNumber, { text: "fmt" }]] });
+    expect(parseRcChoiceFlags(["1:a:b"], [])).toEqual({ choices: [["a:b"]] });
+  });
+
+  it("refuses a choice flag with no question number or no selection, and a gap in the questions answered", () => {
+    for (const malformed of ["SQLite", "0:SQLite", "x:SQLite", "1:"]) {
+      expect(choiceFlagErrorOf([malformed])).toContain("must be <question number>:");
+    }
+    expect(choiceFlagErrorOf(["2:lint"])).toContain("question 1 has no --choose or --other");
   });
 
   it("formats one stream event with its session, identification and a bounded payload sketch, and omits the sketch when the envelope carried no payload", () => {

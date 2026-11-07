@@ -533,7 +533,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       const rcInject = async (sessionId: string, text: string) =>
         await injectRcUserMessage({ credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial, newUuid: randomUUID }, sessionId, text);
       const rcAnswer = async (sessionId: string, requestId: string, decision: RcAnswerDecision) =>
-        await answerRcControlRequest({ credentialOf: rcTracker.credentialOf, pendingOf: (id) => rcTracker.pendingOf(id), completePending: rcTracker.completePending, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial }, sessionId, requestId, decision);
+        await answerRcControlRequest({ credentialOf: rcTracker.credentialOf, pendingOf: (id) => rcTracker.pendingOf(id), completePending: rcTracker.completePending, pendingToolInputOf: rcTracker.pendingToolInputOf, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial }, sessionId, requestId, decision);
       const rcControlRequestDeps = { credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial, newUuid: randomUUID };
       const rcInterrupt = async (sessionId: string) => await interruptRcSession(rcControlRequestDeps, sessionId);
       const rcSetModel = async (sessionId: string, model: string) => await setRcSessionModel(rcControlRequestDeps, sessionId, model);

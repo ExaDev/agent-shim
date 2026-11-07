@@ -82,6 +82,7 @@ export {
   type RcSessionTrackerDeps,
   type RcWorkerFact,
 } from "./frontdoor/rcSessions";
+export type { RcPendingQuestion, RcQuestionOption, RcQuestionSelection } from "./frontdoor/rcQuestions";
 export {
   createRcSessionRegistryReader,
   rcStatusWithRegistry,

@@ -7,7 +7,7 @@ import { CONTROL_PATH_PREFIX, createRcControlHandler, frontDoorRcControl, realRc
 import { generateCa, mintLeaf, LOOPBACK_LEAF_NAMES, type CaMaterial } from "./connect";
 import { KEYGEN_TIMEOUT_MS } from "./connectTestWorld";
 import type { RcPendingRequestSummary, RcSessionStatus, RcSessionSummary } from "./rcSessions";
-import type { RcEventWriteResult } from "./rcWrites";
+import type { RcAnswerDecision, RcEventWriteResult } from "./rcWrites";
 
 const TOKEN = "control-token-under-test";
 /** The sequence number the scripted inject answers with, named so the literal never reads as a magic number. */
@@ -196,7 +196,7 @@ describe("the Remote Control control handler", () => {
   });
 
   it("carries an answer out and answers with the sequence numbers, refusing a malformed body and an approval that carries text", async () => {
-    const seen: { session: string; request: string; decision: { approve: boolean; message: string | undefined } }[] = [];
+    const seen: { session: string; request: string; decision: RcAnswerDecision }[] = [];
     const started = await serve(
       createRcControlHandler(
         handlerDeps({
@@ -220,7 +220,13 @@ describe("the Remote Control control handler", () => {
     const approvalWithText = await transport.request({ method: "POST", path: `${CONTROL_PATH_PREFIX}/answer`, headers, body: JSON.stringify({ session: SESSION_ID, request: REQUEST_ID, approve: true, text: "go on" }) });
     expect(approvalWithText.status).toBe(HTTP_STATUS.badRequest);
     expect(errorTextOf(approvalWithText.body)).toContain("allow result has no message field");
-    for (const malformed of ["{not json", JSON.stringify({ session: SESSION_ID, request: REQUEST_ID }), JSON.stringify({ session: SESSION_ID, request: REQUEST_ID, approve: "yes" }), JSON.stringify({ session: "", request: REQUEST_ID, approve: true })]) {
+    const chosen = await transport.request({ method: "POST", path: `${CONTROL_PATH_PREFIX}/answer`, headers, body: JSON.stringify({ session: SESSION_ID, request: REQUEST_ID, approve: true, choices: [["SQLite"], [1, { text: "fmt" }]] }) });
+    expect(chosen.status).toBe(HTTP_STATUS.ok);
+    expect(seen[2]).toEqual({ session: SESSION_ID, request: REQUEST_ID, decision: { approve: true, message: undefined, choices: [["SQLite"], [1, { text: "fmt" }]] } });
+    const deniedWithChoices = await transport.request({ method: "POST", path: `${CONTROL_PATH_PREFIX}/answer`, headers, body: JSON.stringify({ session: SESSION_ID, request: REQUEST_ID, approve: false, choices: [["SQLite"]] }) });
+    expect(deniedWithChoices.status).toBe(HTTP_STATUS.badRequest);
+    expect(errorTextOf(deniedWithChoices.body)).toContain("a denial dismisses the question");
+    for (const malformed of ["{not json", JSON.stringify({ session: SESSION_ID, request: REQUEST_ID }), JSON.stringify({ session: SESSION_ID, request: REQUEST_ID, approve: "yes" }), JSON.stringify({ session: "", request: REQUEST_ID, approve: true }), JSON.stringify({ session: SESSION_ID, request: REQUEST_ID, approve: true, choices: [[]] }), JSON.stringify({ session: SESSION_ID, request: REQUEST_ID, approve: true, choices: [[0]] })]) {
       const refused = await transport.request({ method: "POST", path: `${CONTROL_PATH_PREFIX}/answer`, headers, body: malformed });
       expect(refused.status).toBe(HTTP_STATUS.badRequest);
     }

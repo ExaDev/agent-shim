@@ -21,12 +21,27 @@ function workerFactSchema<T extends z.ZodType>(value: T) {
   return z.strictObject({ value, observedAt: z.number() });
 }
 
-/** One pending control request as the control surfaces list it: identification, type, summary and timing, never any credential. */
-const RcPendingRequestSummarySchema = z.strictObject({
+/** One option of a pending question: the label an answer names, and the helper text when the question carried one. */
+const RcQuestionOptionSchema = z.strictObject({
+  label: z.string(),
+  description: z.string().optional(),
+});
+
+/** One question of a pending question request: its text (the key its answer is filed under), its short header when it carried one, whether several options may be chosen, and its options in the order the dialog numbers them. */
+const RcPendingQuestionSchema = z.strictObject({
+  question: z.string(),
+  header: z.string().optional(),
+  multiSelect: z.boolean(),
+  options: z.readonly(z.array(RcQuestionOptionSchema)),
+});
+
+/** One pending control request as the control surfaces list it: identification, type, summary and timing, never any credential, plus the questions when the request is the agent's question dialog. */
+export const RcPendingRequestSummarySchema = z.strictObject({
   sessionId: z.string(),
   requestId: z.string(),
   type: z.string(),
   summary: z.string(),
+  questions: z.readonly(z.array(RcPendingQuestionSchema)).optional(),
   observedAt: z.number(),
 });
 
@@ -135,8 +150,16 @@ export const RcSendInputSchema = z.strictObject({
   text: z.string().min(1),
 });
 
+/** One selection for one question: an option's label, its one-based number in the order the question lists its options, or free text in place of an option. */
+const RcQuestionSelectionSchema = z.union([z.string().min(1), z.int().positive(), z.strictObject({ text: z.string().min(1) })]);
+
 /**
- * The answer operation's input: one non-empty session id, the control request's id, the decision, and the denial message. An approval carries no text (the protocol's allow result has no message field), so the combination is refused at the schema exactly as the bespoke route refuses it, rather than silently dropping the caller's words.
+ * The choices that answer a pending question: one list of selections per question, in the order the request asked them. A single-select question takes exactly one selection, a multi-select question one or more; the operation checks them against the observed options.
+ */
+export const RcQuestionChoicesSchema = z.array(z.array(RcQuestionSelectionSchema).min(1)).min(1);
+
+/**
+ * The answer operation's input: one non-empty session id, the control request's id, the decision, the denial message, and for a question the choices. An approval carries no text (the protocol's allow result has no message field), so the combination is refused at the schema exactly as the bespoke route refuses it, rather than silently dropping the caller's words; choices answer a question, so they come only with an approval.
  */
 export const RcAnswerInputSchema = z
   .strictObject({
@@ -144,8 +167,10 @@ export const RcAnswerInputSchema = z
     request: z.string().min(1),
     approve: z.boolean(),
     text: z.string().optional(),
+    choices: RcQuestionChoicesSchema.optional(),
   })
-  .refine((input) => !input.approve || input.text === undefined || input.text === "", { message: "an approval carries no text (the protocol's allow result has no message field); text is the denial message" });
+  .refine((input) => !input.approve || input.text === undefined || input.text === "", { message: "an approval carries no text (the protocol's allow result has no message field); text is the denial message" })
+  .refine((input) => input.approve || input.choices === undefined, { message: "choices answer a question, so they come with approve: true; a denial dismisses the question" });
 
 /** The interrupt operation's input: one non-empty session id. */
 export const RcInterruptInputSchema = z.strictObject({

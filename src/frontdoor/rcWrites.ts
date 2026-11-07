@@ -1,5 +1,6 @@
 import { HTTP_STATUS } from "../codex/http";
 import { isSuccessful, type RcPendingRequestSummary } from "./rcSessions";
+import { resolveRcQuestionAnswers, type RcQuestionSelection } from "./rcQuestions";
 
 /**
  * The Remote Control client-half writes: the payload builders, the write engine and one typed operation per control verb the door can send into an observed session, every one an event write to `/v1/code/sessions/{id}/events` over the door's interception-proof dials, authenticated by the observed bearer and protocol headers the tracker (`rcSessions.ts`) holds.
@@ -167,18 +168,20 @@ export async function injectRcUserMessage(deps: RcInjectDeps, sessionId: string,
   return result;
 }
 
-/** The decision an answer carries: approve or deny, with the message a denial shows the worker (the protocol's allow result has no text field, so an approval carries none). */
+/** The decision an answer carries: approve or deny, with the message a denial shows the worker (the protocol's allow result has no text field, so an approval carries none), and for a question the options chosen. */
 export interface RcAnswerDecision {
   readonly approve: boolean;
   /** The denial message; undefined means the protocol's empty default. Present only with a denial. */
   readonly message: string | undefined;
+  /** For a pending question, the selections for each question in the order the request asked them; an approval of a question must carry them, and nothing else may. */
+  readonly choices?: readonly (readonly RcQuestionSelection[])[];
 }
 
 /**
- * Builds the `control_response` payload event for one answer: the SDK's response envelope, `subtype: "success"` with the request's id echoed in `request_id`, carrying the permission result the worker is waiting for (`behavior: "allow"`, or `"deny"` with its message).
+ * Builds the `control_response` payload event for one answer: the SDK's response envelope, `subtype: "success"` with the request's id echoed in `request_id`, carrying the permission result the worker is waiting for (`behavior: "allow"`, or `"deny"` with its message). An allow that answers a question carries `updatedInput`: the input the worker asked with, plus the `answers` the tool reads.
  */
-export function buildRcControlResponsePayload(requestId: string, decision: RcAnswerDecision): Record<string, unknown> {
-  const result = decision.approve ? { behavior: "allow" } : { behavior: "deny", message: decision.message ?? "" };
+export function buildRcControlResponsePayload(requestId: string, decision: RcAnswerDecision, updatedInput?: Record<string, unknown>): Record<string, unknown> {
+  const result = decision.approve ? { behavior: "allow", ...(updatedInput === undefined ? {} : { updatedInput }) } : { behavior: "deny", message: decision.message ?? "" };
   return { type: "control_response", response: { subtype: "success", request_id: requestId, response: result } };
 }
 
@@ -335,6 +338,8 @@ export interface RcAnswerDeps {
   readonly pendingOf: (sessionId: string) => readonly RcPendingRequestSummary[];
   /** Retires a pending request as answered: the tracker's accessor, in production, called only once the write is confirmed delivered. */
   readonly completePending: (sessionId: string, requestId: string) => void;
+  /** Reads the input a pending question was asked with: the tracker's accessor, in production, which an answer carries back with its answers added. */
+  readonly pendingToolInputOf: (sessionId: string, requestId: string) => Record<string, unknown> | undefined;
   /** Advances the session's sequence cursor: the tracker's accessor, in production, so a delivered write's numbers are what a stream resume continues after. */
   readonly noteSequenceNums: (sessionId: string, sequenceNums: readonly number[]) => void;
   /** The dial to the real API host. */
@@ -342,7 +347,29 @@ export interface RcAnswerDeps {
 }
 
 /**
- * Answers one pending control request on an observed session: the same documented client-half write the inject path performs, carrying a `control_response` that echoes the request's id, authenticated by the observed bearer and protocol headers. The request must still be pending (an answered or withdrawn request is refused verbosely, since writing a response nothing waits for would mislead the caller), and a successful write retires it. A dial that cannot reach the API host is reported rather than thrown.
+ * The `updatedInput` an answer to a pending question carries, or undefined when the answer carries none (any denial, and an approval of a request that is not a question). Choosing options for a request that is not a question, approving a question without choosing, and choosing while denying are refused, each naming the fix, because each would write an answer the worker reads differently from what the caller meant.
+ */
+function questionAnswerInput(deps: RcAnswerDeps, sessionId: string, pending: RcPendingRequestSummary, decision: RcAnswerDecision): { readonly input: Record<string, unknown> } | { readonly error: string } | undefined {
+  const { questions } = pending;
+  if (questions === undefined) {
+    return decision.choices === undefined ? undefined : { error: `control request ${pending.requestId} is not a question (it is ${pending.type}${pending.summary === "" ? "" : `: ${pending.summary}`}), so it has no options to choose; approve or deny it instead` };
+  }
+  if (!decision.approve) {
+    return decision.choices === undefined ? undefined : { error: "a denial dismisses the question and carries no choices; choose options to answer it, or deny it without them" };
+  }
+  if (decision.choices === undefined) {
+    return { error: `control request ${pending.requestId} is a question, so answering it means choosing an option for each of its ${String(questions.length)} question(s); deny it to dismiss it` };
+  }
+  const input = deps.pendingToolInputOf(sessionId, pending.requestId);
+  if (input === undefined) {
+    return { error: `the front door holds no input for question ${pending.requestId} on session ${sessionId}, so it cannot write the answer the worker expects` };
+  }
+  const resolved = resolveRcQuestionAnswers(questions, decision.choices);
+  return "error" in resolved ? resolved : { input: { ...input, answers: resolved.answers } };
+}
+
+/**
+ * Answers one pending control request on an observed session: the same documented client-half write the inject path performs, carrying a `control_response` that echoes the request's id, authenticated by the observed bearer and protocol headers. The request must still be pending (an answered or withdrawn request is refused verbosely, since writing a response nothing waits for would mislead the caller), and a successful write retires it. A question is answered by choosing options, which the write carries as the tool's `answers` beside the input the worker asked with; denying a question dismisses it. A dial that cannot reach the API host is reported rather than thrown.
  */
 export async function answerRcControlRequest(deps: RcAnswerDeps, sessionId: string, requestId: string, decision: RcAnswerDecision): Promise<RcEventWriteResult> {
   const credential = deps.credentialOf(sessionId);
@@ -352,10 +379,15 @@ export async function answerRcControlRequest(deps: RcAnswerDeps, sessionId: stri
   if (credential.authorization === undefined) {
     return noOAuthCredentialResult(sessionId);
   }
-  if (!deps.pendingOf(sessionId).some((pending) => pending.requestId === requestId)) {
+  const pending = deps.pendingOf(sessionId).find((candidate) => candidate.requestId === requestId);
+  if (pending === undefined) {
     return { ok: false, message: `the front door has not observed control request ${requestId} pending on session ${sessionId}: it was answered already (by this door, by an attached client or in the session's own terminal), the worker withdrew it, or it never passed through this door` };
   }
-  const body = JSON.stringify(buildRcEventWriteBody(buildRcControlResponsePayload(requestId, decision)));
+  const updatedInput = questionAnswerInput(deps, sessionId, pending, decision);
+  if (updatedInput !== undefined && "error" in updatedInput) {
+    return { ok: false, message: updatedInput.error };
+  }
+  const body = JSON.stringify(buildRcEventWriteBody(buildRcControlResponsePayload(requestId, decision, updatedInput?.input)));
   let answer: RcDialAnswer;
   try {
     answer = await deps.dial.writeEvents(sessionId, rcWriteHeaders(credential), body);

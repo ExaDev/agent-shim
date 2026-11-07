@@ -143,6 +143,7 @@ agent-shim frontdoor rc status [<cse_id>] [--json]   # also names each session, 
 agent-shim frontdoor rc pending [<cse_id>] [--json]
 agent-shim frontdoor rc send --session <cse_id> --text <text> [--json]
 agent-shim frontdoor rc answer --session <cse_id> --request <id> --approve | --deny [--text <text>] [--json]
+agent-shim frontdoor rc answer --session <cse_id> --request <id> (--choose <question>:<option> | --other <question>:<text>)... [--json]   # answer a pending question; see docs/rc-questions.md
 agent-shim frontdoor rc interrupt --session <cse_id> [--json]
 agent-shim frontdoor rc set-model --session <cse_id> --model <model> [--json]
 agent-shim frontdoor rc set-permission-mode --session <cse_id> --mode <mode> [--json]

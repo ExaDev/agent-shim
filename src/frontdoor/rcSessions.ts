@@ -5,6 +5,7 @@ import { HTTP_STATUS } from "../codex/http";
 import type { PassthroughObserver } from "./capture";
 import type { RcCredentialStore } from "./rcCredentialStore";
 import type { RcPendingRetireReason, RcSessionEndReason, RcSessionTransition } from "./rcEventLog";
+import { rcQuestionsOfToolRequest, type RcPendingQuestion } from "./rcQuestions";
 import type { RcStreamEnvelope } from "./rcSchemas";
 import type { FrontDoorRoute, RoutedResponse } from "./route";
 import type { RcObservedCredential } from "./rcWrites";
@@ -113,6 +114,10 @@ interface RcPendingRequestRecord {
   readonly type: string;
   /** A short human-readable sketch: the tool name and a bounded excerpt of its input for `can_use_tool`. */
   readonly summary: string;
+  /** The questions a `can_use_tool` request for the question dialog puts to the user, parsed from its input; absent for every other request. */
+  readonly questions: readonly RcPendingQuestion[] | undefined;
+  /** The `can_use_tool` request's input exactly as the worker sent it, which an answer to a question carries back with its answers added; absent for every other request. Memory only, never listed. */
+  readonly toolInput: Record<string, unknown> | undefined;
   readonly observedAt: number;
 }
 
@@ -125,6 +130,8 @@ export interface RcPendingRequestSummary {
   readonly type: string;
   /** A short human-readable sketch: the tool name and a bounded excerpt of its input for `can_use_tool`. */
   readonly summary: string;
+  /** The questions the agent put to the user, in the order it asked them, when the request is the question dialog (a `can_use_tool` request for `AskUserQuestion`); absent for every other request. An answer chooses among exactly these options. */
+  readonly questions?: readonly RcPendingQuestion[];
   /** When the request was observed, in epoch milliseconds from the injected clock. */
   readonly observedAt: number;
 }
@@ -223,6 +230,8 @@ export interface RcSessionTracker {
   readonly liveTasksOf: (sessionId?: string) => readonly LiveTask[];
   /** Retires one pending control request as answered: what a successful answer write calls, so the request stops being listed the moment it is answered. */
   readonly completePending: (sessionId: string, requestId: string) => void;
+  /** The input a pending question request carried, exactly as the worker sent it: the answer path's accessor, since an answer to a question carries that input back with its answers added. Undefined when the request is not pending or is not a question. Never surfaced in a listing. */
+  readonly pendingToolInputOf: (sessionId: string, requestId: string) => Record<string, unknown> | undefined;
   /** Stops the idle sweep timer and tells the transition sink's owner (`onClose`) that no more transitions follow. The entries themselves are unreachable the moment the door drops them. */
   readonly close: () => void;
 }
@@ -320,7 +329,7 @@ function payloadEventsOf(body: string): readonly Record<string, unknown>[] {
 /**
  * One `control_request` payload as the tracker records it, or undefined when it names no id a `control_response` could echo. The id is the payload's `request_id`, the field the protocol's trust rule names; a top-level `uuid` is accepted as a fallback because the payload family also carries one, and a request with neither cannot be answered.
  */
-function pendingOfControlRequestPayload(payload: Record<string, unknown>): { readonly requestId: string; readonly type: string; readonly summary: string } | undefined {
+function pendingOfControlRequestPayload(payload: Record<string, unknown>): Omit<RcPendingRequestRecord, "sessionId" | "observedAt"> | undefined {
   if (payload.type !== "control_request") {
     return undefined;
   }
@@ -333,14 +342,19 @@ function pendingOfControlRequestPayload(payload: Record<string, unknown>): { rea
   const type = subtype ?? "control_request";
   // `can_use_tool` is the approval the surface exists to answer, so its summary names the tool and sketches the input; every other subtype is recorded by type with a bounded sketch of whatever it carried.
   let summary = "";
+  let questions: readonly RcPendingQuestion[] | undefined;
+  let toolInput: Record<string, unknown> | undefined;
   if (subtype === "can_use_tool") {
-    const toolName = nonEmptyString(request, "tool_name") ?? "unknown tool";
+    const toolName = nonEmptyString(request, "tool_name");
     const input = request === undefined ? undefined : request.input;
-    summary = input === undefined ? toolName : `${toolName} ${excerpt(JSON.stringify(input))}`;
+    summary = input === undefined ? (toolName ?? "unknown tool") : `${toolName ?? "unknown tool"} ${excerpt(JSON.stringify(input))}`;
+    // The question dialog rides this same subtype, its tool name telling it apart from an approval; its input is kept whole because the answer carries it back.
+    questions = rcQuestionsOfToolRequest(toolName, input);
+    toolInput = questions !== undefined && isRecord(input) ? input : undefined;
   } else if (request !== undefined) {
     summary = excerpt(JSON.stringify(request));
   }
-  return { requestId, type, summary };
+  return { requestId, type, summary, questions, toolInput };
 }
 
 /** The request id one worker `control_cancel_request` payload withdraws: the worker's own retraction of a request it resolved itself (answered or dismissed in its terminal), sent right after its own `control_response`. */
@@ -412,7 +426,7 @@ function parseRcRequestBody(kind: RcRequestBodyKind, body: string): RcRequestBod
   for (const payload of payloads) {
     const pending = pendingOfControlRequestPayload(payload);
     if (pending !== undefined) {
-      controlRequests.push({ requestId: pending.requestId, type: pending.type, summary: pending.summary });
+      controlRequests.push(pending);
       continue;
     }
     answeredRequestIds.push(...answeredRequestIdsOfControlResponsePayload(payload));
@@ -678,7 +692,7 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
   };
 
   const summaryOf = ({ id, createdAt, lastSeenAt }: RcSessionRecord): RcSessionSummary => ({ id, createdAt, lastSeenAt });
-  const pendingSummaryOf = ({ sessionId, requestId, type, summary, observedAt }: RcPendingRequestRecord): RcPendingRequestSummary => ({ sessionId, requestId, type, summary, observedAt });
+  const pendingSummaryOf = ({ sessionId, requestId, type, summary, questions, observedAt }: RcPendingRequestRecord): RcPendingRequestSummary => ({ sessionId, requestId, type, summary, ...(questions === undefined ? {} : { questions }), observedAt });
   const sortedEntries = (): readonly RcSessionRecord[] => [...entries.values()].sort((left, right) => left.createdAt - right.createdAt || (left.id < right.id ? -1 : 1));
   const pendingSorted = (entry: RcSessionRecord): readonly RcPendingRequestSummary[] => [...entry.pending.values()].sort((left, right) => left.observedAt - right.observedAt || (left.requestId < right.requestId ? -1 : 1)).map(pendingSummaryOf);
 
@@ -775,6 +789,7 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
         retirePending(entry, requestId, "answered");
       }
     },
+    pendingToolInputOf: (sessionId, requestId) => entries.get(sessionId)?.pending.get(requestId)?.toolInput,
     close: () => {
       clearInterval(timer);
       deps.onClose?.();

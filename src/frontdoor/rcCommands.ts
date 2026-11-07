@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { COMPACT_TIMEOUT_MS } from "../supervise/compactTimeout";
 import type { Command } from "commander";
 import { printJson, withExamples } from "../cli/commandDeps";
+import { collectRepeated } from "../cli/parsers";
 import { UsageError } from "../cliError";
 import type { HeadroomFs } from "../headroom/state";
 import type { LayoutPaths } from "../paths";
@@ -15,6 +16,7 @@ import { rcRateLimitInfoOf } from "./rcLiveUsage";
 import type { RcRateLimitInfo } from "./rcSchemas";
 import { mintRcSelfHostCredential, type RcSelfHostMintResult } from "./rcSelfHostMint";
 import { RC_GOAL_CLEAR_WORDS, RC_SESSION_COMMAND_MAX_WAIT_MS, RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "./rcSessionCommands";
+import type { RcQuestionSelection } from "./rcQuestions";
 import { RC_PENDING_SUMMARY_EXCERPT_CHARS, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
 import { RC_CONTEXT_USAGE_DETAILS, RC_PERMISSION_MODES, RC_READ_FILE_ENCODINGS, isRcContextUsageDetail, isRcPermissionMode, isRcReadFileEncoding, type RcEventWriteResult } from "./rcWrites";
 import type { RcStreamEvent } from "./rcSchemas";
@@ -84,12 +86,59 @@ export function formatRcSessionStatus(statuses: readonly RcSessionStatus[]): str
   return lines;
 }
 
-/** Formats `agent-shim frontdoor rc pending`, one line per control request awaiting an answer. */
+/** Formats `agent-shim frontdoor rc pending`, one line per control request awaiting an answer; a question request lists, instead of its raw input, each question by the number `rc answer --choose` names it with, its header, whether it takes several options, and its numbered options. */
 export function formatRcPendingList(pending: readonly RcPendingRequestSummary[]): string[] {
   if (pending.length === 0) {
     return ["no pending control requests observed"];
   }
-  return pending.map((request) => `${request.sessionId}  ${request.requestId}  ${request.type}${request.summary === "" ? "" : `  ${request.summary}`}  observed ${new Date(request.observedAt).toISOString()}`);
+  return pending.flatMap((request) => {
+    const observed = `observed ${new Date(request.observedAt).toISOString()}`;
+    if (request.questions === undefined) {
+      return [`${request.sessionId}  ${request.requestId}  ${request.type}${request.summary === "" ? "" : `  ${request.summary}`}  ${observed}`];
+    }
+    return [
+      `${request.sessionId}  ${request.requestId}  question  ${observed}`,
+      ...request.questions.flatMap((question, index) => [
+        `  ${String(index + 1)}. ${question.header === undefined ? "" : `[${question.header}] `}${question.question}${question.multiSelect ? "  (choose one or more)" : "  (choose one)"}`,
+        ...question.options.map((option, optionIndex) => `     ${String(optionIndex + 1)}) ${option.label}${option.description === undefined ? "" : `: ${option.description}`}`),
+      ]),
+    ];
+  });
+}
+
+/** Separates the question number from the selection in one `--choose` or `--other` value. */
+const CHOICE_FLAG_SEPARATOR = ":";
+
+/** A `--choose` option written only in digits is the option's number, as `frontdoor rc pending` numbers it. */
+const OPTION_NUMBER = /^\d+$/;
+
+/**
+ * Turns the `--choose <question>:<option>` and `--other <question>:<text>` values into the answer's choices: one list of selections per question, in question order, each question named by its one-based number. An option written only in digits is its number, anything else its label; `--other` is free text. Every question from 1 to the highest named must have a selection, and every refusal names the flag value at fault.
+ */
+export function parseRcChoiceFlags(choose: readonly string[], other: readonly string[]): { readonly choices: readonly (readonly RcQuestionSelection[])[] } | { readonly error: string } {
+  const byQuestion = new Map<number, RcQuestionSelection[]>();
+  const entries = [...choose.map((value) => ({ flag: "--choose", value })), ...other.map((value) => ({ flag: "--other", value }))];
+  for (const { flag, value } of entries) {
+    const at = value.indexOf(CHOICE_FLAG_SEPARATOR);
+    const questionText = at === -1 ? "" : value.slice(0, at);
+    const selectionText = at === -1 ? "" : value.slice(at + 1);
+    const question = Number(questionText);
+    if (!OPTION_NUMBER.test(questionText) || question < 1 || selectionText === "") {
+      return { error: `${flag} ${JSON.stringify(value)} must be <question number>${CHOICE_FLAG_SEPARATOR}<${flag === "--choose" ? "option label or number" : "text"}>, with questions numbered from 1 as \`frontdoor rc pending\` lists them` };
+    }
+    const selection: RcQuestionSelection = flag === "--other" ? { text: selectionText } : OPTION_NUMBER.test(selectionText) ? Number(selectionText) : selectionText;
+    byQuestion.set(question, [...(byQuestion.get(question) ?? []), selection]);
+  }
+  const highest = Math.max(...byQuestion.keys());
+  const choices: (readonly RcQuestionSelection[])[] = [];
+  for (let question = 1; question <= highest; question += 1) {
+    const selections = byQuestion.get(question);
+    if (selections === undefined) {
+      return { error: `question ${String(question)} has no --choose or --other, but question ${String(highest)} does: answer every question` };
+    }
+    choices.push(selections);
+  }
+  return { choices };
 }
 
 /** One excerpt kept to the log-detail budget this surface already applies, marked when it was cut. */
@@ -272,21 +321,28 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
   withExamples(
     rc
       .command("answer")
-      .description("Answer one pending control request on an observed session, approving or denying it as an attached client's approval would.")
+      .description("Answer one pending control request on an observed session, approving or denying it as an attached client's approval would, or answering a pending question by choosing its options (--choose and --other, which approve it; --deny dismisses it).")
       .requiredOption("--session <id>", "The cse_ session id, as `frontdoor rc list` shows it.")
       .requiredOption("--request <id>", "The control request's id, as `frontdoor rc pending` shows it.")
       .option("--approve", "Approve the request.")
       .option("--deny", "Deny the request.")
       .option("--text <text>", "The denial message the worker sees; applies to --deny only.")
+      .option("--choose <question:option>", "Answer a pending question: choose an option of one question, naming the question by its number in `frontdoor rc pending` and the option by its label or number (repeat for each question, and for each option of a multi-select question).", collectRepeated, [])
+      .option("--other <question:text>", "Answer one question of a pending question with free text in place of an option.", collectRepeated, [])
       .option("--json", "Print the delivery result as JSON.")
-      .action(async (options: Readonly<{ session: string; request: string; approve?: boolean; deny?: boolean; text?: string; json?: boolean }>) => {
-        if (options.approve === options.deny) {
-          throw new UsageError("answer exactly one way: pass --approve or --deny, not both and not neither");
+      .action(async (options: Readonly<{ session: string; request: string; approve?: boolean; deny?: boolean; text?: string; choose: readonly string[]; other: readonly string[]; json?: boolean }>) => {
+        const choosing = options.choose.length > 0 || options.other.length > 0;
+        if ([options.approve === true, options.deny === true, choosing].filter(Boolean).length !== 1) {
+          throw new UsageError("answer exactly one way: pass --approve, --deny, or the --choose and --other selections of a question");
         }
-        if (options.approve === true && options.text !== undefined) {
+        if (options.deny !== true && options.text !== undefined) {
           throw new UsageError("--text is the denial message; an approval carries no text (the protocol's allow result has no message field)");
         }
-        const result = await frontDoorRcControlFromState(realFarmFs, paths).answerRequest(options.session, options.request, { approve: options.approve === true, message: options.deny === true ? options.text : undefined });
+        const choices = choosing ? parseRcChoiceFlags(options.choose, options.other) : undefined;
+        if (choices !== undefined && "error" in choices) {
+          throw new UsageError(choices.error);
+        }
+        const result = await frontDoorRcControlFromState(realFarmFs, paths).answerRequest(options.session, options.request, { approve: options.deny !== true, message: options.deny === true ? options.text : undefined, ...(choices === undefined ? {} : { choices: choices.choices }) });
         if (!result.ok) {
           throw new Error(result.message);
         }
@@ -294,11 +350,13 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
           printJson({ session: options.session, request: options.request, sequenceNums: result.sequenceNums });
           return;
         }
-        console.log(`${options.approve === true ? "approved" : "denied"} ${options.request} on ${options.session}: sequence_num ${result.sequenceNums.join(", ")}`);
+        console.log(`${choosing ? "answered" : options.approve === true ? "approved" : "denied"} ${options.request} on ${options.session}: sequence_num ${result.sequenceNums.join(", ")}`);
       }),
     [
       "agent-shim frontdoor rc answer --session cse_00000000-0000-4000-8000-000000000000 --request req_00000000-0000-4000-8000-000000000000 --approve",
       'agent-shim frontdoor rc answer --session cse_00000000-0000-4000-8000-000000000000 --request req_00000000-0000-4000-8000-000000000000 --deny --text "not today"',
+      "agent-shim frontdoor rc answer --session cse_00000000-0000-4000-8000-000000000000 --request req_00000000-0000-4000-8000-000000000000 --choose 1:SQLite --choose 2:lint --choose 2:3",
+      "agent-shim frontdoor rc answer --session cse_00000000-0000-4000-8000-000000000000 --request req_00000000-0000-4000-8000-000000000000 --choose 1:2 --other 2:fmt",
     ],
   );
 
