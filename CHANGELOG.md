@@ -1,3 +1,59 @@
+## [12.0.0](https://github.com/ExaDev/agent-shim/compare/v11.90.0...v12.0.0) (2026-11-07)
+
+### ⚠ BREAKING CHANGES
+
+* a pending Remote Control request no longer disappears from
+  rc pending, the typed API or the web page fourteen seconds after it is
+  observed; it stays listed until it is answered, withdrawn, the worker
+  reports idle or a new worker, or its session ends.
+* **frontdoor:** pending control requests no longer expire after fourteen
+  seconds, the library no longer exports RC_PENDING_DEADLINE_MS, the
+  pending-retired session event's reasons are answered, withdrawn,
+  worker-stopped and session-ended, with expired removed, and RcAnswerDeps
+  (taken by answerRcControlRequest and exported from the library) now requires
+  claimPending and pendingToolInputOf.
+
+### Features
+
+* **frontdoor:** list a pending question's options and answer it by choosing them ([9ee9c8b](https://github.com/ExaDev/agent-shim/commit/9ee9c8b74c40f2071e59efca5e3f1c06bd399ad3))
+
+### Bug Fixes
+
+* **frontdoor:** answer an approval past the parse cap again ([5755b4a](https://github.com/ExaDev/agent-shim/commit/5755b4a5b3375d34627172cfbdac1b36ccc920a5))
+* **frontdoor:** count a dropped request once however long its id ([944ff8f](https://github.com/ExaDev/agent-shim/commit/944ff8f9f235f39cc8845d5229120644cd9cb66b))
+* **frontdoor:** dismiss a question the door cannot answer ([a323fc6](https://github.com/ExaDev/agent-shim/commit/a323fc62c7ec19681c8c299087a6c916b4b16701))
+* **frontdoor:** keep a control request pending until the worker resolves it ([04e2d2d](https://github.com/ExaDev/agent-shim/commit/04e2d2dd1690d7798aef171de2f00b3201aaaee0))
+* **frontdoor:** keep a web client pick across the pending poll ([8b6239a](https://github.com/ExaDev/agent-shim/commit/8b6239afd82222004437cc7c2f0e565abd4c7c1a))
+* **frontdoor:** order requests against an idle registration by observation ([065f349](https://github.com/ExaDev/agent-shim/commit/065f3494ca3876f95fcaa31d85f97533be37332a))
+* **frontdoor:** refuse a question the door cannot answer faithfully ([63cef3e](https://github.com/ExaDev/agent-shim/commit/63cef3ec4a4aa4c2ba6037acbb22e4fae7d70f3d))
+* **frontdoor:** retire a pending request only when the worker stops waiting ([6d2c2f2](https://github.com/ExaDev/agent-shim/commit/6d2c2f292d4ae2cca7f38bd6e8fb03b143ebaa3b))
+* **frontdoor:** say the oversized mark and the tombstone bound as built ([8324163](https://github.com/ExaDev/agent-shim/commit/8324163675cc20867914537f18d4733f66ddf3c7))
+* **frontdoor:** say where requests past the pending cap were dropped ([b975add](https://github.com/ExaDev/agent-shim/commit/b975add33f8c66459c843b097809fc2494901822))
+* **frontdoor:** show why the web page cannot answer a question ([84fcaf0](https://github.com/ExaDev/agent-shim/commit/84fcaf02682c5875a0ee01dab87471d702b91ae5))
+* **frontdoor:** write one answer per pending request at a time ([9f6be12](https://github.com/ExaDev/agent-shim/commit/9f6be123aa9567cd8d1dcf0c759985c73fee4596))
+
+### Code Refactoring
+
+* **frontdoor:** remember retired request ids in an ordered set ([bd4cefb](https://github.com/ExaDev/agent-shim/commit/bd4cefb3e8b05fb9e3d0e122e8e3a70df04f96ad))
+
+### Documentation
+
+* describe dropped requests, the question types and the page's tests ([9af5a22](https://github.com/ExaDev/agent-shim/commit/9af5a22afe8159a59c0c9b4230134462314a24e2))
+* state the pending retirement rules and the per-mode support as built ([b661a0e](https://github.com/ExaDev/agent-shim/commit/b661a0ef29742d5238fe5ff89e1a586593504284))
+* state the retired-request bound in the session events reference ([6470aea](https://github.com/ExaDev/agent-shim/commit/6470aea36f07cd9174200972cb693128df0332fa))
+
+### Tests
+
+* **frontdoor:** capture a live free-text answer to a question ([859ed45](https://github.com/ExaDev/agent-shim/commit/859ed45273a69d45e5a200246854f3e8188a0e77))
+* **frontdoor:** check the question path against a captured 2.1.319 exchange ([7870a13](https://github.com/ExaDev/agent-shim/commit/7870a131537e4049c4530f6f3b23d3da08442ce8))
+* **frontdoor:** count a dropped request once across both channels ([a7c0484](https://github.com/ExaDev/agent-shim/commit/a7c0484d1ff98f6d3db1b9948eafe4a776fe4370))
+* **frontdoor:** cover questions and choices on the REST route and MCP tool ([019dd31](https://github.com/ExaDev/agent-shim/commit/019dd3196d2e151b0a74aa9a238b613279662917))
+* **frontdoor:** cover questions and choices through the typed API client ([b7d62a7](https://github.com/ExaDev/agent-shim/commit/b7d62a75217370e282b481ea234701e698ccf67c))
+* **frontdoor:** give the question cases the goal and compaction operations ([0bc4c4c](https://github.com/ExaDev/agent-shim/commit/0bc4c4c5dc0f81da6e489f9dcf7e8b41bb8ac703))
+* **frontdoor:** release the answer claim when the write fails ([0437a9f](https://github.com/ExaDev/agent-shim/commit/0437a9f2d10180546493da3769b79e8c338bbc5b))
+* **frontdoor:** resolve the captured answer through the door's own path ([5324635](https://github.com/ExaDev/agent-shim/commit/532463582272a8e3668536c26cbe1cc82503e4c9))
+* **mcp:** list a pending question through the rc_pending tool ([421b6b2](https://github.com/ExaDev/agent-shim/commit/421b6b2873445eb92defb60eea6468a368265276))
+
 ## [11.90.0](https://github.com/ExaDev/agent-shim/compare/v11.89.1...v11.90.0) (2026-11-07)
 
 ### Features
