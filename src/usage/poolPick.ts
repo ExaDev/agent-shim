@@ -48,10 +48,15 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** The provider a launch of a member routes through, by the member's name: undefined when the launch spends the member's own Claude account. */
+export type ProviderOf = (identity: string) => string | undefined;
+
 /**
  * Reads each member's snapshot, login metadata and the part of the log that reaches into the current five-hour window. Members are named by identity name, and their state is filed under the id `idOf` gives (the directory the identity is stored in, which a rename keeps): the snapshot, the login and the log records the front door wrote from the session's identity header. A name `idOf` knows no id for has no state. A member whose state cannot be read is carried with the reason instead of failing the pick.
+ *
+ * `providerOf` names the provider a member's launch spends, when it does not spend the member's Claude account: the member then carries that provider and its records are the ones the front door logged for it. Without `providerOf` every member is the Claude account's.
  */
-export function loadPoolMembers(fs: PoolPickFs, paths: PoolPickPaths, identities: readonly string[], nowMs: number, idOf: (name: string) => string | undefined): readonly PoolMember[] {
+export function loadPoolMembers(fs: PoolPickFs, paths: PoolPickPaths, identities: readonly string[], nowMs: number, idOf: (name: string) => string | undefined, providerOf?: ProviderOf): readonly PoolMember[] {
   const windowStartMs = nowMs - FIVE_HOUR_WINDOW_MS;
   const log = readUsageLog(fs, paths.usageLogDir, { sinceMs: windowStartMs });
   return identities.map((identity): PoolMember => {
@@ -59,14 +64,16 @@ export function loadPoolMembers(fs: PoolPickFs, paths: PoolPickPaths, identities
     if (id === undefined) {
       return { identity, records: [] };
     }
-    const records = log.records.filter((record) => record.identity === id && record.provider === ANTHROPIC_PROVIDER && Date.parse(record.at) >= windowStartMs);
+    const provider = providerOf?.(identity);
+    const providerField = provider === undefined ? {} : { provider };
+    const records = log.records.filter((record) => record.identity === id && record.provider === (provider ?? ANTHROPIC_PROVIDER) && Date.parse(record.at) >= windowStartMs);
     try {
       const snapshot = readUsageSnapshot(fs, paths.usageSnapshotsDir, id);
       const account = readAccountMetadata(fs, paths.identitiesDir, id) ?? snapshot?.account;
-      return { identity, records, ...(snapshot === undefined ? {} : { snapshot }), ...(account === undefined ? {} : { account }) };
+      return { identity, records, ...providerField, ...(snapshot === undefined ? {} : { snapshot }), ...(account === undefined ? {} : { account }) };
     } catch (error) {
       if (error instanceof UsageSnapshotError || error instanceof AccountMetadataError) {
-        return { identity, records, readError: errorMessage(error) };
+        return { identity, records, ...providerField, readError: errorMessage(error) };
       }
       throw error;
     }
@@ -79,10 +86,10 @@ function snapshotAgeKey(member: PoolMember): number {
 }
 
 /**
- * Marks all but one of the direct members that hold the same login (same account uuid and organisation uuid, `loginKeyOf`) as twins of the one whose usage snapshot is freshest, which stands for the login. Members of one login draw on one quota window, so ranking each would count it twice, and a twin looks usable while its sibling is limited. The earliest listed member wins a tie. A nested `pool:<name>` entry is not grouped, so its pool keeps its own evaluation, and a member with no account uuid is never grouped. Returns `members` in the same order.
+ * Marks all but one of the direct members that hold the same login (same account uuid and organisation uuid, `loginKeyOf`) as twins of the one whose usage snapshot is freshest, which stands for the login. Members of one login draw on one quota window, so ranking each would count it twice, and a twin looks usable while its sibling is limited. The earliest listed member wins a tie. A nested `pool:<name>` entry is not grouped, so its pool keeps its own evaluation, a member with no account uuid is never grouped, and neither is a member whose launch spends a provider, since the Claude login it shares is not the quota it draws on. Returns `members` in the same order.
  */
 function collapseSharedLogins(members: readonly PoolMember[]): readonly PoolMember[] {
-  const groups = groupSharedLogins(members, (member) => (member.nested === undefined && member.account !== undefined ? loginKeyOf(member.account) : undefined));
+  const groups = groupSharedLogins(members, (member) => (member.nested === undefined && member.provider === undefined && member.account !== undefined ? loginKeyOf(member.account) : undefined));
   const representativeOf = new Map<PoolMember, string>();
   for (const group of groups) {
     const representative = group.reduce((freshest, member) => (snapshotAgeKey(member) > snapshotAgeKey(freshest) ? member : freshest));
@@ -120,6 +127,8 @@ export interface RankPoolGraphInput {
   readonly committedContextTokens?: Readonly<Record<string, number>>;
   /** The id (the directory it is stored in) of the identity of a name, or undefined when none is named so: a member whose identity was removed is skipped exactly as a launch skips it, and a member's state is read from where it is filed. */
   readonly identityIdOf: (name: string) => string | undefined;
+  /** The provider a launch of each member routes through, so each member is ranked on that provider's quota in place of its Claude account's. Absent when no member's launch spends a provider. */
+  readonly providerOf?: ProviderOf;
 }
 
 /** A pool graph's ranking, plus the identity entries anywhere in it that no longer exist. */
@@ -146,7 +155,7 @@ function rankNamedPool(input: Readonly<RankPoolGraphInput>, poolName: string, st
   // One log read per level: the direct identity entries are loaded as a batch, then laid down in member order around the nested entries' contributions.
   const direct = pool.identities.filter((entry) => poolNameOf(poolMemberIdentity(entry)) === undefined);
   const missing = direct.filter((entry) => input.identityIdOf(poolMemberIdentity(entry)) === undefined).map((entry) => ({ pool: poolName, identity: poolMemberIdentity(entry) }));
-  const loaded = new Map(loadPoolMembers(input.fs, input.paths, direct.filter((entry) => input.identityIdOf(poolMemberIdentity(entry)) !== undefined).map(poolMemberIdentity), input.nowMs, input.identityIdOf).map((member) => [member.identity, member]));
+  const loaded = new Map(loadPoolMembers(input.fs, input.paths, direct.filter((entry) => input.identityIdOf(poolMemberIdentity(entry)) !== undefined).map(poolMemberIdentity), input.nowMs, input.identityIdOf, input.providerOf).map((member) => [member.identity, member]));
   const members: PoolMember[] = [];
   for (const entry of pool.identities) {
     const nestedName = poolNameOf(poolMemberIdentity(entry));
@@ -192,7 +201,7 @@ function nestedMember(input: Readonly<RankPoolGraphInput>, nestedName: string, c
   const nested = rankNamedPool(input, nestedName, childStack, sticky);
   const pick = nested.ranking.pick;
   if (pick !== undefined) {
-    const [member] = loadPoolMembers(input.fs, input.paths, [pick.identity], input.nowMs, input.identityIdOf);
+    const [member] = loadPoolMembers(input.fs, input.paths, [pick.identity], input.nowMs, input.identityIdOf, input.providerOf);
     return { member: { ...(member ?? { identity: pick.identity, records: [] }), nested: { kind: "pick", pool: nestedName, reasons: pick.reasons } }, missing: nested.missing };
   }
   const earliestReturn = nested.ranking.earliestReturn;
