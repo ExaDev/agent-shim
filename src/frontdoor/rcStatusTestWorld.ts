@@ -9,6 +9,12 @@ export const UNOBSERVED_TEST_SESSION_ID = "cse_00000000-0000-4000-8000-000000000
 const UNOBSERVED_TEST_LOCAL_SESSION_ID = "00000000-0000-4000-8000-0000000000aa";
 const UNOBSERVED_TEST_PID = 4242;
 
+/** The instant the clock of this world always reads. A tracker built on `testStatusClock` and the resolver `testStatusResolver` builds share it, so no hold or expiry depends on real time. */
+const TEST_STATUS_CLOCK_MS = 1_000_000;
+
+/** The injected clock the world's tracker and resolver share: fixed, so a read held by the resolver never lapses and a session is never created after a registry read it was held with. */
+export const testStatusClock = (): number => TEST_STATUS_CLOCK_MS;
+
 /** The worker state every read in this world answers with. */
 export const TEST_READ_WORKER_STATUS = "idle";
 
@@ -32,6 +38,6 @@ export function testStatusResolver(tracker: RcSessionTracker, registered: Readon
     identityNameOf: (id) => id,
     persistedCredentialOf: (sessionId) => (sessionId === UNOBSERVED_TEST_SESSION_ID ? { authorization: "Bearer test-oauth", anthropicVersion: undefined, anthropicClientPlatform: undefined } : undefined),
     backends: { service: async (sessionId, credentialOf) => await readRcWorkerState({ credentialOf, dial: readOnlyDial }, sessionId) },
-    now: () => Date.now(),
+    now: testStatusClock,
   });
 }

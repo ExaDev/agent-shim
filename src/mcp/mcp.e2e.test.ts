@@ -18,7 +18,7 @@ import { createRcSessionTracker, RC_IDLE_EXPIRY_MS } from "../frontdoor/rcSessio
 import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog } from "../frontdoor/rcEventLog";
 import { createRcEventFanout } from "../frontdoor/rcStream";
 import type { RcAnswerDecision } from "../frontdoor/rcWrites";
-import { TEST_READ_WORKER_STATUS, UNOBSERVED_TEST_SESSION_ID, testStatusResolver } from "../frontdoor/rcStatusTestWorld";
+import { TEST_READ_WORKER_STATUS, UNOBSERVED_TEST_SESSION_ID, testStatusClock, testStatusResolver } from "../frontdoor/rcStatusTestWorld";
 import type { FrontDoorStatus } from "../frontdoor/status";
 import { createMcpServer, serveMcp, type McpServerPorts } from "./server";
 import { toolsFromOpenApiDocument, type McpPermissions } from "./tools";
@@ -62,7 +62,7 @@ describe("the MCP server over a real door handler", () => {
   const sessionEvents = createRcSessionEventLog({ generation: "00000000-0000-4000-8000-0000000000ee", capacity: RC_SESSION_EVENT_LOG_CAPACITY });
 
   /** The door's session tracker, which the pending-question case files a request into. */
-  const tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS });
+  const tracker = createRcSessionTracker({ now: testStatusClock, idleMs: RC_IDLE_EXPIRY_MS });
 
   beforeAll(async () => {
     const events = createDoorEventHub();

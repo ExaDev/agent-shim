@@ -15,7 +15,7 @@ import { createRcSessionTracker, RC_IDLE_EXPIRY_MS, RC_PENDING_PER_SESSION_MAX, 
 import type { RcAnswerDecision } from "./rcWrites";
 import type { RcStreamEvent } from "./rcSchemas";
 import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog } from "./rcEventLog";
-import { TEST_READ_WORKER_STATUS, UNOBSERVED_TEST_SESSION_ID, testStatusResolver } from "./rcStatusTestWorld";
+import { TEST_READ_WORKER_STATUS, UNOBSERVED_TEST_SESSION_ID, testStatusClock, testStatusResolver } from "./rcStatusTestWorld";
 import { createRcEventFanout } from "./rcStream";
 import type { FrontDoorStatus } from "./status";
 import { buildLayoutPaths } from "../paths";
@@ -162,7 +162,7 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
 
   beforeAll(async () => {
     configRoot = fs.mkdtempSync(nodePath.join(os.tmpdir(), "agent-shim-openapi-config-"));
-    tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS });
+    tracker = createRcSessionTracker({ now: testStatusClock, idleMs: RC_IDLE_EXPIRY_MS });
     seedSession(tracker, SESSION_ID);
     const surface = createDoorApiNodeHandler({
       expectedToken: CONTROL_TOKEN,
