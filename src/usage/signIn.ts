@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 
+import { AMBIENT_CREDENTIAL_VARS } from "../launcher/guard";
 import type { FarmFs, RunPort } from "../launcher/ports";
 
 /** The file Claude Code keeps an identity's login in where it has no Keychain, and falls back to when the Keychain is unavailable. */
@@ -97,4 +98,34 @@ export function identitySignIn(
     credentialsFile: probing && fs.lstat(credentialsFilePath(identity.farmRoot)) !== undefined,
     platform: probe.platform,
   });
+}
+
+/**
+ * The longest `claude auth status` may take. It answers from the stored login and, for one whose access token has lapsed, tries the refresh once over the network, so it is bounded by one request to the login service: ten seconds is a request that has failed, not one that is slow.
+ */
+const AUTH_STATUS_TIMEOUT_MS = 10_000;
+
+/**
+ * Whether Claude Code can authenticate with the login stored in one identity's configuration directory, asked of Claude Code itself (`claude auth status`), since only it knows whether the stored access token is still good or can be refreshed: the file or Keychain item can exist after the login has expired or been revoked. The child runs with the identity's `CLAUDE_CONFIG_DIR` directory and none of the ambient credential variables, so what it reports is the stored login and nothing the launching shell exported.
+ *
+ * Returns undefined when Claude Code did not answer (it could not be started, timed out, or printed something other than the status document), so a caller never changes a launch on a guess.
+ */
+export function storedLoginUsable(run: RunPort, claudeBin: string, configDir: string, env: Readonly<Record<string, string | undefined>>): boolean | undefined {
+  const childEnv: Record<string, string | undefined> = { ...env, CLAUDE_CONFIG_DIR: configDir };
+  for (const variable of AMBIENT_CREDENTIAL_VARS) {
+    childEnv[variable] = undefined;
+  }
+  const result = run.run(claudeBin, ["auth", "status"], undefined, { env: childEnv, timeoutMs: AUTH_STATUS_TIMEOUT_MS });
+  if (result.status === null) {
+    return undefined;
+  }
+  try {
+    const status: unknown = JSON.parse(result.stdout);
+    if (typeof status === "object" && status !== null && "loggedIn" in status && typeof status.loggedIn === "boolean") {
+      return status.loggedIn;
+    }
+  } catch {
+    // Not the status document: fall through to "did not answer".
+  }
+  return undefined;
 }

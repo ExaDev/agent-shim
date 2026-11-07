@@ -427,8 +427,9 @@ describe("runLauncher provider selection", () => {
 
   describe("Remote Control on a provider launch", () => {
     /** A provider launch under a `--remote-control` request, as the plan the launcher builds, with `hasStoredLogin` wired to `login` (or left unwired). */
-    function plan(login: boolean | undefined, extra: readonly string[] = []) {
+    function plan(login: boolean | undefined, extra: readonly string[] = [], usable?: boolean) {
       const log = fakeLog();
+      const asked: { identity: string; claudeBin: string }[] = [];
       const built = prepareLaunch({
         paths,
         fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/z.json`]: providerZ }),
@@ -439,12 +440,16 @@ describe("runLauncher provider selection", () => {
         frontdoor: fakeFrontDoorPort(),
         farm: fakeFarm(createFakeFarmFs({})),
         ...(login === undefined ? {} : { hasStoredLogin: () => login }),
+        hasUsableLogin: (identity: string, claudeBin: string) => {
+          asked.push({ identity, claudeBin });
+          return usable;
+        },
       });
-      return { built, log };
+      return { built, log, asked };
     }
 
     it("keeps Remote Control, and presents no credential, when the identity has a stored login", () => {
-      const { built, log } = plan(true);
+      const { built, log } = plan(true, [], true);
       expect(built.args).toContain("--remote-control=");
       expect(built.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
       expect(log.infos.join("\n")).not.toContain("no stored login");
@@ -455,6 +460,26 @@ describe("runLauncher provider selection", () => {
       expect(built.args).not.toContain("--remote-control=");
       expect(built.env.ANTHROPIC_AUTH_TOKEN).toBe("agent-shim-provider-session");
       expect(reportedRow(log, "note")?.value).toBe("work has no stored login, so Remote Control is off; provider z runs without it");
+    });
+
+    it("turns Remote Control off and presents the placeholder, saying so, when the stored login is no longer usable", () => {
+      const { built, log, asked } = plan(true, [], false);
+      expect(built.args).not.toContain("--remote-control=");
+      expect(built.env.ANTHROPIC_AUTH_TOKEN).toBe("agent-shim-provider-session");
+      expect(reportedRow(log, "note")?.value).toBe("work has a stored login that is no longer usable, so Remote Control is off; provider z runs without it");
+      expect(asked).toHaveLength(1);
+      expect(asked[0]?.claudeBin).toBe(discovered.path);
+    });
+
+    it("keeps Remote Control when Claude Code could not say whether the stored login is usable", () => {
+      const { built } = plan(true, [], undefined);
+      expect(built.args).toContain("--remote-control=");
+      expect(built.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    });
+
+    it("does not ask Claude Code about a login the identity does not have", () => {
+      const { asked } = plan(false, [], false);
+      expect(asked).toEqual([]);
     });
 
     it("assumes a login when the caller cannot ask, so a launch is never changed on a guess", () => {

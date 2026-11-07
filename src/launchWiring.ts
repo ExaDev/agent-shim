@@ -16,7 +16,7 @@ import { loadCascadeInput, readDirectorySelections } from "./launcher/cascade";
 import type { LogPort, ProcPort, RunPort } from "./launcher/ports";
 import { resolveWithAsyncRuns, type AsyncRun } from "./replayRun";
 import { resolveClaudeHome, resolveLayoutPaths, type LayoutPaths } from "./paths";
-import { identitySignIn } from "./usage/signIn";
+import { identitySignIn, storedLoginUsable } from "./usage/signIn";
 import type { ClaudeBinaryResolver } from "./versionDiscovery";
 import {
   realContentSourcePath,
@@ -119,6 +119,7 @@ export function realPrepareLaunchParams(paths: LayoutPaths, options: RealLaunchO
     credentials: { ...realCredentialPort, cache: realCredentialCacheEnv(paths) },
     hold: realHoldPort,
     hasStoredLogin: (identity) => identitySignIn(realFarmFs, { platform: process.platform, run: options.run ?? realRunPort }, { farmRoot: path.join(paths.identitiesDir, identity), hasCredentialBlock: false, provider: undefined }).state !== "signed-out",
+    hasUsableLogin: (identity, claudeBin) => storedLoginUsable(options.run ?? realRunPort, claudeBin, path.join(paths.identitiesDir, identity), options.proc.env),
     ...(farm.directoryIdentity === undefined ? {} : { directoryPinnedIdentity: farm.directoryIdentity }),
     ...(farm.directoryConfigProfile === undefined ? {} : { directoryRuleConfigProfile: farm.directoryConfigProfile }),
     ...(farm.globalDefaultConfigProfile === undefined ? {} : { globalDefaultConfigProfile: farm.globalDefaultConfigProfile }),

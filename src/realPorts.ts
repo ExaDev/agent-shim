@@ -421,10 +421,21 @@ const RUN_OUTPUT_LIMIT_MIB = 256;
 const BYTES_PER_MIB = 1_048_576;
 const RUN_OUTPUT_LIMIT_BYTES = RUN_OUTPUT_LIMIT_MIB * BYTES_PER_MIB;
 
+/** The environment `spawnSync` takes: the entries with a value, since a variable mapped to undefined is one the caller asked to leave out. */
+function definedEntries(env: Readonly<Record<string, string | undefined>>): Record<string, string> {
+  return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined));
+}
+
 /** The real `RunPort`, used for auxiliary commands whose output this process needs to read — git branch detection for `when: { branch }` conditions, and `check.ts`'s macOS Keychain lookup. */
 export const realRunPort: RunPort = {
-  run(command, args, input) {
-    const result = spawnSyncBlocking("an external command", command, args, { encoding: "utf8", maxBuffer: RUN_OUTPUT_LIMIT_BYTES, ...(input === undefined ? {} : { input }) });
+  run(command, args, input, options) {
+    const result = spawnSyncBlocking("an external command", command, args, {
+      encoding: "utf8",
+      maxBuffer: RUN_OUTPUT_LIMIT_BYTES,
+      ...(input === undefined ? {} : { input }),
+      ...(options?.env === undefined ? {} : { env: definedEntries(options.env) }),
+      ...(options?.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }),
+    });
     return { status: result.status, stdout: result.stdout, stderr: result.stderr };
   },
 };
