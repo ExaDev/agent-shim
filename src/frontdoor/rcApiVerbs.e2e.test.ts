@@ -217,6 +217,7 @@ describe("the wider control-verb family on the door's typed API, end to end over
     tracker.fileStreamEvent(session, { event_type: "control_request", sequence_num: 1, source: "worker", payload: { type: "control_request", request_id: "req_typed", request: { subtype: "can_use_tool", tool_name: "AskUserQuestion", input: { questions } } } });
     const decisions: RcAnswerDecision[] = [];
     const unused = async (): Promise<RcEventWriteResult> => await Promise.resolve({ ok: false, message: "unexercised" });
+    const unusedCommand = async (): Promise<RcSessionCommandResult<never>> => await Promise.resolve({ ok: false, message: "unexercised" });
     const surface = createRcApiNodeHandler({
       expectedToken: CONTROL_TOKEN,
       list: tracker.list,
@@ -241,6 +242,10 @@ describe("the wider control-verb family on the door's typed API, end to end over
       mcpAuthenticate: unused,
       mcpOAuthCallbackUrl: unused,
       teleport: unused,
+      goalGet: unusedCommand,
+      goalSet: unusedCommand,
+      goalClear: unusedCommand,
+      compact: unusedCommand,
       fanout: createRcEventFanout(),
     });
     const server = createFrontDoorServer(
