@@ -54,7 +54,7 @@ export interface RcStatusDeps {
   readonly noteReadWorkerState: RcSessionTracker["noteReadWorkerState"];
   /** The live credential of a tracked session (the tracker's accessor, which adopts a persisted one when it observed none itself). */
   readonly credentialOf: RcSessionTracker["credentialOf"];
-  /** What the Claude Code session registry says about every live session registered on this machine, keyed by `cse_` id (`createRcSessionRegistryReader`). Read once per status call: it supplies the facts every tracked status is enriched with and the sessions the tracker holds no record of. */
+  /** What the Claude Code session registry says about every live session registered on this machine, keyed by `cse_` id (`createRcSessionRegistryReader`). Read at most once per `RC_IDLE_EXPIRY_MS`: its answer supplies the facts every tracked status is enriched with and the sessions the tracker holds no record of. */
   readonly registry: () => ReadonlyMap<string, RcRegisteredSession>;
   /** The current name of the identity whose directory id a tracked session's requests carried (`withIdentityNames`). */
   readonly identityNameOf: (id: string) => string | undefined;
@@ -105,6 +105,14 @@ export type RcStatusResolver = (sessionId?: string) => Promise<RcStatusReport>;
  */
 export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
   const held = new Map<string, HeldRead>();
+  let heldRegistry: { readonly at: number; readonly registry: ReadonlyMap<string, RcRegisteredSession> } | undefined;
+  // The registry read lists and reads every record across every identity's directory and checks each record's process, all synchronously on the door's event loop, and a status is polled (the web client asks every few seconds), so the read is made at most once per `RC_IDLE_EXPIRY_MS` and its answer reused between: a session that registers, exits or is renamed shows within one bound, the span after which the door already treats its own observations of a session as stale.
+  const registryOf = (now: number): ReadonlyMap<string, RcRegisteredSession> => {
+    if (heldRegistry === undefined || now - heldRegistry.at >= RC_IDLE_EXPIRY_MS) {
+      heldRegistry = { at: now, registry: deps.registry() };
+    }
+    return heldRegistry.registry;
+  };
   /** Whether a held read still stands in for a fresh one: in flight, or settled within the bound. */
   const stands = (read: HeldRead, now: number): boolean => read.settledAt === undefined || now - read.settledAt < RC_IDLE_EXPIRY_MS;
   // The entry is filed before the read is awaited, so a caller arriving while it is in flight shares it rather than making its own. This also bounds the fan-out: each session has at most one read outstanding however many callers ask, and the sessions asked about are the Remote Control sessions on one machine, each a running Claude Code process, so no further concurrency cap is needed.
@@ -131,7 +139,7 @@ export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
       }
     }
     const unavailable = new Map<string, string>();
-    const registry = deps.registry();
+    const registry = registryOf(now);
     const statusesOf = (id: string | undefined): readonly RcTrackedSessionStatus[] => withRegisteredSessionFacts(withIdentityNames(deps.statusOf(id), deps.identityNameOf), registry);
     const trackedBefore = statusesOf(sessionId);
     const trackedIds = new Set(trackedBefore.map((status) => status.id));

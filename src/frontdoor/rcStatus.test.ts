@@ -223,7 +223,7 @@ describe("the Remote Control status when traffic crosses the door while a read i
       },
     };
     const persisted = { authorization: OAUTH_BEARER, anthropicVersion: undefined, anthropicClientPlatform: undefined };
-    const report = await resolverOf(tracker, racing, { registered: [registeredAs(OBSERVED_SESSION_ID)], persisted: { [OBSERVED_SESSION_ID]: persisted } })();
+    const report = await resolverOf(tracker, racing, { registered: new Map([registeredAs(OBSERVED_SESSION_ID)]), persisted: { [OBSERVED_SESSION_ID]: persisted } })();
     expect(report.unobserved).toEqual([]);
     expect(report.statuses.map((status) => [status.id, status.workerState?.value, status.workerState?.source])).toEqual([[OBSERVED_SESSION_ID, "requires_action", "read"]]);
   });
@@ -394,6 +394,33 @@ describe("the Remote Control status enriched from the session registry", () => {
     const [status] = await statusesOf(resolve);
     expect(status).toMatchObject({ id: QUIET_SESSION_ID, name: "fix the thing", pid: REGISTERED_PID, cwd: "/repo" });
     expect(registryReads).toBe(1);
+  });
+
+  it("reads the registry at most once per idle bound, however often the status is polled", async () => {
+    let now = CLOCK_START_MS;
+    let registryReads = 0;
+    const tracker = trackerWith();
+    const resolve = createRcStatusResolver({
+      statusOf: tracker.statusOf,
+      noteReadWorkerState: tracker.noteReadWorkerState,
+      credentialOf: tracker.credentialOf,
+      registry: () => {
+        registryReads += 1;
+        return new Map();
+      },
+      identityNameOf: () => undefined,
+      persistedCredentialOf: () => undefined,
+      backends: { service: async () => await Promise.reject(new Error("nothing to read")) },
+      now: () => now,
+    });
+    await resolve();
+    await resolve(QUIET_SESSION_ID);
+    now += RC_IDLE_EXPIRY_MS - 1;
+    await resolve();
+    expect(registryReads).toBe(1);
+    now += 1;
+    await resolve();
+    expect(registryReads).toBe(2);
   });
 
   it("reports the identity a session's requests carried under its current name, and none once that identity is gone", async () => {
