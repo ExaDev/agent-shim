@@ -29,16 +29,34 @@ export function sessionControlVersion(plugin: Readonly<PluginPaths>): string | u
 }
 
 /**
- * Sends one request to the plugin and waits for its outcome: writes `requests/<id>.json` atomically, polls `results/<id>.json` until it holds something other than `running`, and removes both files whatever happens, so no request is left for the plugin to run later. A plugin error is thrown as an `Error` carrying its message. Aborting stops the wait.
+ * Sends one request to the plugin and waits for its outcome: writes `requests/<id>.json` atomically with the instant it stops being runnable, polls `results/<id>.json` until it holds something other than `running`, and removes both files whatever happens, so no request is left for the plugin to run later. A request a crash leaves behind is refused by the plugin once its expiry passes. A plugin error is thrown as an `Error` carrying its message. Aborting stops the wait.
  */
-async function requestInSession(plugin: Readonly<PluginPaths>, body: Readonly<Record<string, unknown>>, signal: AbortSignal): Promise<Readonly<Record<string, unknown>>> {
+/** How one request is sent: the caller's signal, and how long the request stays runnable, after which the plugin refuses it rather than run it for a caller long gone. */
+export interface SessionControlRequestOptions {
+  readonly signal: AbortSignal;
+  readonly expiresInMs: number;
+  /** The clock the expiry is reckoned from: `Date.now` in production. */
+  readonly now?: () => number;
+}
+
+/** The width an epoch-millisecond instant is padded to in a request's name: the digits `Number.MAX_SAFE_INTEGER` has, so every instant a clock can give sorts as a fixed-width string. */
+const REQUEST_INSTANT_DIGITS = String(Number.MAX_SAFE_INTEGER).length;
+
+/** A request's id: the instant it was made, zero-padded so names sort by it, then a random part that keeps two made in the same millisecond apart. The plugin runs requests in name order, so the oldest runs first, whichever process (the supervisor or the door) made it. */
+function requestIdOf(nowMs: number): string {
+  return `${String(nowMs).padStart(REQUEST_INSTANT_DIGITS, "0")}-${randomUUID()}`;
+}
+
+async function requestInSession(plugin: Readonly<PluginPaths>, body: Readonly<Record<string, unknown>>, options: SessionControlRequestOptions): Promise<Readonly<Record<string, unknown>>> {
+  const { signal } = options;
+  const nowMs = (options.now ?? Date.now)();
   if (!sessionControlReady(plugin)) throw new Error("the in-process control plugin did not load");
   signal.throwIfAborted();
-  const id = randomUUID();
+  const id = requestIdOf(nowMs);
   const request = path.join(plugin.requests, `${id}.json`);
   const result = path.join(plugin.results, `${id}.json`);
   const temporary = path.join(plugin.requests, `.${id}.json`);
-  writeFileSync(temporary, JSON.stringify({ ...body, id }), { mode: 0o600 });
+  writeFileSync(temporary, JSON.stringify({ ...body, id, expiresAt: nowMs + options.expiresInMs }), { mode: 0o600 });
   renameSync(temporary, request);
   try {
     for (;;) {
@@ -63,9 +81,9 @@ async function requestInSession(plugin: Readonly<PluginPaths>, body: Readonly<Re
   }
 }
 
-/** Asks the live Claude process to compact its current conversation, with the summary instructions when given. Aborting stops the wait. */
-export async function compactInSession(plugin: Readonly<PluginPaths>, conversationId: string, signal: AbortSignal, instructions?: string): Promise<CompactionResult> {
-  const value = await requestInSession(plugin, { op: "compact", conversationId, ...(instructions === undefined ? {} : { instructions }) }, signal);
+/** Asks the live Claude process to compact its current conversation, with the summary instructions when given. Aborting stops the wait; the request expires after `options.expiresInMs`. */
+export async function compactInSession(plugin: Readonly<PluginPaths>, conversationId: string, options: SessionControlRequestOptions, instructions?: string): Promise<CompactionResult> {
+  const value = await requestInSession(plugin, { op: "compact", conversationId, ...(instructions === undefined ? {} : { instructions }) }, options);
   if (value.kind === "unchanged" && typeof value.skip === "string") return { kind: "unchanged", reason: value.skip };
   if (value.kind !== "compacted") throw new Error("the control plugin returned an invalid compaction result");
   const beforeTokens = typeof value.tokensBefore === "number" ? value.tokensBefore : undefined;
@@ -74,9 +92,9 @@ export async function compactInSession(plugin: Readonly<PluginPaths>, conversati
 }
 
 /** Asks the live Claude process to run `/goal <args>` as if the person typed it; `args` is a condition or a clear word, never empty (a bare `/goal` opens an interactive panel). Resolves once the command has run, with the text it printed when the plugin API returned one; the goal's effect is read from the transcript. */
-export async function runGoalInSession(plugin: Readonly<PluginPaths>, conversationId: string, args: string, signal: AbortSignal): Promise<{ readonly text?: string }> {
+export async function runGoalInSession(plugin: Readonly<PluginPaths>, conversationId: string, args: string, options: SessionControlRequestOptions): Promise<{ readonly text?: string }> {
   if (args.trim() === "") throw new Error("a goal command run in process needs an argument: a bare /goal opens an interactive panel");
-  const value = await requestInSession(plugin, { op: "goal", conversationId, args }, signal);
+  const value = await requestInSession(plugin, { op: "goal", conversationId, args }, options);
   if (value.kind !== "ran") throw new Error("the control plugin returned an invalid goal result");
   return typeof value.text === "string" ? { text: value.text } : {};
 }

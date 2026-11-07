@@ -87,8 +87,10 @@ export interface RcSupervisedTarget {
   readonly transcriptPath: string | undefined;
   /** The Claude Code version the plugin reported when it loaded; undefined when it has not loaded. */
   readonly version: string | undefined;
-  readonly compact: (signal: AbortSignal, instructions: string | undefined) => Promise<CompactionResult>;
-  readonly runGoal: (args: string, signal: AbortSignal) => Promise<unknown>;
+  /** Compacts through the plugin; the request is runnable for `waitMs` and no longer. */
+  readonly compact: (signal: AbortSignal, instructions: string | undefined, waitMs: number) => Promise<CompactionResult>;
+  /** Runs `/goal <args>` through the plugin, runnable for `waitMs` and no longer. */
+  readonly runGoal: (args: string, signal: AbortSignal, waitMs: number) => Promise<unknown>;
 }
 
 /** Everything the verbs need, injected so they run against fakes in unit tests. */
@@ -118,7 +120,7 @@ function unsupportedMessage(sessionId: string): string {
 
 /** One verb's work on a resolved route. */
 interface RouteActions<T> {
-  readonly supervised: (target: RcSupervisedTarget, signal: AbortSignal) => Promise<RcSessionCommandResult<T>>;
+  readonly supervised: (target: RcSupervisedTarget, signal: AbortSignal, waitMs: number) => Promise<RcSessionCommandResult<T>>;
   readonly selfHosted: (selfHost: RcSelfHostCommandDeps, signal: AbortSignal) => Promise<RcSessionCommandResult<T>>;
 }
 
@@ -161,7 +163,7 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
         const timeout = AbortSignal.timeout(waitMs);
         const bounded = AbortSignal.any([signal, timeout]);
         try {
-          return await actions.supervised(target, bounded);
+          return await actions.supervised(target, bounded, waitMs);
         } catch (error) {
           if (timeout.aborted) {
             return { ok: false, message: `session ${sessionId}'s control plugin did not answer within ${String(waitMs)} ms. A request the plugin had not started is withdrawn; one it had started runs once the session is idle (a turn waiting on a permission prompt holds it), so read the session's goal or transcript before asking again` };
@@ -226,12 +228,12 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
         return { ok: false, message: `a goal condition is limited to ${String(RC_GOAL_CONDITION_MAX_CHARS)} characters, and this one has ${String(trimmed.length)}` };
       }
       return await onRoute<RcGoalSetReport>(sessionId, options, {
-        supervised: async (target, signal) => {
+        supervised: async (target, signal, waitMs) => {
           const before = transcriptGoal(sessionId, target);
           if (!before.ok) {
             return before;
           }
-          await target.runGoal(trimmed, signal);
+          await target.runGoal(trimmed, signal, waitMs);
           const after = transcriptGoal(sessionId, target);
           if (!after.ok) {
             return after;
@@ -252,7 +254,7 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
     /** Clears the session's goal and names the condition it cleared, or `null` when there was none, which is not a failure (clearing is idempotent). */
     goalClear: async (sessionId: string, options: RcSessionCommandOptions = {}): Promise<RcSessionCommandResult<RcGoalClearReport>> =>
       await onRoute<RcGoalClearReport>(sessionId, options, {
-        supervised: async (target, signal) => {
+        supervised: async (target, signal, waitMs) => {
           const before = transcriptGoal(sessionId, target);
           if (!before.ok) {
             return before;
@@ -260,7 +262,7 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
           if (before.report === null) {
             return { ok: true, report: { route: "supervised", cleared: null } };
           }
-          await target.runGoal("clear", signal);
+          await target.runGoal("clear", signal, waitMs);
           const after = transcriptGoal(sessionId, target);
           if (!after.ok) {
             return after;
@@ -278,8 +280,8 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
       const instructions = options.instructions?.trim();
       const given = instructions === undefined || instructions === "" ? undefined : instructions;
       return await onRoute<RcCompactReport>(sessionId, options, {
-        supervised: async (target, signal) => {
-          const result = await target.compact(signal, given);
+        supervised: async (target, signal, waitMs) => {
+          const result = await target.compact(signal, given, waitMs);
           if (result.kind === "unchanged") {
             return { ok: false, message: `session ${sessionId} was not compacted: ${result.reason}` };
           }

@@ -5,7 +5,7 @@ import path from "node:path";
 /**
  * A private, per-launch Claude Code plugin that acts inside the live session on request: the supervisor's channel into its child, which the front door also uses for the sessions a supervisor advertises it for.
  *
- * The protocol is one file per request, so several writers (the supervisor's own compaction and the door's goal and compaction verbs) never overwrite each other: a caller writes `requests/<id>.json` (atomically, by renaming a dot-prefixed file into place, since the plugin skips dot files), the plugin writes `results/<id>.json` (first `{ kind: "running" }`, then the outcome), and the caller removes both once it has read the outcome. The plugin handles one request at a time, oldest name first, and never handles a request that already has a result, so a plugin reload (which a compaction can cause) does not run a request twice; a compaction whose result still reads `running` when the post-compaction event fires is completed then, as the reload lost the call that would have written it.
+ * The protocol is one file per request, so several writers (the supervisor's own compaction and the door's goal and compaction verbs) never overwrite each other: a caller writes `requests/<id>.json` (atomically, by renaming a dot-prefixed file into place, since the plugin skips dot files), the plugin writes `results/<id>.json` (first `{ kind: "running" }`, then the outcome), and the caller removes both once it has read the outcome. An id begins with the zero-padded instant the request was made (`sessionControl.ts`), and the plugin handles one request at a time in name order, so the oldest runs first whichever process made it; it never handles a request that already has a result, so a plugin reload (which a compaction can cause) does not run a request twice, and it refuses one whose `expiresAt` has passed, so a request a crashed caller left behind never runs long after the caller gave up. A compaction whose result still reads `running` when the post-compaction event fires is completed then, as the reload lost the call that would have written it.
  *
  * What it can do is what the 2.1.319 plugin API gives a plugin: `$.session.compact`, the call `/compact` makes, with optional instructions; and `$.command.run`, which runs a slash command as if the person typed it, used for `/goal <condition>` and `/goal clear` only. A bare `/goal` is refused here, because in an interactive session it opens the goal panel and waits for the person to dismiss it; the goal is read from the transcript instead (`sessionGoal.ts`).
  */
@@ -91,6 +91,7 @@ export function register(on) {
         await $.fs.write(RESULTS + '/' + name, JSON.stringify({ id: item.id, kind: 'running', op: item.op }));
         let response;
         try {
+          if (typeof item.expiresAt !== 'number' || await $.clock.now() >= item.expiresAt) throw new Error('the request expired before the session could run it, so it was not run');
           if (typeof item.conversationId !== 'string' || await $.session.id() !== item.conversationId) throw new Error('the conversation changed before the request ran');
           if (item.op === 'compact') {
             response = compacted(item.id, await $.session.compact(typeof item.instructions === 'string' ? { instructions: item.instructions } : {}));

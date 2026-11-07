@@ -31,6 +31,10 @@ function memoryFs(files: Map<string, string>) {
   };
 }
 
+/** The plugin clock's instant in these cases, and an expiry still ahead of it. */
+const NOW = 5_000;
+const LIVE = NOW + 1;
+
 describe("the in-process control plugin", () => {
   it("preserves existing plugin options and positional arguments", () => {
     expect(withSessionControlPlugin(["--plugin-dir", "/user", "--", "prompt"], "/shim")).toEqual(["--plugin-dir", "/user", "--plugin-dir", "/shim", "--", "prompt"]);
@@ -56,22 +60,23 @@ describe("the in-process control plugin", () => {
     }
   });
 
-  it("reports its version, runs each request once in name order, compacts and runs a goal command, and refuses what it does not perform", async () => {
+  it("reports its version, runs each request once in name order, refuses an expired one, compacts and runs a goal command, and refuses what it does not perform", async () => {
     const plugin = stageSessionControlPlugin();
     try {
       const start = await hookOf(plugin, "session.start");
       const files = new Map([
-        [path.join(plugin.requests, "1.json"), JSON.stringify({ id: "1", op: "compact", conversationId: "conversation-1", instructions: "keep it" })],
-        [path.join(plugin.requests, "2.json"), JSON.stringify({ id: "2", op: "goal", conversationId: "conversation-1", args: "tests pass" })],
-        [path.join(plugin.requests, "3.json"), JSON.stringify({ id: "3", op: "goal", conversationId: "conversation-1", args: "" })],
-        [path.join(plugin.requests, "4.json"), JSON.stringify({ id: "4", op: "compact", conversationId: "other" })],
+        [path.join(plugin.requests, "1.json"), JSON.stringify({ id: "1", op: "compact", conversationId: "conversation-1", instructions: "keep it", expiresAt: LIVE })],
+        [path.join(plugin.requests, "2.json"), JSON.stringify({ id: "2", op: "goal", conversationId: "conversation-1", args: "tests pass", expiresAt: LIVE })],
+        [path.join(plugin.requests, "3.json"), JSON.stringify({ id: "3", op: "goal", conversationId: "conversation-1", args: "", expiresAt: LIVE })],
+        [path.join(plugin.requests, "4.json"), JSON.stringify({ id: "4", op: "compact", conversationId: "other", expiresAt: LIVE })],
+        [path.join(plugin.requests, "6.json"), JSON.stringify({ id: "6", op: "goal", conversationId: "conversation-1", args: "late", expiresAt: NOW })],
         [path.join(plugin.requests, ".5.json"), "partial"],
       ]);
       const fs = memoryFs(files);
       const compact = vi.fn(() => ({ tokensBefore: 100, tokensAfter: 20, messages: ["private"] }));
       const run = vi.fn(() => ({ context: ["the directive"] }));
       let tick: unknown;
-      await start({ clock: { every: (_ms: number, callback: unknown) => { tick = callback; } }, fs, session: { id: () => "conversation-1", compact, version: () => ({ version: "2.1.319" }) }, command: { run } }, {}, () => "started");
+      await start({ clock: { every: (_ms: number, callback: unknown) => { tick = callback; }, now: () => NOW }, fs, session: { id: () => "conversation-1", compact, version: () => ({ version: "2.1.319" }) }, command: { run } }, {}, () => "started");
       expect(files.get(plugin.ready)).toBe(JSON.stringify({ ready: true, version: "2.1.319" }));
       if (typeof tick !== "function") throw new Error("plugin did not schedule its request reader");
       // One tick per request the fixture holds, plus one that finds nothing left to run.
@@ -88,6 +93,8 @@ describe("the in-process control plugin", () => {
       expect(files.get(path.join(plugin.results, "3.json"))).toContain("no operation this plugin performs");
       expect(files.get(path.join(plugin.results, "4.json"))).toContain("the conversation changed before the request ran");
       expect(files.has(path.join(plugin.results, ".5.json"))).toBe(false);
+      // A request whose expiry has come is refused, never run, as one a crashed caller left behind is.
+      expect(files.get(path.join(plugin.results, "6.json"))).toContain("the request expired");
       expect(JSON.parse(readFileSync(path.join(plugin.directory, "hooks", "hooks.json"), "utf8"))).toEqual({ modules: ["./register.js"] });
     } finally {
       plugin.release();

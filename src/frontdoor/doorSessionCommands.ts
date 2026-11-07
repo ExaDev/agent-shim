@@ -49,8 +49,8 @@ export function createDoorRcSessionCommands(deps: DoorRcSessionCommandsDeps): Rc
         conversationId,
         transcriptPath: found.state?.transcriptPath,
         version: sessionControlVersion(plugin),
-        compact: async (signal, instructions) => await compactInSession(plugin, conversationId, signal, instructions),
-        runGoal: async (args, signal) => await runGoalInSession(plugin, conversationId, args, signal),
+        compact: async (signal, instructions, waitMs) => await compactInSession(plugin, conversationId, { signal, expiresInMs: waitMs }, instructions),
+        runGoal: async (args, signal, waitMs) => await runGoalInSession(plugin, conversationId, args, { signal, expiresInMs: waitMs }),
       };
     },
     readFile: (file) => realFarmFs.readFileUtf8(file),

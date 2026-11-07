@@ -163,9 +163,9 @@ describe("goal and compaction control over Remote Control, by route", () => {
             order.push("compact ended");
             return { kind: "compacted" as const };
           },
-          runGoal: async (args, signal) => {
+          runGoal: async (args, signal, waitMs) => {
             order.push("goal ran");
-            await target.runGoal(args, signal);
+            await target.runGoal(args, signal, waitMs);
           },
         };
       },

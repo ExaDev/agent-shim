@@ -27,6 +27,13 @@ function answer(plugin: SessionControlPlugin, id: unknown, value: Record<string,
   writeFileSync(path.join(plugin.results, `${id}.json`), JSON.stringify({ id, ...value }));
 }
 
+/** A signal no case aborts. */
+const NEVER = new AbortController().signal;
+
+/** How long the requests these cases write stay runnable, and the instant the stamped case reckons from. */
+const EXPIRY_MS = 60_000;
+const NOW_MS = 1_794_000_000_000;
+
 describe("the in-process control requests", () => {
   it("compacts through its own request file, waiting out a running result and removing both files afterwards", async () => {
     const plugin = stageSessionControlPlugin();
@@ -34,9 +41,10 @@ describe("the in-process control requests", () => {
       expect(sessionControlReady(plugin)).toBe(false);
       writeFileSync(plugin.ready, JSON.stringify({ ready: true, version: "2.1.319" }));
       expect(sessionControlVersion(plugin)).toBe("2.1.319");
-      const pending = compactInSession(plugin, "conversation", new AbortController().signal, "keep the plan");
+      const pending = compactInSession(plugin, "conversation", { signal: NEVER, expiresInMs: EXPIRY_MS, now: () => NOW_MS }, "keep the plan");
       const request = await pendingRequest(plugin);
-      expect(request).toMatchObject({ op: "compact", conversationId: "conversation", instructions: "keep the plan" });
+      expect(request).toMatchObject({ op: "compact", conversationId: "conversation", instructions: "keep the plan", expiresAt: NOW_MS + EXPIRY_MS });
+      expect(String(request.id)).toMatch(new RegExp(`^0*${String(NOW_MS)}-[0-9a-f-]{36}$`, "u"));
       answer(plugin, request.id, { kind: "running", op: "compact" });
       await new Promise((resolve) => {
         setTimeout(resolve, RESULT_POLL_MS + RESULT_POLL_MS);
@@ -50,13 +58,39 @@ describe("the in-process control requests", () => {
     }
   });
 
+  it("names requests so they sort by the instant they were made, whatever process made them", async () => {
+    const plugin = stageSessionControlPlugin();
+    try {
+      writeFileSync(plugin.ready, "{}");
+      const later = compactInSession(plugin, "conversation", { signal: NEVER, expiresInMs: EXPIRY_MS, now: () => NOW_MS + 1 });
+      const earlier = runGoalInSession(plugin, "conversation", "tests pass", { signal: NEVER, expiresInMs: EXPIRY_MS, now: () => NOW_MS - EXPIRY_MS });
+      let names: string[] = [];
+      while (names.length < 2) {
+        names = readdirSync(plugin.requests).filter((name) => !name.startsWith("."));
+        await new Promise((resolve) => {
+          setTimeout(resolve, RESULT_POLL_MS);
+        });
+      }
+      const sorted = [...names].sort();
+      const first = JSON.parse(readFileSync(path.join(plugin.requests, sorted[0] ?? ""), "utf8")) as { op: string; id: string };
+      expect(first.op).toBe("goal");
+      for (const name of sorted) {
+        const id = name.slice(0, -".json".length);
+        answer(plugin, id, id === first.id ? { kind: "ran" } : { kind: "unchanged", skip: "nothing to compact" });
+      }
+      await Promise.all([later, earlier]);
+    } finally {
+      plugin.release();
+    }
+  });
+
   it("keeps concurrent requests apart, each answered by its own result", async () => {
     const plugin = stageSessionControlPlugin();
     try {
       writeFileSync(plugin.ready, "{}");
-      const goal = runGoalInSession(plugin, "conversation", "tests pass", new AbortController().signal);
+      const goal = runGoalInSession(plugin, "conversation", "tests pass", { signal: NEVER, expiresInMs: EXPIRY_MS });
       const goalRequest = await pendingRequest(plugin);
-      const compact = compactInSession(plugin, "conversation", new AbortController().signal);
+      const compact = compactInSession(plugin, "conversation", { signal: NEVER, expiresInMs: EXPIRY_MS });
       let compactRequest: Record<string, unknown> | undefined;
       while (compactRequest === undefined) {
         const names = readdirSync(plugin.requests).filter((name) => !name.startsWith(".") && name !== `${String(goalRequest.id)}.json`);
@@ -83,14 +117,14 @@ describe("the in-process control requests", () => {
   it("refuses a bare goal command, fails closed when the plugin did not load, carries a plugin error and cancels a wait on abort", async () => {
     const plugin = stageSessionControlPlugin();
     try {
-      await expect(compactInSession(plugin, "conversation", new AbortController().signal)).rejects.toThrow("did not load");
+      await expect(compactInSession(plugin, "conversation", { signal: NEVER, expiresInMs: EXPIRY_MS })).rejects.toThrow("did not load");
       writeFileSync(plugin.ready, "{}");
-      await expect(runGoalInSession(plugin, "conversation", "  ", new AbortController().signal)).rejects.toThrow("bare /goal");
-      const failing = runGoalInSession(plugin, "conversation", "clear", new AbortController().signal);
+      await expect(runGoalInSession(plugin, "conversation", "  ", { signal: NEVER, expiresInMs: EXPIRY_MS })).rejects.toThrow("bare /goal");
+      const failing = runGoalInSession(plugin, "conversation", "clear", { signal: NEVER, expiresInMs: EXPIRY_MS });
       answer(plugin, (await pendingRequest(plugin)).id, { error: "the conversation changed before the request ran" });
       await expect(failing).rejects.toThrow("the conversation changed");
       const controller = new AbortController();
-      const pending = compactInSession(plugin, "conversation", controller.signal);
+      const pending = compactInSession(plugin, "conversation", { signal: controller.signal, expiresInMs: EXPIRY_MS });
       await pendingRequest(plugin);
       controller.abort();
       await expect(pending).rejects.toThrow();
