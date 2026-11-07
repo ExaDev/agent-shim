@@ -2,6 +2,7 @@ import { X509Certificate, createPrivateKey } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
+  canonicalRequestTarget,
   CONNECT_INTERCEPT_HOST,
   createLeafCache,
   ensureCa,
@@ -52,6 +53,14 @@ describe("CONNECT routing decisions", () => {
     expect(servedByPipeline("/api/oauth/token")).toBe(false);
     expect(servedByPipeline(undefined)).toBe(false);
     expect(ROUTED_PATH_PREFIX).toBe("/v1/");
+  });
+
+  it("reads every spelling of a target as the path a real host would serve, query kept", () => {
+    for (const target of ["/./v1/x", "/a/../v1/x", "/.%2e/v1/x", "\\v1/x", "http://api.anthropic.com/v1/x"]) {
+      expect(canonicalRequestTarget(target), target).toBe("/v1/x");
+    }
+    expect(canonicalRequestTarget("/v1/messages?beta=true")).toBe("/v1/messages?beta=true");
+    expect(canonicalRequestTarget(undefined)).toBe("/");
   });
 
   it("strips hop-by-hop headers and any header the Connection header names, without mutating the input", () => {

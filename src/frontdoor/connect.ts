@@ -136,7 +136,15 @@ export function isInterceptedHost(host: string, interceptHosts: readonly string[
   return interceptHosts.includes(host);
 }
 
-/** Whether a request path on the terminated session is one the routed pipeline serves. The query string stays part of the path: `/v1/messages?beta=true` is still the pipeline's. */
+/**
+ * One request target in the single form every decision on a terminated session reads: the path the WHATWG URL parser resolves (dot segments, percent-encoded dots, backslashes and an absolute-form target all collapse to the path a real host would serve) with the query kept. The surface rewrites each request's target to this before anything decides on it, so the routing choice, the local surface and the upstream all see one path and no two parsers can disagree about a request.
+ */
+export function canonicalRequestTarget(target: string | undefined): string {
+  const parsed = new URL(target ?? "/", "http://127.0.0.1");
+  return `${parsed.pathname}${parsed.search}`;
+}
+
+/** Whether a request path on the terminated session is one the routed pipeline serves. The query string stays part of the path: `/v1/messages?beta=true` is still the pipeline's. Callers pass a target already in `canonicalRequestTarget` form. */
 export function servedByPipeline(path: string | undefined): boolean {
   return path?.startsWith(ROUTED_PATH_PREFIX) === true;
 }
@@ -442,6 +450,7 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
 
     // The local surface is consulted first and awaited, because serving a path it owns means the whole response has been written by the time it resolves; a miss falls through to routing or piping unchanged. The parser's handler shape returns void, so the awaited body runs as its own helper.
     const handleHostRequest = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+      request.url = canonicalRequestTarget(request.url);
       if (ledger.retiring()) {
         // A session the retiring surface took on serves this one request and then ends, so its client's next request opens a connection the successor takes.
         clearTimeout(lateSessionDeadlines.get(request.socket));
