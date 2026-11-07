@@ -1,3 +1,12 @@
+## [11.87.3](https://github.com/ExaDev/agent-shim/compare/v11.87.2...v11.87.3) (2026-11-07)
+
+### Bug Fixes
+
+* classify unknown entries during configuration ([cab34c4](https://github.com/ExaDev/agent-shim/commit/cab34c4b6dcf4196203c4d847ea21b3b7910b898))
+* compact supervised sessions in process ([629b37a](https://github.com/ExaDev/agent-shim/commit/629b37a6283f2e2ec6af6c3a5c847e7316d76dcf))
+* recover hook guard after process ID reuse ([e60a1ef](https://github.com/ExaDev/agent-shim/commit/e60a1efb5165bebfcb7fdc4b3dd0cff4077ae51a))
+* track the current supervised conversation ([dc7a39f](https://github.com/ExaDev/agent-shim/commit/dc7a39fcbc5db2fb642cc0e253792f5d4a5b380d))
+
 ## [11.87.2](https://github.com/ExaDev/agent-shim/compare/v11.87.1...v11.87.2) (2026-11-06)
 
 ### Bug Fixes
