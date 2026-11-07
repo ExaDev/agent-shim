@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { mintRcSelfHostCredential, readRcSelfHostRecord } from "./rcSelfHostMint";
+import { RC_SELF_HOST_MINT_MARKER, isSelfHostMinted, mintRcSelfHostCredential, readRcSelfHostRecord } from "./rcSelfHostMint";
 import { createFakeFarmFs } from "../test-helpers";
 
 /**
@@ -92,5 +92,16 @@ describe("the self-hosted credential minting", () => {
     const again = mint(fs);
     expect(again.replaced).toBe(true);
     expect(() => mint(fs, { identity: "../escape" })).toThrow("not a valid identity name");
+  });
+});
+
+describe("the self-hosted mint's marker", () => {
+  it("marks the identity's directory as minted, and an unminted directory reads as not minted", () => {
+    const fs = createFakeFarmFs();
+    fs.seed({ "/state/identities/rig/identity.json": '{"name":"rig"}', "/state/identities/real/identity.json": '{"name":"real"}' });
+    mintRcSelfHostCredential({ fs, identitiesDir: "/state/identities", frontdoorDir: "/state/frontdoor", identity: "rig", newUuid: () => "00000000-0000-4000-8000-000000000001", randomToken: () => "randomtokenmaterial", force: false, now: () => 0 });
+    expect(fs.readFileUtf8(`/state/identities/rig/${RC_SELF_HOST_MINT_MARKER}`)).toBeDefined();
+    expect(isSelfHostMinted(fs, "/state/identities/rig")).toBe(true);
+    expect(isSelfHostMinted(fs, "/state/identities/real")).toBe(false);
   });
 });

@@ -7,17 +7,19 @@ import { collectRepeated } from "../cli/parsers";
 import { UsageError } from "../cliError";
 import type { HeadroomFs } from "../headroom/state";
 import type { LayoutPaths } from "../paths";
-import { realFarmFs } from "../realPorts";
+import { realFarmFs, realRunPort } from "../realPorts";
 import { readFrontDoorControlMaterial } from "./doorClient";
 import { frontDoorRcApiClient, type RcApiClient } from "./rcApi";
 import { frontDoorRcControl, realRcControlTransport, type FrontDoorRcControl } from "./rcControl";
 import { registerRcEventsCommand } from "./rcEventsCommand";
 import { rcRateLimitInfoOf } from "./rcLiveUsage";
 import type { RcRateLimitInfo } from "./rcSchemas";
-import { mintRcSelfHostCredential, type RcSelfHostMintResult } from "./rcSelfHostMint";
+import { isSelfHostMinted, mintRcSelfHostCredential, type RcSelfHostMintResult } from "./rcSelfHostMint";
 import { RC_GOAL_CLEAR_WORDS, RC_SESSION_COMMAND_MAX_WAIT_MS, RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "./rcSessionCommands";
 import type { RcQuestionSelection } from "./rcQuestions";
 import { RC_PENDING_PER_SESSION_MAX, rcExcerpt, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
+import { identityDirectoryOfName } from "../identityStore";
+import { prepareSelfHostedKeychainLogin } from "../keychainLogin";
 import { RC_CONTEXT_USAGE_DETAILS, RC_PERMISSION_MODES, RC_READ_FILE_ENCODINGS, isRcContextUsageDetail, isRcPermissionMode, isRcReadFileEncoding, type RcEventWriteResult } from "./rcWrites";
 import type { RcStreamEvent } from "./rcSchemas";
 
@@ -715,6 +717,9 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
       .option("--force", "Replace an existing OAuth credential this door did not mint.")
       .option("--json", "Print the mint result as JSON.")
       .action((identity: string, options: Readonly<{ force?: boolean; json?: boolean }>) => {
+        // On macOS a Keychain login filed for the directory wins over the minted file, so it is cleared (an earlier mint's copy) or refused (a real login) before anything is written.
+        const configDir = identityDirectoryOfName(paths, identity);
+        prepareSelfHostedKeychainLogin({ run: realRunPort, platform: process.platform }, configDir, identity, isSelfHostMinted(realFarmFs, configDir));
         const result = mintRcSelfHostCredential({
           fs: realFarmFs,
           identitiesDir: paths.identitiesDir,

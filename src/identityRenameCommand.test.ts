@@ -13,6 +13,7 @@ import { readRenameJournal, renameJournalFile, writeRenameJournal } from "./iden
 import type { SessionProcess } from "./identitySessions";
 import { addIdentity, identityExists, identityIdOf, readActiveIdentity, useIdentity } from "./identityStore";
 import { createFakeKeychain } from "./keychainTestWorld";
+import { RC_SELF_HOST_MINT_MARKER } from "./frontdoor/rcSelfHostMint";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { buildProgram } from "./program";
 import { realFarmFs } from "./realPorts";
@@ -241,6 +242,31 @@ describe("identity rename", () => {
     expect(await run(["identity", "rename", "work", "client"])).toBe(0);
     expect(await run(["identity", "remove", "client", "--yes"])).toBe(0);
     expect(cacheRemovals).toEqual(["keychain:identity work"]);
+  });
+
+  it("identity remove deletes the Claude Code login item of an identity the self-hosted mint wrote into, by service and account, and of no other", async () => {
+    const previousUser = process.env.USER;
+    process.env.USER = "alex";
+    try {
+      addIdentity(paths, "lab");
+      const labDir = path.join(paths.identitiesDir, "lab");
+      fs.writeFileSync(path.join(labDir, RC_SELF_HOST_MINT_MARKER), "{}\n");
+      keychain.seed(claudeCodeKeychainService(labDir), "alex", "a-made-up-minted-copy");
+      addIdentity(paths, "work");
+      keychain.seed(claudeCodeKeychainService(path.join(paths.identitiesDir, "work")), "alex", "a-made-up-real-login");
+      expect(await run(["identity", "remove", "lab", "--yes"])).toBe(0);
+      expect(keychain.items.has(claudeCodeKeychainService(labDir))).toBe(false);
+      expect(keychain.calls.some((call) => call.args.includes("-g") || call.args.includes("-w"))).toBe(false);
+      // A real login's item is left as identity remove has always left it.
+      expect(await run(["identity", "remove", "work", "--yes"])).toBe(0);
+      expect(keychain.items.has(claudeCodeKeychainService(path.join(paths.identitiesDir, "work")))).toBe(true);
+    } finally {
+      if (previousUser === undefined) {
+        delete process.env.USER;
+      } else {
+        process.env.USER = previousUser;
+      }
+    }
   });
 
   it("keeps the removed id reserved until the CLI deletes its Keychain cache", async () => {

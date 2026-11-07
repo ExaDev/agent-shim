@@ -1,3 +1,4 @@
+import os from "node:os";
 import path from "node:path";
 import { identityCacheKey } from "./credential";
 import { Option, type Command } from "commander";
@@ -19,7 +20,8 @@ import type { LayoutPaths } from "./paths";
 import { realFarmFs } from "./realPorts";
 import { describeIdentityMove, describeIdentityRename, discardRenameJournal, moveIdentity, renameIdentity, type IdentityRenamePorts } from "./identityRename";
 import { realIdentityRenamePorts } from "./realIdentityRename";
-import { KEEP_KEYCHAIN_LOGIN_DESCRIPTION, KeychainCacheDeleteError, type KeychainProbe } from "./keychainLogin";
+import { KEEP_KEYCHAIN_LOGIN_DESCRIPTION, KeychainCacheDeleteError, claudeCodeKeychainAccount, claudeCodeLoginDeleteArgs, requireSelfHostedLoginDeleted, type KeychainProbe } from "./keychainLogin";
+import { isSelfHostMinted } from "./frontdoor/rcSelfHostMint";
 import { InvalidIdentityNameError, REMOVED_STATE, identityExists, readIdentity, addIdentity, addNewIdentity, requireIdentityAddable, useIdentity, type IdentityListing, listIdentities, setDefaultConfigProfile, setIdentityLabel, setIdentityProvider, setAllowAmbientCredential, setIdentityCredential, setIdentityAnchors, removeIdentityWithLockHeld, requireNoUnfinishedRenameNaming, identityDirectory, requireIdentityId, identityNotFound } from "./identityStore";
 import { realIdentityNamesLockPorts, withIdentityNamesLock } from "./identityNamesLock";
 import { describeAccountHolder, describeIdentityAccount, groupByLogin, loginKeyOf, readIdentityAccount, summariseIdentityAccount, type IdentityAccountRead, type IdentityAccountSummary } from "./identityAccounts";
@@ -478,6 +480,9 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
         const id = requireIdentityId(paths, name);
         await confirmRemoval(deps, options.yes, `identity "${name}", its directory ${identityDirectory(paths, id)}, and ${REMOVED_STATE}`);
         withIdentityNamesLock(paths, realIdentityNamesLockPorts, () => {
+        // Read before the directory goes: only an identity the self-hosted mint wrote into has its Claude Code login item deleted below.
+        const configDir = identityDirectory(paths, id);
+        const selfHosted = isSelfHostMinted(renamePorts.fs, configDir);
         const removed = removeIdentityWithLockHeld(paths, name, realIdentityNamesLockPorts);
         // The Keychain store holds a cached credential the store function cannot reach; forgetting it keeps a later identity given the same id from reading it.
         if (renamePorts.credentialCache.platform === "darwin") {
@@ -490,6 +495,11 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
             }
             throw error;
           }
+        }
+        // A minted self-hosted login Claude Code copied into the Keychain would otherwise outlive the identity and sign in the next identity made in the same directory.
+        if (selfHosted && renamePorts.platform === "darwin") {
+          const account = claudeCodeKeychainAccount(process.env, () => os.userInfo().username);
+          requireSelfHostedLoginDeleted(name, configDir, account, renamePorts.run.run("security", [...claudeCodeLoginDeleteArgs(configDir, account)]).status);
         }
         });
         reportMutation(options.json, { action: "removed", kind: "identity", name }, () => {

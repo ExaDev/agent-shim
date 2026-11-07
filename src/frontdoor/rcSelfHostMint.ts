@@ -22,6 +22,16 @@ const CREDENTIALS_FILE = ".credentials.json";
 /** The file Claude Code keeps its account block and feature cache in, inside the same directory. */
 const CLAUDE_JSON = ".claude.json";
 
+/**
+ * The file the mint leaves in the identity's directory to say its login is a minted self-hosted one. On macOS Claude Code reads its login from the Keychain item filed for the directory and falls back to `.credentials.json` when there is none (its secure storage in 2.1.319), so the minted file is what a fresh identity signs in with; but any credential write the CLI makes goes to the Keychain first and then deletes the file, which would leave the minted login in an item named for the directory. The marker is what lets `identity remove` delete that item for this identity, and only for one the mint wrote into: a real login's item is never touched, because no real login's directory carries the marker.
+ */
+export const RC_SELF_HOST_MINT_MARKER = ".agent-shim-selfhost-mint";
+
+/** Whether the mint wrote into the identity directory `identityDir` (`RC_SELF_HOST_MINT_MARKER`). */
+export function isSelfHostMinted(fs: Pick<FarmFs, "readFileUtf8">, identityDir: string): boolean {
+  return fs.readFileUtf8(path.join(identityDir, RC_SELF_HOST_MINT_MARKER)) !== undefined;
+}
+
 /** Where the door's own copy of the minted credential lives, under the door's state directory. */
 export const RC_SELF_HOST_RECORD_DIR = "rc-selfhost";
 
@@ -159,6 +169,8 @@ export function mintRcSelfHostCredential(deps: RcSelfHostMintDeps): RcSelfHostMi
       tengu_bridge_repl_v2_cse_shim_enabled: true,
     },
   }, null, 2)}\n`);
+
+  deps.fs.writeFilePrivate(path.join(identityDir, RC_SELF_HOST_MINT_MARKER), `${JSON.stringify({ mintedAt })}\n`);
 
   deps.fs.mkdirPrivate(recordDir);
   deps.fs.writeFilePrivate(recordFile, `${JSON.stringify({ accessToken, refreshToken, organizationUuid, accountUuid }, null, 2)}\n`);

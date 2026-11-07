@@ -11,8 +11,11 @@ import { applyProfileChange, createProfile, ProfileAlreadyExistsError, ProfileNo
 import { summariseCredential } from "../credential";
 import { mergeCredentialCache } from "../credentialCacheChange";
 import { addDirectoryRule, DirectoryRuleAlreadyExistsError, DirectoryRuleNotFoundError, listDirectoryRules, removeDirectoryRule, requireRuleSelector, updateDirectoryRule } from "../directoryRulesStore";
-import { addIdentity, IdentityAlreadyExistsError, IdentityNotFoundError, identityExists, readIdentity, removeIdentityWithLockHeld, REMOVED_STATE, loggedIdentityIds, requireIdentityAddable, requireIdentityNames, setAllowAmbientCredential, setDefaultConfigProfile, setIdentityLabel, setIdentityProvider, setIdentityAnchors, setIdentityCredential, useIdentity, type IdentityCredentialChange, identityNotFound } from "../identityStore";
-import { KeychainCacheDeleteError, KeychainLoginError, KeychainLookupError, requireKeychainCacheDeleted } from "../keychainLogin";
+import { addIdentity, IdentityAlreadyExistsError, IdentityNotFoundError, identityDirectoryOfName, identityExists, readIdentity, removeIdentityWithLockHeld, REMOVED_STATE, loggedIdentityIds, requireIdentityAddable, requireIdentityNames, setAllowAmbientCredential, setDefaultConfigProfile, setIdentityLabel, setIdentityProvider, setIdentityAnchors, setIdentityCredential, useIdentity, type IdentityCredentialChange, identityNotFound } from "../identityStore";
+import { KeychainCacheDeleteError, KeychainLoginError, KeychainLookupError, SelfHostedLoginDeleteError, claudeCodeKeychainAccount, claudeCodeLoginDeleteArgs, requireKeychainCacheDeleted, requireSelfHostedLoginDeleted } from "../keychainLogin";
+import { isSelfHostMinted } from "./rcSelfHostMint";
+import { realFarmFs } from "../realPorts";
+import os from "node:os";
 import { acquireIdentityNamesLock, nonWaitingIdentityNamesLockPorts } from "../identityNamesLock";
 import { IdentityLockBusyError } from "../launcher/lock";
 import { poolNameOf } from "../launcher/identity";
@@ -110,7 +113,7 @@ function refusal(error: unknown): never {
     throw new ORPCError("CONFLICT", { message: error.message });
   }
   // The request was carried out but left a Keychain entry behind, so it is no fault of the request.
-  if (error instanceof KeychainCacheDeleteError) {
+  if (error instanceof KeychainCacheDeleteError || error instanceof SelfHostedLoginDeleteError) {
     throw new ORPCError("INTERNAL_SERVER_ERROR", { message: error.message });
   }
   if (error instanceof CliError) {
@@ -266,6 +269,9 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
             requireConfirmation(input.confirm, `identity "${input.name}", its directory, and ${REMOVED_STATE}`);
             const lock = guarded(() => acquireIdentityNamesLock(paths, nonWaitingIdentityNamesLockPorts));
             try {
+              // Read before the directory goes: only an identity the self-hosted mint wrote into has its Claude Code login item deleted below.
+              const configDir = guarded(() => identityDirectoryOfName(paths, input.name));
+              const selfHosted = isSelfHostMinted(realFarmFs, configDir);
               const id = guarded(() => removeIdentityWithLockHeld(paths, input.name, nonWaitingIdentityNamesLockPorts));
               // The Keychain store's cached credential is forgotten too, through the runner that does not block the event loop; an item that is not there is no failure, and any other leaves the entry behind, so it is reported (the identity itself is removed by then).
               if (deps.keychain.platform === "darwin") {
@@ -274,6 +280,14 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
                 guarded(() => {
                   requireKeychainCacheDeleted(owner, status, input.name);
                 });
+                // A minted self-hosted login Claude Code copied into the Keychain would otherwise outlive the identity and sign in the next identity made in the same directory.
+                if (selfHosted) {
+                  const account = claudeCodeKeychainAccount(process.env, () => os.userInfo().username);
+                  const deleted = await deps.keychain.runAsync("security", claudeCodeLoginDeleteArgs(configDir, account));
+                  guarded(() => {
+                    requireSelfHostedLoginDeleted(input.name, configDir, account, deleted.status);
+                  });
+                }
               }
               return { action: "removed" as const, kind: "identity" as const, name: input.name };
             } finally {
