@@ -1,3 +1,51 @@
+## [11.90.0](https://github.com/ExaDev/agent-shim/compare/v11.89.1...v11.90.0) (2026-11-07)
+
+### Features
+
+* give every supervised launch an in-process control channel ([d55b60a](https://github.com/ExaDev/agent-shim/commit/d55b60acfdae3dac61f85c6b3f8a28d657bd02a8))
+* read, set and clear a session's goal and compact it over Remote Control ([529a627](https://github.com/ExaDev/agent-shim/commit/529a62790067b6a1b1e45066c14bd1da614fcfd6)), closes [#723](https://github.com/ExaDev/agent-shim/issues/723)
+* route goal and compaction verbs through each session's own channel ([95c2068](https://github.com/ExaDev/agent-shim/commit/95c20684936f4f1a2dd7c74636254a597f2b417b))
+
+### Bug Fixes
+
+* accept only literal loopback addresses for the self-hosted dial ([0764778](https://github.com/ExaDev/agent-shim/commit/0764778dbf87ebf2211501aabb7ba7ad7dcad801))
+* bound a supervised session's goal and compaction requests by the wait ([eacce59](https://github.com/ExaDev/agent-shim/commit/eacce59c233e1c2656e755d240e252a9ee16ffc8))
+* bound compaction instructions by what a request can carry ([7d9b012](https://github.com/ExaDev/agent-shim/commit/7d9b012d99aebb6768717c9855f92596c66899d5))
+* bound each goal verb by one wait and refuse inputs it cannot confirm ([8a2c774](https://github.com/ExaDev/agent-shim/commit/8a2c774c800894c272932b4d70d8d83820a0a0bb))
+* clean up what the control channel leaves behind ([7f08f6f](https://github.com/ExaDev/agent-shim/commit/7f08f6f7ae7093d4925773da6b45563501bd6f24))
+* give the library no way to name another client platform ([dfc8f6f](https://github.com/ExaDev/agent-shim/commit/dfc8f6f2dfd005a5e4cca9a64de4ce66f33a35b8))
+* join a Remote Control session to its launch by bridge rows alone ([daae4ac](https://github.com/ExaDev/agent-shim/commit/daae4ac550777bf4b1f25511b54d91e8952d9d42))
+* keep the door's own client writes out of the observed client platform ([29f4a54](https://github.com/ExaDev/agent-shim/commit/29f4a543815f6edf9b242256151290113ac34c6e))
+* list control results before requests when removing orphans ([9903f94](https://github.com/ExaDev/agent-shim/commit/9903f945dfd213e66723c67aaec712d8020cbe55))
+* load the session control plugin under Claude Code 2.1.319 ([7afba94](https://github.com/ExaDev/agent-shim/commit/7afba948a070058fc135cb0aaf135a577dbc7565))
+* make the directives grant take effect only beside remote-control ([77ec839](https://github.com/ExaDev/agent-shim/commit/77ec839e0753b299e543854af4d1c5b0134ed17c))
+* name why the self-hosted surface is unbound in the refusal ([31dee54](https://github.com/ExaDev/agent-shim/commit/31dee54e0ae31e0798ca64df63f8355b86c0e593))
+* never send a person's-app command to the real host when self-hosting ([59a46ce](https://github.com/ExaDev/agent-shim/commit/59a46cecee2ae96a1ee01981f9d691af5304f48c))
+* raise the typed API client's header timeout only for session verbs ([6d6f004](https://github.com/ExaDev/agent-shim/commit/6d6f004f20ed4d7e10cd6375fd33a5e231ee4e44))
+* read supervised transcripts by their appended tail, asynchronously ([96dc3b7](https://github.com/ExaDev/agent-shim/commit/96dc3b728299c0b0ba8c81151b395880b8f090f6))
+* run control-plugin requests oldest first and expire abandoned ones ([1dbefae](https://github.com/ExaDev/agent-shim/commit/1dbefae5ca1c943482bb4fa322d4e2e079317671))
+* stamp client events with the writer's client platform when self-hosting ([835d073](https://github.com/ExaDev/agent-shim/commit/835d073d600c9b04d8e1d94c7ed282cccca5ac0c))
+* take a self-hosted client event's platform from its header alone ([10f744c](https://github.com/ExaDev/agent-shim/commit/10f744ce787cab9762e2464cda608558e82e8698))
+* take a self-hosted teleport write's platform from its header too ([4fe5fee](https://github.com/ExaDev/agent-shim/commit/4fe5feee2394a0f87efede5e3470780641eb7822))
+* trim a goal condition before measuring it ([403ea7d](https://github.com/ExaDev/agent-shim/commit/403ea7d482c138b61536f374a615ac4ffe57fb2a))
+* wait for the transcript row that confirms a supervised goal change ([b6b74ef](https://github.com/ExaDev/agent-shim/commit/b6b74ef0b3736e6d10e4672ec3992d2ab14abc9d))
+
+### Documentation
+
+* key the goal verbs' matrix on door mode and state the grant's limits ([b392588](https://github.com/ExaDev/agent-shim/commit/b39258898755fb38981e4c34e2970c0be2632ee8))
+* list the goal and compaction exports, supervised route only ([e8c233b](https://github.com/ExaDev/agent-shim/commit/e8c233b3e174b4a2312d23485108793285ab508b))
+* record inbound platform rewriting as a rejected option ([fa0861b](https://github.com/ExaDev/agent-shim/commit/fa0861b695536798ee9861b5477c4cff4c961ac4))
+* record what the isolated lab verified for goal and compaction control ([35b54bd](https://github.com/ExaDev/agent-shim/commit/35b54bd35817c0e623c86caa3f20012c0f192a56))
+* say what the bridge-row join and the loader guard rest on ([203632d](https://github.com/ExaDev/agent-shim/commit/203632df78338726692b91eaf608e29a4c4554dd))
+* state that self-hosted answers are matched by order, not identity ([8d7b59a](https://github.com/ExaDev/agent-shim/commit/8d7b59aba7a5a7ec3c063c9df3354c1839826c41))
+
+### Tests
+
+* add a plain-text driver to the rig's mock provider ([b93354b](https://github.com/ExaDev/agent-shim/commit/b93354bd1582596ecf1342f4f3fed3fda73399e7))
+* guard a session born from a client write against its platform ([7041aa1](https://github.com/ExaDev/agent-shim/commit/7041aa1f71385fb81401fd209f868d284e974669))
+* guard the control plugin against Claude Code's loader constraint ([d6b6c8d](https://github.com/ExaDev/agent-shim/commit/d6b6c8d366b1728be15543d0b4c69348fce1daf4))
+* name the directives grant in the session-events MCP case ([6e26b97](https://github.com/ExaDev/agent-shim/commit/6e26b9724c91482587d1098b02de17367c5e66fe))
+
 ## [11.89.1](https://github.com/ExaDev/agent-shim/compare/v11.89.0...v11.89.1) (2026-11-07)
 
 ### Bug Fixes
