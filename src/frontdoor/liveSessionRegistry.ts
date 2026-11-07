@@ -30,6 +30,8 @@ export interface LiveSessionRegistry {
    * The models block the launch carrying `sessionId` resolved for itself, or undefined when no live launch carries that id or the launch added nothing to the global block. A session id the view does not hold is looked up as `admits` looks up a token (one listing, a stat per record, a read of only what is new or changed), so a launch is found on its first request and an unknown id costs no record read.
    */
   readonly modelsOf: (sessionId: string) => ModelsConfig | undefined;
+  /** Whether a live launch carries `sessionId`, looked up as `modelsOf` looks one up: the bound on per-session state the door keeps in memory, which lives exactly as long as the launch it describes. */
+  readonly holdsSession: (sessionId: string) => boolean;
   /** Drops the launches `pids` from the view, for the records the caller has just removed (the tick's prune), so their capabilities are refused at once rather than at the next `rescan`. */
   readonly forget: (pids: readonly number[]) => void;
 }
@@ -113,6 +115,7 @@ export function createLiveSessionRegistry(ports: LiveSessionRegistryPorts): Live
       const held = bySessionId.get(sessionId) ?? (reconcile() ? bySessionId.get(sessionId) : undefined);
       return held?.models;
     },
+    holdsSession: (sessionId) => bySessionId.has(sessionId) || (reconcile() && bySessionId.has(sessionId)),
     rescan: () => {
       known.clear();
       for (const name of recordNames()) {
