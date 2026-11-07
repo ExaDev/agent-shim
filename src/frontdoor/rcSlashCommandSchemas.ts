@@ -15,10 +15,10 @@ export const RcGoalSessionInputSchema = z.strictObject({
   waitMs: WaitMsSchema,
 });
 
-/** The goal set's input: one non-empty session id, the condition (as long as `/goal` accepts) and an optional wait bound. */
+/** The goal set's input: one non-empty session id, the condition (trimmed before it is measured, then as long as `/goal` accepts) and an optional wait bound. */
 export const RcGoalSetInputSchema = z.strictObject({
   session: z.string().min(1),
-  condition: z.string().min(1).max(RC_GOAL_CONDITION_MAX_CHARS).regex(/^[^\r\n]*$/u, "a goal condition is one line"),
+  condition: z.string().trim().min(1).max(RC_GOAL_CONDITION_MAX_CHARS).regex(/^[^\r\n]*$/u, "a goal condition is one line"),
   waitMs: WaitMsSchema,
 });
 
