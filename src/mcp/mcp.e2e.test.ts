@@ -224,17 +224,19 @@ describe("the MCP server over a real door handler", () => {
     await client.close();
   });
 
-  it("exposes a goal set and an instructed compaction only under the directives grant, which the Remote Control grant does not imply", async () => {
+  it("exposes a goal set and an instructed compaction only under the directives grant on top of the Remote Control one, which does not imply it", async () => {
     const remoteOnly = await connect({ writes: true, remoteControl: true, history: false, directives: false });
     const remoteTools = (await remoteOnly.listTools()).tools.map((tool) => tool.name);
     expect(remoteTools).toEqual(expect.arrayContaining(["rc_goalGet", "rc_goalClear", "rc_compact"]));
     expect(remoteTools).not.toContain("rc_goalSet");
     expect(remoteTools).not.toContain("rc_compactWithInstructions");
     await remoteOnly.close();
-    const directives = await connect({ writes: false, remoteControl: false, history: false, directives: true });
+    const alone = await connect({ writes: false, remoteControl: false, history: false, directives: true });
+    expect((await alone.listTools()).tools.map((tool) => tool.name)).not.toContain("rc_goalSet");
+    await alone.close();
+    const directives = await connect({ writes: false, remoteControl: true, history: false, directives: true });
     const directiveTools = (await directives.listTools()).tools.map((tool) => tool.name);
-    expect(directiveTools).toEqual(expect.arrayContaining(["rc_goalSet", "rc_compactWithInstructions"]));
-    expect(directiveTools).not.toContain("rc_goalClear");
+    expect(directiveTools).toEqual(expect.arrayContaining(["rc_goalSet", "rc_compactWithInstructions", "rc_goalGet", "rc_goalClear"]));
     const set = await directives.callTool({ name: "rc_goalSet", arguments: { session: SESSION_ID, condition: "the build is green" } });
     expect(set.isError).not.toBe(true);
     expect(JSON.parse(textOf(set))).toMatchObject({ session: SESSION_ID, condition: "the build is green", superseded: null });

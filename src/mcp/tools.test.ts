@@ -99,7 +99,9 @@ describe("toolsFromOpenApiDocument", () => {
       },
     };
     expect(toolsFromOpenApiDocument(document, { writes: true, remoteControl: true, history: true, directives: false }).map((tool) => tool.name)).toEqual(["rc_send"]);
-    expect(toolsFromOpenApiDocument(document, { writes: false, remoteControl: false, history: false, directives: true }).map((tool) => tool.name)).toEqual(["rc_goalSet"]);
+    // The directives grant narrows the Remote Control one and never stands alone: without it an agent could set a goal it could neither read nor clear.
+    expect(toolsFromOpenApiDocument(document, { writes: false, remoteControl: false, history: false, directives: true }).map((tool) => tool.name)).toEqual([]);
+    expect(toolsFromOpenApiDocument(document, { writes: false, remoteControl: true, history: false, directives: true }).map((tool) => tool.name)).toEqual(["rc_goalSet", "rc_send"]);
   });
 
   it("refuses two operations that map to one tool name", () => {

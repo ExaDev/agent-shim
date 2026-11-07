@@ -50,7 +50,7 @@ export interface McpPermissions {
   readonly remoteControl: boolean;
   /** Expose the reads of session history, which span every identity the machine has and carry descriptions, task contents and project names. */
   readonly history: boolean;
-  /** Expose the Remote Control writes that put a directive into another session as its user's intent (a goal's condition, a compaction's summary instructions): narrower than `remoteControl`, which never includes them. */
+  /** Expose the Remote Control writes that put a directive into another session as its user's intent (a goal's condition, a compaction's summary instructions). It takes effect only beside `remoteControl`, which never includes them. */
   readonly directives: boolean;
 }
 
@@ -82,7 +82,8 @@ function permitted(tag: string | undefined, readOnly: boolean, permissions: McpP
     return permissions.history;
   }
   if (tag === RC_DIRECTIVE_TAG) {
-    return permissions.directives;
+    // A narrowing of the Remote Control grant, never a grant on its own: alone it would let an agent set a goal it could neither read nor clear.
+    return permissions.remoteControl && permissions.directives;
   }
   if (readOnly) {
     return true;

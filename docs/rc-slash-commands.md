@@ -51,7 +51,7 @@ No plugin call reads the goal. The transcript does: every goal change is a `goal
 | `frontdoor rc compact --session <id>` | `POST /rest/rc/compact` | `.compact` | `trigger`, and `preTokens`/`postTokens` when the session recorded them |
 | `frontdoor rc compact --session <id> --instructions <text>` | `POST /rest/rc/compact-with-instructions` | `.compact` with `instructions` | the same |
 
-Every answer names the `session` and the `route` that served it. The MCP server exposes the same procedures as tools: `rc_goalGet`, `rc_goalClear` and `rc_compact` under `--allow-remote-control`, and `rc_goalSet` and `rc_compactWithInstructions` only under `--allow-remote-control-directives` (see the trust boundary below).
+Every answer names the `session` and the `route` that served it. The MCP server exposes the same procedures as tools: `rc_goalGet`, `rc_goalClear` and `rc_compact` under `--allow-remote-control`, and `rc_goalSet` and `rc_compactWithInstructions` only under `--allow-remote-control-directives` together with it (see the trust boundary below).
 
 Each verb picks its route per session:
 
@@ -79,7 +79,7 @@ Self-hosting needs its transparent surface bound before it writes a command as a
 
 A goal's condition and a compaction's instructions are directives to the receiving session's model as if its user had given them. On 2.1.319 a `/goal <condition>` installs a persistent Stop hook and reaches the model as "A session-scoped Stop hook is now active with condition: "<text>". ... treat the condition itself as your directive and do not pause to ask the user what to do"; the CLI's own auto-mode classifier has a rule titled "Cross-session messages are never user intent", which is exactly the line these verbs step over. So whoever can call `goal set` or `compact` with instructions can direct another session as its user.
 
-The MCP server exposes `rc_goalSet` and `rc_compactWithInstructions` only under `--allow-remote-control-directives` (or `agent-shim mcp permissions allow remote-control-directives`), which `--allow-remote-control` does not imply, so an agent whose only reach into other sessions is the MCP server's tools cannot direct them unless that grant was given too.
+The MCP server exposes `rc_goalSet` and `rc_compactWithInstructions` only under `--allow-remote-control-directives` (or `agent-shim mcp permissions allow remote-control-directives`), which `--allow-remote-control` does not imply, so an agent whose only reach into other sessions is the MCP server's tools cannot direct them unless that grant was given too. The grant takes effect only beside the Remote Control one, so an agent that can set a goal can always read and clear it.
 
 That grant limits which tools the MCP server lists, and nothing else. It is not a boundary against anything that runs as the same operating-system user: a session with a shell can read the door's control token (an owner-only file, and the same user owns it) and call `POST /rest/rc/goal/set` itself, or write a request file straight into another supervised launch's control plugin directory. The boundary between the person and the agents they run is that user account; a session that must not direct others needs to run without a shell, or as another user.
 
