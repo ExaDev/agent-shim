@@ -70,12 +70,13 @@ function supervisedWorld(options: Readonly<{ version?: string; transcript?: stri
 }
 
 /** A self-hosted session with no supervisor, whose self-hosted dial records each write and whose surface answers 500; `unavailable` is the surface's refusal, when it gives one. */
-function selfHostedWorld(version: string | undefined, unavailable?: string) {
+function selfHostedWorld(version: string | undefined, unavailable?: string, accepts = false) {
   const written: string[] = [];
   const dial = rcSelfHostEventDial(() => ({ host: "127.0.0.1", port: 47_592 }), () => ({
     writeEvents: async (_sessionId, _headers, body) => {
       written.push(body);
-      return await Promise.resolve({ status: 500, body: "the self-hosted surface refused the write" });
+      // An accepting surface numbers the write and its worker never answers, so only the verb's own deadline ends the wait.
+      return await Promise.resolve(accepts ? { status: 200, body: JSON.stringify({ results: [{ sequence_num: String(written.length) }] }) } : { status: 500, body: "the self-hosted surface refused the write" });
     },
     writeTeleportEvents: async () => await Promise.reject(new Error("unused")),
   }));
@@ -236,6 +237,21 @@ describe("goal and compaction control over Remote Control, by route", () => {
     const result = await commands.compact(SESSION, { waitMs: SHORT_WAIT_MS });
     expect(seen?.aborted).toBe(true);
     expect(result.ok ? "" : result.message).toContain(`within ${String(SHORT_WAIT_MS)} ms`);
+  });
+
+  it("bounds a self-hosted verb by one deadline in all, however many commands it runs", async () => {
+    const world = selfHostedWorld(VERIFIED_VERSION, undefined, true);
+    const result = await createRcSessionCommands(world.deps).goalSet(SESSION, "tests pass", { waitMs: SHORT_WAIT_MS });
+    expect(result.ok ? "" : result.message).toContain(`within ${String(SHORT_WAIT_MS)} ms in all`);
+    // The goal set reads the goal it replaces first; the deadline passed during that read, so the set itself was never written.
+    expect(world.written).toHaveLength(1);
+  });
+
+  it("refuses a goal condition that spans lines, unsent", async () => {
+    const world = supervisedWorld();
+    const result = await createRcSessionCommands(world.deps).goalSet(SESSION, "tests pass\nand docs build");
+    expect(result.ok ? "" : result.message).toContain("a goal condition is one line");
+    expect(world.ran).toEqual([]);
   });
 
   it("refuses with the reason when the door cannot tell which supervised launch the session is", async () => {

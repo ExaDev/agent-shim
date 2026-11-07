@@ -183,7 +183,14 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
         if (version === undefined || !RC_SESSION_COMMAND_VERIFIED_VERSIONS.includes(version)) {
           return { ok: false, message: unverifiedVersionMessage(sessionId, version, "no system/init from its worker has been observed on its stream; send it a prompt so it reports one") };
         }
-        return await actions.selfHosted(deps.selfHost, signal);
+        // One deadline for the whole verb, however many commands it runs (a goal set reads the goal it replaces first): each command's own wait is the whole bound, and this signal ends the verb once the bound has passed in total.
+        const waitMs = options.waitMs ?? deps.selfHost.defaultWaitMs;
+        const timeout = AbortSignal.timeout(waitMs);
+        const result = await actions.selfHosted(deps.selfHost, AbortSignal.any([signal, timeout]));
+        if (!result.ok && timeout.aborted) {
+          return { ok: false, message: `session ${sessionId}'s worker did not answer within ${String(waitMs)} ms in all; it may still be queued behind a running turn, so read the session's stream before asking again` };
+        }
+        return result;
       }
       return { ok: false, message: unsupportedMessage(sessionId) };
     });
@@ -223,6 +230,9 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
       }
       if (RC_GOAL_CLEAR_WORDS.includes(trimmed.toLowerCase())) {
         return { ok: false, message: `"${trimmed}" cannot be set as a goal condition: /goal reads ${RC_GOAL_CLEAR_WORDS.join(", ")} as a request to clear the goal, so use the clear verb for that` };
+      }
+      if (/[\r\n]/u.test(trimmed)) {
+        return { ok: false, message: "a goal condition is one line: /goal reads its condition from the line it is typed on, and both routes confirm the goal by the exact condition, so a condition spanning lines is refused rather than set as something else" };
       }
       if (trimmed.length > RC_GOAL_CONDITION_MAX_CHARS) {
         return { ok: false, message: `a goal condition is limited to ${String(RC_GOAL_CONDITION_MAX_CHARS)} characters, and this one has ${String(trimmed.length)}` };
