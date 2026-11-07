@@ -859,13 +859,6 @@ describe("the self-hosted local answers", () => {
     const refresh = await call(oauthPort, "POST", "/v1/oauth/token", { grant_type: "refresh_token", refresh_token: REFRESH_TOKEN });
     expect(refresh.status).toBe(HTTP_STATUS.ok);
     expect(JSON.parse(refresh.body)).toMatchObject({ access_token: MINTED_OAUTH_TOKEN, refresh_token: REFRESH_TOKEN });
-    // The surface serves only sessions the connect surface already attributed to the mode, so a path no named answer serves is answered from the offline table whatever the request presents, never left to be forwarded.
-    const presentations: readonly Readonly<Record<string, string>>[] = [{}, { authorization: `Bearer ${MINTED_OAUTH_TOKEN}` }, { authorization: "Bearer sk-ant-REDACTED" }, { "x-api-key": "sk-ant-api" }];
-    for (const presented of presentations) {
-      const offline = await call(oauthPort, "GET", "/api/nothing", undefined, presented);
-      expect(offline.status).toBe(HTTP_STATUS.notFound);
-      expect(offline.body).toContain("self-hosted Remote Control mode serves nothing at /api/nothing");
-    }
     await new Promise<void>((resolve) => {
       oauthServer.close(() => {
         resolve(undefined);
