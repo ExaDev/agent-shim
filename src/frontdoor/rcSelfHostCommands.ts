@@ -50,6 +50,8 @@ async function writeRcPersonMessage(deps: RcPersonWriteDeps, sessionId: string, 
 export interface RcSelfHostCommandDeps {
   /** What writing a command as a person's app needs, its dial the door's own surface alone. */
   readonly personWrite: RcPersonWriteDeps;
+  /** Whether the door's own service owns the session: a command is written to the door's own surface only for a session it owns, never for a native session whose service is the real one. */
+  readonly owns: (sessionId: string) => boolean;
   /** Why the door's own surface cannot take a command now (it is not bound, as when the door runs self-hosted without a transparent surface), or undefined when it can. */
   readonly unavailable: () => string | undefined;
   /** The client attachment's fan-out, on which the worker's answer arrives. */

@@ -46,6 +46,7 @@ import {
   teleportRcSession,
   buildRcMarkReadBody,
   type RcEventDial,
+  perSessionRcEventDial,
 } from "./rcWrites";
 
 /**
@@ -842,5 +843,37 @@ describe("the teleport write and the read-receipt body", () => {
       expect(workerOnly.message).toContain("no claude.ai OAuth bearer has been observed");
     }
     expect(teleports).toEqual([]);
+  });
+});
+
+describe("the per-session event dial", () => {
+  const sent: string[] = [];
+  const recording = (name: string): RcEventDial => ({
+    writeEvents: async (sessionId) => {
+      sent.push(`${name}:events:${sessionId}`);
+      return await Promise.resolve({ status: 200, body: "{}" });
+    },
+    writeTeleportEvents: async (sessionId) => {
+      sent.push(`${name}:teleport:${sessionId}`);
+      return await Promise.resolve({ status: 200, body: "{}" });
+    },
+  });
+
+  it("sends a session the self-hosted service owns to it and every other session to the real service, by the session and the credential presented", async () => {
+    sent.length = 0;
+    const ownedId = "cse_00000000-0000-4000-8000-000000000001";
+    const dial = perSessionRcEventDial((id, headers) => id === ownedId || headers.authorization === "Bearer minted", recording("self-hosted"), recording("service"));
+    await dial.writeEvents(ownedId, {}, "{}");
+    await dial.writeTeleportEvents(ownedId, {}, "{}");
+    await dial.writeEvents("cse_00000000-0000-4000-8000-000000000002", { authorization: "Bearer minted" }, "{}");
+    await dial.writeEvents("cse_00000000-0000-4000-8000-000000000003", { authorization: "Bearer native" }, "{}");
+    await dial.writeTeleportEvents("cse_00000000-0000-4000-8000-000000000003", { authorization: "Bearer native" }, "{}");
+    expect(sent).toEqual([
+      `self-hosted:events:${ownedId}`,
+      `self-hosted:teleport:${ownedId}`,
+      "self-hosted:events:cse_00000000-0000-4000-8000-000000000002",
+      "service:events:cse_00000000-0000-4000-8000-000000000003",
+      "service:teleport:cse_00000000-0000-4000-8000-000000000003",
+    ]);
   });
 });

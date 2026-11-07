@@ -67,6 +67,7 @@ function makeWorld(answer: readonly RcStreamEvent[] = [], injectResult?: RcEvent
     versionOf: () => "2.1.319",
     defaultWaitMs: SHORT_WAIT_MS,
     personWrite: { credentialOf: () => OBSERVED, noteSequenceNums: () => undefined, newUuid: () => "00000000-0000-4000-8000-000000000001", dial: rcSelfHostEventDial({ resolve: () => target, unboundReason: () => UNBOUND_REASON }, fakeDial) },
+    owns: () => true,
     unavailable: () => undefined,
     setTimer: (action) => {
       timers.push(action);

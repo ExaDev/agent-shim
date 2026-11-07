@@ -263,6 +263,10 @@ describe("the self-hosted Remote Control mode end to end", () => {
     // The tracker observed the create through the same wrapper the real door wraps every resolved route with, so the door's client half already holds the credential and the attachment follows.
     await waitUntil(() => tracker.list().some((session) => session.id === sessionId));
     expect(tracker.credentialOf(sessionId)?.authorization).toBe(`Bearer ${MINTED_OAUTH_TOKEN}`);
+    // The surface owns the session it holds, and any session presented with the credential it minted, but not a native session carrying some other account's token.
+    expect(surface.ownsSession(sessionId, undefined)).toBe(true);
+    expect(surface.ownsSession("cse_00000000-0000-4000-8000-0000000000aa", `Bearer ${MINTED_OAUTH_TOKEN}`)).toBe(true);
+    expect(surface.ownsSession("cse_00000000-0000-4000-8000-0000000000aa", "Bearer a-native-account-token")).toBe(false);
 
     const bridgeSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
     const bridged = await requestOn(bridgeSocket, rawRequest("POST", `/v1/code/sessions/${sessionId}/bridge`, { Authorization: `Bearer ${MINTED_OAUTH_TOKEN}`, "Content-Type": "application/json" }, "{}"));

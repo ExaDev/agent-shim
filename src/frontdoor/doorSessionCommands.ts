@@ -19,6 +19,8 @@ export interface DoorRcSessionCommandsDeps {
     | {
         /** The person's-app write, over the dial that reaches the door's own surface and nothing else. */
         readonly personWrite: RcPersonWriteDeps;
+        /** Whether the door's own service owns the session. */
+        readonly owns: (sessionId: string) => boolean;
         /** Why that surface cannot take a command now, or undefined when it can. */
         readonly unavailable: () => string | undefined;
         readonly fanout: RcEventFanout;
@@ -61,6 +63,7 @@ export function createDoorRcSessionCommands(deps: DoorRcSessionCommandsDeps): Rc
         ? undefined
         : {
             personWrite: selfHost.personWrite,
+            owns: selfHost.owns,
             unavailable: selfHost.unavailable,
             fanout: selfHost.fanout,
             versionOf: (sessionId) => {

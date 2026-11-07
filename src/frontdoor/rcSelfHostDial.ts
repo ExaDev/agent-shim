@@ -1,6 +1,7 @@
 import { realRcEventDial, realRcStreamDial, type RcDialTarget } from "./connectEffects";
-import type { RcStreamDial } from "./rcStream";
-import type { RcEventDial } from "./rcWrites";
+import { rcSelfHostedChoiceOf, type RcSelfHostSurface } from "./rcSelfHost";
+import { perSessionRcStreamDial, type RcStreamDial } from "./rcStream";
+import { perSessionRcEventDial, type RcEventDial, type RcObservedCredential } from "./rcWrites";
 
 /** The brand only `rcSelfHostEventDial` and `rcSelfHostStreamDial` put on a dial: not exported, so no other code can make a value of either type. */
 const SELF_HOST_DIAL: unique symbol = Symbol("the door's own self-hosted surface");
@@ -87,4 +88,31 @@ export function selfHostSurfaceUnboundReason(transparentSurface: string | undefi
     return `AGENT_SHIM_TRANSPARENT_SURFACE is "${transparentSurface}", which is not a port, so the door has no surface of its own to write to`;
   }
   return `the door's transparent surface on port ${String(port)} is not bound: its listener has not started yet or could not bind the port (the door's log says which)`;
+}
+
+/**
+ * The self-hosted mode's dials, chosen per session: `event` and `stream` are the real service's for a native session and the branded loopback dials for a session the door's own service owns, so an owned session's credential is never offered to the real service and a native session is never sent to the door's own surface. `selfHostEvent` is the branded event dial alone, the one a command written as a person's app may ride; `owns` says whether the door's own service owns a session, by what it holds and by the credential the tracker observed for it.
+ */
+export interface RcSelfHostedDials {
+  readonly event: RcEventDial;
+  readonly stream: RcStreamDial;
+  readonly selfHostEvent: RcSelfHostEventDial;
+  readonly owns: (sessionId: string) => boolean;
+}
+
+/** Builds the self-hosted mode's per-session dials over the surface that decides ownership, the source of the door's own surface, and the real dials a native session uses. */
+export function rcSelfHostedDials(
+  surface: Pick<RcSelfHostSurface, "ownsSession">,
+  source: RcSelfHostDialSource,
+  credentialOf: (sessionId: string) => RcObservedCredential | undefined,
+  real: { readonly event: RcEventDial; readonly stream: RcStreamDial },
+): RcSelfHostedDials {
+  const choice = rcSelfHostedChoiceOf(surface);
+  const selfHostEvent = rcSelfHostEventDial(source);
+  return {
+    event: perSessionRcEventDial(choice, selfHostEvent, real.event),
+    stream: perSessionRcStreamDial(choice, rcSelfHostStreamDial(source), real.stream),
+    selfHostEvent,
+    owns: (sessionId) => surface.ownsSession(sessionId, credentialOf(sessionId)?.authorization),
+  };
 }

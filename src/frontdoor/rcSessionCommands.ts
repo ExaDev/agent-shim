@@ -186,7 +186,7 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
       if (!deps.isObserved(sessionId)) {
         return { ok: false, message: `the front door has not observed Remote Control session ${sessionId}` };
       }
-      if (deps.selfHost !== undefined) {
+      if (deps.selfHost?.owns(sessionId) === true) {
         const unavailable = deps.selfHost.unavailable();
         if (unavailable !== undefined) {
           return { ok: false, message: `session ${sessionId} was not launched under an agent-shim supervisor, and the door's self-hosted surface cannot take a command: ${unavailable}` };

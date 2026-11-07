@@ -53,6 +53,22 @@ export interface RcEventDial {
 }
 
 /**
+ * Whether a call belongs to the door's own self-hosted Remote Control service rather than the real one, decided from the session and the headers the call would carry (`RcSelfHostSurface.ownsSession`). The headers matter because the credential says whose a session is even when the service holds nothing of it any longer.
+ */
+export type RcSelfHostedChoice = (sessionId: string, headers: Readonly<Record<string, string>>) => boolean;
+
+/**
+ * A dial that chooses its backend per call: `selfHosted` for a session the door's own service owns (one created against the door itself, with no Anthropic login, or one carrying the credential the service minted), and `service` for every other session (a native one, created against the real service). One door serves both kinds at once, so a door in self-hosted mode still reaches a native session's real service, and an owned session's credential is only ever offered to `selfHosted`, which the door builds so that it cannot reach anywhere else.
+ */
+export function perSessionRcEventDial(isSelfHosted: RcSelfHostedChoice, selfHosted: RcEventDial, service: RcEventDial): RcEventDial {
+  const dialOf = (sessionId: string, headers: Readonly<Record<string, string>>): RcEventDial => (isSelfHosted(sessionId, headers) ? selfHosted : service);
+  return {
+    writeEvents: async (sessionId, headers, body) => await dialOf(sessionId, headers).writeEvents(sessionId, headers, body),
+    writeTeleportEvents: async (sessionId, headers, body) => await dialOf(sessionId, headers).writeTeleportEvents(sessionId, headers, body),
+  };
+}
+
+/**
  * What one client-half write produced: the sequence numbers the real service assigned, or a verbose failure message ready to show a user. A write that carried a `control_request` also names the request id it minted, because the worker's `control_response` echoes exactly that id on the stream: a consumer that wants the answer matches it there, and the id is surfaced here since only the door ever knew it.
  */
 export type RcEventWriteResult = { readonly ok: true; readonly sequenceNums: readonly number[]; readonly requestId?: string } | { readonly ok: false; readonly message: string };

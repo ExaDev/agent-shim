@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { RcDialTarget } from "./connectEffects";
-import { rcSelfHostEventDial, rcSelfHostStreamDial, selfHostSurfaceUnboundReason, type RcSelfHostDialSource } from "./rcSelfHostDial";
+import { rcSelfHostEventDial, rcSelfHostStreamDial, rcSelfHostedDials, selfHostSurfaceUnboundReason, type RcSelfHostDialSource } from "./rcSelfHostDial";
 import type { RcPresenceAnswer, RcStreamDial } from "./rcStream";
 import { answerRcControlRequest, injectRcUserMessage, interruptRcSession, type RcEventDial } from "./rcWrites";
 
@@ -128,5 +128,44 @@ describe("the door's dials in the self-hosted mode", () => {
     expect(selfHostSurfaceUnboundReason(undefined)).toContain("is not set");
     expect(selfHostSurfaceUnboundReason("abc")).toContain('is "abc", which is not a port');
     expect(selfHostSurfaceUnboundReason("47592")).toContain("on port 47592 is not bound");
+  });
+});
+
+describe("the self-hosted mode's per-session dials", () => {
+  const OWNED = "cse_00000000-0000-4000-8000-0000000000a1";
+  const NATIVE = "cse_00000000-0000-4000-8000-0000000000b2";
+  const OWNED_CREDENTIAL = "Bearer minted";
+
+  /** A world whose real dials record what reaches the real service, over a surface that owns one session and the credential it minted. */
+  function makeComposedWorld(resolve: () => RcDialTarget | undefined) {
+    const realSent: string[] = [];
+    const source: RcSelfHostDialSource = { resolve, unboundReason: () => REASON };
+    const real = {
+      event: { writeEvents: async (sessionId: string) => { realSent.push(`events:${sessionId}`); return await Promise.resolve(ANSWERED); }, writeTeleportEvents: async (sessionId: string) => { realSent.push(`teleport:${sessionId}`); return await Promise.resolve(ANSWERED); } } satisfies RcEventDial,
+      stream: { announcePresence: async (sessionId: string) => { realSent.push(`presence:${sessionId}`); return await Promise.resolve(PRESENCE); }, markRead: async (sessionId: string) => { realSent.push(`mark-read:${sessionId}`); return await Promise.resolve(PRESENCE); }, openStream: async (sessionId: string) => { realSent.push(`stream:${sessionId}`); return await Promise.resolve({ status: 200, chunks: NO_CHUNKS }); } } satisfies RcStreamDial,
+    };
+    const surface = { ownsSession: (sessionId: string, authorization: string | undefined) => sessionId === OWNED || authorization === OWNED_CREDENTIAL };
+    const credentials = new Map([[OWNED, { authorization: OWNED_CREDENTIAL, anthropicVersion: undefined, anthropicClientPlatform: undefined }]]);
+    return { realSent, dials: rcSelfHostedDials(surface, source, (id) => credentials.get(id), real) };
+  }
+
+  it("never offer an owned session to the real service, refusing while the surface is unbound, and still reach a native session's real service", async () => {
+    const world = makeComposedWorld(() => undefined);
+    const signal = new AbortController().signal;
+    await expect(world.dials.event.writeEvents(OWNED, { authorization: OWNED_CREDENTIAL }, "{}")).rejects.toThrow(REASON);
+    await expect(world.dials.event.writeTeleportEvents(OWNED, { authorization: OWNED_CREDENTIAL }, "{}")).rejects.toThrow(REASON);
+    await expect(world.dials.stream.openStream(OWNED, { authorization: OWNED_CREDENTIAL }, undefined, signal)).rejects.toThrow(REASON);
+    await expect(world.dials.stream.announcePresence(OWNED, { authorization: OWNED_CREDENTIAL }, "client", false)).rejects.toThrow(REASON);
+    await expect(world.dials.event.writeEvents("cse_00000000-0000-4000-8000-0000000000c3", { authorization: OWNED_CREDENTIAL }, "{}")).rejects.toThrow(REASON);
+    expect(world.realSent).toEqual([]);
+    await world.dials.event.writeEvents(NATIVE, { authorization: "Bearer native" }, "{}");
+    await world.dials.stream.openStream(NATIVE, { authorization: "Bearer native" }, undefined, signal);
+    expect(world.realSent).toEqual([`events:${NATIVE}`, `stream:${NATIVE}`]);
+  });
+
+  it("answers whether the door's own service owns a session by what the surface holds and the credential the tracker observed", () => {
+    const world = makeComposedWorld(() => LOOPBACK);
+    expect(world.dials.owns(OWNED)).toBe(true);
+    expect(world.dials.owns(NATIVE)).toBe(false);
   });
 });

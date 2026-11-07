@@ -63,9 +63,9 @@ A goal condition is one line, at most 4000 characters, and not a word `/goal` re
 
 ## Which sessions get which
 
-The route depends on two things: whether the session was launched under an agent-shim supervisor, and the door's mode. Self-hosting is a mode of the whole door (`AGENT_SHIM_FRONTDOOR_RC_SELF_HOST=1` when it starts): with it on, the door serves every Remote Control session that reaches it itself, whatever the account (an Anthropic OAuth login, a provider session, or no Anthropic login at all); with it off, every such session is on the real claude.ai service. The provider a session sends its inference to makes no difference.
+The route depends on two things: whether the session was launched under an agent-shim supervisor, and the door's mode. Self-hosting is a mode of the whole door (`AGENT_SHIM_FRONTDOOR_RC_SELF_HOST=1` when it starts): with it on, the door serves the Remote Control sessions that were created against it with its minted credential itself, and a session it owns is one it holds or one carrying that credential; with it off, every session is on the real claude.ai service. In the mode a session the door does not own, a native one whose service is still the real claude.ai (for instance one whose credential an earlier door generation stored), keeps going to the real service for its other verbs, and is never written to as a person's app. The provider a session sends its inference to makes no difference.
 
-| Verb | Supervised, either mode | Not supervised, self-hosting with its surface bound | Not supervised, self-hosting without `AGENT_SHIM_TRANSPARENT_SURFACE` | Not supervised, door not self-hosting |
+| Verb | Supervised, either mode | Not supervised, owned by the self-hosted service, its surface bound | Not supervised, owned by the self-hosted service, without `AGENT_SHIM_TRANSPARENT_SURFACE` | Not supervised, not owned by the self-hosted service, or door not self-hosting |
 |---|---|---|---|---|
 | goal get | yes, from the transcript | yes, `/goal` on the door's own surface | refused: the door has no surface of its own to write to | refused: no in-process channel, and the real service treats the door's writes as a peer's |
 | goal set | yes, through the plugin | yes, on the door's own surface | refused, the same | refused, the same |
@@ -73,7 +73,7 @@ The route depends on two things: whether the session was launched under an agent
 | compact | yes, through the plugin | yes, on the door's own surface | refused, the same | refused, the same |
 | a slash command through `send` | delivered as a peer's message, never run | the same | the same | the same |
 
-Self-hosting needs its transparent surface bound before the door writes anything for a session: every client-half dial in that mode (the goal and compaction writes as a person's app, and `send`, `answer`, `interrupt` and the other control verbs) reaches only the door's own loopback surface and refuses while none is bound, so none can fall back to the real API host. A refusal names its reason, and a session two live supervised launches both claim is refused rather than guessed at.
+Self-hosting needs its transparent surface bound before the door writes anything for a session it owns: the client half's dials in that mode choose per session, and an owned session's (the goal and compaction writes as a person's app, `send`, `answer`, `interrupt`, the other control verbs and the read stream) reach only the door's own loopback surface and refuse, naming why, while none is bound, so none can fall back to the real API host. A native session's calls go to the real service, never to the door's own surface. A refusal names its reason, and a session two live supervised launches both claim is refused rather than guessed at.
 
 ## The trust boundary
 
