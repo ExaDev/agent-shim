@@ -143,11 +143,24 @@ export function isInterceptedHost(host: string, interceptHosts: readonly string[
 }
 
 /**
- * One request target in the single form every decision on a terminated session reads: the path the WHATWG URL parser resolves (dot segments, percent-encoded dots, backslashes and an absolute-form target all collapse to the path a real host would serve) with the query kept. The surface rewrites each request's target to this before anything decides on it, so the routing choice, the local surface and the upstream all see one path and no two parsers can disagree about a request.
+ * One request target in the single form every decision on a terminated session reads: the path the WHATWG URL parser resolves (dot segments, percent-encoded dots, backslashes and an absolute-form target all collapse to the path a real host would serve) with the query kept. The surface rewrites each request's target to this before anything decides on it, so the routing choice, the local surface and the upstream all see one path and no two parsers can disagree about a request. Undefined for a target the parser cannot read at all (an out-of-range port, a malformed host in an absolute-form target), which the surface refuses rather than decides on.
  */
-export function canonicalRequestTarget(target: string | undefined): string {
+export function canonicalRequestTarget(target: string | undefined): string | undefined {
+  if (!URL.canParse(target ?? "/", "http://127.0.0.1")) {
+    return undefined;
+  }
   const parsed = new URL(target ?? "/", "http://127.0.0.1");
   return `${parsed.pathname}${parsed.search}`;
+}
+
+/** Answers one request on a terminated session with an empty body and the given status, closing the session: what the surface sends for a request it will neither decide on nor forward. */
+function answerAndClose(response: ServerResponse, status: number): void {
+  if (response.headersSent) {
+    response.destroy();
+    return;
+  }
+  response.writeHead(status, { "content-length": "0", connection: "close" });
+  response.end();
 }
 
 /** Whether a request path on the terminated session is one the routed pipeline serves. The query string stays part of the path: `/v1/messages?beta=true` is still the pipeline's. Callers pass a target already in `canonicalRequestTarget` form. */
@@ -372,6 +385,8 @@ export interface ConnectServerConfig {
   readonly limits: ConnectLimits;
   /** The diagnostic tap, when capturing is enabled; absent means nothing is recorded. */
   readonly capture?: ConnectCapture;
+  /** Where the surface writes one line per request it failed to serve; absent, such a failure is answered and not logged. */
+  readonly log?: (line: string) => void;
 }
 
 /** A running connect surface. */
@@ -404,6 +419,12 @@ export interface ConnectLocalSurface {
   /** Whether the launch whose capability a CONNECT tunnel presented is one this surface owns: its requests are served by `serve`, its upgrades refused and its blind tunnels refused, whatever any request presents. */
   readonly ownsLaunch: (capability: string) => boolean;
 }
+
+/** The statuses the surface answers one request on a terminated session with when it neither serves nor forwards it. */
+const REQUEST_STATUS = {
+  badRequest: 400,
+  internalServerError: 500,
+} as const;
 
 /** The whole answer to an upgrade the local surface claims: a 404 that closes the connection, since no upgrade it claims has anything on this machine to talk to. */
 const REFUSED_UPGRADE_RESPONSE = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
@@ -469,7 +490,13 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
 
     // The local surface is consulted first and awaited, because serving a path it owns means the whole response has been written by the time it resolves; a miss falls through to routing or piping unchanged. The parser's handler shape returns void, so the awaited body runs as its own helper.
     const handleHostRequest = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
-      request.url = canonicalRequestTarget(request.url);
+      const target = canonicalRequestTarget(request.url);
+      if (target === undefined) {
+        request.resume();
+        answerAndClose(response, REQUEST_STATUS.badRequest);
+        return;
+      }
+      request.url = target;
       if (ledger.retiring()) {
         // A session the retiring surface took on serves this one request and then ends, so its client's next request opens a connection the successor takes.
         clearTimeout(lateSessionDeadlines.get(request.socket));
@@ -490,8 +517,13 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
       }
       effects.forwardHttp(config.upstreamFor(host), request, response, config.capture?.observePassthrough(request));
     };
+    // The handler is the last place a failure in serving one request can be caught: the door is one process carrying every session's tunnels, so a failure answers this request 500 and nothing else.
     const handler: ConnectRequestHandler = (request, response) => {
-      void handleHostRequest(request, response);
+      handleHostRequest(request, response).catch((error: unknown) => {
+        config.log?.(`connect: serving ${request.method ?? "?"} on ${host} failed: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
+        request.resume();
+        answerAndClose(response, REQUEST_STATUS.internalServerError);
+      });
     };
     const httpSession = effects.createHttpSession(handler, onUpgrade(host));
     const serveSecure = (secure: net.Socket, capability: string): void => {

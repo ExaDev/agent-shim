@@ -57,6 +57,9 @@ describe("CONNECT routing decisions", () => {
     }
     expect(canonicalRequestTarget("/v1/messages?beta=true")).toBe("/v1/messages?beta=true");
     expect(canonicalRequestTarget(undefined)).toBe("/");
+    for (const unreadable of ["http://x:99999/v1/", "http://%zz/v1/x", "http://[::1/v1/x"]) {
+      expect(canonicalRequestTarget(unreadable), unreadable).toBeUndefined();
+    }
   });
 
   it("strips hop-by-hop headers and any header the Connection header names, without mutating the input", () => {
