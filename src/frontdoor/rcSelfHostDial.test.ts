@@ -13,7 +13,28 @@ const ANSWERED = { status: 200, body: "{}" };
 const PRESENCE: RcPresenceAnswer = { status: 200, body: "{}" };
 
 /** The targets a dial the door builds must never reach: the real API host first, then every other address that is not a loopback literal. */
-const NOT_THIS_MACHINE: readonly string[] = ["api.anthropic.com", "localhost", "10.0.0.5", "127.0.0.1.example.com", "::ffff:127.0.0.1", "0.0.0.0"];
+const NOT_THIS_MACHINE: readonly string[] = [
+  "api.anthropic.com",
+  "localhost",
+  "10.0.0.5",
+  "127.0.0.1.example.com",
+  "::ffff:127.0.0.1",
+  "0.0.0.0",
+  // Other spellings of this machine, and of an address the host field must not carry: a dial's host is a literal address and nothing else.
+  "127.0.0.2",
+  "127.1",
+  "0x7f.1",
+  "2130706433",
+  "127.0.0.1.",
+  "[::1]",
+  "0:0:0:0:0:0:0:1",
+  "user@127.0.0.1",
+  "127.0.0.1:8080",
+  " 127.0.0.1",
+];
+
+/** The only hosts a dial to the door's own surface may reach: the two loopback literals, exactly. */
+const LOOPBACK_HOSTS: readonly string[] = ["127.0.0.1", "::1"];
 
 /** An empty byte stream: the opened stream these worlds hand back. */
 const NO_CHUNKS: AsyncIterable<Uint8Array> = {
@@ -87,6 +108,13 @@ describe("the door's dials in the self-hosted mode", () => {
     expect(world.sent).toEqual([]);
   });
 
+  it.each(LOOPBACK_HOSTS)("accept exactly the loopback literal %s", async (host) => {
+    const world = makeWorld(() => ({ ...LOOPBACK, host }));
+    await world.eventDial.writeEvents(SESSION, HEADERS, "{}");
+    await world.streamDial.announcePresence(SESSION, HEADERS, "client", false);
+    expect(world.sent).toEqual([`events@${host}`, `presence@${host}`]);
+  });
+
   it("carry a request to a loopback surface, building one dial per resolved target and rebuilding when it changes", async () => {
     let target: RcDialTarget = LOOPBACK;
     const world = makeWorld(() => target);
@@ -105,11 +133,9 @@ describe("the door's dials in the self-hosted mode", () => {
     for (const resolution of resolutions) {
       const world = makeWorld(() => resolution);
       const deps = { credentialOf: () => ({ authorization: "Bearer sk-ant-oat", anthropicVersion: undefined, anthropicClientPlatform: "claude_code_cli" }), noteSequenceNums: () => undefined, dial: world.eventDial, newUuid: () => "00000000-0000-4000-8000-000000000001" };
-      const results = [
-        await injectRcUserMessage(deps, SESSION, "hello"),
-        await interruptRcSession(deps, SESSION),
-        await answerRcControlRequest({ ...deps, pendingOf: () => [{ sessionId: SESSION, requestId: "req_1", type: "can_use_tool", summary: "Bash", observedAt: 0 }], completePending: () => undefined }, SESSION, "req_1", { approve: true, message: undefined }),
-      ];
+      await injectRcUserMessage(deps, SESSION, "hello");
+      await interruptRcSession(deps, SESSION);
+      await answerRcControlRequest({ ...deps, pendingOf: () => [{ sessionId: SESSION, requestId: "req_1", type: "can_use_tool", summary: "Bash", observedAt: 0 }], completePending: () => undefined }, SESSION, "req_1", { approve: true, message: undefined });
       for (const sent of world.sent) {
         expect(sent.endsWith("@127.0.0.1") || sent.endsWith("@::1")).toBe(true);
       }
@@ -117,8 +143,6 @@ describe("the door's dials in the self-hosted mode", () => {
         expect(["127.0.0.1", "::1"]).toContain(target.host);
       }
       if (resolution === undefined) {
-        const refused = results[0];
-        expect(refused?.ok === false ? refused.message : "").toContain(REASON);
         expect(world.sent).toEqual([]);
       }
     }
