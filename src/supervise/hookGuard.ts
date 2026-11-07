@@ -41,9 +41,8 @@ export function announceHook(deps: Readonly<HookGuardDeps>, pool: string, sessio
   const dir = stateDirOf(deps.paths, pool);
   deps.fs.mkdirPrivate(dir);
   const marker = path.join(dir, `${prefixOf(sessionId)}${String(deps.pid)}.json`);
-  if (!deps.fs.writeFileExclusive(marker, `${JSON.stringify({ pid: deps.pid })}\n`)) {
-    throw new Error(`a hook announcement already exists for pid ${String(deps.pid)}`);
-  }
+  // A marker for this PID can be left by a failed hook whose PID was reused. Keep it visible while this hook runs.
+  const created = deps.fs.writeFileExclusive(marker, `${JSON.stringify({ pid: deps.pid })}\n`);
   return {
     acquire: () => {
       const lock = acquireIdentityLock({ identity: `mark-${sessionId}`, dir, fs: deps.fs, nowMs: deps.now, pid: deps.pid, isRunning: deps.isRunning, sleep: deps.sleep, ...(deps.maxAttempts === undefined ? {} : { maxAttempts: deps.maxAttempts }) });
@@ -62,7 +61,7 @@ export function announceHook(deps: Readonly<HookGuardDeps>, pool: string, sessio
                 }
               }
             }
-            if (success) {
+            if (success && (created || newTurn)) {
               deps.fs.removeRecursive(marker);
             }
           } finally {
