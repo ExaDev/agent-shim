@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
 
@@ -52,6 +52,26 @@ async function eventOf(pull: Readonly<Promise<IteratorResult<RcSessionEvent, voi
     throw new Error("the follower ended, which it never does on its own");
   }
   return next.value;
+}
+
+/** A log whose append listeners are counted, so a test can assert that a follower detached. */
+function countedLog(): { readonly log: RcSessionEventLog; readonly attached: () => number } {
+  const inner = createRcSessionEventLog({ generation: GENERATION, capacity: ROOMY_CAPACITY });
+  let count = 0;
+  return {
+    log: {
+      ...inner,
+      onAppend: (listener) => {
+        count += 1;
+        const detach = inner.onAppend(listener);
+        return () => {
+          count -= 1;
+          detach();
+        };
+      },
+    },
+    attached: () => count,
+  };
 }
 
 /** Settles every microtask the follower's wake chain queues, so a test can assert what a waiting follower has not yet yielded. */
@@ -261,14 +281,49 @@ describe("following the session event log", () => {
     await follower.return();
   });
 
-  it("ends through the aborted signal while it waits", async () => {
-    const log = createRcSessionEventLog({ generation: GENERATION, capacity: ROOMY_CAPACITY });
+  it("rejects with the signal's own reason when it aborts while waiting, detaching from the log", async () => {
+    const { log, attached } = countedLog();
     const leave = new AbortController();
     const follower = followRcSessionEvents(log, {}, leave.signal);
     const next = follower.next();
     await settle();
-    leave.abort();
-    await expect(next).rejects.toThrow();
+    expect(attached()).toBe(1);
+    const reason = new Error("the subscriber left");
+    leave.abort(reason);
+    await expect(next).rejects.toBe(reason);
+    expect(attached()).toBe(0);
+  });
+
+  it("detaches from the log when its consumer returns", async () => {
+    const { log, attached } = countedLog();
+    const follower = followRcSessionEvents(log, {});
+    const next = follower.next();
+    await settle();
+    log.append(appeared(SESSION_A, 1));
+    await eventOf(next);
+    expect(attached()).toBe(1);
+    await follower.return();
+    expect(attached()).toBe(0);
+  });
+
+  it("fixes its start when created, so an event appended before the first pull is delivered", async () => {
+    const log = createRcSessionEventLog({ generation: GENERATION, capacity: ROOMY_CAPACITY });
+    const follower = followRcSessionEvents(log, {});
+    log.append(appeared(SESSION_A, 1));
+    expect((await eventOf(follower.next())).sequence).toBe(1);
+    await follower.return();
+  });
+
+  it("returns once the log closes, waking a follower that waits", async () => {
+    const { log, attached } = countedLog();
+    const follower = followRcSessionEvents(log, {});
+    const next = follower.next();
+    await settle();
+    log.close();
+    expect(await next).toEqual({ value: undefined, done: true });
+    expect(attached()).toBe(0);
+    // A follower created after the close returns at once.
+    expect(await followRcSessionEvents(log, {}).next()).toEqual({ value: undefined, done: true });
   });
 });
 
@@ -398,6 +453,23 @@ describe("the tracker's transitions into the log", () => {
       { kind: "session-ended", session: SESSION_A, reason: "archived" },
       { kind: "session-appeared", session: SESSION_A },
     ]);
+  });
+
+  it("emits a deadline expiry from the sweep timer alone, with no read to prompt it, and ends followers when the tracker closes", async () => {
+    vi.useFakeTimers();
+    try {
+      const log = createRcSessionEventLog({ generation: GENERATION, capacity: ROOMY_CAPACITY });
+      const tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS, onTransition: log.append, onClose: log.close });
+      exchange(tracker, "POST", `/v1/code/sessions/${SESSION_A}/worker/events`, workerEvents(canUseTool));
+      const follower = followRcSessionEvents(log, {});
+      // The sweep runs at the shorter of its two deadlines, so one answer deadline past the birth, plus one sweep period, the timer alone has retired the request.
+      await vi.advanceTimersByTimeAsync(RC_PENDING_DEADLINE_MS + Math.min(RC_IDLE_EXPIRY_MS, RC_PENDING_DEADLINE_MS));
+      expect(await eventOf(follower.next())).toMatchObject({ kind: "pending-retired", session: SESSION_A, requestId: "req_1", reason: "expired" });
+      tracker.close();
+      expect(await follower.next()).toEqual({ value: undefined, done: true });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("delivers a session ending to a live follower", async () => {
