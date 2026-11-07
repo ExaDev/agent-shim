@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -98,6 +99,25 @@ describe("the in-process control plugin", () => {
       expect(JSON.parse(readFileSync(path.join(plugin.directory, "hooks", "hooks.json"), "utf8"))).toEqual({ modules: ["./register.js"] });
     } finally {
       plugin.release();
+    }
+  });
+});
+
+describe("the staged plugin directories", () => {
+  it("names each for its launcher's pid and removes the ones a killed launcher left, keeping a live launcher's and anything else", () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "agent-shim-staging-"));
+    try {
+      const LIVE_PID = 4_242;
+      const DEAD_PID = 4_343;
+      mkdirSync(path.join(parent, `agent-shim-control-${String(DEAD_PID)}-abcdef`));
+      mkdirSync(path.join(parent, `agent-shim-control-${String(LIVE_PID)}-ghijkl`));
+      mkdirSync(path.join(parent, "agent-shim-control-unnamed"));
+      mkdirSync(path.join(parent, "someone-else"));
+      const plugin = stageSessionControlPlugin({ parent, pid: LIVE_PID, isRunning: (pid) => pid === LIVE_PID });
+      expect(path.basename(plugin.directory)).toMatch(new RegExp(`^agent-shim-control-${String(LIVE_PID)}-`, "u"));
+      expect(readdirSync(parent).filter((name) => name !== path.basename(plugin.directory)).sort()).toEqual([`agent-shim-control-${String(LIVE_PID)}-ghijkl`, "agent-shim-control-unnamed", "someone-else"]);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
     }
   });
 });

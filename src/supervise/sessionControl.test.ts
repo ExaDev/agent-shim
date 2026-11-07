@@ -84,6 +84,21 @@ describe("the in-process control requests", () => {
     }
   });
 
+  it("removes a result whose request is gone before it writes its own, as one the plugin wrote after its caller gave up", async () => {
+    const plugin = stageSessionControlPlugin();
+    try {
+      writeFileSync(plugin.ready, "{}");
+      writeFileSync(path.join(plugin.results, "orphan.json"), JSON.stringify({ id: "orphan", kind: "ran" }));
+      const pending = runGoalInSession(plugin, "conversation", "clear", { signal: NEVER, expiresInMs: EXPIRY_MS });
+      const request = await pendingRequest(plugin);
+      expect(readdirSync(plugin.results)).toEqual([]);
+      answer(plugin, request.id, { kind: "ran" });
+      await pending;
+    } finally {
+      plugin.release();
+    }
+  });
+
   it("keeps concurrent requests apart, each answered by its own result", async () => {
     const plugin = stageSessionControlPlugin();
     try {

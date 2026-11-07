@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -47,11 +47,24 @@ function requestIdOf(nowMs: number): string {
   return `${String(nowMs).padStart(REQUEST_INSTANT_DIGITS, "0")}-${randomUUID()}`;
 }
 
+/**
+ * Removes every result whose request is gone: one the plugin wrote after its caller had given up and removed the request (an abort, or a wait that passed while the plugin was mid-run), which nothing else would ever read. A caller removes its request before its result, so a result with no request belongs to no live caller.
+ */
+function removeOrphanResults(plugin: Readonly<PluginPaths>): void {
+  const requests = new Set(readdirSync(plugin.requests));
+  for (const name of readdirSync(plugin.results)) {
+    if (!requests.has(name)) {
+      rmSync(path.join(plugin.results, name), { force: true });
+    }
+  }
+}
+
 async function requestInSession(plugin: Readonly<PluginPaths>, body: Readonly<Record<string, unknown>>, options: SessionControlRequestOptions): Promise<Readonly<Record<string, unknown>>> {
   const { signal } = options;
   const nowMs = (options.now ?? Date.now)();
   if (!sessionControlReady(plugin)) throw new Error("the in-process control plugin did not load");
   signal.throwIfAborted();
+  removeOrphanResults(plugin);
   const id = requestIdOf(nowMs);
   const request = path.join(plugin.requests, `${id}.json`);
   const result = path.join(plugin.results, `${id}.json`);
