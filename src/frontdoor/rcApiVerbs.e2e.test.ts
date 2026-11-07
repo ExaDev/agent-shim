@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { generateCa, LOOPBACK_LEAF_NAMES, mintLeaf, type CaMaterial } from "./connect";
 import { KEYGEN_TIMEOUT_MS } from "./connectTestWorld";
 import { createRcApiNodeHandler, frontDoorRcApiClient } from "./rcApi";
-import { RC_SESSION_COMMAND_MAX_WAIT_MS, type RcCompactOptions, type RcSessionCommandResult } from "./rcSessionCommands";
+import { RC_GOAL_CONDITION_MAX_CHARS, RC_SESSION_COMMAND_MAX_WAIT_MS, type RcCompactOptions, type RcSessionCommandResult } from "./rcSessionCommands";
 import { createRcEventFanout } from "./rcStream";
 import type { RcEventWriteResult } from "./rcWrites";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
@@ -138,6 +138,10 @@ describe("the wider control-verb family on the door's typed API, end to end over
     expect(await api.rc.compact({ session: SESSION_ID })).toEqual({ session: SESSION_ID, route: "supervised", trigger: "plugin", preTokens: COMPACT_PRE_TOKENS, postTokens: COMPACT_POST_TOKENS });
     await api.rc.compactWithInstructions({ session: SESSION_ID, instructions: "keep the decisions" });
     await expect(api.rc.goalSet({ session: SESSION_ID, condition: "x", waitMs: RC_SESSION_COMMAND_MAX_WAIT_MS + 1 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    // A condition that fits once trimmed is accepted whatever whitespace surrounds it; the verb sets the trimmed one.
+    const fits = "x".repeat(RC_GOAL_CONDITION_MAX_CHARS);
+    expect(await api.rc.goalSet({ session: SESSION_ID, condition: `  ${fits}  ` })).toMatchObject({ condition: fits });
+    calls.pop();
     expect(calls.slice(before)).toEqual([
       { op: "goalGet", args: [SESSION_ID, {}] },
       { op: "goalSet", args: [SESSION_ID, "the build is green", { waitMs: COMMAND_WAIT_MS }] },
