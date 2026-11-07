@@ -540,7 +540,8 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean, onRecorded
     // The cascade's block when a cascade was read (a launch with a farm), else the global block alone; read through the launcher's own config port so a test sees its own filesystem.
     const globalModels = loadConfigFile(paths.globalConfigFile, GlobalConfigSchema, params.fs.readConfigFile)?.config.models;
     const models = launchCascade !== undefined && params.farm !== undefined ? cascadeModels : globalModels;
-    const callerSettings = hasSettingsArgument(parsedArgv.rest);
+    const extraFlags = splitExtraFlags(env.CLAUDE_EXTRA_FLAGS);
+    const callerSettings = hasSettingsArgument([...extraFlags, ...parsedArgv.rest]);
     const startsSession = !isClaudeSubcommand(parsedArgv.rest);
     const argsForSupervisor = (supervisorPid?: number): { readonly args: readonly string[]; readonly pickerSuppressed: boolean } => {
     const door = readFrontDoorState(params.fs, paths.frontdoorStateFile);
@@ -575,13 +576,13 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean, onRecorded
       }
     });
     const pickerSettings = modelPickerSettingsFromRows(routedModelRows(models ?? {}, listedProviders), selectedProvider !== undefined);
-    const launcherSettings = mergeSettings([params.supervised?.settings, callerSettings ? undefined : pickerSettings]);
+    const launcherSettings = params.supervised?.settingsFile ?? mergeSettings([params.supervised?.settings, callerSettings ? undefined : pickerSettings]);
 
     // A claude subcommand (`plugin install`, `auth status`) starts no session and rejects the options a session takes, so it receives the caller's arguments as typed.
     const args = startsSession
       ? buildArgv({
           toolFlags: buildFlagArgs(flags),
-          extraFlags: splitExtraFlags(env.CLAUDE_EXTRA_FLAGS),
+          extraFlags,
           passthrough: withLauncherSettings(params.supervised === undefined ? parsedArgv.rest : withSupervision(parsedArgv.rest, params.supervised), launcherSettings),
         })
       : [...parsedArgv.rest];

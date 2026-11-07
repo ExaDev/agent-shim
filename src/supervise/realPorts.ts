@@ -57,8 +57,19 @@ export const realTimerPort: TimerPort = {
  * Watches `directory` and calls `onChange` when a file `accepts` is written in it. Files the writer replaces by renaming a temporary one over them (the usage snapshots, the session state) are only seen by a watch on their directory: a watch on the file itself would be left pointing at the replaced one. The directory is created when it is not there yet. The watcher does not keep the process alive, and a watcher error is reported once, naming what was being watched, and ends the watch rather than going unseen.
  */
 export function realWatchDirectory(directory: string, accepts: (filename: string) => boolean, what: string, log: LogPort): (onChange: () => void) => () => void {
+  return watchDirectory(directory, accepts, what, log, true);
+}
+
+/** Watches an existing directory without creating it or changing its permissions. */
+export function realWatchExistingDirectory(directory: string, accepts: (filename: string) => boolean, what: string, log: LogPort): (onChange: () => void) => () => void {
+  return watchDirectory(directory, accepts, what, log, false);
+}
+
+function watchDirectory(directory: string, accepts: (filename: string) => boolean, what: string, log: LogPort, createPrivate: boolean): (onChange: () => void) => () => void {
   return (onChange) => {
-    realFarmFs.mkdirPrivate(directory);
+    if (createPrivate) {
+      realFarmFs.mkdirPrivate(directory);
+    }
     const watcher = fs.watch(directory, { persistent: false }, (_event, filename) => {
       if (filename === null || accepts(filename)) {
         onChange();

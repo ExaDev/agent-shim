@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 
 import type { Pool } from "../config/schema";
 import type { FarmRuntime, LaunchPlan } from "../launcher";
-import { hasSettingsArgument, initialConversationOf, type SupervisedLaunch } from "../launcher/claudeSession";
+import { combineCallerSettings, hasSettingsArgument, initialConversationOf, type SupervisedLaunch } from "../launcher/claudeSession";
 import { isClaudeSubcommand } from "../launcher/claudeSubcommand";
 import { resolvePoolLaunch } from "../launcher/pool";
 import type { LogPort } from "../launcher/ports";
@@ -10,14 +11,17 @@ import { identityRecordsOver } from "../identityRecords";
 import type { LayoutPaths } from "../paths";
 import { refreshPools } from "../poolUsageRefresh";
 import { realFarmFs, realFsPort, selfInvocation, type DaemonSpawner } from "../realPorts";
-import { latestConversationId, resumedContextTokens } from "../usage/resumeContext";
+import { contextTokensOfTranscript, latestConversationId } from "../usage/resumeContext";
 import { createCompactionDeps } from "./compactionDeps";
 import { quotaHitOf } from "./limit";
+import { currentConversation, hooksPending } from "./hookGuard";
 import { markHooksSettings } from "./marks";
 import { createIdentityMover, createMover } from "./move";
 import { createRealCompactor } from "./realCompact";
-import { realSignalPort, realSupervisedSpawnPort, realTimerPort, realWatchDirectory, resetTerminal } from "./realPorts";
-import { readModelMove, registerSupervised, removeModelMove, stateDirOf, unregisterSupervised } from "./registry";
+import { realSignalPort, realSupervisedSpawnPort, realTimerPort, realWatchDirectory, realWatchExistingDirectory, resetTerminal } from "./realPorts";
+import { readModelMove, readSessionState, registerSupervised, removeModelMove, stateDirOf, unregisterSupervised } from "./registry";
+import { stopHooksFinished } from "./stopSummary";
+import { stageSupervisedSettings } from "./settings";
 import { supervise, type CompactionDeps } from "./supervise";
 
 /**
@@ -36,6 +40,8 @@ export interface RunSupervisedParams {
   readonly farm: FarmRuntime;
   /** The arguments claude will receive, as the person typed them. */
   readonly passthrough: readonly string[];
+  /** Additional Claude flags placed before the caller's arguments. */
+  readonly extraFlags: readonly string[];
   /** Builds the plan for one launch: `prepareLaunch` over this machine's ports, with the supervised parameter set. */
   readonly prepare: (launch: SupervisedLaunch) => LaunchPlan;
   readonly spawnDaemon: DaemonSpawner;
@@ -56,20 +62,22 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
     log.warn(`agent-shim: pool "${pool}" resumes on a spent quota, which needs a POSIX terminal; this launch runs unsupervised`);
     return undefined;
   }
+  if (params.extraFlags.includes("--")) {
+    log.warn(`agent-shim: pool "${pool}" cannot supervise a launch whose extra flags end option parsing`);
+    return undefined;
+  }
   const first = initialConversationOf(params.passthrough, { newId: randomUUID, latestId: () => latestConversationId(farm.fs, { claudeHome: farm.claudeHome, cwd: farm.cwd }) });
   if ("reason" in first) {
     log.warn(`agent-shim: pool "${pool}" resumes on a spent quota, but this launch runs unsupervised: ${first.reason}`);
     return undefined;
   }
-  // Compacting needs to know when a turn begins and ends, which the session's own hooks tell it. They are passed with `--settings`, which a launch that passes its own cannot take.
-  let launch: SupervisedLaunch = first;
+  // The hooks also identify the current conversation after /clear, which moves need even when the pool does not compact.
   let compaction: CompactionDeps | undefined;
   const policy = params.pools[pool];
+  const markSettings = markHooksSettings(selfInvocation([]), paths.root, pool, first.sessionId);
+  const settingsArgs = [...params.extraFlags, ...params.passthrough];
+  const settings = hasSettingsArgument(settingsArgs) ? combineCallerSettings(settingsArgs, markSettings, (name) => farm.fs.readFileUtf8(path.resolve(farm.cwd, name))) : undefined;
   if (policy?.compactBeforeLimit === true) {
-    if (hasSettingsArgument(params.passthrough)) {
-      log.warn(`agent-shim: pool "${pool}" compacts before its quota is spent, which needs --settings for its turn hooks; this launch passes its own, so it moves without compacting`);
-    } else {
-      launch = { ...first, settings: markHooksSettings(selfInvocation([]), paths.root, pool, first.sessionId) };
       compaction = createCompactionDeps({
         paths,
         fs: realFarmFs,
@@ -79,9 +87,16 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
         now: farm.now,
         isRunning: farm.lock.isRunning,
         sleep: farm.lock.sleep,
+        hooksFinished: (session, state) => {
+          if (hooksPending(realFarmFs, paths, pool, session.sessionId)) {
+            return false;
+          }
+          const conversationId = state.conversationId ?? session.sessionId;
+          const text = state.transcriptPath === undefined ? undefined : realFarmFs.readFileUtf8(state.transcriptPath);
+          return text !== undefined && stopHooksFinished(text, conversationId, state.at);
+        },
         compact: createRealCompactor({ paths, spawnDaemon: params.spawnDaemon }),
       });
-    }
   }
   const mover = createMover({
     paths,
@@ -111,7 +126,10 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
     pickMember: resolvePoolLaunch,
     log,
   });
-  return await supervise(
+  const staged = settings === undefined ? undefined : stageSupervisedSettings(realFarmFs, paths, pool, first.sessionId, farm.lock.pid, settings);
+  const launch: SupervisedLaunch = { ...first, ...(staged === undefined ? { settings: markSettings } : { settingsFile: staged.file }) };
+  try {
+    return await supervise(
     {
       pool,
       cwd: farm.cwd,
@@ -122,11 +140,42 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
       timer: realTimerPort,
       watchChanges: (identity, onChange) => {
         const stopSnapshot = realWatchDirectory(paths.usageSnapshotsDir, (filename) => filename === `${identity}.json`, `${identity}'s usage`, log)(onChange);
-        // The end of a turn is recorded after its last response has updated the snapshot, so a session that has just gone idle is only seen by watching the state. The whole pool's state is watched: a sibling that finished compacting frees the identity's slot for the next session.
-        const stopState = compaction === undefined ? undefined : realWatchDirectory(stateDirOf(paths, pool), (filename) => filename.endsWith(".json"), "the pool's sessions", log)(onChange);
+        let watchedDir: string | undefined;
+        let stopTranscripts: (() => void) | undefined;
+        let transcriptWarning = "";
+        const watchTranscript = (): void => {
+          const transcript = readSessionState(realFarmFs, paths, pool, first.sessionId)?.transcriptPath;
+          const directory = transcript === undefined ? undefined : path.dirname(transcript);
+          if (compaction === undefined || directory === watchedDir) {
+            return;
+          }
+          stopTranscripts?.();
+          watchedDir = undefined;
+          stopTranscripts = undefined;
+          if (directory !== undefined && realFarmFs.lstat(directory) !== undefined) {
+            try {
+              stopTranscripts = realWatchExistingDirectory(directory, (filename) => filename.endsWith(".jsonl"), "the session transcripts", log)(onChange);
+              watchedDir = directory;
+              transcriptWarning = "";
+            } catch (error) {
+              const warning = `agent-shim: could not watch the session transcripts: ${error instanceof Error ? error.message : String(error)}`;
+              if (warning !== transcriptWarning) {
+                transcriptWarning = warning;
+                log.warn(warning);
+              }
+            }
+          }
+        };
+        // A state change can name a new transcript after /clear; watch its directory before checking for the later Stop summary.
+        const stopState = realWatchDirectory(stateDirOf(paths, pool), (filename) => filename.endsWith(".json"), "the pool's sessions", log)(() => {
+          watchTranscript();
+          onChange();
+        });
+        watchTranscript();
         return () => {
           stopSnapshot();
-          stopState?.();
+          stopState();
+          stopTranscripts?.();
         };
       },
       quotaHit: (identity, sessionId, sinceMs) => quotaHitOf(realFarmFs, paths, identity, sessionId, sinceMs, farm.now()),
@@ -135,7 +184,15 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
         await refreshPools({ paths, cwd: farm.cwd, poolNames: [pool], spawnDaemon: params.spawnDaemon, log: (line) => { log.warn(line); } });
         return mover(request);
       },
-      contextTokens: (sessionId) => resumedContextTokens(farm.fs, { claudeHome: farm.claudeHome, cwd: farm.cwd, passthrough: ["--resume", sessionId] }),
+      contextTokens: (sessionId) => {
+        const state = readSessionState(realFarmFs, paths, pool, first.sessionId);
+        if (state?.transcriptPath === undefined || (state.conversationId ?? first.sessionId) !== sessionId) {
+          return undefined;
+        }
+        const transcript = realFarmFs.readFileUtf8(state.transcriptPath);
+        return transcript === undefined ? undefined : contextTokensOfTranscript(transcript);
+      },
+      currentConversationId: (sessionId) => currentConversation(realFarmFs, paths, pool, sessionId),
       claimModelMove: (sessionId) => {
         const request = readModelMove(realFarmFs, paths, sessionId);
         if (request === undefined) {
@@ -144,7 +201,7 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
         removeModelMove(realFarmFs, paths, sessionId);
         return { to: request.to, model: request.model };
       },
-      decideRemodel: (request) => identityMover({ sessionId: request.sessionId, from: request.from, to: request.to, contextTokens: undefined }),
+      decideRemodel: (request) => identityMover(request),
       watchModelMoves: (onChange) => realWatchDirectory(paths.modelMovesDir, () => true, "the model-move requests", log)(onChange),
       ...(compaction === undefined ? {} : { compaction }),
       register: (session) => {
@@ -163,5 +220,8 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
       },
     },
     launch,
-  );
+    );
+  } finally {
+    staged?.release();
+  }
 }

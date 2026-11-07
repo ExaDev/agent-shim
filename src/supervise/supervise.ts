@@ -59,11 +59,13 @@ export interface SupervisorDeps {
   /** The model move the front door left for this session, when one is pending: claimed (removed from the directory) by this read. An `acct:` model member is served by relaunch, and this is how the door asks for one. */
   readonly claimModelMove: (sessionId: string) => { readonly to: string; readonly model: string } | undefined;
   /** Moves the session onto the identity a model pick named, and registers it there: no re-rank, the `acct:` member is the decision. */
-  readonly decideRemodel: (request: { readonly sessionId: string; readonly from: string; readonly to: string }) => MoveOutcome;
+  readonly decideRemodel: (request: { readonly sessionId: string; readonly conversationId?: string; readonly from: string; readonly to: string; readonly contextTokens: number | undefined }) => MoveOutcome;
   /** Calls `onChange` whenever the model-move directory changes, the cue to look for a request the door left. Absent when this supervisor cannot watch it. */
   readonly watchModelMoves?: (onChange: () => void) => () => void;
   /** The size in tokens of the conversation's context, when its transcript can be read. */
   readonly contextTokens: (sessionId: string) => number | undefined;
+  /** The current Claude conversation under the stable launch id. */
+  readonly currentConversationId: (sessionId: string) => string | undefined;
   /** Present for a pool that compacts before its quota is spent. */
   readonly compaction?: CompactionDeps;
   readonly register: (session: Readonly<SupervisedSession>) => void;
@@ -100,9 +102,9 @@ function labelOf(deps: Readonly<SupervisorDeps>, id: string): string {
 
 /** Why a child was stopped before it exited by itself. */
 type Departure =
-  | { readonly kind: "move"; readonly to: string; readonly explanation: string }
-  | { readonly kind: "compact"; readonly slot: CompactionSlot; readonly contextTokens: number; readonly reason: string }
-  | { readonly kind: "remodel"; readonly to: string; readonly model: string };
+  | { readonly kind: "move"; readonly to: string; readonly explanation: string; readonly conversationId: string }
+  | { readonly kind: "compact"; readonly slot: CompactionSlot; readonly contextTokens: number; readonly reason: string; readonly conversationId: string }
+  | { readonly kind: "remodel"; readonly to: string; readonly model: string; readonly conversationId: string };
 
 /** What one child's run came to: it exited by itself, or it was stopped for a departure. */
 type RunOutcome = { readonly kind: "exited"; readonly result: SpawnResult } | Departure;
@@ -159,10 +161,19 @@ async function runChild(deps: Readonly<SupervisorDeps>, plan: LaunchPlan, identi
 
   /** A refusal this session met: ask where it goes. */
   const handleRefusal = async (hit: QuotaHit): Promise<void> => {
-    const outcome = await deps.decideMove({ sessionId: plan.sessionId, from: identity, contextTokens: deps.contextTokens(plan.sessionId) });
+    const conversationId = deps.currentConversationId(plan.sessionId);
+    if (conversationId === undefined) {
+      const warning = `agent-shim: cannot move session ${plan.sessionId}: its current conversation is unknown`;
+      if (warning !== state.lastWarning) {
+        state.lastWarning = warning;
+        deps.log.warn(warning);
+      }
+      return;
+    }
+    const outcome = await deps.decideMove({ sessionId: plan.sessionId, ...(conversationId === plan.sessionId ? {} : { conversationId }), from: identity, contextTokens: deps.contextTokens(conversationId) });
     if (outcome.kind === "move") {
       state.leaving = true;
-      depart(outcome);
+      depart({ ...outcome, conversationId });
     } else {
       state.declined = true;
       deps.log.warn(`agent-shim: ${labelOf(deps, identity)} is out of quota${hit.resetAt === undefined ? "" : ` until ${hit.resetAt}`}, and this session stays on it: ${outcome.reason}`);
@@ -180,9 +191,10 @@ async function runChild(deps: Readonly<SupervisorDeps>, plan: LaunchPlan, identi
       return;
     }
     // The turn could have begun while the slot was being taken: look once more before anything is stopped.
-    if (compaction.shouldCompact(identity, plan.sessionId).compact) {
+    const confirmed = compaction.shouldCompact(identity, plan.sessionId);
+    if (confirmed.compact) {
       state.leaving = true;
-      depart({ kind: "compact", slot, contextTokens: decision.contextTokens, reason: decision.reason });
+      depart({ kind: "compact", slot, contextTokens: confirmed.contextTokens, reason: confirmed.reason, conversationId: confirmed.conversationId ?? plan.sessionId });
     } else {
       slot.release();
     }
@@ -205,12 +217,13 @@ async function runChild(deps: Readonly<SupervisorDeps>, plan: LaunchPlan, identi
         if (isLeaving()) {
           break;
         }
-        const move = deps.claimModelMove(plan.sessionId);
-        if (move !== undefined) {
-          const outcome = deps.decideRemodel({ sessionId: plan.sessionId, from: identity, to: move.to });
+        const currentConversation = deps.currentConversationId(plan.sessionId);
+        const move = currentConversation === undefined ? undefined : deps.claimModelMove(plan.sessionId);
+        if (move !== undefined && currentConversation !== undefined) {
+          const outcome = deps.decideRemodel({ sessionId: plan.sessionId, ...(currentConversation === plan.sessionId ? {} : { conversationId: currentConversation }), from: identity, to: move.to, contextTokens: deps.contextTokens(currentConversation) });
           if (outcome.kind === "move") {
             state.leaving = true;
-            depart({ kind: "remodel", to: outcome.to, model: move.model });
+            depart({ kind: "remodel", to: outcome.to, model: move.model, conversationId: currentConversation });
           } else {
             deps.log.warn(`agent-shim: session ${plan.sessionId} picked a model under ${labelOf(deps, move.to)}, but stays on ${labelOf(deps, identity)}: ${outcome.reason}`);
           }
@@ -286,7 +299,7 @@ function signalExit(signal: NodeJS.Signals): number {
 /**
  * Compacts a session as `identity`, between children, holding the identity's compaction slot for as long as it takes. A failure is reported and the session resumes as it was. A signal to the launcher abandons the compaction and returns the signal, which ends the supervisor.
  */
-async function compactSession(deps: Readonly<SupervisorDeps>, compaction: CompactionDeps, slot: CompactionSlot, identity: string, sessionId: string): Promise<NodeJS.Signals | undefined> {
+async function compactSession(deps: Readonly<SupervisorDeps>, compaction: CompactionDeps, slot: CompactionSlot, identity: string, sessionId: string, conversationId: string = sessionId): Promise<NodeJS.Signals | undefined> {
   const abort = new AbortController();
   const interrupted: { signal: NodeJS.Signals | undefined } = { signal: undefined };
   const stopHandlers = (["SIGINT", "SIGHUP", "SIGTERM"] as const).map((signal) =>
@@ -296,7 +309,7 @@ async function compactSession(deps: Readonly<SupervisorDeps>, compaction: Compac
     }),
   );
   try {
-    const result = await compaction.compact({ identity: memberName(deps, identity), sessionId, cwd: deps.cwd }, abort.signal);
+    const result = await compaction.compact({ identity: memberName(deps, identity), sessionId: conversationId, cwd: deps.cwd }, abort.signal);
     if (result.kind === "unchanged") {
       deps.log.info(`agent-shim: session ${sessionId} was left as it was: ${result.reason}`);
     } else {
@@ -328,7 +341,7 @@ async function compactSession(deps: Readonly<SupervisorDeps>, compaction: Compac
 export async function supervise(deps: Readonly<SupervisorDeps>, first: SupervisedLaunch): Promise<number> {
   const { compaction } = deps;
   // What every launch of the session carries: its id, and the hooks that mark its turns.
-  const base = { sessionId: first.sessionId, ...(first.settings === undefined ? {} : { settings: first.settings }) };
+  const base = { sessionId: first.sessionId, ...(first.settings === undefined ? {} : { settings: first.settings }), ...(first.settingsFile === undefined ? {} : { settingsFile: first.settingsFile }) };
   let launch = first;
   let compactedHere = false;
   try {
@@ -362,15 +375,15 @@ export async function supervise(deps: Readonly<SupervisorDeps>, first: Supervise
       }
       if (outcome.kind === "compact") {
         // Only a pool with compaction asks for one, so the dependency is there.
-        const interrupted = compaction === undefined ? undefined : await compactSession(deps, compaction, outcome.slot, identity, plan.sessionId);
+        const interrupted = compaction === undefined ? undefined : await compactSession(deps, compaction, outcome.slot, identity, plan.sessionId, outcome.conversationId);
         compactedHere = true;
         if (interrupted !== undefined) {
           return signalExit(interrupted);
         }
-        launch = { ...base, conversation: "resume", member: memberName(deps, identity) };
+        launch = { ...base, conversation: "resume", ...(outcome.conversationId === plan.sessionId ? {} : { conversationId: outcome.conversationId }), member: memberName(deps, identity) };
         continue;
       }
-      launch = { ...base, conversation: "resume", member: memberName(deps, outcome.to), from: labelOf(deps, identity), ...(outcome.kind === "remodel" ? { model: outcome.model } : {}) };
+      launch = { ...base, conversation: "resume", ...(outcome.conversationId === plan.sessionId ? {} : { conversationId: outcome.conversationId }), member: memberName(deps, outcome.to), from: labelOf(deps, identity), ...(outcome.kind === "remodel" ? { model: outcome.model } : {}) };
       const compactedOnOld = compactedHere;
       compactedHere = false;
       if (compaction !== undefined) {
@@ -378,7 +391,7 @@ export async function supervise(deps: Readonly<SupervisorDeps>, first: Supervise
         // A session compacted during its stay on the member it leaves has already had its context made small; one refused before that is compacted here, since its context is written on the new member whatever it costs.
         const slot = compactedOnOld ? undefined : compaction.acquire(outcome.to);
         if (slot !== undefined) {
-          const interrupted = await compactSession(deps, compaction, slot, outcome.to, plan.sessionId);
+          const interrupted = await compactSession(deps, compaction, slot, outcome.to, plan.sessionId, outcome.conversationId);
           compactedHere = true;
           if (interrupted !== undefined) {
             return signalExit(interrupted);

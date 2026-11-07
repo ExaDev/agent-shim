@@ -6,7 +6,7 @@ import { FIVE_HOUR_WINDOW_MS } from "../usage/pick";
 import { readUsageLog, readUsageSnapshot } from "../usage/read";
 import { decideCompaction } from "./compaction";
 import { COMPACT_TIMEOUT_MS, type CompactionResult, type CompactRequest } from "./realCompact";
-import { liveSupervised, readSessionState, superviseDirOf, writeSessionState } from "./registry";
+import { liveSupervised, readSessionState, superviseDirOf, writeSessionState, type SessionState, type SupervisedSession } from "./registry";
 import type { CompactionDeps } from "./supervise";
 
 /** A compaction slot older than this is abandoned whoever claims to hold it, since a pid can be reused. Twice the longest a compaction may run, which also covers stopping the child before it and the preparation of the launch it needs. */
@@ -24,6 +24,8 @@ export interface CompactionWiring {
   readonly now: () => number;
   readonly isRunning: (pid: number) => boolean;
   readonly sleep: (ms: number) => void;
+  /** True only after the session's transcript proves its Stop hooks completed successfully. */
+  readonly hooksFinished: (session: Readonly<SupervisedSession>, state: Readonly<SessionState>) => boolean;
   /** Compacts a conversation as an identity: the real one runs `/compact` through the Agent SDK. */
   readonly compact: (request: CompactRequest, signal: AbortSignal) => Promise<CompactionResult>;
 }
@@ -36,10 +38,9 @@ export function createCompactionDeps(wiring: Readonly<CompactionWiring>): Compac
   return {
     shouldCompact: (identity, sessionId) => {
       const nowMs = wiring.now();
-      const sessions = liveSupervised(fs, paths, pool, wiring.isRunning)
-        .filter((session) => session.identity === identity)
-        .map((session) => ({ sessionId: session.sessionId, state: readSessionState(fs, paths, pool, session.sessionId) }));
-      return decideCompaction({
+      const registry = liveSupervised(fs, paths, pool, wiring.isRunning).filter((session) => session.identity === identity);
+      const sessions = registry.map((session) => ({ sessionId: session.sessionId, state: readSessionState(fs, paths, pool, session.sessionId) }));
+      const decision = decideCompaction({
         atUtilisation: wiring.policy.compactAtUtilisation,
         snapshot: readUsageSnapshot(fs, paths.usageSnapshotsDir, identity),
         records: () => readUsageLog(fs, paths.usageLogDir, { sinceMs: nowMs - FIVE_HOUR_WINDOW_MS }).records.filter((record) => record.identity === identity),
@@ -47,6 +48,15 @@ export function createCompactionDeps(wiring: Readonly<CompactionWiring>): Compac
         sessionId,
         nowMs,
       });
+      if (!decision.compact) {
+        return decision;
+      }
+      const own = registry.find((session) => session.sessionId === sessionId);
+      const state = sessions.find((session) => session.sessionId === sessionId)?.state;
+      if (own === undefined || state === undefined || !wiring.hooksFinished(own, state)) {
+        return { compact: false, reason: "the turn's Stop hooks have not finished successfully" };
+      }
+      return decision;
     },
     acquire: (identity) => {
       try {
@@ -64,6 +74,10 @@ export function createCompactionDeps(wiring: Readonly<CompactionWiring>): Compac
       const previous = readSessionState(fs, paths, pool, sessionId);
       writeSessionState(fs, paths, pool, sessionId, {
         mark: previous?.mark ?? "idle",
+        ...(previous?.conversationId === undefined ? {} : { conversationId: previous.conversationId }),
+        ...(previous?.transcriptPath === undefined ? {} : { transcriptPath: previous.transcriptPath }),
+        ...(previous?.promptId === undefined ? {} : { promptId: previous.promptId }),
+        ...(previous?.unavailable === true ? { unavailable: true } : {}),
         ...(previous?.contextTokens === undefined ? {} : { contextTokens: previous.contextTokens }),
         ...(compacted ? { compacted: true } : {}),
         at: new Date(wiring.now()).toISOString(),

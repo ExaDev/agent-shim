@@ -41,6 +41,7 @@ function setup(running: readonly number[] = [PID, OTHER_PID]) {
     now: () => FAKE_NOW_MS,
     isRunning: (pid) => running.includes(pid),
     sleep: () => undefined,
+    hooksFinished: () => true,
     compact: () => {
       throw new Error("the decision and the slot never compact");
     },
@@ -51,6 +52,13 @@ function setup(running: readonly number[] = [PID, OTHER_PID]) {
 const idleWith = (contextTokens: number) => ({ mark: "idle" as const, contextTokens, at: iso(0) });
 
 describe("the compaction decision over the shared registry", () => {
+  it("waits until all Stop hooks have completed successfully", () => {
+    const { fs, deps } = setup();
+    registerSupervised(fs, paths, session("mine", "work"));
+    writeSessionState(fs, paths, POOL, "mine", idleWith(SMALL));
+    const blocked = createCompactionDeps({ paths, fs, pool: POOL, policy: { compactAtUtilisation: AT_UTILISATION }, pid: PID, now: () => FAKE_NOW_MS, isRunning: () => true, sleep: () => undefined, hooksFinished: () => false, compact: deps.compact });
+    expect(blocked.shouldCompact("work", "mine")).toEqual({ compact: false, reason: "the turn's Stop hooks have not finished successfully" });
+  });
   it("lets the largest idle session on an identity go, and the others wait", () => {
     const { fs, deps } = setup();
     for (const [id, tokens] of [["big", BIG], ["small", SMALL]] as const) {

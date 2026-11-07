@@ -32,6 +32,14 @@ export type SupervisedSession = z.infer<typeof SupervisedSessionSchema>;
 const SessionStateSchema = z.strictObject({
   /** `busy` from the moment a prompt is submitted until the turn ends, `idle` from then until the next prompt: the only times the child can be stopped without losing a turn. */
   mark: z.enum(["busy", "idle"]),
+  /** The current Claude conversation when it differs from the launch id, for example after /clear. */
+  conversationId: z.uuid().optional(),
+  /** Claude's own path for the current conversation transcript. */
+  transcriptPath: z.string().min(1).optional(),
+  /** Claude's identifier for the most recently submitted prompt. */
+  promptId: z.uuid().optional(),
+  /** A hook failed to establish the current conversation, so the saved id must not be used for a move. */
+  unavailable: z.literal(true).optional(),
   /** The size in tokens of the context as of the last turn that ended; absent until one has. */
   contextTokens: z.number().int().nonnegative().optional(),
   /** Whether the session was compacted during its stay on the member it runs on now. Set by the supervisor, kept by later marks, and cleared when the session moves. */

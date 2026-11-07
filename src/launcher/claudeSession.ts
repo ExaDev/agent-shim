@@ -52,7 +52,7 @@ export function withSupervision(passthrough: readonly string[], supervised: Supe
   if (supervised.conversation === "as-given") {
     return passthrough;
   }
-  const conversed = withConversation(passthrough, supervised.conversation, supervised.sessionId);
+  const conversed = withConversation(passthrough, supervised.conversation, supervised.conversationId ?? supervised.sessionId);
   if (supervised.model === undefined) {
     return conversed;
   }
@@ -79,12 +79,68 @@ export function withLauncherSettings(passthrough: readonly string[], settings: s
     return passthrough;
   }
   const end = passthrough.indexOf(TERMINATOR);
-  return end === -1 ? [...passthrough, "--settings", settings] : [...passthrough.slice(0, end), "--settings", settings, ...passthrough.slice(end)];
+  const head = end === -1 ? passthrough : passthrough.slice(0, end);
+  const tail = end === -1 ? [] : passthrough.slice(end);
+  const kept: string[] = [];
+  for (let index = 0; index < head.length; index += 1) {
+    const token = head[index];
+    if (token === "--settings") {
+      index += 1;
+    } else if (token !== undefined && !token.startsWith("--settings=")) {
+      kept.push(token);
+    }
+  }
+  return [...kept, "--settings", settings, ...tail];
 }
 
 /** Whether `value` is a plain JSON object. */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isUnknownArray(value: unknown): value is unknown[] {
+  return Array.isArray(value);
+}
+
+/** Merges the caller's inline or file settings with launcher hooks without replacing any caller hook. `read` resolves a settings-file path relative to the launch directory. */
+export function combineCallerSettings(passthrough: readonly string[], launcherSettings: string, read: (name: string) => string | undefined): string {
+  const end = passthrough.indexOf(TERMINATOR);
+  const head = end === -1 ? passthrough : passthrough.slice(0, end);
+  let argument: string | undefined;
+  for (let index = 0; index < head.length; index += 1) {
+    const token = head[index];
+    if (token === "--settings") {
+      argument = head[index + 1];
+      index += 1;
+    } else if (token?.startsWith("--settings=") === true) {
+      argument = token.slice("--settings=".length);
+    }
+  }
+  if (argument === undefined || argument === "") {
+    throw new Error("--settings requires a JSON object or settings file");
+  }
+  const contents = argument.trimStart().startsWith("{") ? argument : read(argument);
+  if (contents === undefined) {
+    throw new Error(`cannot read settings file ${argument}`);
+  }
+  const caller: unknown = JSON.parse(contents);
+  const added: unknown = JSON.parse(launcherSettings);
+  if (!isRecord(caller) || !isRecord(added) || !isRecord(added.hooks)) {
+    throw new Error("settings must be JSON objects with launcher hooks");
+  }
+  const callerHooks = caller.hooks;
+  if (callerHooks !== undefined && !isRecord(callerHooks)) {
+    throw new Error("settings hooks must be an object");
+  }
+  const hooks: Record<string, unknown> = { ...callerHooks };
+  for (const [event, value] of Object.entries(added.hooks)) {
+    const existing = hooks[event];
+    if (!isUnknownArray(value) || (existing !== undefined && !isUnknownArray(existing))) {
+      throw new Error(`settings hooks for ${event} must be arrays`);
+    }
+    hooks[event] = existing === undefined ? value : [...existing, ...value];
+  }
+  return JSON.stringify({ ...caller, ...added, hooks });
 }
 
 /**
@@ -129,6 +185,8 @@ function isPrintRun(passthrough: readonly string[]): boolean {
 export interface SupervisedLaunch {
   /** The id the launch's session carries: the front door's session header, and claude's own conversation id. */
   readonly sessionId: string;
+  /** The current Claude conversation when it has changed within the launch. */
+  readonly conversationId?: string;
   readonly conversation: ClaudeConversation;
   /** The pool member to run as, for a relaunch after the previous member ran out of quota. The pool pick is skipped. */
   readonly member?: string;
@@ -138,6 +196,8 @@ export interface SupervisedLaunch {
   readonly model?: string;
   /** Claude Code settings, as the JSON `--settings` takes, to add to the launch: the hooks that tell the supervisor when a turn begins and ends. */
   readonly settings?: string;
+  /** A private file containing the caller's settings composed with supervisor hooks. */
+  readonly settingsFile?: string;
 }
 
 /** A conversation id that is safe to use as a file name: the supervisor registers sessions under it. Claude's own ids are UUIDs; anything with a separator or a dot is refused rather than trusted. */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { hasSettingsArgument, initialConversationOf, mergeSettings, withConversation, withLauncherSettings, withSupervision } from "./claudeSession";
+import { combineCallerSettings, hasSettingsArgument, initialConversationOf, mergeSettings, withConversation, withLauncherSettings, withSupervision } from "./claudeSession";
 
 const ID = "11111111-1111-4111-8111-111111111111";
 const OTHER = "22222222-2222-4222-8222-222222222222";
@@ -32,6 +32,9 @@ describe("withConversation", () => {
 });
 
 describe("withSupervision", () => {
+  it("resumes the changed conversation while keeping the supervisor's launch id", () => {
+    expect(withSupervision([], { sessionId: ID, conversationId: OTHER, conversation: "resume" })).toEqual(["--resume", OTHER]);
+  });
   it("applies the conversation argument and leaves the arguments alone when it takes the caller's as given", () => {
     expect(withSupervision(["--model", "opus"], { sessionId: ID, conversation: "start" })).toEqual(["--model", "opus", "--session-id", ID]);
     expect(withSupervision(["--resume", OTHER], { sessionId: OTHER, conversation: "as-given" })).toEqual(["--resume", OTHER]);
@@ -43,7 +46,10 @@ describe("withSupervision", () => {
 
 describe("withLauncherSettings", () => {
   const SETTINGS = '{"hooks":{}}';
-
+  it("replaces the caller's settings argument when the launcher composed it with its own", () => {
+    expect(withLauncherSettings(["--settings", "settings.json", "--model", "opus", "--", "--settings=argument"], SETTINGS)).toEqual(["--model", "opus", "--settings", SETTINGS, "--", "--settings=argument"]);
+    expect(withLauncherSettings(["--settings=inline"], SETTINGS)).toEqual(["--settings", SETTINGS]);
+  });
   it("adds the settings after the arguments and before a -- terminator", () => {
     expect(withLauncherSettings(["--model", "opus"], SETTINGS)).toEqual(["--model", "opus", "--settings", SETTINGS]);
     expect(withLauncherSettings(["--session-id", ID, "--", "mcp"], SETTINGS)).toEqual(["--session-id", ID, "--settings", SETTINGS, "--", "mcp"]);
@@ -52,6 +58,22 @@ describe("withLauncherSettings", () => {
   it("leaves the arguments alone when the launch adds no settings", () => {
     const args = ["--model", "opus"];
     expect(withLauncherSettings(args, undefined)).toBe(args);
+  });
+});
+
+describe("combineCallerSettings", () => {
+  it("preserves settings and appends supervisor hooks for an inline object or file", () => {
+    const own = '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"ours"}]}]}}';
+    const caller = '{"model":"opus","hooks":{"Stop":[{"hooks":[{"type":"command","command":"theirs"}]}]}}';
+    const read = (name: string): string | undefined => name === "settings.json" ? caller : undefined;
+    for (const args of [["--settings", caller], ["--settings=settings.json"]]) {
+      const merged: unknown = JSON.parse(combineCallerSettings(args, own, read));
+      expect(merged).toEqual({ model: "opus", hooks: { Stop: [{ hooks: [{ type: "command", command: "theirs" }] }, { hooks: [{ type: "command", command: "ours" }] }] } });
+    }
+  });
+  it("rejects unreadable and malformed caller settings rather than discarding them", () => {
+    expect(() => combineCallerSettings(["--settings", "missing.json"], '{"hooks":{}}', () => undefined)).toThrow();
+    expect(() => combineCallerSettings(["--settings", "{bad"], '{"hooks":{}}', () => undefined)).toThrow();
   });
 });
 
