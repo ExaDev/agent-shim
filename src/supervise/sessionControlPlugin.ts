@@ -1,6 +1,8 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+
+import { realIsProcessRunning } from "../realPorts";
 
 /**
  * A private, per-launch Claude Code plugin that acts inside the live session on request: the supervisor's channel into its child, which the front door also uses for the sessions a supervisor advertises it for.
@@ -18,9 +20,32 @@ export interface SessionControlPlugin {
   readonly release: () => void;
 }
 
-/** Creates the in-process control plugin used by one supervised launch. */
-export function stageSessionControlPlugin(): SessionControlPlugin {
-  const directory = mkdtempSync(path.join(tmpdir(), "agent-shim-control-"));
+/** The prefix every staged plugin directory's name starts with, before the staging launcher's pid. */
+const STAGED_PREFIX = "agent-shim-control-";
+
+/**
+ * Removes the staged plugin directories a launcher left when it was killed before its own release ran (SIGKILL, or a crash): every directory in `parent` named for a launcher pid that is no longer running. Only this user's own entries are touched, since a shared temporary directory holds other users' too.
+ */
+function removeAbandonedPlugins(parent: string, isRunning: (pid: number) => boolean): void {
+  const uid = process.getuid?.();
+  for (const name of readdirSync(parent)) {
+    const pid = Number(/^agent-shim-control-(\d+)-/u.exec(name)?.[1]);
+    if (!name.startsWith(STAGED_PREFIX) || !Number.isInteger(pid) || isRunning(pid)) {
+      continue;
+    }
+    const entry = path.join(parent, name);
+    const stat = lstatSync(entry, { throwIfNoEntry: false });
+    if (stat?.isDirectory() === true && (uid === undefined || stat.uid === uid)) {
+      rmSync(entry, { recursive: true, force: true });
+    }
+  }
+}
+
+/** Creates the in-process control plugin used by one supervised launch, named for this launcher's pid so a later launch can remove it if this one is killed before its release runs; removes the ones killed launchers left first. */
+export function stageSessionControlPlugin(options: Readonly<{ parent?: string; pid?: number; isRunning?: (pid: number) => boolean }> = {}): SessionControlPlugin {
+  const parent = options.parent ?? tmpdir();
+  removeAbandonedPlugins(parent, options.isRunning ?? realIsProcessRunning);
+  const directory = mkdtempSync(path.join(parent, `${STAGED_PREFIX}${String(options.pid ?? process.pid)}-`));
   const { ready, requests, results } = sessionControlPluginPaths(directory);
   try {
     mkdirSync(path.join(directory, ".claude-plugin"), { mode: 0o700 });
