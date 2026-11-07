@@ -11,6 +11,8 @@ import type { RcSelfHostCredentialRecord } from "./rcSelfHost";
  *
  * A mint recorded before the identity's id was (a record with no `identityId`) cannot be attributed to any launch, so it fails closed: every launch counts as the mode's, and the local surface refuses each of their calls with the instruction to mint again (see `rcSelfHostLocal.ts`), rather than letting the minted identity's traffic pass as native.
  *
+ * A capability that matches no registry entry cannot be attributed and fails closed like an unreadable peer: it is the mode's.
+ *
  * The decision is read from files the door and the launcher already keep, fresh on every call, because launches come and go. The session registry entry behind each capability names the configuration directory the launch's child runs with, and a launch is the minted identity's exactly when that is the minted identity's own directory (`<identitiesDir>/<id>`, which a rename leaves alone): an escape-hatch launch pointed at it is attributed like any other, and no name is ever looked up. Only an entry an older launcher wrote names no directory; it is decided by the launch records of its launcher pid, and one with none of those either cannot be told apart from the minted identity's, so it is the mode's. Each entry is written per launch under its launcher's pid, so a crashed launcher's entry is replaced by the next launch that reuses the pid, never mistaken for it.
  */
 
@@ -78,7 +80,8 @@ export function createRcSelfHostLaunchCheck(deps: RcSelfHostLaunchDeps & RcSelfH
         return minted.kind === "every";
       }
       const launch = sessions().find((record) => isLiveCapability(capability, [record.token]));
-      return launch !== undefined && launchRunsMinted(launch, minted.id);
+      // A capability the door admitted but whose registry entry cannot be read (its launch ended between the two reads) cannot be attributed, so it is the mode's, as an unattributable redirected connection is.
+      return launch === undefined || launchRunsMinted(launch, minted.id);
     },
     ownsPeer: async (port) => {
       const minted = mintedId();

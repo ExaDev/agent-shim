@@ -85,9 +85,10 @@ describe("which launches the self-hosted mode owns", () => {
     expect(check("work-2")("cap-self-hosted")).toBe(false);
   });
 
-  it("owns nothing while nothing is minted, and nothing for a capability no launch holds", () => {
+  it("owns nothing while nothing is minted, and fails closed for a capability no registry entry holds", () => {
     expect(check(undefined, "none")("cap-self-hosted")).toBe(false);
-    expect(check("rig")("cap-unknown")).toBe(false);
+    expect(check(undefined, "none")("cap-unknown")).toBe(false);
+    expect(check("rig")("cap-unknown")).toBe(true);
   });
 
   it("fails closed for a mint that names no identity: every launch is the mode's", () => {
@@ -163,6 +164,7 @@ describe("attributing a launch by the configuration directory its session names"
       doorPid: DOOR_PID,
     });
     expect(checked.ownsLaunch("cap-reused")).toBe(false);
-    expect(checked.ownsLaunch("cap-crashed")).toBe(false);
+    // The crashed launch's capability matches no entry any more, so nothing attributes it and it fails closed.
+    expect(checked.ownsLaunch("cap-crashed")).toBe(true);
   });
 });
