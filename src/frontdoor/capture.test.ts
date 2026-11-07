@@ -115,7 +115,7 @@ describe("createFileCapture", () => {
     const capture = createFileCapture(file, () => new Date("2026-10-03T12:00:00.000Z"));
     capture.refusedTunnel({ host: "downloads.example.test", port: 443 });
     capture.routedForward({ method: "GET", url: "/v1/mcp_servers", headers: { authorization: "Bearer oauth-token" } });
-    const lines = fs.readFileSync(file, "utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+    const lines = fs.readFileSync(file, "utf8").trim().split("\n").map((line): unknown => JSON.parse(line));
     expect(lines).toEqual([
       { ts: "2026-10-03T12:00:00.000Z", kind: "connect-refused", host: "downloads.example.test", port: 443 },
       { ts: "2026-10-03T12:00:00.000Z", kind: "routed-forward", method: "GET", url: "/v1/mcp_servers", headers: { authorization: "<redacted>" } },

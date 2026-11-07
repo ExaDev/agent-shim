@@ -1,6 +1,7 @@
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
+import type tls from "node:tls";
 import { beforeAll, afterAll, describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
@@ -607,18 +608,28 @@ describe("the self-hosted Remote Control mode end to end", () => {
     oauthSocket.destroy();
   }, TEST_TIMEOUT_MS);
 
-  it("reads a request target one way only: dot segments, a backslash and the absolute form reach the same answer as the plain path, and none is forwarded", async () => {
+  /** A terminated session of the self-hosted launch on `host`, reached the two ways the mode's traffic arrives: by redirect (no capability, attributed by its peer) and through the launch's own CONNECT tunnel (attributed by its capability). */
+  const openSelfHosted = async (via: "redirect" | "tunnel", host: string): Promise<tls.TLSSocket> =>
+    via === "redirect" ? await connectRedirected(transparentPort, host, ca.certPem) : await connectThroughProxy(connectHandle.port, host, ca.certPem, SELF_HOSTED_CAPABILITY);
+
+  it.each(["redirect", "tunnel"] as const)("reads a request target one way only over a %s: dot segments, a backslash and the absolute form reach the same answer as the plain path, a leading double slash is refused, and none is forwarded", async (via) => {
     upstreamDials.length = 0;
     const minted = { Authorization: `Bearer ${MINTED_OAUTH_TOKEN}` };
     for (const target of ["/./v1/mcp_servers", "/a/../v1/mcp_servers", "/.%2e/v1/mcp_servers", "http://api.anthropic.com/v1/mcp_servers"]) {
-      const socket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+      const socket = await openSelfHosted(via, CONNECT_INTERCEPT_HOST);
       const answered = await requestOn(socket, rawRequest("GET", target, minted));
       socket.destroy();
       expect(answered.statusLine, target).toContain(String(HTTP_STATUS.ok));
       expect(JSON.parse(answered.body), target).toEqual({ data: [], next_page: null });
     }
+    // A path starting with two slashes would read as an authority to a reader that resolves it against a base, so it is refused instead of decided.
+    for (const target of ["//v1/mcp_servers", "//api.anthropic.com/v1/mcp_servers"]) {
+      const socket = await openSelfHosted(via, CONNECT_INTERCEPT_HOST);
+      expect((await requestOn(socket, rawRequest("GET", target, minted))).statusLine, target).toContain(String(HTTP_STATUS.badRequest));
+      socket.destroy();
+    }
     // A backslash target is refused by the HTTP parser itself or read as a slash; either way nothing is forwarded.
-    const backslash = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+    const backslash = await openSelfHosted(via, CONNECT_INTERCEPT_HOST);
     backslash.write(rawRequest("GET", "\\v1/mcp_servers", minted));
     await new Promise<void>((resolve) => {
       backslash.once("close", () => {
@@ -649,21 +660,23 @@ describe("the self-hosted Remote Control mode end to end", () => {
       { host: "platform.claude.com", method: "GET", path: `/api/oauth/organizations/${org}/sync/github/auth`, headers: minted, status: HTTP_STATUS.ok, body: { is_authenticated: false } },
       { host: "platform.claude.com", method: "GET", path: "/api/anything/else", headers: minted, status: HTTP_STATUS.notFound },
     ];
-    for (const call of calls) {
-      const socket = await connectRedirected(transparentPort, call.host, ca.certPem);
-      const answered = await requestOn(socket, rawRequest(call.method, call.path, call.headers, call.method === "POST" ? JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" }) : undefined));
-      socket.destroy();
-      expect(answered.statusLine, call.path).toContain(String(call.status));
-      if (call.body !== undefined) {
-        expect(JSON.parse(answered.body)).toEqual(call.body);
+    for (const via of ["redirect", "tunnel"] as const) {
+      for (const call of calls) {
+        const socket = await openSelfHosted(via, call.host);
+        const answered = await requestOn(socket, rawRequest(call.method, call.path, call.headers, call.method === "POST" ? JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" }) : undefined));
+        socket.destroy();
+        expect(answered.statusLine, `${via} ${call.path}`).toContain(String(call.status));
+        if (call.body !== undefined) {
+          expect(JSON.parse(answered.body)).toEqual(call.body);
+        }
       }
+      // A websocket upgrade of the mode's (the artifacts sync socket presents its token as a subprotocol, not an Authorization header) is refused before any dial.
+      const upgradeSocket = await openSelfHosted(via, CONNECT_INTERCEPT_HOST);
+      const upgrade = await requestOn(upgradeSocket, rawRequest("GET", "/api/frame/sync?slug=s&vn=passive", { Upgrade: "websocket", "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==", "Sec-WebSocket-Version": "13", "Sec-WebSocket-Protocol": "frame-sync.v1" }).replace("Connection: close", "Connection: Upgrade"));
+      upgradeSocket.destroy();
+      expect(upgrade.statusLine, via).toContain("404");
+      expect(upstreamDials, via).toEqual([]);
     }
-    // A websocket upgrade of the mode's (the artifacts sync socket presents its token as a subprotocol, not an Authorization header) is refused before any dial.
-    const upgradeSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
-    const upgrade = await requestOn(upgradeSocket, rawRequest("GET", "/api/frame/sync?slug=s&vn=passive", { Upgrade: "websocket", "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==", "Sec-WebSocket-Version": "13", "Sec-WebSocket-Protocol": "frame-sync.v1" }).replace("Connection: close", "Connection: Upgrade"));
-    upgradeSocket.destroy();
-    expect(upgrade.statusLine).toContain("404");
-    expect(upstreamDials).toEqual([]);
 
     // The control: a native launch's tunnel on the same host is forwarded exactly as with the mode off, which is what proves the recorder above could have gone red.
     const nativeSocket = await connectThroughProxy(connectHandle.port, CONNECT_INTERCEPT_HOST, ca.certPem, NATIVE_CAPABILITY);
