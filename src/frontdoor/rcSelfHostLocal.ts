@@ -151,7 +151,7 @@ export function createRcSelfHostLocal(deps: RcSelfHostLocalDeps): RcSelfHostLoca
           return true;
         }
         answerServerJson(response, HTTP_STATUS.ok, {
-          // The email is required: the 2.1.319 client's profile schema rejects an answer without `account.email` (observed in the lab's debug log as a shape-validation failure on every start).
+          // The email is required: the client's profile schema rejects an answer without `account.email`, discarding the whole profile.
           account: { uuid: record.accountUuid, email: RC_SELF_HOST_EMAIL, display_name: "agent-shim self-hosted", created_at: new Date(0).toISOString() },
           organization: { uuid: record.organizationUuid, organization_type: "claude_max" },
         });
