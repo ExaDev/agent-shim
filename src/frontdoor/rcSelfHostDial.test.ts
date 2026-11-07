@@ -150,7 +150,7 @@ describe("the door's dials in the self-hosted mode", () => {
       const results = [
         await injectRcUserMessage(deps, SESSION, "hello"),
         await interruptRcSession(deps, SESSION),
-        await answerRcControlRequest({ ...deps, pendingOf: () => [{ sessionId: SESSION, requestId: "req_1", type: "can_use_tool", summary: "Bash", observedAt: 0 }], completePending: () => undefined }, SESSION, "req_1", { approve: true, message: undefined }),
+        await answerRcControlRequest({ ...deps, pendingOf: () => [{ sessionId: SESSION, requestId: "req_1", type: "can_use_tool", summary: "Bash", observedAt: 0 }], completePending: () => undefined, claimPending: () => () => undefined, pendingToolInputOf: () => undefined }, SESSION, "req_1", { approve: true, message: undefined }),
       ];
       for (const sent of world.sent) {
         expect(sent.endsWith("@127.0.0.1") || sent.endsWith("@::1")).toBe(true);
@@ -239,7 +239,7 @@ describe("the self-hosted mode's per-session dials", () => {
             await setRcSessionModel(deps, session, "model"),
             await endRcSession(deps, session, undefined),
             await teleportRcSession(deps, session, "marker"),
-            await answerRcControlRequest({ ...deps, pendingOf: () => [{ sessionId: session, requestId: "req_1", type: "can_use_tool", summary: "Bash", observedAt: 0 }], completePending: () => undefined }, session, "req_1", { approve: true, message: undefined }),
+            await answerRcControlRequest({ ...deps, pendingOf: () => [{ sessionId: session, requestId: "req_1", type: "can_use_tool", summary: "Bash", observedAt: 0 }], completePending: () => undefined, claimPending: () => () => undefined, pendingToolInputOf: () => undefined }, session, "req_1", { approve: true, message: undefined }),
           ];
           for (const result of results) {
             expect(result.ok).toBe(false);
