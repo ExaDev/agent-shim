@@ -3,7 +3,7 @@ import path from "node:path";
 import { ConfigFileNotJsonError, loadConfigFile, type LoadedFile } from "../config/load";
 import { FILE_NAME_RULE, isFileName, UnsafeNameError } from "../config/names";
 import { IdentitySchema, IdentitySelectorSchema, POOL_SELECTOR_PREFIX, type Identity } from "../config/schema";
-import { guardedNameRead, identityIdIn, isSymlinkEntry, nameOfParsed, readIdentityRecords, type IdentityRecordsPort } from "../identityRecords";
+import { guardedNameRead, IDENTITY_FILE, identityIdIn, isSymlinkEntry, nameOfParsed, readIdentityRecords, type IdentityRecordsPort } from "../identityRecords";
 import { sameDirectory } from "../sameDirectory";
 import type { FsPort } from "./ports";
 
@@ -209,6 +209,35 @@ export function identityIdResolver(identitiesDir: string, fs: Pick<FsPort, "read
   return (name) => {
     records ??= readIdentityRecords(configRecordsPort(fs), identitiesDir);
     return identityIdIn(records, name);
+  };
+}
+
+/** What answers an identity's id and its `identity.json` by name from one read of each file. */
+export interface IdentityReader {
+  /** The id (the directory the identity is stored in) of the identity of a name, or undefined when none is named so. */
+  readonly idOf: (name: string) => string | undefined;
+  /** The identity's validated `identity.json`, or undefined when no identity is named so. Throws `ConfigValidationError` for a file that fails validation, as `loadIdentity` does. */
+  readonly load: (name: string) => Identity | undefined;
+}
+
+/**
+ * Reads the identity records once and each `identity.json` at most once, so a decision that needs both a name's id and its configuration for many names (ranking a pool, resolving each member's provider) reads every file once however many times it asks. Use one per decision, since it does not see a rename or an edit made after its first read.
+ */
+export function identityReader(identitiesDir: string, fs: Pick<FsPort, "readdir" | "readConfigFile">): IdentityReader {
+  const read = new Map<string, unknown>();
+  const readOnce = (file: string): unknown => {
+    if (!read.has(file)) {
+      read.set(file, fs.readConfigFile(file));
+    }
+    return read.get(file);
+  };
+  const idOf = identityIdResolver(identitiesDir, { readdir: fs.readdir, readConfigFile: readOnce });
+  return {
+    idOf,
+    load: (name) => {
+      const id = idOf(name);
+      return id === undefined ? undefined : loadConfigFile(path.join(identitiesDir, id, IDENTITY_FILE), IdentitySchema, readOnce)?.config;
+    },
   };
 }
 
