@@ -106,6 +106,22 @@ describe("the Remote Control session tracker", () => {
     expect(tracker.credentialOf(SESSION_ID)?.anthropicClientPlatform).toBe("claude_code_vscode");
   });
 
+  it("births a session from a client event write without the platform that write named, in memory and in the store", () => {
+    const real = createRcCredentialStore(createFakeFarmFs(), "/state/frontdoor/rc-credentials");
+    const persistedPlatforms: (string | undefined)[] = [];
+    const store = { ...real, write: (sessionId: string, credential: Parameters<typeof real.write>[1]) => {
+      persistedPlatforms.push(credential.anthropicClientPlatform);
+      real.write(sessionId, credential);
+    } };
+    const tracker = createRcSessionTracker({ now: () => CLOCK_START_MS, idleMs: RC_IDLE_EXPIRY_MS, credentialStore: store });
+    // The first accepted call this door sees for the session is the door's own person's-app write.
+    exchange(tracker, { method: "POST", url: `/v1/code/sessions/${SESSION_ID}/events`, authorization: "Bearer sk-ant-oat", headers: { "anthropic-client-platform": "web_claude_ai" }, requestBody: JSON.stringify({ events: [] }) }).respond(HTTP_STATUS.ok, JSON.stringify({ results: [] }));
+    expect(tracker.list().map((entry) => entry.id)).toEqual([SESSION_ID]);
+    expect(tracker.credentialOf(SESSION_ID)?.anthropicClientPlatform).toBeUndefined();
+    expect(persistedPlatforms.length).toBeGreaterThan(0);
+    expect(persistedPlatforms).not.toContain("web_claude_ai");
+  });
+
   it("tracks a session it never saw created from its recurring calls alone", () => {
     const { tracker } = trackerWithClock();
     exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer sk-ant-oat" }).respond(HTTP_STATUS.ok);
