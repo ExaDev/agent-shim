@@ -94,6 +94,18 @@ describe("the Remote Control session tracker", () => {
     expect(tracker.credentialOf(SESSION_ID)?.authorization).toBe("Bearer sk-ant-oat2");
   });
 
+  it("never takes the client platform from a client event write, so the door's own person's-app write does not become what every later write replays", () => {
+    const { tracker } = trackerWithClock();
+    exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer sk-ant-oat", headers: { "anthropic-client-platform": "claude_code_cli" } }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
+    // The self-hosted route's write rides the door's own surface and comes back through the observed route like any client's write.
+    exchange(tracker, { method: "POST", url: `/v1/code/sessions/${SESSION_ID}/events`, authorization: "Bearer sk-ant-oat", headers: { "anthropic-client-platform": "web_claude_ai" }, requestBody: JSON.stringify({ events: [] }) }).respond(HTTP_STATUS.ok, JSON.stringify({ results: [] }));
+    exchange(tracker, { method: "POST", url: `/v1/code/sessions/${SESSION_ID}/teleport-events`, authorization: "Bearer sk-ant-oat", headers: { "anthropic-client-platform": "web_claude_ai" } }).respond(HTTP_STATUS.ok, JSON.stringify({ results: [] }));
+    expect(tracker.credentialOf(SESSION_ID)?.anthropicClientPlatform).toBe("claude_code_cli");
+    // Any other call of the session's own still refreshes it, latest-wins.
+    exchange(tracker, { method: "POST", url: `/v1/code/sessions/${SESSION_ID}/client/presence`, authorization: "Bearer sk-ant-oat", headers: { "anthropic-client-platform": "claude_code_vscode" } }).respond(HTTP_STATUS.ok);
+    expect(tracker.credentialOf(SESSION_ID)?.anthropicClientPlatform).toBe("claude_code_vscode");
+  });
+
   it("tracks a session it never saw created from its recurring calls alone", () => {
     const { tracker } = trackerWithClock();
     exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer sk-ant-oat" }).respond(HTTP_STATUS.ok);
