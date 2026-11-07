@@ -1,9 +1,6 @@
-import { RC_IDLE_EXPIRY_MS, type RcSessionStatus, type RcSessionTracker, type RcTrackedSessionStatus, type RcWorkerStateFact } from "./rcSessions";
+import { MS_PER_SECOND, RC_IDLE_EXPIRY_MS, type RcSessionStatus, type RcSessionTracker, type RcTrackedSessionStatus, type RcWorkerStateFact } from "./rcSessions";
 import { withIdentityNames, withRegisteredSessionFacts, type RcRegisteredSession } from "./rcSessionRegistry";
 import type { RcObservedCredential, RcWorkerStateReadResult } from "./rcWrites";
-
-/** Milliseconds in a second, for stating the idle bound in a reason a person reads. */
-const MS_PER_SECOND = 1_000;
 
 /** One session that registered with the Remote Control service on this machine (its Claude Code registry record names a bridge) but that the door's tracker holds no record of, with the worker state the door could read for it or why it could not. */
 export interface RcUnobservedSession {

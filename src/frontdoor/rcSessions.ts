@@ -38,6 +38,9 @@ export function isRcSessionExchange(url: string | undefined): boolean {
 /** The id prefix the protocol's own clients validate before using a session id, so the tracker applies the same test before recording one. */
 const RC_SESSION_ID_PREFIX = "cse_";
 
+/** Milliseconds per second, so every second-denominated conversion on the Remote Control surfaces reads as the seconds it names. */
+export const MS_PER_SECOND = 1_000;
+
 /**
  * How long an entry survives without any observed exchange for its session. Derived from the protocol's own liveness, not chosen: the worker heartbeats every 20 s (the `current_interval_seconds` our own captured heartbeat body carries), so a live session produces observable traffic at least that often, and the transport's documented liveness bound is the 45 s stream timeout, which outlasts two missed heartbeat intervals (40 s) precisely so a momentarily quiet session is not dropped. An entry idle past 45 s therefore names a session the protocol itself has given up on, which makes 45 s the exact bound where retaining it stops describing anything live.
  */

@@ -17,7 +17,7 @@ import type { RcRateLimitInfo } from "./rcSchemas";
 import { mintRcSelfHostCredential, type RcSelfHostMintResult } from "./rcSelfHostMint";
 import { RC_GOAL_CLEAR_WORDS, RC_SESSION_COMMAND_MAX_WAIT_MS, RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "./rcSessionCommands";
 import type { RcQuestionSelection } from "./rcQuestions";
-import { RC_PENDING_PER_SESSION_MAX, rcExcerpt, type RcPendingRequestSummary, type RcSessionSummary, type RcWorkerStateFact } from "./rcSessions";
+import { MS_PER_SECOND, RC_PENDING_PER_SESSION_MAX, rcExcerpt, type RcPendingRequestSummary, type RcSessionSummary, type RcWorkerStateFact } from "./rcSessions";
 import type { RcStatusReport } from "./rcStatus";
 import { RC_CONTEXT_USAGE_DETAILS, RC_PERMISSION_MODES, RC_READ_FILE_ENCODINGS, isRcContextUsageDetail, isRcPermissionMode, isRcReadFileEncoding, type RcEventWriteResult } from "./rcWrites";
 import type { RcStreamEvent } from "./rcSchemas";
@@ -170,9 +170,6 @@ export function parseRcChoiceFlags(choose: readonly string[], other: readonly st
 
 /** The percent scale, the one unit a whole-percentage rendering divides by. */
 const PERCENT_SCALE = 100;
-
-/** The milliseconds in one second, the unit that converts the payload's own unix-epoch-second reset instants into the epoch milliseconds `Date` reads. */
-const MS_PER_SECOND = 1_000;
 
 /** One utilization fraction as a whole percentage, rounded: the fraction the payload reports (which may exceed 1 when usage runs past a window's cap) stated at the precision a one-line read wants. */
 function percentOf(fraction: number): string {

@@ -1,5 +1,5 @@
 import { HTTP_STATUS } from "../codex/http";
-import { isSuccessful, type RcPendingRequestSummary } from "./rcSessions";
+import { MS_PER_SECOND, isSuccessful, type RcPendingRequestSummary } from "./rcSessions";
 import { resolveRcQuestionAnswers, type RcQuestionSelection } from "./rcQuestions";
 
 /**
@@ -648,9 +648,6 @@ export const RC_WORKER_READ_ANSWER_EXCERPT_CHARS = 500;
 function answerExcerpt(body: string): string {
   return body.length <= RC_WORKER_READ_ANSWER_EXCERPT_CHARS ? body : `${body.slice(0, RC_WORKER_READ_ANSWER_EXCERPT_CHARS)}... (${String(body.length - RC_WORKER_READ_ANSWER_EXCERPT_CHARS)} more characters)`;
 }
-
-/** Milliseconds in a second, for stating the read's deadline in a message a person reads. */
-const MS_PER_SECOND = 1_000;
 
 /** What one worker-state read produced: the state string the service named, or a verbose failure message ready to show a user. */
 export type RcWorkerStateReadResult = { readonly ok: true; readonly workerStatus: string } | { readonly ok: false; readonly message: string };
