@@ -333,7 +333,7 @@ export function requireNoClaudeCodeLoginForMint(keychain: KeychainProbe, configD
     return;
   }
   throw new KeychainLoginError(
-    `Cannot mint a self-hosted login into identity "${identity}": the Keychain holds a Claude Code login a session in ${configDir} would read (service ${found.service}${found.account === undefined ? "" : `, account ${found.account}`}), and on macOS Claude Code reads that login ahead of the minted file, so the session would sign in as that account instead. Nothing is changed and --force does not override this. Mint into an identity with no login, or, if that login is not needed, delete it with \`${keychainDeleteCommand(found.service, found.account)}\` and mint again.`,
+    `Cannot mint a self-hosted login into identity "${identity}": the Keychain holds a Claude Code login filed for the directory's service (${found.service}${found.account === undefined ? "" : `, account ${found.account}`}) of ${configDir}, and on macOS Claude Code reads a login filed there ahead of the minted file, so a session could sign in as that account instead. Nothing is changed and --force does not override this. Mint into an identity with no login, or, if that login is not needed, delete it with \`${keychainDeleteCommand(found.service, found.account)}\` and mint again.`,
   );
 }
 

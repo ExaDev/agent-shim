@@ -187,7 +187,7 @@ export interface RcSelfHostGuardedMintDeps extends RcSelfHostMintDeps {
 }
 
 /**
- * The mint as `frontdoor rc selfhost mint` runs it: on macOS the Keychain is asked first, by attributes only, whether a session in the identity's directory would read a Claude Code login ahead of the minted file, and the mint is refused (`requireNoClaudeCodeLoginForMint`) before anything is written when one is filed; then `mintRcSelfHostCredential`. Nothing in the Keychain is ever deleted.
+ * The mint as `frontdoor rc selfhost mint` runs it: on macOS the Keychain is asked first, by attributes only, whether a Claude Code login is filed for the identity directory's service, which a session reads ahead of the minted file, and the mint is refused (`requireNoClaudeCodeLoginForMint`) before anything is written when one is filed; then `mintRcSelfHostCredential`. Nothing in the Keychain is ever deleted.
  */
 export function mintRcSelfHostLogin(deps: RcSelfHostGuardedMintDeps): RcSelfHostMintResult {
   const id = identityIdOver(deps.fs, deps.identitiesDir, deps.identity);

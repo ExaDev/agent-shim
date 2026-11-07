@@ -245,6 +245,9 @@ describe("the self-hosted mint's Keychain checks, which refuse and never delete"
     expect(() => {
       requireNoClaudeCodeLoginForMint(darwin(keychain), LAB_DIR, "lab", TEST_CLAUDE_LOGIN);
     }).toThrow(`security delete-generic-password -s '${LAB_SERVICE}' -a 'someone-else'`);
+    expect(() => {
+      requireNoClaudeCodeLoginForMint(darwin(keychain), LAB_DIR, "lab", TEST_CLAUDE_LOGIN);
+    }).toThrow("a Claude Code login filed for the directory's service");
   });
 
   it("refuses outright, naming the variable and no item to delete, while CLAUDE_SECURESTORAGE_CONFIG_DIR is set, on every platform", () => {
