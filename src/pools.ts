@@ -12,6 +12,7 @@ import { realFarmFs, realFsPort } from "./realPorts";
 import { candidateHeading } from "./usage/candidateText";
 import { formatAge } from "./usage/preflight";
 import { collectPoolPick } from "./poolPickReport";
+import { realMemberProviderResolver } from "./poolProviderWiring";
 import { describeSharedLoginMembers, sharedLoginMembers } from "./poolSharedLogins";
 import { readIdentityAccount } from "./identityAccounts";
 import type { LayoutPaths } from "./paths";
@@ -231,11 +232,14 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
   withExamples(
     pool
       .command("pick <name>")
-      .description("Show how a launch from this directory would rank the pool's members right now, and which it would run as. Read-only: it records nothing.")
+      .description("Show how a launch from this directory would rank the pool's members right now, and which it would run as. Each member is ranked on the quota of the provider its launch would spend (the --provider flag, else the directory's configuration, else the member's own provider), or on its Claude account when that is none. Read-only: it records nothing.")
+      .option("--provider <name>", "Rank each member as a launch with `--provider <name>` would: on that provider's quota, whatever the member declares.")
+      .option("--no-provider", "Rank each member on its Claude account, as a launch with `--no-provider` would, whatever a provider is configured.")
       .option("--json", "Print the ranking as JSON.")
-      .action((name: string, options: Readonly<{ json?: boolean }>) => {
+      .action((name: string, options: Readonly<{ json?: boolean; provider?: string | false }>) => {
         const nowMs = Date.now();
-        const report = collectPoolPick({ paths, fs: realFsPort, usageFs: realFarmFs, poolName: name, pools: readPools(paths), directory: process.cwd(), nowMs });
+        const providerOf = realMemberProviderResolver({ paths, cwd: process.cwd(), env: process.env, ...(options.provider === undefined ? {} : { cliProvider: options.provider }) });
+        const report = collectPoolPick({ paths, fs: realFsPort, usageFs: realFarmFs, poolName: name, pools: readPools(paths), directory: process.cwd(), nowMs, providerOf });
         if (options.json === true) {
           printJson(report);
           return;
@@ -244,6 +248,6 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
           console.log(line);
         }
       }),
-    ["agent-shim pool pick subs", "agent-shim pool pick subs --json"],
+    ["agent-shim pool pick subs", "agent-shim pool pick subs --provider spark", "agent-shim pool pick subs --json"],
   );
 }

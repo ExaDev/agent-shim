@@ -20,6 +20,8 @@ const PoolPickCandidateViewSchema = z.strictObject({
   /** When an `ineligible` member can be used again, as an ISO instant. */
   blockedUntil: z.iso.datetime().optional(),
   plan: PlanClassSchema,
+  /** The provider the member was ranked on, when its launch spends one in place of its Claude account: its windows, refusals and plan are the provider's own. Absent when ranked on the Claude account. */
+  provider: z.string().optional(),
   /** The facts behind the class and score, in the order they matter. */
   reasons: z.array(z.string()),
 });

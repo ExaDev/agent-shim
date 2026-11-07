@@ -346,3 +346,58 @@ describe("agent-shim pool: members on one login", () => {
     expect((await cli(["pool", "pick", "subs"])).stdout).toContain("same login as work");
   });
 });
+
+describe("agent-shim pool pick: ranking on a provider", () => {
+  const PROVIDER = { displayName: "Example", baseUrl: "https://api.example.com/anthropic", credential: { sources: [{ literal: "example-token" }] } };
+
+  /** An identity whose Claude seven-day window is spent and whose provider `p` seven-day window is open. */
+  function seedSpentClaudeOpenProvider(identity: string): void {
+    seedSnapshot(identity, { utilization: FULL, resetsInMs: SIX_DAYS_MS, status: "rejected" });
+    const file = snapshotPath(paths.usageSnapshotsDir, identity);
+    const snapshot = JSON.parse(fs.readFileSync(file, "utf8")) as { providers: Record<string, unknown> };
+    const seen = new Date(Date.now() - HOUR_MS).toISOString();
+    snapshot.providers.p = { lastRequestAt: seen, lastStatus: 200, rateLimit: { observedAt: seen, headers: {}, unified: { sevenDay: { utilization: U10, resetsAt: new Date(Date.now() + SIX_DAYS_MS).toISOString() } } } };
+    fs.writeFileSync(file, JSON.stringify(snapshot));
+  }
+
+  interface PickJson {
+    readonly pick?: string;
+    readonly candidates: readonly { readonly identity: string; readonly class: string; readonly provider?: string }[];
+  }
+
+  beforeEach(async () => {
+    addIdentity(paths, "work");
+    addIdentity(paths, "personal");
+    fs.mkdirSync(paths.providersDir, { recursive: true });
+    fs.writeFileSync(path.join(paths.providersDir, "p.json"), JSON.stringify(PROVIDER));
+    seedSpentClaudeOpenProvider("work");
+    seedSpentClaudeOpenProvider("personal");
+    await cli(["pool", "add", "subs", "--identity", "work", "--identity", "personal"]);
+  });
+
+  it("ranks each member on the provider the flag names, reporting it per candidate", async () => {
+    const report = JSON.parse((await cli(["pool", "pick", "subs", "--provider", "p", "--json"])).stdout) as PickJson;
+    expect(report.pick).toBeDefined();
+    expect(report.candidates.map((candidate) => [candidate.class, candidate.provider])).toEqual([["scored", "p"], ["scored", "p"]]);
+    expect((await cli(["pool", "pick", "subs", "--provider", "p"])).stdout).toContain("on provider p");
+  });
+
+  it("ranks the same pool on the Claude account when no provider applies, and with --no-provider", async () => {
+    for (const argv of [["pool", "pick", "subs", "--json"], ["pool", "pick", "subs", "--no-provider", "--json"]]) {
+      const report = JSON.parse((await cli(argv)).stdout) as PickJson;
+      expect(report.pick).toBeUndefined();
+      expect(report.candidates.map((candidate) => candidate.class)).toEqual(["ineligible", "ineligible"]);
+      expect(report.candidates.every((candidate) => candidate.provider === undefined)).toBe(true);
+    }
+  });
+
+  it("ranks a member on the provider its own identity declares when the flag names none", async () => {
+    const identityFile = path.join(paths.identitiesDir, "work", "identity.json");
+    const declared = JSON.parse(fs.readFileSync(identityFile, "utf8")) as Record<string, unknown>;
+    fs.writeFileSync(identityFile, JSON.stringify({ ...declared, provider: "p" }));
+    const report = JSON.parse((await cli(["pool", "pick", "subs", "--json"])).stdout) as PickJson;
+    expect(report.pick).toBe("work");
+    expect(report.candidates.find((candidate) => candidate.identity === "work")).toMatchObject({ class: "scored", provider: "p" });
+    expect(report.candidates.find((candidate) => candidate.identity === "personal")).toMatchObject({ class: "ineligible" });
+  });
+});

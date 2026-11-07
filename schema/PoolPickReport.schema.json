@@ -92,6 +92,9 @@
               }
             ]
           },
+          "provider": {
+            "type": "string"
+          },
           "reasons": {
             "type": "array",
             "items": {

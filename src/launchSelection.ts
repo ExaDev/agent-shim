@@ -6,6 +6,7 @@ import { loadCascadeInput, readDirectorySelections, type LoadedCascade } from ".
 import { decideConfigProfile, decideIdentity, loadIdentity, type ConfigProfileDecision, type IdentityDecision } from "./launcher/identity";
 import type { LayoutPaths } from "./paths";
 import { collectPoolPick } from "./poolPickReport";
+import { realMemberProviderResolver } from "./poolProviderWiring";
 import { PoolNotFoundError } from "./poolStore";
 import { realFarmFs, realFsPort } from "./realPorts";
 import type { PoolPickReport } from "./usage/pickReportSchema";
@@ -67,7 +68,8 @@ export function selectLaunch(params: ResolveLaunchSelectionParams, loaded: Loade
     if (pools[decidedIdentity.pool] === undefined) {
       throw new PoolNotFoundError(decidedIdentity.pool);
     }
-    poolPick = collectPoolPick({ paths, fs: realFsPort, usageFs: realFarmFs, poolName: decidedIdentity.pool, pools, directory: cwd, nowMs: Date.now() });
+    const providerOf = realMemberProviderResolver({ paths, cwd, env: params.env, ...(params.configProfile === undefined ? {} : { cliFlagConfigProfile: params.configProfile }), loaded });
+    poolPick = collectPoolPick({ paths, fs: realFsPort, usageFs: realFarmFs, poolName: decidedIdentity.pool, pools, directory: cwd, nowMs: Date.now(), providerOf });
   }
   const identity = poolPick?.pick === undefined ? decidedIdentity : { ...decidedIdentity, name: poolPick.pick };
 
