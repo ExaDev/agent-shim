@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
 
-import { createRcSessionTracker, type RcSessionTracker } from "./rcSessions";
+import { createRcSessionTracker, RC_REQUEST_PARSE_CAP_BYTES, type RcSessionTracker } from "./rcSessions";
 import {
   RC_CONTEXT_USAGE_DETAILS,
   RC_PERMISSION_MODES,
@@ -386,6 +386,21 @@ describe("the control_response payload and answerRcControlRequest over an inject
         expect(refused.ok ? "delivered" : refused.message).toContain("cannot answer");
       }
       expect(dialled).toEqual([]);
+    });
+
+    it("approves and denies an approval request past the parse cap, which holds none of its input", async () => {
+      const { tracker } = trackerWithPending();
+      const bigId = "req_00000000-0000-4000-8000-0000000000b1";
+      tracker.fileStreamEvent(SESSION_ID, { event_type: "control_request", sequence_num: 1, source: "worker", payload: { type: "control_request", request_id: bigId, request: { subtype: "can_use_tool", tool_name: "Write", input: { content: "x".repeat(RC_REQUEST_PARSE_CAP_BYTES) } } } });
+      const listed = tracker.pendingOf().find((request) => request.requestId === bigId);
+      expect(listed?.oversized).toBeUndefined();
+      expect(listed?.summary.startsWith("Write ")).toBe(true);
+      const { dial, dialled } = dialRecording();
+      expect((await answerRcControlRequest(depsOf(tracker, dial), SESSION_ID, bigId, { approve: true, message: undefined })).ok).toBe(true);
+      expect(JSON.parse(dialled[0]?.body ?? "")).toEqual({ events: [{ payload: { type: "control_response", response: { subtype: "success", request_id: bigId, response: { behavior: "allow" } } } }] });
+      const second = trackerWithPending().tracker;
+      second.fileStreamEvent(SESSION_ID, { event_type: "control_request", sequence_num: 1, source: "worker", payload: { type: "control_request", request_id: bigId, request: { subtype: "can_use_tool", tool_name: "Write", input: { content: "x".repeat(RC_REQUEST_PARSE_CAP_BYTES) } } } });
+      expect((await answerRcControlRequest(depsOf(second, dial), SESSION_ID, bigId, { approve: false, message: "no" })).ok).toBe(true);
     });
 
     it("dismisses a question with a plain denial", async () => {
