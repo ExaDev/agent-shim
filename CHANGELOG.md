@@ -1,3 +1,14 @@
+## [12.0.1](https://github.com/ExaDev/agent-shim/compare/v12.0.0...v12.0.1) (2026-11-07)
+
+### Bug Fixes
+
+* **launcher:** keep the run options type internal to the ports module ([3e22961](https://github.com/ExaDev/agent-shim/commit/3e229610de821c94f103186aa7ee3c3e236d8e02))
+* **launcher:** run a provider launch without Remote Control when the stored login is unusable ([589e50f](https://github.com/ExaDev/agent-shim/commit/589e50f3f7037ef93272f92492342cf790ef972c))
+
+### Documentation
+
+* say a provider launch also drops Remote Control for a stored login that is no longer usable ([bd5652f](https://github.com/ExaDev/agent-shim/commit/bd5652f4cf2f855d6e71b897a992f0289ca8cef9))
+
 ## [12.0.0](https://github.com/ExaDev/agent-shim/compare/v11.90.0...v12.0.0) (2026-11-07)
 
 ### ⚠ BREAKING CHANGES
