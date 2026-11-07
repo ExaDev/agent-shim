@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { describe, expect, it, vi } from "vitest";
 
 import type { Credential } from "./config/schema";
@@ -75,6 +77,26 @@ describe("runCheck", () => {
 
     const withoutVar = runCheck(baseParams());
     expect(withoutVar.ambientCredential.ok).toBe(true);
+  });
+
+  describe("inside a session another launch started", () => {
+    /** What a `claude @work` launcher left in the session's environment: its credential and the marker naming it. */
+    const SESSION = {
+      CLAUDE_CODE_OAUTH_TOKEN: "oauth-work-token",
+      AGENT_SHIM_INJECTED: JSON.stringify({ CLAUDE_CODE_OAUTH_TOKEN: createHash("sha256").update("oauth-work-token").digest("hex") }),
+    };
+
+    it("does not call a credential the parent launcher injected ambient for a launch that names its own identity", () => {
+      expect(runCheck(baseParams({ env: SESSION })).ambientCredential.ok).toBe(true);
+    });
+
+    it("still calls it ambient when the launch would take the escape hatch and keep the session as it is", () => {
+      expect(runCheck(baseParams({ env: SESSION, configDirEscapeHatch: true })).ambientCredential.ok).toBe(false);
+    });
+
+    it("still calls a credential the person set ambient", () => {
+      expect(runCheck(baseParams({ env: { ...SESSION, CLAUDE_CODE_OAUTH_TOKEN: "set-by-the-person" } })).ambientCredential.ok).toBe(false);
+    });
   });
 
   it("respects an identity's own allowAmbientCredential opt-in", () => {

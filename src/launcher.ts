@@ -52,7 +52,7 @@ import { resolveClaudeVersion, type PinnedClaudeVersion } from "./launcher/claud
 import { runLaunchUpdateCheck, type UpdateLaunchPort } from "./update/launchHook";
 import { targetRefs } from "./models/targets";
 import { profileFilePath } from "./config/names";
-import { INJECTED_ENV, withoutInjected } from "./launcher/injected";
+import { INJECTED_ENV, launchEnvironment } from "./launcher/injected";
 
 /**
  * Everything the farm resync needs that the launcher itself has no way to produce: a real filesystem, a real clock, the working directory, and a way to load the cascade for it.
@@ -340,7 +340,7 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean, onRecorded
   const configDirEscapeHatchApplies = decidedIdentity.configDirEscapeHatch;
 
   // A launch that resolves its own identity does not inherit what its parent launcher injected into the environment (the parent's credential, routing headers, provider variables): they describe the parent's session, not this one. Under the escape hatch the child is the parent's session, so its environment stays as it is.
-  const env = configDirEscapeHatchApplies ? proc.env : withoutInjected(proc.env);
+  const env = launchEnvironment(proc.env, configDirEscapeHatchApplies);
   const cliOverride = buildCliOverride({
     env,
     categoryFlags: parsedArgv.categoryFlags,
