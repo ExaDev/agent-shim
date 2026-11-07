@@ -321,6 +321,31 @@ export {
 } from "./frontdoor/rcSchemas";
 export { createRcLiveUsage, rcRateLimitInfoOf, type RcLiveUsage, type RcLiveUsageDeps } from "./frontdoor/rcLiveUsage";
 export {
+  RC_GOAL_CLEAR_WORDS,
+  RC_PERSON_CLIENT_PLATFORM,
+  RC_SLASH_COMMAND_DEFAULT_WAIT_MS,
+  RC_SLASH_COMMAND_VERIFIED_VERSIONS,
+  clearRcSessionGoal,
+  compactRcSession,
+  createRcClaudeCodeVersions,
+  getRcSessionGoal,
+  parseRcGoalClearReport,
+  parseRcGoalReport,
+  rcCompactSignalOf,
+  rcLocalCommandOutputOf,
+  setRcSessionGoal,
+  type RcClaudeCodeVersions,
+  type RcCompactOptions,
+  type RcCompactReport,
+  type RcGoal,
+  type RcGoalClearReport,
+  type RcGoalReport,
+  type RcGoalSetReport,
+  type RcSlashCommandDeps,
+  type RcSlashCommandOptions,
+  type RcSlashCommandResult,
+} from "./frontdoor/rcSlashCommands";
+export {
   RC_STREAM_BACKOFF_MS,
   createRcEventFanout,
   createRcStreamHub,

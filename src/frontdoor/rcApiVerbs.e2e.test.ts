@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { generateCa, LOOPBACK_LEAF_NAMES, mintLeaf, type CaMaterial } from "./connect";
 import { KEYGEN_TIMEOUT_MS } from "./connectTestWorld";
 import { createRcApiNodeHandler, frontDoorRcApiClient } from "./rcApi";
+import type { RcSlashCommandResult } from "./rcSlashCommands";
 import { createRcEventFanout } from "./rcStream";
 import type { RcEventWriteResult } from "./rcWrites";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
@@ -19,6 +20,13 @@ const SESSION_ID = "cse_00000000-0000-4000-8000-000000000001";
 const MINTED_REQUEST_ID = "minted-00000000-0000-4000-8000-000000000002";
 /** The sequence numbers the recording writes answer with, named so the literal never reads as a magic number. */
 const ANSWERED_SEQUENCE_NUM = 411;
+/** The token counts the recorded compaction reports, distinct so the answer is seen to carry both. */
+const COMPACT_PRE_TOKENS = 1200;
+const COMPACT_POST_TOKENS = 300;
+
+/** The wait bound the set call names, so the procedure is seen to hand it through. */
+const COMMAND_WAIT_MS = 30_000;
+
 const SEQUENCE_NUMS = [ANSWERED_SEQUENCE_NUM];
 
 describe("the wider control-verb family on the door's typed API, end to end over its own TLS", () => {
@@ -31,6 +39,12 @@ describe("the wider control-verb family on the door's typed API, end to end over
   const note = async (op: string, args: readonly unknown[]): Promise<RcEventWriteResult> => {
     calls.push({ op, args });
     return await Promise.resolve({ ok: true, sequenceNums: [...SEQUENCE_NUMS], requestId: MINTED_REQUEST_ID });
+  };
+
+  /** The same recording for the goal and compaction verbs, answering with the report each one is handed. */
+  const noteCommand = async <T>(op: string, args: readonly unknown[], report: T): Promise<RcSlashCommandResult<T>> => {
+    calls.push({ op, args });
+    return await Promise.resolve({ ok: true, sequenceNums: [...SEQUENCE_NUMS], report });
   };
 
   beforeAll(async () => {
@@ -56,6 +70,10 @@ describe("the wider control-verb family on the door's typed API, end to end over
       mcpAuthenticate: async (session, serverName, redirectUri) => note("mcpAuthenticate", [session, serverName, redirectUri]),
       mcpOAuthCallbackUrl: async (session, serverName, callbackUrl) => note("mcpOAuthCallbackUrl", [session, serverName, callbackUrl]),
       teleport: async (session, marker) => note("teleport", [session, marker]),
+      goalGet: async (session, options) => noteCommand("goalGet", [session, options], { goal: { condition: "the build is green", iterations: 2, lastCheck: "one test still fails" } }),
+      goalSet: async (session, condition, options) => noteCommand("goalSet", [session, condition, options], { condition }),
+      goalClear: async (session, options) => noteCommand("goalClear", [session, options], { cleared: null }),
+      compact: async (session, options) => noteCommand("compact", [session, options], { trigger: "manual", preTokens: COMPACT_PRE_TOKENS, postTokens: COMPACT_POST_TOKENS }),
       fanout: createRcEventFanout(),
     });
     const server = createFrontDoorServer(
@@ -108,6 +126,21 @@ describe("the wider control-verb family on the door's typed API, end to end over
     ]);
   });
 
+  it("serves the goal and compaction verbs, each answer carrying the worker's report beside the command's sequence numbers", async () => {
+    const api = frontDoorRcApiClient(port, ca.certPem, CONTROL_TOKEN);
+    const before = calls.length;
+    expect(await api.rc.goalGet({ session: SESSION_ID })).toEqual({ session: SESSION_ID, sequenceNums: SEQUENCE_NUMS, goal: { condition: "the build is green", iterations: 2, lastCheck: "one test still fails" } });
+    expect(await api.rc.goalSet({ session: SESSION_ID, condition: "the build is green", waitMs: COMMAND_WAIT_MS })).toEqual({ session: SESSION_ID, sequenceNums: SEQUENCE_NUMS, condition: "the build is green" });
+    expect(await api.rc.goalClear({ session: SESSION_ID })).toEqual({ session: SESSION_ID, sequenceNums: SEQUENCE_NUMS, cleared: null });
+    expect(await api.rc.compact({ session: SESSION_ID, instructions: "keep the decisions" })).toEqual({ session: SESSION_ID, sequenceNums: SEQUENCE_NUMS, trigger: "manual", preTokens: COMPACT_PRE_TOKENS, postTokens: COMPACT_POST_TOKENS });
+    expect(calls.slice(before)).toEqual([
+      { op: "goalGet", args: [SESSION_ID, {}] },
+      { op: "goalSet", args: [SESSION_ID, "the build is green", { waitMs: COMMAND_WAIT_MS }] },
+      { op: "goalClear", args: [SESSION_ID, {}] },
+      { op: "compact", args: [SESSION_ID, { instructions: "keep the decisions" }] },
+    ]);
+  });
+
   it("refuses a caller without this generation's control token before any operation runs", async () => {
     // The same token middleware the whole mount shares refuses a caller without it, and no operation is carried out: the recording log holds exactly what it held before.
     const callsBefore = calls.length;
@@ -139,6 +172,10 @@ describe("the wider control-verb family on the door's typed API, end to end over
       mcpAuthenticate: async () => await Promise.resolve({ ok: false, message: "unexercised" }),
       mcpOAuthCallbackUrl: async () => await Promise.resolve({ ok: false, message: "unexercised" }),
       teleport: async () => await Promise.resolve({ ok: false, message: "unexercised" }),
+      goalGet: async () => await Promise.resolve({ ok: false as const, message: "unexercised" }),
+      goalSet: async () => await Promise.resolve({ ok: false as const, message: "unexercised" }),
+      goalClear: async () => await Promise.resolve({ ok: false as const, message: "unexercised" }),
+      compact: async () => await Promise.resolve({ ok: false as const, message: "unexercised" }),
       fanout: createRcEventFanout(),
     });
     const server = createFrontDoorServer(

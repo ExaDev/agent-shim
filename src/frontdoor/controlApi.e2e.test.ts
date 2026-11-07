@@ -80,6 +80,9 @@ const CHECK: CheckReport = runCheck({
 /** The write operations this test never drives: present because the merged mount wires them, typed because the router demands them. */
 const unexercised = async (): Promise<RcEventWriteResult> => await Promise.resolve({ ok: false, message: "this test drives no Remote Control write" });
 
+/** The same stand-in for the goal and compaction verbs, whose results carry a report rather than a write. */
+const unexercisedCommand = async (): Promise<{ readonly ok: false; readonly message: string }> => await Promise.resolve({ ok: false, message: "this test drives no Remote Control command" });
+
 /**
  * How long the events case may wait for the publish it drives to cross the wire. Loopback TLS and the bridge run in milliseconds; the bound exists only so an overloaded machine fails visibly instead of hanging the suite.
  */
@@ -138,6 +141,10 @@ describe("the door's typed API with the control plane mounted beside Remote Cont
       mcpAuthenticate: unexercised,
       mcpOAuthCallbackUrl: unexercised,
       teleport: unexercised,
+      goalGet: unexercisedCommand,
+      goalSet: unexercisedCommand,
+      goalClear: unexercisedCommand,
+      compact: unexercisedCommand,
       fanout: rcFanout,
       sessionEvents: createRcSessionEventLog({ generation: "00000000-0000-4000-8000-0000000000ee", capacity: RC_SESSION_EVENT_LOG_CAPACITY }),
       events: doorEvents,
