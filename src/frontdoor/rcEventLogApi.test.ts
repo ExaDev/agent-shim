@@ -126,6 +126,32 @@ describe("the session events surface of the typed API", () => {
     expect(eventOfFrame(frame)).toEqual(second);
   });
 
+  it("ends an open SSE response when the log closes, so a retiring door's drain is not held open by a subscriber", async () => {
+    const closing = createRcSessionEventLog({ generation: GENERATION, capacity: CAPACITY });
+    const mounted = await mountRouterClient(createRcSessionEventsApiRouter({ expectedToken: CONTROL_TOKEN, sessionEvents: closing }), CONTROL_TOKEN, CONTROL_TOKEN);
+    try {
+      const answered = await fetch(`${mounted.url}/rest/rc/session-events`, { headers: { authorization: `Bearer ${CONTROL_TOKEN}` } });
+      if (answered.body === null) {
+        throw new Error("expected a streaming body");
+      }
+      const reader = answered.body.getReader();
+      const deadline = new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error("the SSE response did not end within the test's wait budget"));
+        }, WAIT_BUDGET_MS);
+      });
+      closing.close();
+      for (;;) {
+        const { done } = await Promise.race([reader.read(), deadline]);
+        if (done) {
+          break;
+        }
+      }
+    } finally {
+      await mounted.close();
+    }
+  });
+
   it("follows live through the typed client and refuses an evicted cursor with GONE, naming the head", async () => {
     const leave = new AbortController();
     const stream = await client.rcSessions.events({}, { signal: leave.signal });

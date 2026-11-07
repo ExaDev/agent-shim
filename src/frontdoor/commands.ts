@@ -723,7 +723,11 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       });
       return { port: handle.port, listening: server, close: handle.close, drain: handle.drain };
     },
-    closeRcStreamHub: rcHub.close,
+    // The tracker closes with the hub: its close ends every session-events follower, so a supervisor's open stream ends with the door instead of holding a retiring door's drain open for as long as the subscriber stays connected.
+    closeRcStreamHub: () => {
+      rcHub.close();
+      rcTracker.close();
+    },
     respawnChain: {
       generation: respawnGeneration,
       startNext: async () => {
