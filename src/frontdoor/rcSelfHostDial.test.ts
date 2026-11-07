@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { RcDialTarget } from "./connectEffects";
-import { rcSelfHostEventDial, rcSelfHostStreamDial, rcSelfHostedDials, selfHostSurfaceUnboundReason, type RcSelfHostDialSource } from "./rcSelfHostDial";
+import { doorRcDials, rcSelfHostEventDial, rcSelfHostStreamDial, selfHostSurfaceUnboundReason, type RcSelfHostDialSource } from "./rcSelfHostDial";
 import type { RcPresenceAnswer, RcStreamDial } from "./rcStream";
 import { RcDialRefusal, answerRcControlRequest, endRcSession, injectRcUserMessage, interruptRcSession, setRcSessionModel, teleportRcSession, type RcControlRequestDeps, type RcEventDial, type RcObservedCredential } from "./rcWrites";
 
@@ -204,7 +204,7 @@ describe("the self-hosted mode's per-session dials", () => {
         return real.stream;
       },
     };
-    return { realSent, selfHostedBuilt, dials: rcSelfHostedDials(surface, source, (id) => credentials.get(id), real, makers) };
+    return { realSent, selfHostedBuilt, dials: doorRcDials(surface, source, (id) => credentials.get(id), real, makers) };
   }
 
   it("never offer an owned session to the real service, refusing while the surface is unbound, and still reach a native session's real service", async () => {
@@ -223,8 +223,8 @@ describe("the self-hosted mode's per-session dials", () => {
 
   it("answers whether the door's own service owns a session by what the surface holds and the credential the tracker observed", () => {
     const world = makeComposedWorld(() => LOOPBACK);
-    expect(world.dials.owns(OWNED)).toBe(true);
-    expect(world.dials.owns(NATIVE)).toBe(false);
+    expect(world.dials.selfHost?.owns(OWNED)).toBe(true);
+    expect(world.dials.selfHost?.owns(NATIVE)).toBe(false);
   });
   it("never lets a verb reach a dial without an observed OAuth credential, whichever backend the session would choose", async () => {
     const withoutOAuth: readonly (RcObservedCredential | undefined)[] = [undefined, { authorization: undefined, anthropicVersion: undefined, anthropicClientPlatform: "claude_code_cli" }];

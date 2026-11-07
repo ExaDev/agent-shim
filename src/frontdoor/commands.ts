@@ -86,7 +86,7 @@ import { targetRefs } from "../models/targets";
 import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
 import { createDoorRcSessionCommands } from "./doorSessionCommands";
 import { createRcClaudeCodeVersions } from "./rcSelfHostCommands";
-import { rcSelfHostedDials, selfHostSurfaceUnboundReason, type RcSelfHostDialSource } from "./rcSelfHostDial";
+import { doorRcDials, selfHostSurfaceUnboundReason, type RcSelfHostDialSource } from "./rcSelfHostDial";
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
 import type { RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
@@ -251,7 +251,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
   const rcSessionEvents = createRcSessionEventLog({ generation: randomUUID(), capacity: RC_SESSION_EVENT_LOG_CAPACITY });
   const rcTracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS, credentialStore: rcCredentialStore, onTransition: rcSessionEvents.append, onClose: rcSessionEvents.close });
   // The self-hosted mode's per-session dials: a session the door's own service owns is reached only through the branded loopback dials (they refuse while the surface is unbound and never fall back), and every other session, a native one, through the real service as it always was.
-  const selfHostedDials = rcSelfHostSurface === undefined ? undefined : rcSelfHostedDials(rcSelfHostSurface, rcSelfHostDials, rcTracker.credentialOf, { event: realRcEventDial(), stream: realRcStreamDial() });
+  const dials = doorRcDials(rcSelfHostSurface, rcSelfHostDials, rcTracker.credentialOf, { event: realRcEventDial(), stream: realRcStreamDial() });
   // The door's event backbone: one publisher/subscriber spine for every door-wide source, serving the typed API's `events.subscribe`. The Remote Control client read stream is its first publisher (through the wrap below, which moves nothing about how RC events flow) and the launch lifecycle is its first door-native one, fed by the supervisor's tick from the session registry; the usage source publishes every snapshot the store writes, the door health source the supervisor's own transitions, and the expiring-quota source the windows the supervisor's tick sees entering their final span (kept fresh by the usage source's own events, seeded from the snapshot directory).
   const doorEvents = createDoorEventHub();
   // The usage source's publisher, registered here so the store (created below) can hand it every snapshot it writes, and the expiring-quota checker that reads those same snapshots off the backbone rather than the disk.
@@ -284,7 +284,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     sequenceNumOf: rcTracker.sequenceNumOf,
     storedSequenceNumOf: rcCredentialStore.readCursor,
     saveSequenceNum: rcCredentialStore.writeCursor,
-    dial: selfHostedDials?.stream ?? realRcStreamDial(),
+    dial: dials.stream,
     fanout: rcFanout,
     newClientId: randomUUID,
     backoffMs: RC_STREAM_BACKOFF_MS,
@@ -533,7 +533,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     startProviderListener: async (source) => {
       const authority = loadCa();
       // The write operations the control routes and the typed API both carry out: the door itself dials the real API host over its interception-proof agent, using the observed credential, which is why the CLI never dials the API directly. A confirmed write advances the session's sequence cursor through the tracker, so a stream resume continues after the door's own events too. In the self-hosted mode the dial's target is resolved per call so it names the door's own surface once that has bound.
-      const rcDial = selfHostedDials?.event ?? realRcEventDial();
+      const rcDial = dials.event;
       const rcInject = async (sessionId: string, text: string) =>
         await injectRcUserMessage({ credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial, newUuid: randomUUID }, sessionId, text);
       const rcAnswer = async (sessionId: string, requestId: string, decision: RcAnswerDecision) =>
@@ -557,9 +557,9 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       const rcSessionCommands = createDoorRcSessionCommands({
         paths,
         isTracked: (sessionId) => rcTracker.statusOf(sessionId).length > 0,
-        selfHost: selfHostedDials === undefined ? undefined : {
-          personWrite: { credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, newUuid: randomUUID, dial: selfHostedDials.selfHostEvent },
-          owns: selfHostedDials.owns,
+        selfHost: dials.selfHost === undefined ? undefined : {
+          personWrite: { credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, newUuid: randomUUID, dial: dials.selfHost.event },
+          owns: dials.selfHost.owns,
           unavailable: () => (rcSelfHostDialTarget() === undefined ? rcSelfHostDials.unboundReason() : undefined),
           fanout: rcFanout,
           versions: rcClaudeCodeVersions,

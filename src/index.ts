@@ -66,7 +66,7 @@ export {
   type LeafCert,
 } from "./frontdoor/connect";
 export { realConnectEffects, realRcEventDial, realRcStreamDial, type RcDialTarget } from "./frontdoor/connectEffects";
-export { rcSelfHostEventDial, rcSelfHostStreamDial, rcSelfHostedDials, selfHostSurfaceUnboundReason, type RcSelfHostDialSource, type RcSelfHostEventDial, type RcSelfHostStreamDial, type RcSelfHostedDials } from "./frontdoor/rcSelfHostDial";
+export { rcSelfHostEventDial, rcSelfHostStreamDial, doorRcDials, selfHostSurfaceUnboundReason, type RcSelfHostDialSource, type RcSelfHostEventDial, type RcSelfHostStreamDial, type DoorRcDials } from "./frontdoor/rcSelfHostDial";
 export {
   RC_SESSIONS_PATH_PREFIX,
   RC_IDLE_EXPIRY_MS,

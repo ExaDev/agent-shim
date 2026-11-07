@@ -91,29 +91,32 @@ export function selfHostSurfaceUnboundReason(transparentSurface: string | undefi
 }
 
 /**
- * The self-hosted mode's dials, chosen per session: `event` and `stream` are the real service's for a native session and the branded loopback dials for a session the door's own service owns, so an owned session's credential is never offered to the real service and a native session is never sent to the door's own surface. `selfHostEvent` is the branded event dial alone, the one a command written as a person's app may ride; `owns` says whether the door's own service owns a session, by what it holds and by the credential the tracker observed for it.
+ * The door's client-half dials: `event` and `stream` are what every client-half verb and the read stream dial. With the self-hosted mode off (`selfHost` undefined) they are the real service's. With it on they choose per session: the real service's for a native session and the branded loopback dials for a session the door's own service owns, so an owned session's credential is never offered to the real service and a native session is never sent to the door's own surface. `selfHost` carries what only the self-hosted mode has: the branded event dial alone (the one a command written as a person's app may ride) and whether the door's own service owns a session, by what it holds and by the credential the tracker observed for it.
  */
-export interface RcSelfHostedDials {
+export interface DoorRcDials {
   readonly event: RcEventDial;
   readonly stream: RcStreamDial;
-  readonly selfHostEvent: RcSelfHostEventDial;
-  readonly owns: (sessionId: string) => boolean;
+  readonly selfHost: { readonly event: RcSelfHostEventDial; readonly owns: (sessionId: string) => boolean } | undefined;
 }
 
-/** Builds the self-hosted mode's per-session dials over the surface that decides ownership, the source of the door's own surface, and the real dials a native session uses; `makers` build the owned side's dials for a resolved target (the real ones in production, fakes in tests). */
-export function rcSelfHostedDials(
-  surface: Pick<RcSelfHostSurface, "ownsSession">,
+/**
+ * Builds the door's client-half dials over the self-hosted surface that decides ownership (undefined when the mode is off), the source of the door's own surface, the tracker's credential accessor, and the real dials a native session uses; `makers` build the owned side's dials for a resolved target (the real ones in production, fakes in tests).
+ */
+export function doorRcDials(
+  surface: Pick<RcSelfHostSurface, "ownsSession"> | undefined,
   source: RcSelfHostDialSource,
   credentialOf: (sessionId: string) => RcObservedCredential | undefined,
   real: { readonly event: RcEventDial; readonly stream: RcStreamDial },
   makers: { readonly event: (target: RcDialTarget) => RcEventDial; readonly stream: (target: RcDialTarget) => RcStreamDial } = { event: realRcEventDial, stream: realRcStreamDial },
-): RcSelfHostedDials {
+): DoorRcDials {
+  if (surface === undefined) {
+    return { event: real.event, stream: real.stream, selfHost: undefined };
+  }
   const choice = rcSelfHostedChoiceOf(surface);
   const selfHostEvent = rcSelfHostEventDial(source, makers.event);
   return {
     event: perSessionRcEventDial(choice, selfHostEvent, real.event),
     stream: perSessionRcStreamDial(choice, rcSelfHostStreamDial(source, makers.stream), real.stream),
-    selfHostEvent,
-    owns: (sessionId) => surface.ownsSession(sessionId, credentialOf(sessionId)?.authorization),
+    selfHost: { event: selfHostEvent, owns: (sessionId) => surface.ownsSession(sessionId, credentialOf(sessionId)?.authorization) },
   };
 }
