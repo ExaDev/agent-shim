@@ -432,9 +432,11 @@ describe("the Remote Control pending-request lifecycle", () => {
     it("marks a request past the parse cap as oversized, holding its summary only", () => {
       const { tracker } = trackerWithClock();
       heartbeat(tracker);
-      ask(tracker, REQUEST_ID, 1, { questions: [{ question: "Q?", options: [{ label: "x".repeat(RC_REQUEST_PARSE_CAP_BYTES) }] }] });
+      // Every question field is within its own bound; what passes the cap is a field the door does not list (an option's preview), so the cap itself is what marks it.
+      ask(tracker, REQUEST_ID, 1, { questions: [{ question: "Q?", options: [{ label: "A", preview: "x".repeat(RC_REQUEST_PARSE_CAP_BYTES) }] }] });
       const [pending] = tracker.pendingOf();
       expect(pending?.oversized).toBe(true);
+      expect(pending?.unanswerable).toContain("parse cap");
       expect(pending?.questions).toBeUndefined();
       expect(tracker.pendingToolInputOf(SESSION_ID, REQUEST_ID)).toBeUndefined();
     });

@@ -371,6 +371,23 @@ describe("the control_response payload and answerRcControlRequest over an inject
       expect(second.claimPending(SESSION_ID, QUESTION_ID)).toBeDefined();
     });
 
+    it("refuses to approve a question the door cannot answer, which it lists with the reason", async () => {
+      const { tracker } = trackerWithPending();
+      exchange(tracker, {
+        method: "POST",
+        url: `/v1/code/sessions/${SESSION_ID}/worker/events`,
+        authorization: "Bearer sk-ant-oat",
+        requestBody: JSON.stringify({ worker_epoch: 1, events: [{ payload: { type: "control_request", request_id: QUESTION_ID, request: { subtype: "can_use_tool", tool_name: "AskUserQuestion", input: { questions: [QUESTION_INPUT.questions[0], QUESTION_INPUT.questions[0]] } } } }] }),
+      }).respond(HTTP_STATUS.ok);
+      expect(tracker.pendingOf().find((request) => request.requestId === QUESTION_ID)?.unanswerable).toContain("twice");
+      const { dial, dialled } = dialRecording();
+      for (const decision of [{ approve: true, message: undefined }, { approve: true, message: undefined, choices: [["SQLite"], ["SQLite"]] }]) {
+        const refused = await answerRcControlRequest(depsOf(tracker, dial), SESSION_ID, QUESTION_ID, decision);
+        expect(refused.ok ? "delivered" : refused.message).toContain("cannot answer");
+      }
+      expect(dialled).toEqual([]);
+    });
+
     it("dismisses a question with a plain denial", async () => {
       const tracker = trackerWithQuestion();
       const { dial, dialled } = dialRecording();

@@ -5,6 +5,20 @@
 /** The tool name a `can_use_tool` request carries when it is the question dialog rather than an approval. */
 export const RC_QUESTION_TOOL_NAME = "AskUserQuestion";
 
+/**
+ * The most questions, and the most options per question, one request may carry and still be answered here. The tool's own schema allows four of each; four times that leaves room for the tool to grow while bounding what one listing holds.
+ */
+export const RC_QUESTIONS_MAX = 16;
+export const RC_QUESTION_OPTIONS_MAX = 16;
+
+/**
+ * The longest question text, header, label or description held. The dialog is read by a person at a glance, and the tool asks for a short question and a few-word label; 1024 characters is an order of magnitude past that, and with the count bounds it keeps one listed request's questions under RC_QUESTIONS_MAX × (2 + 2 × RC_QUESTION_OPTIONS_MAX) fields of this size.
+ */
+export const RC_QUESTION_FIELD_MAX_CHARS = 1024;
+
+/** What parsing one question request yields: the questions this surface can answer, or why it cannot answer them (the request is still the question dialog, so an approval without choices must not be written for it). */
+export type RcQuestionParse = { readonly questions: readonly RcPendingQuestion[] } | { readonly unanswerable: string };
+
 /** How the tool joins the labels of a multi-select question into its one answer string (its own input preprocessing joins an array the same way, and its result reads the string back as comma-separated). */
 const MULTI_SELECT_SEPARATOR = ", ";
 
@@ -36,50 +50,76 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** One observed option, or undefined when it names no label an answer could carry. */
-function optionOf(value: unknown): RcQuestionOption | undefined {
-  if (!isRecord(value) || typeof value.label !== "string" || value.label === "") {
-    return undefined;
-  }
-  return typeof value.description === "string" && value.description !== "" ? { label: value.label, description: value.description } : { label: value.label };
+/** Whether one optional string field fits the field bound. */
+function fits(value: string | undefined): boolean {
+  return value === undefined || value.length <= RC_QUESTION_FIELD_MAX_CHARS;
 }
 
-/** One observed question, or undefined when it is not a choice question this surface can answer (no text, or no options at all). */
-function questionOf(value: unknown): RcPendingQuestion | undefined {
-  if (!isRecord(value) || typeof value.question !== "string" || value.question === "" || !Array.isArray(value.options)) {
-    return undefined;
+/** One observed option, or why it cannot be answered here. */
+function optionOf(value: unknown): RcQuestionOption | string {
+  if (!isRecord(value) || typeof value.label !== "string" || value.label === "") {
+    return "an option names no label";
+  }
+  const description = typeof value.description === "string" && value.description !== "" ? value.description : undefined;
+  if (!fits(value.label) || !fits(description)) {
+    return `an option is past ${String(RC_QUESTION_FIELD_MAX_CHARS)} characters`;
+  }
+  return description === undefined ? { label: value.label } : { label: value.label, description };
+}
+
+/** One observed question, or why it cannot be answered here. */
+function questionOf(value: unknown): RcPendingQuestion | string {
+  if (!isRecord(value) || typeof value.question !== "string" || value.question === "" || !Array.isArray(value.options) || value.options.length === 0) {
+    return "a question has no text or no options";
+  }
+  if (value.options.length > RC_QUESTION_OPTIONS_MAX) {
+    return `a question has more than ${String(RC_QUESTION_OPTIONS_MAX)} options`;
   }
   const options: RcQuestionOption[] = [];
   for (const candidate of value.options) {
     const option = optionOf(candidate);
-    if (option === undefined) {
-      return undefined;
+    if (typeof option === "string") {
+      return option;
+    }
+    // Answers name options by label, so two options with one label could not be told apart in the answer the worker reads.
+    if (options.some((existing) => existing.label === option.label)) {
+      return `a question lists the option ${JSON.stringify(option.label)} twice`;
     }
     options.push(option);
   }
-  if (options.length === 0) {
-    return undefined;
-  }
   const header = typeof value.header === "string" && value.header !== "" ? value.header : undefined;
+  if (!fits(value.question) || !fits(header)) {
+    return `a question is past ${String(RC_QUESTION_FIELD_MAX_CHARS)} characters`;
+  }
   return { question: value.question, ...(header === undefined ? {} : { header }), multiSelect: value.multiSelect === true, options };
 }
 
 /**
- * The questions one `can_use_tool` request puts to the user, or undefined when the request is not the question dialog or its input does not have the shape this surface can answer. One malformed question makes the whole request unanswerable here rather than partly listed, because an answer must name every question the worker asked.
+ * The questions one `can_use_tool` request puts to the user: undefined when the request is not the question dialog, the questions when this surface can answer them, or why it cannot. One unanswerable question makes the whole request unanswerable here rather than partly listed, because an answer must name every question the worker asked; the request is still listed, marked, so a caller answers it in the session.
  */
-export function rcQuestionsOfToolRequest(toolName: string | undefined, input: unknown): readonly RcPendingQuestion[] | undefined {
-  if (toolName !== RC_QUESTION_TOOL_NAME || !isRecord(input) || !Array.isArray(input.questions) || input.questions.length === 0) {
+export function rcQuestionsOfToolRequest(toolName: string | undefined, input: unknown): RcQuestionParse | undefined {
+  if (toolName !== RC_QUESTION_TOOL_NAME) {
     return undefined;
+  }
+  if (!isRecord(input) || !Array.isArray(input.questions) || input.questions.length === 0) {
+    return { unanswerable: "the request names no questions" };
+  }
+  if (input.questions.length > RC_QUESTIONS_MAX) {
+    return { unanswerable: `the request asks more than ${String(RC_QUESTIONS_MAX)} questions` };
   }
   const questions: RcPendingQuestion[] = [];
   for (const candidate of input.questions) {
     const question = questionOf(candidate);
-    if (question === undefined) {
-      return undefined;
+    if (typeof question === "string") {
+      return { unanswerable: question };
+    }
+    // Answers are filed under the question text, so two questions with one text would overwrite each other's answer.
+    if (questions.some((existing) => existing.question === question.question)) {
+      return { unanswerable: `the request asks ${JSON.stringify(question.question)} twice` };
     }
     questions.push(question);
   }
-  return questions;
+  return { questions };
 }
 
 /** One selection resolved to the answer text it contributes, or the refusal naming why it cannot be. */
@@ -89,7 +129,8 @@ function resolveSelection(question: RcPendingQuestion, questionNumber: number, s
     return option === undefined ? { error: `question ${String(questionNumber)} has no option ${String(selection)}: its options are numbered 1 to ${String(question.options.length)}` } : { text: option.label };
   }
   if (typeof selection === "object") {
-    return selection.text === "" ? { error: `question ${String(questionNumber)}'s free-text answer is empty` } : { text: selection.text };
+    const text = selection.text.trim();
+    return text === "" ? { error: `question ${String(questionNumber)}'s free-text answer is empty` } : { text };
   }
   const exact = question.options.find((option) => option.label === selection);
   if (exact !== undefined) {
