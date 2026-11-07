@@ -175,6 +175,38 @@ describe("the Remote Control status with worker states read from the service", (
   });
 });
 
+describe("the Remote Control status when traffic crosses the door while a read is in flight", () => {
+  it("reports a state observed during the read over the state the read returned", async () => {
+    const tracker = trackerWith(QUIET_SESSION_ID);
+    const { dial } = readingDial({});
+    const racing: RcEventDial = {
+      ...dial,
+      readWorker: async () => {
+        exchange(tracker, { method: "PUT", url: `/v1/code/sessions/${QUIET_SESSION_ID}/worker`, authorization: OAUTH_BEARER, requestBody: JSON.stringify({ worker_status: "running" }) }, { status: HTTP_STATUS.ok });
+        return await Promise.resolve(workerRecord("idle"));
+      },
+    };
+    const [status] = await statusesOf(resolverOf(tracker, racing));
+    expect(status?.workerState).toEqual({ value: "running", observedAt: CLOCK_START_MS, source: "observed" });
+  });
+
+  it("reports a registered session whose create crossed the door during its read once, as tracked, with the state read", async () => {
+    const tracker = trackerWith();
+    const { dial } = readingDial({});
+    const racing: RcEventDial = {
+      ...dial,
+      readWorker: async () => {
+        exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: OAUTH_BEARER }, { status: HTTP_STATUS.ok, body: JSON.stringify({ session: { id: OBSERVED_SESSION_ID } }) });
+        return await Promise.resolve(workerRecord("requires_action"));
+      },
+    };
+    const persisted = { authorization: OAUTH_BEARER, anthropicVersion: undefined, anthropicClientPlatform: undefined };
+    const report = await resolverOf(tracker, racing, { registered: [registeredAs(OBSERVED_SESSION_ID)], persisted: { [OBSERVED_SESSION_ID]: persisted } })();
+    expect(report.unobserved).toEqual([]);
+    expect(report.statuses.map((status) => [status.id, status.workerState?.value, status.workerState?.source])).toEqual([[OBSERVED_SESSION_ID, "requires_action", "read"]]);
+  });
+});
+
 describe("the Remote Control status under concurrent callers", () => {
   /** A dial whose every worker read waits until the test releases it, recording each request it was asked to make. */
   const gatedDial = (): { readonly dial: RcEventDial; readonly reads: string[]; readonly release: () => void } => {

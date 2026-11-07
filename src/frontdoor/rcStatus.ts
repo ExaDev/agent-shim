@@ -115,12 +115,12 @@ export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
       }
     }
     const unavailable = new Map<string, string>();
-    const tracked = deps.statusOf(sessionId);
-    const trackedIds = new Set(tracked.map((status) => status.id));
+    const trackedBefore = deps.statusOf(sessionId);
+    const trackedIds = new Set(trackedBefore.map((status) => status.id));
     const registered = deps.registered().filter((session) => (sessionId === undefined || session.id === sessionId) && !trackedIds.has(session.id));
-    const [, unobserved] = await Promise.all([
+    const [, readUnobserved] = await Promise.all([
       Promise.all(
-        tracked
+        trackedBefore
           .filter((status) => status.workerState === undefined)
           .map(async (status) => {
             const holding = heldRead(status.id, deps.credentialOf);
@@ -151,8 +151,17 @@ export function createRcStatusResolver(deps: RcStatusDeps): RcStatusResolver {
         }),
       ),
     ]);
+    // A registered session whose traffic began crossing the door while its read was in flight is now tracked: its read state is filed on the new record (unless an observed one got there first), and it is reported once, as tracked, never also as unobserved.
+    const nowTracked = new Set(deps.statusOf(sessionId).map((status) => status.id));
+    for (const session of readUnobserved) {
+      if (nowTracked.has(session.id) && session.workerState !== undefined) {
+        deps.noteReadWorkerState(session.id, session.workerState.value);
+      }
+    }
     // Re-read after the filing, so a state that crossed the door while the reads were in flight is the one reported, and a session that expired meanwhile is no longer listed.
-    const statuses = deps.statusOf(sessionId).map((status) => ({ ...status, workerStateUnavailable: status.workerState === undefined ? unavailable.get(status.id) : undefined }));
-    return { statuses, unobserved };
+    const tracked = deps.statusOf(sessionId);
+    const trackedAfter = new Set(tracked.map((status) => status.id));
+    const statuses = tracked.map((status) => ({ ...status, workerStateUnavailable: status.workerState === undefined ? unavailable.get(status.id) : undefined }));
+    return { statuses, unobserved: readUnobserved.filter((session) => !trackedAfter.has(session.id)) };
   };
 }
