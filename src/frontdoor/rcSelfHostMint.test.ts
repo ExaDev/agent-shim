@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { mintRcSelfHostCredential, readRcSelfHostRecord } from "./rcSelfHostMint";
+import { backfillRcSelfHostIdentity, mintRcSelfHostCredential, readRcSelfHostRecord, rcSelfHostMintFacts } from "./rcSelfHostMint";
 import { createFakeFarmFs } from "../test-helpers";
 
 /**
@@ -94,5 +94,43 @@ describe("the self-hosted credential minting", () => {
     const again = mint(fs);
     expect(again.replaced).toBe(true);
     expect(() => mint(fs, { identity: "../escape" })).toThrow("not a valid identity name");
+  });
+});
+
+describe("recording the identity a mint from before ids were recorded names none of", () => {
+  const legacyRecord = JSON.stringify({ accessToken: "legacy-access-token", refreshToken: "refresh", organizationUuid: "11111111-1111-4111-8111-111111111111", accountUuid: "22222222-2222-4222-8222-222222222222" });
+  const holding = (token: string): string => JSON.stringify({ claudeAiOauth: { accessToken: token } });
+
+  it("records the one identity whose credentials hold the minted token", () => {
+    const fs = createFakeFarmFs({ "/state/frontdoor/rc-selfhost/credential.json": legacyRecord, "/state/identities/rig/.credentials.json": holding("legacy-access-token"), "/state/identities/work/.credentials.json": holding("other-access-token") });
+    expect(backfillRcSelfHostIdentity(fs, "/state/identities", "/state/frontdoor")).toEqual({ kind: "backfilled", identityId: "rig" });
+    expect(readRcSelfHostRecord(fs, "/state/frontdoor")?.identityId).toBe("rig");
+  });
+
+  it("leaves the record alone when no identity, or more than one, holds the token, and when it already names one", () => {
+    const none = createFakeFarmFs({ "/state/frontdoor/rc-selfhost/credential.json": legacyRecord, "/state/identities/work/.credentials.json": holding("other-access-token") });
+    expect(backfillRcSelfHostIdentity(none, "/state/identities", "/state/frontdoor")).toEqual({ kind: "unmatched", holders: 0 });
+    const two = createFakeFarmFs({ "/state/frontdoor/rc-selfhost/credential.json": legacyRecord, "/state/identities/a/.credentials.json": holding("legacy-access-token"), "/state/identities/b/.credentials.json": holding("legacy-access-token") });
+    expect(backfillRcSelfHostIdentity(two, "/state/identities", "/state/frontdoor")).toEqual({ kind: "unmatched", holders: 2 });
+    expect(readRcSelfHostRecord(two, "/state/frontdoor")?.identityId).toBeUndefined();
+    const current = createFakeFarmFs({ "/state/frontdoor/rc-selfhost/credential.json": JSON.stringify({ ...JSON.parse(legacyRecord), identityId: "rig" }) });
+    expect(backfillRcSelfHostIdentity(current, "/state/identities", "/state/frontdoor")).toEqual({ kind: "not-needed" });
+  });
+});
+
+describe("what doctor is told of the self-hosted mint", () => {
+  const record = (extra: Readonly<Record<string, unknown>>): string => JSON.stringify({ accessToken: "legacy-access-token", refreshToken: "refresh", organizationUuid: "11111111-1111-4111-8111-111111111111", accountUuid: "22222222-2222-4222-8222-222222222222", ...extra });
+  const holding = (token: string): string => JSON.stringify({ claudeAiOauth: { accessToken: token } });
+  const facts = (files: Readonly<Record<string, string>>): ReturnType<typeof rcSelfHostMintFacts> => rcSelfHostMintFacts(createFakeFarmFs(files), "/state/identities", "/state/frontdoor");
+
+  it("says nothing while nothing is minted, and calls a mint that names its identity or that one identity holds attributable", () => {
+    expect(facts({})).toEqual({});
+    expect(facts({ "/state/frontdoor/rc-selfhost/credential.json": record({ identityId: "rig" }) })).toEqual({ rcSelfHostMint: { attributable: true } });
+    expect(facts({ "/state/frontdoor/rc-selfhost/credential.json": record({}), "/state/identities/rig/.credentials.json": holding("legacy-access-token") })).toEqual({ rcSelfHostMint: { attributable: true, holders: 1 } });
+  });
+
+  it("calls a mint no identity or several identities hold unattributable, with how many hold it", () => {
+    expect(facts({ "/state/frontdoor/rc-selfhost/credential.json": record({}) })).toEqual({ rcSelfHostMint: { attributable: false, holders: 0 } });
+    expect(facts({ "/state/frontdoor/rc-selfhost/credential.json": record({}), "/state/identities/a/.credentials.json": holding("legacy-access-token"), "/state/identities/b/.credentials.json": holding("legacy-access-token") })).toEqual({ rcSelfHostMint: { attributable: false, holders: 2 } });
   });
 });

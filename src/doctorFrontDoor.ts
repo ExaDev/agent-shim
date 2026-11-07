@@ -1,5 +1,6 @@
 import type { DoctorSection, DoctorSeverity } from "./doctorReport";
 import type { FrontDoorListenerReading } from "./frontdoor/listenerReadings";
+import type { RcSelfHostMintFacts } from "./frontdoor/rcSelfHostMint";
 import type { FrontDoorSessionSummary } from "./frontdoor/state";
 import type { FrontDoorSupervisorListing } from "./frontdoor/supervisorProcesses";
 
@@ -68,7 +69,7 @@ const LISTENER_ROUTES: Readonly<Record<FrontDoorListenerReading["listener"], str
 /**
  * Reports whether each listener of the serving door accepts, which a live supervisor pid cannot say: a door whose event loop is blocked is alive and accepts nothing. A listener that does not accept within the probe's bound fails the check and names the sessions it cuts off; one that does is a pass that states how long it took on this machine now, as an observation, not a threshold.
  */
-export function pushFrontDoorListeners(
+function pushFrontDoorListeners(
   push: (section: DoctorSection, severity: DoctorSeverity, message: string, subject?: string) => void,
   readings: readonly FrontDoorListenerReading[],
 ): void {
@@ -86,4 +87,22 @@ export function pushFrontDoorListeners(
       reading.listener,
     );
   }
+}
+
+/** Reports a self-hosted Remote Control mint that cannot be attributed to an identity: its record names none, and not exactly one identity holds its credential, so a door with the mode on can tell no launch apart from it and refuses every launch's calls on the intercepted hosts. It fails with the command that fixes it. Nothing is reported for a mint that names its identity or that one identity's credential identifies (the door records that at start), or when nothing is minted. */
+function pushRcSelfHostMint(push: (section: DoctorSection, severity: DoctorSeverity, message: string, subject?: string) => void, mint: RcSelfHostMintFacts | undefined): void {
+  if (mint !== undefined && !mint.attributable) {
+    push("frontdoor", "fail", `The self-hosted Remote Control credential was minted before the door recorded its identity, and ${mint.holders === 0 ? "no identity holds it" : "more than one identity holds it"}, so a door with the mode on refuses every launch's calls on the intercepted hosts. Mint it again: agent-shim frontdoor rc selfhost mint <identity>.`);
+  }
+}
+
+/** Reports what was read about the serving door beyond its supervisors: its listeners (skipped when none were probed) and the self-hosted Remote Control mint (see `pushRcSelfHostMint`). */
+export function pushFrontDoorReadings(
+  push: (section: DoctorSection, severity: DoctorSeverity, message: string, subject?: string) => void,
+  readings: { readonly listeners?: readonly FrontDoorListenerReading[]; readonly rcSelfHostMint?: RcSelfHostMintFacts },
+): void {
+  if (readings.listeners !== undefined) {
+    pushFrontDoorListeners(push, readings.listeners);
+  }
+  pushRcSelfHostMint(push, readings.rcSelfHostMint);
 }

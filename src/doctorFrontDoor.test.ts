@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { runDoctor, type RunDoctorParams } from "./doctorReport";
 import { baseParams, findingsFor } from "./doctorTestFixtures";
+import type { RcSelfHostMintFacts } from "./frontdoor/rcSelfHostMint";
 
 const ALIVE_SUPERVISOR_PID = 11;
 const ALIVE_DAEMON_PID = 12;
@@ -32,6 +33,16 @@ describe("runDoctor: front door", () => {
     const findings = findingsFor(report, "frontdoor");
     expect(findings.map((finding) => finding.severity)).toEqual(["pass"]);
     expect(report.ok).toBe(true);
+  });
+
+  it("fails a self-hosted mint no identity can be attributed to, naming the command that fixes it, and says nothing of an attributable one", () => {
+    const base = frontDoorParams({ supervisorPid: SERVING_DOOR_PID }, { ok: true, pids: [SERVING_DOOR_PID] });
+    const withMint = (mint: RcSelfHostMintFacts): Partial<RunDoctorParams> => ({ frontDoor: { ...(base.frontDoor ?? { state: { path: FRONT_DOOR_STATE_PATH, raw: undefined }, supervisors: { ok: true, pids: [] }, liveSessions: [] }), rcSelfHostMint: mint } });
+    const held = (holders: number): string => findingsFor(runDoctor(baseParams(withMint({ attributable: false, holders }))), "frontdoor").map((finding) => `${finding.severity}: ${finding.message}`).join("\n");
+    expect(held(0)).toContain("fail: The self-hosted Remote Control credential was minted before the door recorded its identity, and no identity holds it");
+    expect(held(2)).toContain("more than one identity holds it");
+    expect(held(0)).toContain("agent-shim frontdoor rc selfhost mint <identity>");
+    expect(findingsFor(runDoctor(baseParams(withMint({ attributable: true }))), "frontdoor").map((finding) => finding.severity)).toEqual(["pass"]);
   });
 
   it("passes when no supervisor is running", () => {

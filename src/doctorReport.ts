@@ -41,8 +41,9 @@ import { reportableAllowlistFileProblem } from "./headroom/socket";
 import { pushHeadroomAllowlist, pushRefusedAllowlistFile, type DoctorHeadroomAllowlist } from "./doctorHeadroomAllowlist";
 import { HeadroomStateSchema, resolveServingHeadroomState } from "./headroom/state";
 import { currentHeadroomAllowlistInputs, undeterminedFrontDoors } from "./headroom/supervisor";
+import { rcSelfHostMintFacts, type RcSelfHostMintFacts } from "./frontdoor/rcSelfHostMint";
 import { FrontDoorStateSchema, listDrainingFrontDoors, listFrontDoorSessions, readFrontDoorState, type FrontDoorSessionSummary } from "./frontdoor/state";
-import { pushFrontDoor, pushFrontDoorListeners } from "./doctorFrontDoor";
+import { pushFrontDoor, pushFrontDoorReadings } from "./doctorFrontDoor";
 import { readFrontDoorListeners, realFrontDoorListenerProbes, type FrontDoorListenerReading } from "./frontdoor/listenerReadings";
 import { listFrontDoorSupervisors, type FrontDoorSupervisorListing } from "./frontdoor/supervisorProcesses";
 import { ENV_PREFIX, LEGACY_ENV_PREFIX, LEGACY_HOME_DIRNAME } from "./legacy";
@@ -232,6 +233,8 @@ export interface RunDoctorParams {
     readonly draining?: readonly number[];
     /** What probing the serving door's listeners found: empty when no door serves or the platform cannot say. Omit to skip the listener checks. */
     readonly listeners?: readonly FrontDoorListenerReading[];
+    /** What is known of the self-hosted Remote Control mint, when one is minted: whether it can be attributed to one identity, since one that cannot makes a door in that mode refuse every launch's calls. Omit when nothing is minted. */
+    readonly rcSelfHostMint?: RcSelfHostMintFacts;
   };
 }
 
@@ -841,9 +844,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   if (params.frontDoor !== undefined) {
     const validated = params.frontDoor.state.raw === undefined ? undefined : validateJson(FrontDoorStateSchema, params.frontDoor.state);
     pushFrontDoor(push, params.frontDoor.supervisors, validated?.ok === true ? validated.data.supervisorPid : undefined, params.frontDoor.liveSessions, params.frontDoor.draining ?? []);
-    if (params.frontDoor.listeners !== undefined) {
-      pushFrontDoorListeners(push, params.frontDoor.listeners);
-    }
+    pushFrontDoorReadings(push, params.frontDoor);
   }
 
   if (params.activeIdentity.raw === undefined) {
@@ -1033,7 +1034,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
     },
     ...(uid === undefined
       ? {}
-      : { frontDoor: { state: { path: paths.frontdoorStateFile, raw: realFsPort.readFileUtf8(paths.frontdoorStateFile) }, supervisors: listFrontDoorSupervisors(realRunPort, uid), liveSessions: listFrontDoorSessions(realFarmFs, paths.frontdoorSessionsDir).filter((session) => realIsProcessRunning(session.pid)), draining: listDrainingFrontDoors(realFarmFs, paths.frontdoorDrainingDir, realIsProcessRunning), listeners: servingDoorListeners(paths) } }),
+      : { frontDoor: { state: { path: paths.frontdoorStateFile, raw: realFsPort.readFileUtf8(paths.frontdoorStateFile) }, supervisors: listFrontDoorSupervisors(realRunPort, uid), liveSessions: listFrontDoorSessions(realFarmFs, paths.frontdoorSessionsDir).filter((session) => realIsProcessRunning(session.pid)), draining: listDrainingFrontDoors(realFarmFs, paths.frontdoorDrainingDir, realIsProcessRunning), listeners: servingDoorListeners(paths), ...rcSelfHostMintFacts(realFarmFs, paths.identitiesDir, paths.frontdoorDir) } }),
   });
   return report;
 }
