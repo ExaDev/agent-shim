@@ -85,7 +85,7 @@ import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, isRcSessionExchange, observi
 import { targetRefs } from "../models/targets";
 import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
 import { createDoorRcSessionCommands } from "./doorSessionCommands";
-import { createRcClaudeCodeVersions } from "./rcSelfHostCommands";
+import { createRcClaudeCodeVersions, rcSelfHostEventDial } from "./rcSelfHostCommands";
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
 import type { RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
@@ -553,7 +553,14 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       const rcSessionCommands = createDoorRcSessionCommands({
         paths,
         isTracked: (sessionId) => rcTracker.statusOf(sessionId).length > 0,
-        selfHost: rcSelfHost ? { inject: async (sessionId, text, clientPlatform) => await injectRcUserMessage({ credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial, newUuid: randomUUID }, sessionId, text, clientPlatform), fanout: rcFanout, versions: rcClaudeCodeVersions } : undefined,
+        selfHost: rcSelfHost
+          ? {
+              personWrite: { credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, newUuid: randomUUID, dial: rcSelfHostEventDial(rcSelfHostDialTarget) },
+              unavailable: () => (rcSelfHostDialTarget() === undefined ? "AGENT_SHIM_TRANSPARENT_SURFACE is not set, so the door has no surface of its own to write to, and a command written as a person's app would otherwise go to the real API host" : undefined),
+              fanout: rcFanout,
+              versions: rcClaudeCodeVersions,
+            }
+          : undefined,
       });
       // The control-plane reads the typed API serves beside Remote Control, each one the same read-only collector the CLI's own verbs use, so the door's answer and `frontdoor status`'s can never disagree, plus the live rate-limit observations the event backbone files.
       const controlDeps = {

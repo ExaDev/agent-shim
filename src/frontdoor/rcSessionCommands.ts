@@ -170,6 +170,10 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
         return { ok: false, message: `the front door has not observed Remote Control session ${sessionId}` };
       }
       if (deps.selfHost !== undefined) {
+        const unavailable = deps.selfHost.unavailable();
+        if (unavailable !== undefined) {
+          return { ok: false, message: `session ${sessionId} was not launched under an agent-shim supervisor, and the door's self-hosted surface cannot take a command: ${unavailable}` };
+        }
         const version = deps.selfHost.versionOf(sessionId);
         if (version === undefined || !RC_SESSION_COMMAND_VERIFIED_VERSIONS.includes(version)) {
           return { ok: false, message: unverifiedVersionMessage(sessionId, version, "no system/init from its worker has been observed on its stream; send it a prompt so it reports one") };

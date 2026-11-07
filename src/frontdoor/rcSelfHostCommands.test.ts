@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import type { RcStreamEvent } from "./rcSchemas";
-import { RC_PERSON_CLIENT_PLATFORM, createRcClaudeCodeVersions, parseRcGoalOutput, runSelfHostedSlashCommand, type RcSelfHostCommandDeps } from "./rcSelfHostCommands";
+import type { RcDialTarget } from "./connectEffects";
+import { RC_PERSON_CLIENT_PLATFORM, createRcClaudeCodeVersions, parseRcGoalOutput, rcSelfHostEventDial, runSelfHostedSlashCommand, type RcSelfHostCommandDeps } from "./rcSelfHostCommands";
 import { createRcEventFanout } from "./rcStream";
-import type { RcEventWriteResult } from "./rcWrites";
+import type { RcEventDial, RcEventWriteResult } from "./rcWrites";
 
 const SESSION = "cse_00000000-0000-4000-8000-000000000000";
 
@@ -26,19 +27,25 @@ function boundary(sequenceNum: number, trigger: string): RcStreamEvent {
   return streamEvent(sequenceNum, { type: "system", subtype: "compact_boundary", compact_metadata: { trigger, pre_tokens: 1200, post_tokens: 300 } });
 }
 
-/** A world over a real fan-out whose inject echoes the command, then publishes the scripted answers once the write is numbered. */
-function makeWorld(answer: readonly RcStreamEvent[] = [], injectResult?: RcEventWriteResult) {
+/** The credential the client half replays, as the tracker would hold it for an observed session. */
+const OBSERVED = { authorization: "Bearer sk-ant-oat", anthropicVersion: "2023-06-01", anthropicClientPlatform: "claude_code_cli" };
+
+/** The loopback target of the door's own surface in these worlds. */
+const SURFACE = { host: "127.0.0.1", port: 47_592, servername: "api.anthropic.com" };
+
+/** A world over a real fan-out whose self-hosted dial records each write (target and headers) and echoes the command, then publishes the scripted answers once the write is numbered. */
+function makeWorld(answer: readonly RcStreamEvent[] = [], injectResult?: RcEventWriteResult, surface: Readonly<{ target: RcDialTarget | undefined }> = { target: SURFACE }) {
+  const target = surface.target;
   const fanout = createRcEventFanout();
-  const written: { readonly text: string; readonly platform: string }[] = [];
+  const written: { readonly text: string; readonly platform: string | undefined; readonly host: string }[] = [];
   const timers: (() => void)[] = [];
-  const deps: RcSelfHostCommandDeps = {
-    fanout,
-    versionOf: () => "2.1.319",
-    defaultWaitMs: SHORT_WAIT_MS,
-    inject: async (_sessionId, text, platform) => {
-      written.push({ text, platform });
+  const fakeDial = (dialled: RcDialTarget): RcEventDial => ({
+    writeEvents: async (_sessionId, headers, body) => {
+      const parsed: unknown = JSON.parse(body);
+      const text = typeof parsed === "object" && parsed !== null && "events" in parsed && Array.isArray(parsed.events) ? String((parsed.events[0] as { payload: { message: { content: unknown } } }).payload.message.content) : "";
+      written.push({ text, platform: headers["anthropic-client-platform"], host: dialled.host });
       if (injectResult !== undefined) {
-        return injectResult;
+        return await Promise.resolve({ status: 500, body: injectResult.ok ? "" : injectResult.message });
       }
       fanout.publish(streamEvent(COMMAND_SEQUENCE, { type: "user", message: { role: "user", content: text } }, "client"));
       queueMicrotask(() => {
@@ -46,8 +53,16 @@ function makeWorld(answer: readonly RcStreamEvent[] = [], injectResult?: RcEvent
           fanout.publish(event);
         }
       });
-      return await Promise.resolve({ ok: true, sequenceNums: [COMMAND_SEQUENCE] });
+      return await Promise.resolve({ status: 200, body: JSON.stringify({ results: [{ sequence_num: String(COMMAND_SEQUENCE) }] }) });
     },
+    writeTeleportEvents: async () => await Promise.reject(new Error("unused")),
+  });
+  const deps: RcSelfHostCommandDeps = {
+    fanout,
+    versionOf: () => "2.1.319",
+    defaultWaitMs: SHORT_WAIT_MS,
+    personWrite: { credentialOf: () => OBSERVED, noteSequenceNums: () => undefined, newUuid: () => "00000000-0000-4000-8000-000000000001", dial: rcSelfHostEventDial(() => target, fakeDial) },
+    unavailable: () => undefined,
     setTimer: (action) => {
       timers.push(action);
       return () => {
@@ -66,7 +81,7 @@ describe("slash commands on the door's own self-hosted surface", () => {
     const decoys = [localAnswer(COMMAND_SEQUENCE - 1, "goal", "", "No goal set"), streamEvent(COMMAND_SEQUENCE + 1, { type: "mark_read" }, "client"), localAnswer(COMMAND_SEQUENCE + 2, "goal", "", "Goal active: someone else's read (not yet evaluated)")];
     const world = makeWorld([...decoys, localAnswer(COMMAND_SEQUENCE + decoys.length, "goal", "tests pass", "Goal set: tests pass")]);
     expect(await runSelfHostedSlashCommand(world.deps, SESSION, { kind: "goal-set", condition: "tests pass" }, undefined, NEVER)).toEqual({ ok: true, report: { condition: "tests pass" } });
-    expect(world.written).toEqual([{ text: "/goal tests pass", platform: RC_PERSON_CLIENT_PLATFORM }]);
+    expect(world.written).toEqual([{ text: "/goal tests pass", platform: RC_PERSON_CLIENT_PLATFORM, host: SURFACE.host }]);
   });
 
   it("parses every goal line the verified version answers with, a multi-line condition included", () => {
@@ -114,8 +129,18 @@ describe("slash commands on the door's own self-hosted surface", () => {
   });
 
   it("returns the write's own failure when the command could not be delivered", async () => {
-    const world = makeWorld([], { ok: false, message: "the surface answered HTTP 500" });
-    expect(await runSelfHostedSlashCommand(world.deps, SESSION, { kind: "goal-get" }, undefined, NEVER)).toEqual({ ok: false, message: "the surface answered HTTP 500" });
+    const world = makeWorld([], { ok: false, message: "the surface refused it" });
+    expect(await runSelfHostedSlashCommand(world.deps, SESSION, { kind: "goal-get" }, undefined, NEVER)).toEqual({ ok: false, message: "the API answered HTTP 500 to the injected event: the surface refused it" });
+  });
+
+  it("never writes as a person's app while the door's own surface is unbound, or to an address that is not this machine", async () => {
+    const unbound = makeWorld([], undefined, { target: undefined });
+    const refused = await runSelfHostedSlashCommand(unbound.deps, SESSION, { kind: "goal-clear" }, undefined, NEVER);
+    expect(refused.ok ? "" : refused.message).toContain("self-hosted surface is not bound");
+    const elsewhere = makeWorld([], undefined, { target: { host: "api.anthropic.com", port: 443 } });
+    const refusedElsewhere = await runSelfHostedSlashCommand(elsewhere.deps, SESSION, { kind: "goal-clear" }, undefined, NEVER);
+    expect(refusedElsewhere.ok ? "" : refusedElsewhere.message).toContain("which is not this machine");
+    expect([...unbound.written, ...elsewhere.written]).toEqual([]);
   });
 
   it("files the version only from a worker's own system/init, the latest winning, and forgets a session that is no longer tracked", () => {
