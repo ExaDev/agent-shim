@@ -536,14 +536,15 @@ describe("the self-hosted presence, read-receipt and teleport endpoints", () => 
     // The worker stream opens before the write, the way a live worker's held stream stands: what the write publishes it receives live.
     const workerStream = new SseStream(world.port, `/v1/code/sessions/${id}/worker/events/stream`, { authorization: `Bearer ${workerJwt}` });
     expect((await workerStream.response()).statusCode).toBe(HTTP_STATUS.ok);
-    const marker = { type: "user", uuid: "teleport-marker", message: { role: "user", content: "__ULTRAPAN_TELEPORT_LOCAL__" } };
+    // The marker claims a person's app in its own payload; like any client write, only the writer's header may name the platform.
+    const marker = { type: "user", uuid: "teleport-marker", client_platform: "web_claude_ai", message: { role: "user", content: "__ULTRAPAN_TELEPORT_LOCAL__" } };
     const written = await call(world.port, "POST", `/v1/code/sessions/${id}/teleport-events`, { events: [{ payload: marker }] }, auth);
     expect(written.status).toBe(HTTP_STATUS.ok);
     expect(JSON.parse(written.body)).toEqual({ results: [{ sequence_num: "1", duplicate: false }] });
 
     // The marker is a session event: the worker's stream carries it like any client write, and the teleport read pages it in `{data: [{payload}], next_cursor}`.
     await workerStream.waitForEvents(1);
-    expect(envelopesOf(workerStream).map((event) => event.envelope.event_type)).toEqual(["user"]);
+    expect(envelopesOf(workerStream).map((event) => [event.envelope.event_type, "client_platform" in (event.envelope.payload as Record<string, unknown>)])).toEqual([["user", false]]);
     workerStream.close();
     await call(world.port, "POST", `/v1/code/sessions/${id}/events`, { events: [{ payload: { type: "user", uuid: "after-marker" } }] }, auth);
     const firstPage = JSON.parse((await call(world.port, "GET", `/v1/code/sessions/${id}/teleport-events?limit=1`, undefined, auth)).body) as { data: { event_id: string; payload: Record<string, unknown> }[]; next_cursor?: string };

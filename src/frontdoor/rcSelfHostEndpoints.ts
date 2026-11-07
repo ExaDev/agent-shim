@@ -166,7 +166,7 @@ export async function serveRcClientChannels(ctx: RcClientChannelContext, tail: s
         await ctx.answerJson(response, HTTP_STATUS.badRequest, { type: "error", error: { type: "invalid_request_error", message: "every event in a teleport write is an object carrying one payload object" } });
         return true;
       }
-      const published = ctx.publish(host.conversation, host.writer, RC_SOURCE_CLIENT, event.payload);
+      const published = ctx.publish(host.conversation, host.writer, RC_SOURCE_CLIENT, withClientPlatform(event.payload, request.headers));
       results.push({ sequence_num: String(published.sequenceNum), duplicate: published.duplicate });
     }
     ctx.sweep();
