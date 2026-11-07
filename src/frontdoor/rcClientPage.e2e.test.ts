@@ -41,6 +41,9 @@ const MS_PER_SECOND = 1_000;
 /** A write the tests never expect to reach the real dial: the steering procedures resolve through it. */
 const unexercised = async (): Promise<RcEventWriteResult> => await Promise.resolve({ ok: false, message: "this test drives no Remote Control write" });
 
+/** The same stand-in for the goal and compaction verbs, whose results carry a report rather than a write. */
+const unexercisedCommand = async (): Promise<{ readonly ok: false; readonly message: string }> => await Promise.resolve({ ok: false, message: "this test drives no Remote Control command" });
+
 /** How long the stream case may wait for the publishes it drives to cross the wire, so an overloaded machine fails visibly instead of hanging the suite. */
 const WAIT_BUDGET_MS = 5_000;
 const SETTLE_MS = 50;
@@ -136,6 +139,10 @@ describe("the door's web client page and its API calls over the door's own TLS",
       mcpAuthenticate: unexercised,
       mcpOAuthCallbackUrl: unexercised,
       teleport: unexercised,
+      goalGet: unexercisedCommand,
+      goalSet: unexercisedCommand,
+      goalClear: unexercisedCommand,
+      compact: unexercisedCommand,
       fanout: { publish: () => undefined, subscribe: () => () => undefined },
       sessionEvents: createRcSessionEventLog({ generation: "00000000-0000-4000-8000-0000000000ee", capacity: RC_SESSION_EVENT_LOG_CAPACITY }),
       events: doorEvents,
