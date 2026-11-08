@@ -1,7 +1,8 @@
 import { Option, type Command } from "commander";
 import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDeps } from "./cli/commandDeps";
 import { addCredentialCacheOptions, cacheChange, collectCredentialSource, CREDENTIAL_SOURCE_SYNTAX, type CredentialCacheOptions } from "./cli/credentialOption";
-import { collectRepeated, collectStringPair } from "./cli/parsers";
+import { collectRepeated, collectStringPair, parseDurationOption } from "./cli/parsers";
+import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS, providerConnectTimeoutMs } from "./providerReachability";
 import { resolveCodexConfig } from "./codex/translate";
 import { savedCatalogueFingerprint } from "./codex/catalogueCredential";
 import { resolveAntigravityConfig } from "./antigravity/translate";
@@ -45,6 +46,9 @@ import { realCredentialCacheEnv } from "./realCredentialCache";
 import { realFarmFs, realFsPort, realIsProcessAlive } from "./realPorts";
 import { ProviderNotFoundError, providerExists, readProvider, listProviders, type ProviderCredentialTarget, type ProviderKind, describeProviderEndpoint, addProvider, updateProvider, removeProvider } from "./providersStore";
 
+/** What `--connect-timeout`'s help says the default is. */
+const CONNECT_TIMEOUT_DEFAULT_HINT = `a duration such as 3s or 500ms; default ${String(DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS)}ms, the first SYN and two retransmissions`;
+
 /** One provider as `provider show --json` and `provider list --json` print it: its name, the file's own fields (less its editor-only `$schema` pointer), and its credential block summarised, so no `literal` source's value is printed. */
 function toProviderView(name: string, provider: Provider, formerNames: readonly string[]): Record<string, unknown> {
   return {
@@ -58,7 +62,7 @@ function toProviderView(name: string, provider: Provider, formerNames: readonly 
       ? (provider.antigravity === undefined ? {} : { antigravity: provider.antigravity })
       : isRouterProvider(provider)
       ? {}
-      : { baseUrl: provider.baseUrl }),
+      : { baseUrl: provider.baseUrl, ...(provider.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: provider.connectTimeoutMs }) }),
     ...(isRouterProvider(provider) ? {} : { credential: summariseCredential(provider.credential) }),
     ...(!isRouterProvider(provider) && provider.env !== undefined ? { env: provider.env } : {}),
     ...(!isRouterProvider(provider) && provider.pickerModels !== undefined ? { pickerModels: provider.pickerModels } : {}),
@@ -178,6 +182,7 @@ interface ProviderAddOptions extends CodexOptions, AntigravityOptions, Catalogue
   readonly kind?: ProviderKind;
   readonly displayName: string;
   readonly baseUrl?: string;
+  readonly connectTimeout?: number;
   readonly credential: CredentialSource[];
   readonly credentialTarget?: ProviderCredentialTarget;
   readonly env?: Record<string, string>;
@@ -215,6 +220,8 @@ interface ProviderSetOptions extends CodexOptions, AntigravityOptions, Catalogue
   readonly json?: boolean;
   readonly displayName?: string;
   readonly baseUrl?: string;
+  readonly connectTimeout?: number;
+  readonly unsetConnectTimeout?: boolean;
   readonly credential?: CredentialSource[];
   readonly credentialTarget?: ProviderCredentialTarget;
   readonly env?: Record<string, string>;
@@ -239,6 +246,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       .addOption(new Option("--kind <kind>", "http (default): an Anthropic-compatible endpoint at --base-url; codex: ChatGPT's Codex backend through the front-door daemon.").choices(PROVIDER_KINDS))
       .requiredOption("--display-name <name>", "Human-readable name, exported to the child as AGENT_SHIM_PROVIDER.")
       .option("--base-url <url>", "Anthropic-compatible base URL the child's requests are sent to (http providers only, and required for them).")
+      .option("--connect-timeout <duration>", `http providers: how long opening a connection to the base URL may take before the provider counts as unreachable (${CONNECT_TIMEOUT_DEFAULT_HINT}). Bounds the connect only, never the wait for the answer.`, parseDurationOption)
       .requiredOption(
         "--credential <source>",
         `Where the provider's token comes from (repeatable; tried in the order given until one yields a token): ${CREDENTIAL_SOURCE_SYNTAX}. Never the token itself.`,
@@ -279,6 +287,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           ...(options.kind === undefined ? {} : { kind: options.kind }),
           displayName: options.displayName,
           ...(options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl }),
+          ...(options.connectTimeout === undefined ? {} : { connectTimeoutMs: options.connectTimeout }),
           sources: options.credential,
           ...(options.credentialTarget === undefined ? {} : { target: options.credentialTarget }),
           ...(options.env === undefined ? {} : { env: options.env }),
@@ -308,6 +317,8 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       .description("Update an existing API provider definition.")
       .option("--display-name <name>", "Replace the human-readable name.")
       .option("--base-url <url>", "Replace the base URL (http providers only).")
+      .option("--connect-timeout <duration>", `http providers: replace how long opening a connection to the base URL may take before the provider counts as unreachable (${CONNECT_TIMEOUT_DEFAULT_HINT}).`, parseDurationOption)
+      .option("--unset-connect-timeout", "http providers: go back to the default connect timeout.")
       .option(
         "--credential <source>",
         `Replace the credential's sources with these (repeatable, in the order tried): ${CREDENTIAL_SOURCE_SYNTAX}.`,
@@ -350,13 +361,16 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         const { json, ...options } = allOptions;
         if (Object.entries(allOptions).every(([key, value]) => key === "json" || value === undefined)) {
           throw new UsageError(
-            "Nothing to change: pass --display-name, --base-url, --credential, --credential-target, a --credential-cache option, --env, --unset-env, --picker-model, --unset-picker-model, a --catalogue option, --unset-catalogue, or codex/antigravity settings.",
+            "Nothing to change: pass --display-name, --base-url, --connect-timeout, --unset-connect-timeout, --credential, --credential-target, a --credential-cache option, --env, --unset-env, --picker-model, --unset-picker-model, a --catalogue option, --unset-catalogue, or codex/antigravity settings.",
           );
         }
         const codex = codexConfigFromOptions(options);
         const antigravity = antigravityConfigFromOptions(options);
         const existingForCache = readProvider(paths, name);
         const cache = cacheChange(options, existingForCache !== undefined && !isRouterProvider(existingForCache) ? existingForCache.credential.cache : undefined);
+        if (options.unsetConnectTimeout === true && options.connectTimeout !== undefined) {
+          throw new UsageError("--unset-connect-timeout cannot be combined with --connect-timeout.");
+        }
         if (options.unsetCatalogue === true && hasCatalogueOptions(options)) {
           throw new UsageError("--unset-catalogue cannot be combined with another --catalogue option.");
         }
@@ -368,6 +382,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           ...(cache === undefined ? {} : { cache }),
           ...(options.displayName === undefined ? {} : { displayName: options.displayName }),
           ...(options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl }),
+          ...(options.unsetConnectTimeout === true ? { connectTimeoutMs: false } : options.connectTimeout === undefined ? {} : { connectTimeoutMs: options.connectTimeout }),
           ...(options.credential === undefined ? {} : { sources: options.credential }),
           ...(options.credentialTarget === undefined ? {} : { target: options.credentialTarget }),
           ...(options.env === undefined ? {} : { env: options.env }),
@@ -382,6 +397,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       }),
     [
       "agent-shim provider set z --base-url https://api.z.ai/api/anthropic",
+      "agent-shim provider set local --connect-timeout 3s",
       "agent-shim provider set z --env API_TIMEOUT_MS=600000",
       "agent-shim provider set z --credential op:op://vault/z/credential --credential-cache-ttl 12h",
       "agent-shim provider set anthropic-api --credential-target apiKey",
@@ -453,6 +469,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           console.log(`Endpoint: ${describeProviderEndpoint(found)}`);
         } else if (!isRouterProvider(found)) {
           console.log(`Base URL: ${found.baseUrl}`);
+          console.log(`Connect timeout: ${String(providerConnectTimeoutMs(found))}ms${found.connectTimeoutMs === undefined ? " (the default)" : ""}`);
         }
         if (!isRouterProvider(found)) {
           console.log(`Credential: ${describeCredential(found.credential)}`);

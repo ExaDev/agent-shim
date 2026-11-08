@@ -99,12 +99,12 @@ export function probeFrontDoorSync(port: number, caPem: string, timeoutMs: numbe
 }
 
 /**
- * The accept probe, run on a worker thread for the same reason: one TCP connect to 127.0.0.1 that succeeds as soon as the listener accepts and is closed again at once, so nothing is sent to the surface it asks about.
+ * The accept probe, run on a worker thread for the same reason: one TCP connect to `host` that succeeds as soon as the listener accepts and is closed again at once, so nothing is sent to the surface it asks about.
  */
 const ACCEPT_PROBE_SOURCE = `
 const { workerData } = require("node:worker_threads");
 const net = require("node:net");
-const { port, timeoutMs, shared, ok, failed, headerSlots } = workerData;
+const { host, port, timeoutMs, shared, ok, failed, headerSlots } = workerData;
 const header = new Int32Array(shared, 0, headerSlots);
 const reason = new Uint8Array(shared, headerSlots * 4);
 let done = false;
@@ -117,7 +117,7 @@ const finish = (verdict, message) => {
   Atomics.store(header, 0, verdict);
   Atomics.notify(header, 0);
 };
-const socket = net.connect({ host: "127.0.0.1", port });
+const socket = net.connect({ host, port });
 socket.once("connect", () => { socket.destroy(); finish(ok, ""); });
 socket.once("error", (error) => finish(failed, (error.code ? error.code + ": " : "") + error.message));
 setTimeout(() => { socket.destroy(); finish(failed, "no connection accepted within " + String(timeoutMs) + "ms"); }, timeoutMs);
@@ -128,7 +128,15 @@ setTimeout(() => { socket.destroy(); finish(failed, "no connection accepted with
  */
 export function probeListenerAcceptSync(port: number, timeoutMs: number = PROBE_TIMEOUT_MS): ListenerVerdict {
   refuseToBlockInRole("a synchronous probe of a front door listener");
-  return runProbeWorker(ACCEPT_PROBE_SOURCE, { port }, timeoutMs);
+  return runProbeWorker(ACCEPT_PROBE_SOURCE, { host: "127.0.0.1", port }, timeoutMs);
+}
+
+/**
+ * Whether anything at `host`:`port` accepts a TCP connection within `timeoutMs`: one connect (the name resolved by the system resolver, as any dial would), closed again the moment it is accepted, so no request reaches the listener. What `doctor`, `check` and a launch ask of a provider's base URL.
+ */
+export function probeAddressAcceptSync(host: string, port: number, timeoutMs: number): ListenerVerdict {
+  refuseToBlockInRole("a synchronous probe of a provider's address");
+  return runProbeWorker(ACCEPT_PROBE_SOURCE, { host, port }, timeoutMs);
 }
 
 /** Runs one probe source on a worker thread and blocks this thread on its verdict, whatever the probe asks, for at most `timeoutMs` plus the margin the waiting thread allows the worker's own timeout verdict. */
