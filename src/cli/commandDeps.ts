@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 
+import { announceReportOutput } from "../blockingSteps";
 import { MissingInputError, PromptCancelledError } from "../cliError";
 import type { PromptsPort } from "../configure";
 import type { LayoutPaths } from "../paths";
@@ -17,9 +18,14 @@ export interface CommandDeps {
   readonly exit: (code: number) => never;
 }
 
+/** The bytes `console.log` adds after the text it prints. */
+const NEWLINE_BYTES = 1;
+
 /** Prints `value` as indented JSON on standard output: the one `--json` output format every `list`, `show`, `check`, `doctor` and `headroom status` command shares. */
 export function printJson(value: unknown): void {
-  console.log(JSON.stringify(value, null, 2));
+  const text = JSON.stringify(value, null, 2);
+  announceReportOutput(Buffer.byteLength(text) + NEWLINE_BYTES);
+  console.log(text);
 }
 
 /** What a mutating command did, as the one object `--json` prints in place of its text output. */

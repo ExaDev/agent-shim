@@ -26,6 +26,7 @@ function recordingObserver(): { readonly told: (number | "end" | "work")[]; read
     begin: (ms) => { told.push(ms); },
     end: () => { told.push("end"); },
     localWork: () => { told.push("work"); },
+    output: () => undefined,
     unboundedStepLimitMs: UNBOUNDED_LIMIT_MS,
   });
   return { told, stop };

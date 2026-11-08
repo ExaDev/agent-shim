@@ -16,7 +16,7 @@ let works: number;
 
 beforeEach(() => {
   works = 0;
-  stopObserving = observeBlockingSteps({ begin: () => undefined, end: () => undefined, localWork: () => { works += 1; }, unboundedStepLimitMs: 1 });
+  stopObserving = observeBlockingSteps({ begin: () => undefined, end: () => undefined, localWork: () => { works += 1; }, output: () => undefined, unboundedStepLimitMs: 1 });
 });
 
 afterEach(() => {

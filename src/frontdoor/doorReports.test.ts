@@ -11,7 +11,7 @@ import { enterProcessRole } from "../processRole";
 import { MAX_TIMER_DELAY_MS } from "../config/schema";
 import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS } from "../providerReachability";
 import { PROBE_WAIT_MARGIN_MS } from "./probe";
-import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, REPORT_QUIET_MS } from "./reportProgress";
+import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, REPORT_QUIET_MS, REPORT_SIZE_PREFIX, encodeReportSize } from "./reportProgress";
 import { createDoorReports } from "./doorReports";
 
 const DOCTOR = { ok: false, findings: [{ section: "provider", severity: "fail", message: "provider spark could not connect to http://192.0.2.1:8000: no connection accepted within 1500ms", subject: "spark" }] };
@@ -39,6 +39,11 @@ afterEach(() => {
   leaveRole?.();
   leaveRole = undefined;
 });
+
+/** A child script that prints `report` the way a report child does: its size line, then the report. */
+function printing(report: string): string {
+  return `process.stdout.write(${JSON.stringify(encodeReportSize(Buffer.byteLength(report)))}); process.stdout.write(${JSON.stringify(report)});`;
+}
 
 /** A report child that is only streams the test writes to, so the watchdog is driven by announcements and fake timers alone, with no process start-up for a loaded host to stretch. */
 function fakeReportChild(): { readonly spawn: typeof spawn; readonly progress: PassThrough; readonly killed: () => boolean } {
@@ -166,7 +171,7 @@ describe("the bound on a report child", () => {
   });
 
   it("starts its child with the descriptor its progress is announced on", async () => {
-    const reports = createDoorReports({ selfInvocation: nodeRunning(`process.stdout.write(JSON.stringify({ fd: process.env.${REPORT_PROGRESS_FD_ENV} }));`), env: {} });
+    const reports = createDoorReports({ selfInvocation: nodeRunning(printing("{}")), env: {} });
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow();
     const seen = createDoorReports({ selfInvocation: nodeRunning(`process.stderr.write(process.env.${REPORT_PROGRESS_FD_ENV} ?? "none"); process.exitCode = 1;`), env: {} });
     await expect(seen.doctorReport(new AbortController().signal)).rejects.toThrow(String(REPORT_PROGRESS_FD));
@@ -181,7 +186,7 @@ describe("the door's check and doctor reports", () => {
     const reports = createDoorReports({
       selfInvocation: (args) => {
         asked.push(args);
-        return nodeRunning(`process.stdout.write(${JSON.stringify(JSON.stringify(DOCTOR))}); process.exitCode = 1;`)(args);
+        return nodeRunning(`${printing(JSON.stringify(DOCTOR))} process.exitCode = 1;`)(args);
       },
       env: {},
     });
@@ -194,7 +199,7 @@ describe("the door's check and doctor reports", () => {
     const reports = createDoorReports({
       selfInvocation: (args) => {
         asked.push(args);
-        return nodeRunning("process.stdout.write('{}');")(args);
+        return nodeRunning(printing("{}"))(args);
       },
       env: {},
     });
@@ -208,7 +213,7 @@ describe("the door's check and doctor reports", () => {
   });
 
   it("refuses a report that does not match its schema", async () => {
-    const reports = createDoorReports({ selfInvocation: nodeRunning("process.stdout.write('{\"ok\":\"yes\"}');"), env: {} });
+    const reports = createDoorReports({ selfInvocation: nodeRunning(printing(JSON.stringify({ ok: "yes" }))), env: {} });
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow();
   });
 
@@ -321,12 +326,12 @@ describe("the door's check and doctor reports", () => {
     expect(ended).toBe(true);
   });
 
-  it("stops reading a child that prints more than the limit and fails naming it", async () => {
+  it("ends a child that prints a report longer than the size it announced, and fails naming that size", async () => {
     const recorded = recordingSpawn();
-    const limit = 1_024;
-    const endless = nodeRunning(`const line = "x".repeat(${String(limit)}); setInterval(() => process.stdout.write(line), 1);`);
-    const reports = createDoorReports({ selfInvocation: endless, env: {}, quietMs: LONG_BOUND_MS, stdoutLimitBytes: limit, spawn: recorded.spawn });
-    await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`printed more than ${String(limit)} bytes`);
+    const announced = 1_024;
+    const endless = nodeRunning(`process.stdout.write(${JSON.stringify(encodeReportSize(announced))}); const line = "x".repeat(${String(announced)}); setInterval(() => process.stdout.write(line), 1);`);
+    const reports = createDoorReports({ selfInvocation: endless, env: {}, quietMs: LONG_BOUND_MS, spawn: recorded.spawn });
+    await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`printed more than the ${String(announced)} bytes it announced`);
     const pid = recorded.children[0]?.pid;
     if (pid === undefined) {
       throw new Error("the child did not start");
@@ -334,8 +339,24 @@ describe("the door's check and doctor reports", () => {
     expect(await gone(pid)).toBe(true);
   });
 
+  it("accepts a report of any size the child announced, however long", async () => {
+    /** Past the fixed cap the door used to apply, so only an announced size can have admitted it. */
+    const BYTES_PER_MIB = 1_048_576;
+    const BIG_MIB = 40;
+    const BIG_BYTES = BIG_MIB * BYTES_PER_MIB;
+    const script = `const body = '{"padding":"' + "x".repeat(${String(BIG_BYTES)}) + '"}'; process.stdout.write(${JSON.stringify(REPORT_SIZE_PREFIX)} + Buffer.byteLength(body) + "\\n"); process.stdout.write(body); process.exitCode = 1;`;
+    const reports = createDoorReports({ selfInvocation: nodeRunning(script), env: {} });
+    // The report is read whole, past what a fixed cap would allow, and then refused by its schema.
+    await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(/expected|invalid|required/i);
+  });
+
+  it("ends a child that prints without announcing a size", async () => {
+    const reports = createDoorReports({ selfInvocation: nodeRunning(`process.stdout.write("{}".repeat(100));`), env: {}, quietMs: LONG_BOUND_MS });
+    await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow("printed output without announcing its size");
+  });
+
   it("names what the child wrote to stderr when its stdout is not JSON", async () => {
-    const reports = createDoorReports({ selfInvocation: nodeRunning("process.stderr.write('warning: the keychain is locked\\n'); process.stdout.write('not json at all');"), env: {} });
+    const reports = createDoorReports({ selfInvocation: nodeRunning(`process.stderr.write('warning: the keychain is locked\\n'); ${printing("not json at all")}`), env: {} });
     const failure = await reports.doctorReport(new AbortController().signal).catch((caught: unknown) => caught);
     expect(failure).toBeInstanceOf(Error);
     expect((failure as Error).message).toContain("agent-shim doctor --json printed output that is not JSON");

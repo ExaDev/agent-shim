@@ -11,7 +11,7 @@ import { realFarmFs } from "../realPorts";
 import { frontDoorApiClient } from "./controlApi";
 import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS } from "../providerReachability";
 import { PROBE_WAIT_MARGIN_MS, PROBE_WORKER_START_LIMIT_MS } from "./probe";
-import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, createReportProgressReader, type ReportProgress } from "./reportProgress";
+import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, createReportProgressReader, encodeReportSize, type ReportProgress } from "./reportProgress";
 import { readFrontDoorState } from "./state";
 
 const BUNDLE_TARGET = "node22";
@@ -103,7 +103,7 @@ describe.skipIf(process.platform === "win32")("the front door's check and doctor
     expect(check.providerReachability).toMatchObject({ ok: false });
   }, SUITE_TIMEOUT_MS);
 
-  it("has the bundled doctor announce the provider probe's step and its end on the descriptor it is given", async () => {
+  it("has the bundled doctor announce the provider probe's step and its end on the descriptor it is given, and its report's size before the report", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "door-reports-progress-e2e-"));
     cleanups.push(() => {
       fs.rmSync(home, { recursive: true, force: true });
@@ -112,7 +112,14 @@ describe.skipIf(process.platform === "win32")("the front door's check and doctor
     fs.mkdirSync(layout.providersDir, { recursive: true });
     fs.writeFileSync(path.join(layout.providersDir, "refused.json"), JSON.stringify({ displayName: "Refused", baseUrl: REFUSED_BASE_URL, credential: { sources: [{ literal: "placeholder" }] } }));
     const cli = await bundleCli(home);
-    const child = spawn(process.execPath, [cli, "doctor", "--json"], { env: { ...process.env, AGENT_SHIM_HOME: home, [REPORT_PROGRESS_FD_ENV]: String(REPORT_PROGRESS_FD) }, stdio: ["ignore", "ignore", "ignore", "pipe"] });
+    const child = spawn(process.execPath, [cli, "doctor", "--json"], { env: { ...process.env, AGENT_SHIM_HOME: home, [REPORT_PROGRESS_FD_ENV]: String(REPORT_PROGRESS_FD) }, stdio: ["ignore", "pipe", "ignore", "pipe"] });
+    let printed = "";
+    const standardOutput = child.stdout;
+    if (!(standardOutput instanceof Readable)) {
+      throw new Error("the standard output pipe was not opened");
+    }
+    standardOutput.setEncoding("utf8");
+    standardOutput.on("data", (chunk: string) => { printed += chunk; });
     const events: ReportProgress[] = [];
     const progress = child.stdio[REPORT_PROGRESS_FD];
     if (!(progress instanceof Readable)) {
@@ -123,6 +130,9 @@ describe.skipIf(process.platform === "win32")("the front door's check and doctor
     await new Promise<void>((resolve) => { child.once("close", () => { resolve(); }); });
     const probeBoundMs = PROBE_WORKER_START_LIMIT_MS + DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS + PROBE_WAIT_MARGIN_MS;
     expect(events).toContainEqual({ kind: "begin", boundMs: probeBoundMs });
+    // The report is preceded by its size line, which gives the byte length of the rest.
+    const lineEnd = printed.indexOf("\n");
+    expect(printed.slice(0, lineEnd + 1)).toBe(encodeReportSize(Buffer.byteLength(printed.slice(lineEnd + 1))));
     // Every announced step ends before the next begins, and the last one ends.
     expect(events.map((event) => event.kind).join(",")).toMatch(/^(begin,end,)*begin,end$/);
   }, SUITE_TIMEOUT_MS);

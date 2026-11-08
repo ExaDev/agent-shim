@@ -4,7 +4,7 @@ import { Readable } from "node:stream";
 import { CheckReportJsonSchema, type CheckReportJson } from "../checkReportSchema";
 import { MAX_TIMER_DELAY_MS } from "../config/schema";
 import { PROBE_WAIT_MARGIN_MS } from "./probe";
-import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, REPORT_QUIET_MS, createReportProgressReader } from "./reportProgress";
+import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, REPORT_QUIET_MS, createReportOutputReader, createReportProgressReader } from "./reportProgress";
 import { DoctorRunOutputSchema } from "./controlSchemas";
 import type { DoctorReport } from "../doctorReport";
 
@@ -24,14 +24,6 @@ const REPORTED_STATUSES: ReadonlySet<number | null> = new Set([0, 1]);
 function timerDelay(ms: number): number {
   return Math.min(ms, MAX_TIMER_DELAY_MS);
 }
-
-const BYTES_PER_MIB = 1_048_576;
-
-/**
- * The most a report child may print to stdout before the door ends it. A report holds one finding or row per provider, identity and directory rule, each a few hundred bytes, so sixteen mebibytes is far past any real report while still bounding the door's memory against a child that prints without end.
- */
-const REPORT_STDOUT_LIMIT_MIB = 16;
-const REPORT_STDOUT_LIMIT_BYTES = REPORT_STDOUT_LIMIT_MIB * BYTES_PER_MIB;
 
 /** How much of a child's stderr the door keeps to name in a failure: the end of it, where the cause is, enough for a few lines of diagnostics. */
 const STDERR_TAIL_CHARS = 2_048;
@@ -64,12 +56,13 @@ function readablePipe(child: ChildProcess, index: number): Readable {
 /** What `runSelfJson` is bounded by, and the process it starts. */
 interface RunLimits {
   readonly quietMs: number;
-  readonly stdoutLimitBytes: number;
   readonly signal: AbortSignal | undefined;
   readonly spawn: typeof spawn;
 }
 
-/** Runs the door's own executable with `args` and reads the JSON it prints, failing with what it wrote to stderr when it printed none, or when what it printed is not JSON. The child leads its own process group and is ended, with everything it started, and the call fails, once it has gone `limit.quietMs` without announcing a blocking step or the end of one, or longer than a step's announced bound and `PROBE_WAIT_MARGIN_MS` (the margin a probe's caller waits past its bound, which also covers a killed command being reaped) inside it (the child announces each on `REPORT_PROGRESS_FD`, see `reportProgress.ts`), `limit.signal` aborts (the request's client went away) or it has printed more than `limit.stdoutLimitBytes`. */
+/**
+ * Runs the door's own executable with `args` and reads the JSON report it prints, failing with what it wrote to stderr when it printed none, or when what it printed is not JSON. The child leads its own process group and is ended, with everything it started, and the call fails, once any of these holds: it has gone `limit.quietMs` without announcing anything, or stayed longer than a blocking step's announced bound and `PROBE_WAIT_MARGIN_MS` inside that step (the margin a probe's caller waits past its bound, which also covers a killed command being reaped), the child announcing each on `REPORT_PROGRESS_FD` (see `reportProgress.ts`); `limit.signal` aborts (the request's client went away); or it prints a report longer than the size it announced before it, which is the only bound on what the door keeps, since a report grows with the user's data.
+ */
 async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEnv, args: readonly string[], limit: RunLimits): Promise<unknown> {
   const invocation = selfInvocation(args);
   const command = `agent-shim ${args.join(" ")}`;
@@ -105,24 +98,16 @@ async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEn
     const onAbort = (): void => { fail(limit.signal?.reason); };
     limit.signal?.addEventListener("abort", onAbort, { once: true });
     releases.push(() => { limit.signal?.removeEventListener("abort", onAbort); });
-    let out = "";
-    let outBytes = 0;
+    const output = createReportOutputReader((reason) => { fail(new Error(`${command} ${reason}`)); });
     let err = "";
     outPipe.setEncoding("utf8");
-    outPipe.on("data", (chunk: string) => {
-      outBytes += Buffer.byteLength(chunk);
-      if (outBytes > limit.stdoutLimitBytes) {
-        fail(new Error(`${command} printed more than ${String(limit.stdoutLimitBytes)} bytes`));
-        return;
-      }
-      out += chunk;
-    });
+    outPipe.on("data", (chunk: string) => { output.push(chunk); });
     errPipe.setEncoding("utf8");
     errPipe.on("data", (chunk: string) => {
       err = (err + chunk).slice(-STDERR_TAIL_CHARS);
     });
     child.once("error", (error) => { finish(() => { reject(error); }); });
-    child.once("close", (code) => { finish(() => { resolve({ status: code, stdout: out, stderr: err }); }); });
+    child.once("close", (code) => { finish(() => { resolve({ status: code, stdout: output.report(), stderr: err }); }); });
   });
   const diagnostics = stderr.trim();
   if (!REPORTED_STATUSES.has(status) || stdout.trim() === "") {
@@ -140,13 +125,12 @@ async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEn
 /**
  * The door's `check` and `doctor` reports, each collected by a child of the door's own executable (`agent-shim check --json`, `agent-shim doctor --json`) rather than in the door's process: collecting them runs commands, reads the keychain and probes listeners and provider base URLs, every one of which blocks the calling thread, and the door's thread is the event loop that answers every session (see `refuseToBlockInRole`). The child prints exactly the JSON `check --json` and `doctor --json` print, which is the control API's contract, validated here against the same schemas the API's output is.
  */
-export function createDoorReports(deps: Readonly<{ selfInvocation: SelfInvocation; env: NodeJS.ProcessEnv; quietMs?: number; stdoutLimitBytes?: number; spawn?: typeof spawn }>): DoorReports {
+export function createDoorReports(deps: Readonly<{ selfInvocation: SelfInvocation; env: NodeJS.ProcessEnv; quietMs?: number; spawn?: typeof spawn }>): DoorReports {
   const spawnChild = deps.spawn ?? spawn;
-  const stdoutLimitBytes = deps.stdoutLimitBytes ?? REPORT_STDOUT_LIMIT_BYTES;
   // `quietMs` fixes the quiet bound for a test.
   const quietMs = deps.quietMs ?? REPORT_QUIET_MS;
   return {
-    checkReport: async (path, identity, signal) => CheckReportJsonSchema.parse(await runSelfJson(deps.selfInvocation, deps.env, ["check", path, ...(identity === undefined ? [] : ["--identity", identity]), "--json"], { quietMs, stdoutLimitBytes, signal, spawn: spawnChild })),
-    doctorReport: async (signal) => DoctorRunOutputSchema.parse(await runSelfJson(deps.selfInvocation, deps.env, ["doctor", "--json"], { quietMs, stdoutLimitBytes, signal, spawn: spawnChild })),
+    checkReport: async (path, identity, signal) => CheckReportJsonSchema.parse(await runSelfJson(deps.selfInvocation, deps.env, ["check", path, ...(identity === undefined ? [] : ["--identity", identity]), "--json"], { quietMs, signal, spawn: spawnChild })),
+    doctorReport: async (signal) => DoctorRunOutputSchema.parse(await runSelfJson(deps.selfInvocation, deps.env, ["doctor", "--json"], { quietMs, signal, spawn: spawnChild })),
   };
 }

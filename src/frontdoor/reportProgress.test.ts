@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { noteLocalWork, withBlockingStep } from "../blockingSteps";
+import { announceReportOutput, noteLocalWork, withBlockingStep } from "../blockingSteps";
 import {
   REPORT_PROGRESS_FD_ENV,
   REPORT_UNBOUNDED_STEP_LIMIT_MS,
+  createReportOutputReader,
   createReportProgressReader,
+  encodeReportSize,
+  REPORT_SIZE_PREFIX,
   encodeReportProgress,
   installReportProgress,
   LOCAL_WORK_ANNOUNCE_INTERVAL_MS,
@@ -114,5 +117,48 @@ describe("local work announcements", () => {
     stop?.();
     uninstall = undefined;
     expect(module.statSync).toBe(original);
+  });
+});
+
+describe("the report output reader", () => {
+  /** Feeds `chunks` to a reader and returns the report it kept and every failure it raised. */
+  function read(chunks: readonly string[]): { readonly report: string; readonly failures: readonly string[] } {
+    const failures: string[] = [];
+    const reader = createReportOutputReader((reason) => { failures.push(reason); });
+    for (const chunk of chunks) {
+      reader.push(chunk);
+    }
+    return { report: reader.report(), failures };
+  }
+
+  it("keeps the report after its size line, whatever the chunking", () => {
+    const text = `${encodeReportSize(Buffer.byteLength("{\"a\":1}\n"))}{"a":1}\n`;
+    expect(read([text])).toEqual({ report: '{"a":1}\n', failures: [] });
+    expect(read(text.split(""))).toEqual({ report: '{"a":1}\n', failures: [] });
+  });
+
+  it("counts the report in bytes, not characters", () => {
+    const report = "{\"a\":\"é\"}";
+    expect(read([`${encodeReportSize(Buffer.byteLength(report))}${report}`]).failures).toEqual([]);
+    expect(read([`${encodeReportSize(1)}é`]).failures).toEqual(["printed more than the 1 bytes it announced"]);
+  });
+
+  it("fails on a report longer than it announced", () => {
+    expect(read([`${encodeReportSize(2)}abc`]).failures).toEqual(["printed more than the 2 bytes it announced"]);
+  });
+
+  it("fails on output with no size line, a malformed one or one that never ends", () => {
+    expect(read(["{}\n"]).failures).toEqual(["printed output without announcing its size"]);
+    expect(read([`${REPORT_SIZE_PREFIX}many\n`]).failures).toEqual(["printed output without announcing its size"]);
+    expect(read([`${REPORT_SIZE_PREFIX}-4\n`]).failures).toEqual(["printed output without announcing its size"]);
+    expect(read(["x".repeat(REPORT_SIZE_PREFIX.length + String(Number.MAX_SAFE_INTEGER).length + 2)]).failures).toEqual(["printed output without announcing its size"]);
+  });
+
+  it("is told of a report's size by the installed observer, before the report", () => {
+    const printed: string[] = [];
+    const stop = installReportProgress({ [REPORT_PROGRESS_FD_ENV]: String(DESCRIPTOR) }, () => undefined, () => 0, {}, (text) => { printed.push(text); });
+    uninstall = stop;
+    announceReportOutput(STEP_BOUND_MS);
+    expect(printed).toEqual([encodeReportSize(STEP_BOUND_MS)]);
   });
 });

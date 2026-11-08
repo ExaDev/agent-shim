@@ -1,8 +1,9 @@
-/** What a process that wants to know about its blocking steps registers: `begin` is told how long a step may take at most, `end` that it has finished, `localWork` that a loop over local data has done another unit of its work, and `unboundedStepLimitMs` is the limit a step gets when its caller names none. */
+/** What a process that wants to know about its blocking steps registers: `begin` is told how long a step may take at most, `end` that it has finished, `localWork` that a loop over local data has done another unit of its work, `output` that the process is about to print a report of that many bytes on standard output, and `unboundedStepLimitMs` is the limit a step gets when its caller names none. */
 export interface BlockingStepObserver {
   readonly begin: (boundMs: number) => void;
   readonly end: () => void;
   readonly localWork: () => void;
+  readonly output: (bytes: number) => void;
   readonly unboundedStepLimitMs: number;
 }
 
@@ -67,4 +68,11 @@ export function noteFileSystemWork(fsModule: object): () => void {
       Reflect.set(fsModule, name, original);
     }
   };
+}
+
+/**
+ * Tells the registered observer that the process is about to print a report of `bytes` bytes on standard output, before it prints the first of them, so whoever reads the report can bound what it accepts by what was announced. A no-op without an observer.
+ */
+export function announceReportOutput(bytes: number): void {
+  observer?.output(bytes);
 }
