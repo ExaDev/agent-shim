@@ -3,7 +3,7 @@ import fs from "node:fs";
 import { noteFileSystemWork, observeBlockingSteps } from "../blockingSteps";
 import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS } from "../providerReachability";
 
-/** The environment variable that tells a report child which file descriptor to announce its blocking steps on. Set by the door that starts the child, read by `installReportProgress`. */
+/** The environment variable that tells a report child which file descriptor to announce its progress on: each blocking step with its bound, the end of one, and local work done. Set by the door that starts the child, read by `installReportProgress`. */
 export const REPORT_PROGRESS_FD_ENV = "AGENT_SHIM_REPORT_PROGRESS_FD";
 
 /** The descriptor the door gives a report child for its progress: the first after standard input, output and error. */
@@ -101,7 +101,7 @@ export function encodeReportProgress(event: ReportProgress): string {
   return event.kind === "end" ? `${END_LINE}\n` : `${WORK_LINE}\n`;
 }
 
-/** Reads the lines of a progress stream as they arrive in chunks of any size, handing each complete, well-formed one to `onEvent`. A line that is not one of the two announcements is ignored: the stream carries nothing else, and an unreadable line must not be taken for a sign of life. */
+/** Reads the lines of a progress stream as they arrive in chunks of any size, handing each complete, well-formed one to `onEvent`. A line that is not one of the announcements (`begin`, `end`, `work`) is ignored: the stream carries nothing else, and an unreadable line must not be taken for a sign of life. */
 export function createReportProgressReader(onEvent: (event: ReportProgress) => void): (chunk: string) => void {
   let pending = "";
   return (chunk) => {
