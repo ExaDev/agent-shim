@@ -44,8 +44,8 @@ const WORKER_PRELUDE_SOURCE = `
   const reason = new Uint8Array(workerData.shared, workerData.headerSlots * 4);
   globalThis.finishProbe = (verdict, message) => {
     try {
+      const bytes = Buffer.from(String(message), "utf8").subarray(0, reason.length);
       if (Atomics.compareExchange(header, workerData.claimSlot, 0, 1) === 0) {
-        const bytes = Buffer.from(String(message), "utf8").subarray(0, reason.length);
         reason.set(bytes);
         Atomics.store(header, 1, bytes.length);
         Atomics.store(header, 0, verdict);
