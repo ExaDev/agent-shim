@@ -47,7 +47,7 @@ export const LimitClassificationSchema = z.strictObject({
 export type LimitClassification = z.infer<typeof LimitClassificationSchema>;
 
 /** The classes Claude Code states for a request in `x-claude-code-request-class`, and `unknown` for a value it does not state. */
-export const REQUEST_CLASSES = ["main", "subagent", "workflow", "compaction", "auxiliary", "side_reply", "unknown"] as const;
+const REQUEST_CLASSES = ["main", "subagent", "workflow", "compaction", "auxiliary", "side_reply", "unknown"] as const;
 export const RequestClassSchema = z.enum(REQUEST_CLASSES);
 export type RequestClass = z.infer<typeof RequestClassSchema>;
 
