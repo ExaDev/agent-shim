@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { noteFileSystemWork, observeBlockingSteps } from "./blockingSteps";
 import { collectCheckReport } from "./checkReport";
 import { collectDoctorReport } from "./doctorReport";
+import { realInstalledClaudeVersions } from "./realPorts";
 import { buildLayoutPaths } from "./paths";
 
 /** Every synchronous call of `node:fs` is a unit of local work a report child announces, so a loop over the user's files cannot be mistaken for a stall however it is written. */
@@ -161,6 +162,18 @@ describe("the reports' file system access", () => {
     }
     return { calls, notes: works };
   }
+
+  it("is noted for every entry of the installed versions directory, which is stat-ed one by one", () => {
+    const VERSIONS = 6;
+    const versionsDirectory = path.join(home, ".local", "share", "claude", "versions");
+    fs.mkdirSync(versionsDirectory, { recursive: true });
+    for (let index = 0; index < VERSIONS; index += 1) {
+      fs.writeFileSync(path.join(versionsDirectory, `1.0.${String(index)}`), "");
+    }
+    const { calls, notes } = countedRun(() => { realInstalledClaudeVersions(); });
+    expect(calls).toBeGreaterThanOrEqual(VERSIONS);
+    expect(notes).toBe(calls);
+  });
 
   it("is noted for every call the doctor report makes, with a tree of the user's files to walk", () => {
     const paths = buildLayoutPaths(path.join(home, ".agent-shim"));
