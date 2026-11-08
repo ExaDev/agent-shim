@@ -1,9 +1,10 @@
+import vm from "node:vm";
 import { EventEmitter } from "node:events";
 import * as net from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { probeAddressesAcceptSync } from "./probe";
-import { createDoorLookup, doorDial, probeAccept, type DialSocket } from "./doorDial";
+import { createDoorLookup, doorDial, probeAccept, type DialSocket, type DoorDialIo } from "./doorDial";
 import { SourcePortRange } from "./connectEffects";
 
 /** A bound short enough that a test waiting it out stays quick. */
@@ -182,5 +183,49 @@ describe("the provider probe on its worker thread", () => {
       wait();
     });
     expect(Buffer.concat(received).length).toBe(0);
+  });
+});
+
+describe("evaluating each embedded dial function from its source text alone", () => {
+  it("resolves a name through createDoorLookup evaluated in isolation", () => {
+    const isolatedCreateLookup = vm.runInNewContext(`(${createDoorLookup.toString()})`, { Error }) as typeof createDoorLookup;
+    let resolvedAddresses: readonly { readonly address: string; readonly family: number }[] | undefined;
+    const lookup = isolatedCreateLookup({
+      isIP: () => 0,
+      resolve4: (_host, callback) => {
+        callback(null, ["192.0.2.99"]);
+      },
+    });
+    lookup("provider.example", {}, (_err, addresses) => {
+      resolvedAddresses = addresses as readonly { readonly address: string; readonly family: number }[];
+    });
+    expect(resolvedAddresses).toEqual([{ address: "192.0.2.99", family: 4 }]);
+  });
+
+  it("dials a name through doorDial evaluated in isolation", async () => {
+    const isolatedDoorDial = vm.runInNewContext(`(${doorDial.toString()})`, { Promise, Error }) as typeof doorDial;
+    const socket = new SilentSocket();
+    let dialledOptions: Parameters<DoorDialIo<SilentSocket>["connect"]>[0] | undefined;
+    const outcome = await isolatedDoorDial(
+      {
+        connect: (options) => {
+          dialledOptions = options;
+          queueMicrotask(() => {
+            socket.emit("connect");
+          });
+          return socket;
+        },
+        lookup: () => undefined,
+        isIP: () => 0,
+      },
+      { host: "provider.example", port: 8080 },
+      { take: () => RANGE_START, count: 1 },
+    );
+    expect(outcome.error).toBeNull();
+    expect(dialledOptions).toMatchObject({
+      host: "provider.example",
+      port: 8080,
+      localPort: RANGE_START,
+    });
   });
 });
