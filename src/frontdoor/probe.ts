@@ -153,9 +153,6 @@ runAcceptProbe({ net, dns, createDoorLookup, doorDial, probeAccept, SourcePortRa
 });
 `;
 
-/**
- * Whether a listener on 127.0.0.1 accepts a TCP connection within the probe's bound (`timeoutMs`), which is all the CONNECT surface can be asked without presenting a launch's capability. Used by `doctor` and `frontdoor status` to tell a listener that accepts from one whose process is alive but whose event loop is not serving, which a supervisor pid check cannot. The bound is `timeoutMs` (`PROBE_TIMEOUT_MS` in production).
- */
 /** Where probe workers come from: `start` begins one and returns what blocks the calling thread on its verdict. Injected so a test can observe that every worker has started before any is waited on. */
 export interface ProbeWorkers {
   readonly start: (source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number) => { readonly verdict: () => ListenerVerdict };
@@ -163,11 +160,13 @@ export interface ProbeWorkers {
 
 const realProbeWorkers: ProbeWorkers = { start: (source, data, timeoutMs) => startProbeWorker(source, data, timeoutMs) };
 
+/**
+ * Whether a listener on 127.0.0.1 accepts a TCP connection within the probe's bound (`timeoutMs`), which is all the CONNECT surface can be asked without presenting a launch's capability. Used by `doctor` and `frontdoor status` to tell a listener that accepts from one whose process is alive but whose event loop is not serving, which a supervisor pid check cannot. The bound is `timeoutMs` (`PROBE_TIMEOUT_MS` in production).
+ */
 export function probeListenerAcceptSync(port: number, timeoutMs: number = PROBE_TIMEOUT_MS, workers: ProbeWorkers = realProbeWorkers): ListenerVerdict {
   refuseToBlockInRole("a synchronous probe of a front door listener");
   return workers.start(ACCEPT_PROBE_SOURCE, { host: "127.0.0.1", port, portStart: DOOR_SOURCE_PORT_START, portEnd: DOOR_SOURCE_PORT_END }, timeoutMs).verdict();
 }
-
 
 /**
  * Whether the door's own dial reaches each address within its bound: one connect each, closed again the moment it is accepted, so no request reaches a listener. Every probe's worker is started before any is waited on, so the probes run together and the whole takes about the longest bound, not their sum. Verdicts come back in the order the targets were given. What `doctor`, `check` and a launch ask of providers' base URLs.
@@ -177,7 +176,6 @@ export function probeAddressesAcceptSync(targets: readonly { readonly host: stri
   const started = targets.map((target) => workers.start(ACCEPT_PROBE_SOURCE, { host: target.host, port: target.port, portStart: DOOR_SOURCE_PORT_START, portEnd: DOOR_SOURCE_PORT_END }, target.timeoutMs));
   return started.map((probe) => probe.verdict());
 }
-
 
 /** Runs one probe source on a worker thread and blocks this thread on its verdict, whatever the probe asks, for at most `timeoutMs` plus the margin the waiting thread allows the worker's own timeout verdict. */
 function runProbeWorker(source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number): ListenerVerdict {

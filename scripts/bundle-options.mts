@@ -8,7 +8,6 @@ export const ESBUILD_TARGET = "node22";
 /** The CommonJS bundle's stand-in for `import.meta.url`, declared by its banner and substituted for every bundled ES module's use of it. */
 const IMPORT_META_URL_VARIABLE = "__agentShimImportMetaUrl";
 
-
 /**
  * The options the release bundles the command line with (everything but the output file), shared by `scripts/build.mts` and the tests that must build exactly what the release builds.
  */
