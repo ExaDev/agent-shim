@@ -244,7 +244,7 @@ async function startDoor(options: { readonly files: Record<string, unknown>; rea
     log: () => undefined,
   };
   let directPort = 0;
-  const resolveRoute = createProviderRouteResolver({ fs: fakeFs(options.files), providersDir: PROVIDERS_DIR, codexPorts: ports, directPort: () => directPort, env: {}, credentials: fakeAsyncCredentials() });
+  const resolveRoute = createProviderRouteResolver({ log: () => undefined, now: () => 0, fs: fakeFs(options.files), providersDir: PROVIDERS_DIR, codexPorts: ports, directPort: () => directPort, env: {}, credentials: fakeAsyncCredentials() });
   const log = options.log ?? ((): void => undefined);
   const pipelines = createDoorPipelines({
     resolveRoute,

@@ -41,7 +41,7 @@ describe("how many configuration files the door reads to resolve one request", (
       return real(file);
     };
     const upstream = recordingFetch(() => new Response("{}", { status: 200 }));
-    const resolve = createProviderRouteResolver({
+    const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0,
       fs: { ...fakeFs({}), readConfigFile: counting },
       providersDir,
       codexPorts: { upstreams: sameUpstreamForEveryLogin({ fetch: upstream.fetch, auth: fakeAuth(), timers: { after: () => () => undefined }, randomId: () => "random" }), writeUsageSnapshot: () => undefined, now: () => 0, log: () => undefined },

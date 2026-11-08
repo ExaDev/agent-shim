@@ -182,7 +182,7 @@ describe("the self-hosted Remote Control mode end to end", () => {
         });
       },
     });
-    const resolver = createProviderRouteResolver({
+    const resolver = createProviderRouteResolver({ log: () => undefined, now: () => 0,
       fs: realFsPort,
       providersDir: resolveLayoutPaths().providersDir,
       codexPorts: createCodexRoutePorts(() => undefined, resolveLayoutPaths().chatgptSignInFile),

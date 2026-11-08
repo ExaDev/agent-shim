@@ -9,6 +9,7 @@ import { resolveAntigravityConfig, type ResolvedAntigravityConfig } from "../ant
 import { createCachedAntigravityQuotaSource, fetchAntigravityQuotaSummary, type AntigravityQuotaMap } from "../antigravity/quota";
 import { resolveCredentialAsync, shareInFlightResolutions, type AsyncCredentialPort, type ResolvedCredential, type ResolveCredentialAsyncParams, type CredentialResolution } from "../credential";
 import { LegacyProviderFileError, loadProvider } from "../providersStore";
+import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS, providerConnectTimeoutMs } from "../providerReachability";
 import type { FsPort } from "../launcher/ports";
 import { createCodexRouteMount } from "./codexMount";
 import { createAntigravityRouteMount } from "./antigravityMount";
@@ -28,6 +29,9 @@ import type { UsageSnapshot } from "../usage/schema";
 import { PROVIDER_PATH_PREFIX, directOrigin, parseProviderPath, type FrontDoorRoute, type ModelChoice, type RoutedRequest } from "./route";
 import { Readable } from "node:stream";
 import { scanRequestHead } from "./requestScan";
+
+/** How often the door logs that one upstream could not be connected to, while it stays down. */
+export const COULD_NOT_CONNECT_LOG_INTERVAL_MS = 60_000;
 
 /**
  * Resolves the route a request's target names: `/providers/<name>/...` reads the provider file fresh on every request (so an edited provider applies to the next request with no restart) and answers with the route its kind selects: the in-process codex translator for a `codex` provider, the pass-through route for an `http` one with the provider's own credential attached in place of whatever the child presented. A bare `/v1/...` target (what the CONNECT surface hands the pipeline from a terminated OAuth session) rides a pass-through to Claude Code's own API, except in two cases: the Remote Control session family when the door serves that surface itself (`rcSelfHostRoute`, the self-hosted mode's route), and a session whose launch named a provider, whose inference is rewritten under that provider's scoped path (`scopeSessionProviderPath`, before anything else, so the route that serves sees the scoped target too, not only the resolution) and resolved as if the child had dialled the provider directly. Anything else is unrouted.
@@ -181,9 +185,33 @@ export function createProviderRouteResolver(deps: {
    * The self-hosted Remote Control route, when the door runs that mode: it takes over the `/v1/code/sessions` family and the `/v1/sessions` compatibility list, which would otherwise ride the pass-through to the real API. Absent, every `/v1/` target rides the pass-through exactly as before.
    */
   readonly rcSelfHostRoute?: FrontDoorRoute;
+  /** The door's log: where an upstream that could not be connected to is reported, at most once per upstream per `COULD_NOT_CONNECT_LOG_INTERVAL_MS`. */
+  readonly log: (line: string) => void;
+  /** The clock that interval is measured on. */
+  readonly now: () => number;
 }): (request: RoutedRequest) => Promise<RouteResolution> {
+  /** When each upstream (by the subject its routes name it with) last had a failure to connect logged. */
+  const couldNotConnectLoggedAt = new Map<string, number>();
+  /** Logs a pass-through's failure to connect, unless the same upstream had one logged within the interval: a session retrying a down provider fails every few seconds, and one line a minute says it is still down. */
+  const couldNotConnectFor = (subject: string) => (line: string): void => {
+    const now = deps.now();
+    const last = couldNotConnectLoggedAt.get(subject);
+    if (last !== undefined && now - last < COULD_NOT_CONNECT_LOG_INTERVAL_MS) {
+      return;
+    }
+    couldNotConnectLoggedAt.set(subject, now);
+    deps.log(`front door: ${line}`);
+  };
+
   /** The pass-through every bare /v1/ request from the CONNECT surface rides: straight to Claude Code's own API, with no per-request upstream for a headroom hop (the daemon's default upstream is exactly that API, which is what an OAuth session wants). */
-  const oauthRoute = createPassthroughRoute("anthropic", { baseUrl: `https://${CONNECT_INTERCEPT_HOST}:${String(HTTPS_PORT)}`, stripPrefix: undefined, headroomUpstream: undefined });
+  const oauthRoute = createPassthroughRoute("anthropic", {
+    baseUrl: `https://${CONNECT_INTERCEPT_HOST}:${String(HTTPS_PORT)}`,
+    stripPrefix: undefined,
+    headroomUpstream: undefined,
+    subject: "the Anthropic API",
+    connectTimeoutMs: DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS,
+    couldNotConnect: couldNotConnectFor("the Anthropic API"),
+  });
 
   /** Resolves a credential block on the request path; requests in flight together for the same block share one run of its sources. */
   const resolveCredential = shareInFlightResolutions(resolveCredentialAsync);
@@ -257,13 +285,16 @@ export function createProviderRouteResolver(deps: {
    * Pass-through routes by target, cached: a route owns a keep-alive connection pool, so building one per request would both churn connections (no reuse across a session's requests) and accumulate pools that only an idle timeout retires. A provider file edit that changes the base URL simply lands on a new cache entry.
    */
   const passthroughByTarget = new Map<string, ReturnType<typeof createPassthroughRoute>>();
-  const passthroughFor = (name: string, target: { readonly baseUrl: string; readonly stripPrefix: string | undefined; readonly headroomUpstream: string | undefined }): ReturnType<typeof createPassthroughRoute> => {
-    const key = `${name}\u0000${target.baseUrl}\u0000${target.stripPrefix ?? ""}\u0000${target.headroomUpstream ?? ""}`;
+  const passthroughFor = (
+    name: string,
+    target: { readonly baseUrl: string; readonly stripPrefix: string | undefined; readonly headroomUpstream: string | undefined; readonly subject: string; readonly connectTimeoutMs: number },
+  ): ReturnType<typeof createPassthroughRoute> => {
+    const key = `${name}\u0000${target.baseUrl}\u0000${target.stripPrefix ?? ""}\u0000${target.headroomUpstream ?? ""}\u0000${String(target.connectTimeoutMs)}`;
     const existing = passthroughByTarget.get(key);
     if (existing !== undefined) {
       return existing;
     }
-    const route = createPassthroughRoute(name, target);
+    const route = createPassthroughRoute(name, { ...target, couldNotConnect: couldNotConnectFor(target.subject) });
     passthroughByTarget.set(key, route);
     return route;
   };
@@ -340,7 +371,16 @@ export function createProviderRouteResolver(deps: {
     }
     if (isRouterProvider(definition)) {
       // The router mounts in the routing layer below: it has no route of its own until a request's model name resolves to a target, so the resolver serves the OAuth passthrough for any path a routing layer did not claim.
-      return { ok: true, route: passthroughFor(`router:${provider}`, { baseUrl: `http://127.0.0.1:${String(deps.directPort())}`, stripPrefix: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(provider)}`, headroomUpstream: directOrigin(deps.directPort()) }) };
+      return {
+        ok: true,
+        route: passthroughFor(`router:${provider}`, {
+          baseUrl: `http://127.0.0.1:${String(deps.directPort())}`,
+          stripPrefix: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(provider)}`,
+          headroomUpstream: directOrigin(deps.directPort()),
+          subject: `router ${provider}'s own door listener`,
+          connectTimeoutMs: DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS,
+        }),
+      };
     }
     const httpProvider: HttpProvider = definition;
     return {
@@ -350,6 +390,8 @@ export function createProviderRouteResolver(deps: {
           baseUrl: httpProvider.baseUrl,
           stripPrefix: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(provider)}`,
           headroomUpstream: directOrigin(deps.directPort()),
+          subject: `provider ${provider}`,
+          connectTimeoutMs: providerConnectTimeoutMs(httpProvider),
         }),
         { provider, credential: httpProvider.credential, env: deps.env, port: deps.credentials, resolve: resolveCredential },
       ),
