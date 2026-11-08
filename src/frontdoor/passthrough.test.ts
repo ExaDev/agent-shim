@@ -284,6 +284,30 @@ describe("the pass-through route", () => {
     }
   });
 
+  it("names the base URL without its userinfo or query in what the client and the log are told", async () => {
+    const probe = http.createServer();
+    const deadPort = await listen(probe);
+    await new Promise<void>((resolve) => {
+      probe.close(() => {
+        resolve(undefined);
+      });
+    });
+    servers.splice(servers.indexOf(probe), 1);
+    const told: string[] = [];
+    const door = await startDoor({ baseUrl: `http://user:hunter2@127.0.0.1:${String(deadPort)}/v1?key=abc123`, stripPrefix: "/providers/z", headroomUpstream: undefined, couldNotConnect: (line) => {
+      told.push(line);
+    } });
+    try {
+      const response = await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", headers: { [AUTH_HEADER]: "launch-token-for-tests" }, body: "{}" });
+      const printed = [await response.text(), ...told].join("\n");
+      expect(printed).toContain(`http://127.0.0.1:${String(deadPort)}/v1`);
+      expect(printed).not.toContain("hunter2");
+      expect(printed).not.toContain("abc123");
+    } finally {
+      await door.close();
+    }
+  });
+
   it("bounds only the connect: an upstream that accepts at once and answers after the connect bound is served", async () => {
     const server = http.createServer((_request, response) => {
       setTimeout(() => {

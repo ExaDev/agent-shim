@@ -110,4 +110,15 @@ describe("collectCheckReport and the provider file the identity selects", () => 
       await server.close();
     }
   });
+
+  it("names the base URL without its userinfo or query, in the text and the JSON", async () => {
+    const server = await listening();
+    await server.close();
+    writeProvider(`http://user:hunter2@127.0.0.1:${String(server.port)}/v1?key=abc123`);
+    const report = collectCheckReport({ paths, cwd: root, identity: "work", env: {} });
+    const printed = [...formatCheckReport(report), JSON.stringify(checkReportToJson(report))].join("\n");
+    expect(printed).toContain(`http://127.0.0.1:${String(server.port)}/v1`);
+    expect(printed).not.toContain("hunter2");
+    expect(printed).not.toContain("abc123");
+  });
 });

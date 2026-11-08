@@ -12,6 +12,7 @@ import {
   providerConnectTimeoutMs,
   realBaseUrlProbe,
 } from "./providerReachability";
+import { displayBaseUrl } from "./baseUrlDisplay";
 
 const servers: http.Server[] = [];
 
@@ -127,5 +128,21 @@ describe("realBaseUrlProbe", () => {
 
   it("fails a base URL whose scheme nothing dials", () => {
     expect(realBaseUrlProbe("ftp://example.com", SHORT_CONNECT_BOUND_MS)).toEqual({ ok: false, reason: "the base URL is neither http nor https" });
+  });
+});
+
+describe("a base URL in what the probe and the door report", () => {
+  const SECRET_BASE_URL = "https://user:hunter2@provider.example:8443/api/anthropic?key=abc123#frag";
+
+  it("leaves out the userinfo, query and fragment, keeping the scheme, host, port and path", () => {
+    expect(displayBaseUrl(SECRET_BASE_URL)).toBe("https://provider.example:8443/api/anthropic");
+    expect(displayBaseUrl("http://127.0.0.1:18080")).toBe("http://127.0.0.1:18080");
+  });
+
+  it("is what the could-not-connect line names", () => {
+    const line = couldNotConnectMessage("provider z", SECRET_BASE_URL, "ECONNREFUSED");
+    expect(line).toBe("provider z could not connect to https://provider.example:8443/api/anthropic: ECONNREFUSED");
+    expect(line).not.toContain("hunter2");
+    expect(line).not.toContain("abc123");
   });
 });

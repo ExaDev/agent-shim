@@ -40,4 +40,12 @@ describe("doctor and a provider's base URL", () => {
     runDoctor(baseParams({ providers: [provider("codex", { kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "codex" }] } }), provider("router", { kind: "router", displayName: "Router" })], probeBaseUrl: probe }));
     expect(asked).toEqual([]);
   });
+
+  it("names the base URL without its userinfo or query in every finding", () => {
+    const report = runDoctor(baseParams({ providers: [provider("spark", { ...SPARK, baseUrl: "http://user:hunter2@192.0.2.1:8000/v1?key=abc123" })], probeBaseUrl: recordingProbe({ ok: false, reason: "no connection accepted within 1500ms" }).probe }));
+    const printed = findingsFor(report, "provider").map((finding) => finding.message).join("\n");
+    expect(printed).toContain("http://192.0.2.1:8000/v1");
+    expect(printed).not.toContain("hunter2");
+    expect(printed).not.toContain("abc123");
+  });
 });

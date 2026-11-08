@@ -21,6 +21,7 @@ import {
   isRouterProvider,
   type ModelsConfig,
 } from "./config/schema";
+import { displayBaseUrl } from "./baseUrlDisplay";
 import { CliError, UsageError } from "./cliError";
 import { canonicalProviderName, loadProviderAliases, readProviderAliases } from "./providerAliases";
 import { CREDENTIAL_UNAVAILABLE_EXIT, resolveCredential, type CredentialPort } from "./credential";
@@ -244,7 +245,7 @@ export function describeProviderEndpoint(provider: Provider): string {
       ? "antigravity local (ACP daemon)"
       : "antigravity cloud (Gemini API)";
   }
-  return isRouterProvider(provider) ? "the models block" : provider.baseUrl;
+  return isRouterProvider(provider) ? "the models block" : displayBaseUrl(provider.baseUrl);
 }
 
 /** Everything `addProvider` writes into a fresh provider file. `baseUrl` is required for an `http` provider and refused for codex/antigravity ones; `codex` applies only to codex, `antigravity` applies only to antigravity. */

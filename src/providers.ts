@@ -2,6 +2,7 @@ import { Option, type Command } from "commander";
 import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDeps } from "./cli/commandDeps";
 import { addCredentialCacheOptions, cacheChange, collectCredentialSource, CREDENTIAL_SOURCE_SYNTAX, type CredentialCacheOptions } from "./cli/credentialOption";
 import { collectRepeated, collectStringPair, parseDurationOption } from "./cli/parsers";
+import { displayBaseUrl } from "./baseUrlDisplay";
 import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS, providerConnectTimeoutMs } from "./providerReachability";
 import { resolveCodexConfig } from "./codex/translate";
 import { savedCatalogueFingerprint } from "./codex/catalogueCredential";
@@ -468,7 +469,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           console.log(`Antigravity degrade down tiers: ${config.degradeDownTiers ? "on" : "off"}`);
           console.log(`Endpoint: ${describeProviderEndpoint(found)}`);
         } else if (!isRouterProvider(found)) {
-          console.log(`Base URL: ${found.baseUrl}`);
+          console.log(`Base URL: ${displayBaseUrl(found.baseUrl)}`);
           console.log(`Connect timeout: ${String(providerConnectTimeoutMs(found))}ms${found.connectTimeoutMs === undefined ? " (the default)" : ""}`);
         }
         if (!isRouterProvider(found)) {

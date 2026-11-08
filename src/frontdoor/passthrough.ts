@@ -3,6 +3,7 @@ import * as https from "node:https";
 import type { IncomingMessage } from "node:http";
 
 import { HTTP_STATUS } from "../codex/http";
+import { displayBaseUrl } from "../baseUrlDisplay";
 import { couldNotConnectMessage } from "../providerReachability";
 import { forwardableHeaders } from "./connect";
 import { ExemptHttpAgent, ExemptTlsAgent } from "./connectEffects";
@@ -148,7 +149,7 @@ export function createPassthroughRoute(name: string, target: PassthroughTarget):
                 response.destroy();
               } else {
                 response.start(HTTP_STATUS.badGateway, { "Content-Type": "application/json" });
-                await response.write(JSON.stringify({ type: "error", error: { type: "api_error", message: `${target.subject} at ${target.baseUrl} dropped the connection` } }));
+                await response.write(JSON.stringify({ type: "error", error: { type: "api_error", message: `${target.subject} at ${displayBaseUrl(target.baseUrl)} dropped the connection` } }));
                 response.end();
               }
             }
@@ -165,7 +166,7 @@ export function createPassthroughRoute(name: string, target: PassthroughTarget):
           }
           failed = true;
           if (!response.headersSent) {
-            const message = connected ? `${target.subject} at ${target.baseUrl} dropped the connection before answering: ${error.message}` : couldNotConnectMessage(target.subject, target.baseUrl, error.message);
+            const message = connected ? `${target.subject} at ${displayBaseUrl(target.baseUrl)} dropped the connection before answering: ${error.message}` : couldNotConnectMessage(target.subject, target.baseUrl, error.message);
             if (!connected) {
               target.couldNotConnect(message);
             }
