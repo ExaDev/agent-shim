@@ -1,5 +1,5 @@
 import { refuseToBlockInRole } from "../processRole";
-import { Worker } from "node:worker_threads";
+import { Worker, type WorkerOptions } from "node:worker_threads";
 
 import { DOOR_SOURCE_PORT_END, DOOR_SOURCE_PORT_START, SourcePortRange } from "./connectEffects";
 import { createDoorLookup, doorDial, probeAccept, runAcceptProbe } from "./doorDial";
@@ -24,11 +24,35 @@ const STARTED_SLOT = 2;
 const PROBE_WORKER_START_LIMIT_MS = 10_000;
 /** What each worker source runs first: it marks the worker started. The sources are templates over `workerData`, which carries `startedSlot`. */
 export const STARTED_SIGNAL_SOURCE = "Atomics.store(new Int32Array(workerData.shared, 0, workerData.headerSlots), workerData.startedSlot, 1); Atomics.notify(new Int32Array(workerData.shared, 0, workerData.headerSlots), workerData.startedSlot);";
+/** What a failed probe's reason starts with when the worker itself broke (an uncaught error, a rejected promise, source that does not parse), ahead of the error's message and nothing else of it. */
+export const PROBE_WORKER_FAILURE_PREFIX = "the probe worker failed: ";
 const INT32_BYTES = 4;
 const VERDICT_PENDING = 0;
 const WORKER_NOT_STARTED = 0;
 const VERDICT_OK = 1;
 const VERDICT_FAILED = 2;
+
+/**
+ * What every worker runs first, in front of the probe source: it turns an uncaught error or a rejected promise anywhere in the worker into a failed verdict that also marks the worker started, and wakes both waits, since the waiting thread is blocked and cannot hear an `error` event. Only the first verdict counts (a worker that answered before it failed keeps its answer). The message is the error's message alone.
+ */
+const FATAL_HANDLER_SOURCE = `
+(() => {
+  const { workerData } = require("node:worker_threads");
+  const header = new Int32Array(workerData.shared, 0, workerData.headerSlots);
+  const reason = new Uint8Array(workerData.shared, workerData.headerSlots * 4);
+  const fail = (error) => {
+    if (Atomics.compareExchange(header, 0, 0, workerData.failed) !== 0) return;
+    const bytes = Buffer.from(workerData.failurePrefix + (error instanceof Error ? error.message : String(error)), "utf8").subarray(0, reason.length);
+    reason.set(bytes);
+    Atomics.store(header, 1, bytes.length);
+    Atomics.store(header, workerData.startedSlot, 1);
+    Atomics.notify(header, 0);
+    Atomics.notify(header, workerData.startedSlot);
+  };
+  process.on("uncaughtException", fail);
+  process.on("unhandledRejection", fail);
+})();
+`;
 
 /**
  * The probe itself, run on a worker thread so the synchronous launcher can wait on it with `Atomics.wait`: one HTTPS GET of `/healthz` on 127.0.0.1 that trusts only the agent-shim CA (`ca` replaces the default trust store) and checks the leaf names 127.0.0.1. No capability or credential is sent. Kept as plain CommonJS source because the worker evaluates it standalone, outside the bundle.
@@ -170,14 +194,41 @@ function runProbeWorker(source: string, data: Readonly<Record<string, unknown>>,
   return startProbeWorker(source, data, timeoutMs).verdict();
 }
 
-/** Starts one probe source on a worker thread; `verdict` blocks this thread until the worker answers. The probe's clock runs from the moment the worker signals that it started, for `timeoutMs` plus the margin the worker's own timeout verdict is allowed, so a slow start-up is never counted against the probe's bound; a worker that has not started within `PROBE_WORKER_START_LIMIT_MS` fails the probe. */
-export function startProbeWorker(source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number): { readonly verdict: () => ListenerVerdict } {
+/** The part of a worker thread this module uses, so a test can stand in a worker that reports an error. */
+export interface ProbeWorkerHandle {
+  readonly on: (event: "error", listener: (error: Error) => void) => unknown;
+  readonly unref: () => unknown;
+  readonly terminate: () => Promise<number>;
+}
+
+/** Starts a worker thread running `source`; the real one is `node:worker_threads`. */
+export type ProbeWorkerSpawn = (source: string, options: WorkerOptions) => ProbeWorkerHandle;
+
+const spawnRealWorker: ProbeWorkerSpawn = (source, options) => new Worker(source, options);
+
+/**
+ * Starts one probe source on a worker thread; `verdict` blocks this thread until the worker answers. The probe's clock runs from the moment the worker signals that it started, for `timeoutMs` plus the margin the worker's own timeout verdict is allowed, so a slow start-up is never counted against the probe's bound; a worker that has not started within `PROBE_WORKER_START_LIMIT_MS` fails the probe.
+ *
+ * A worker that breaks is a failed probe, never a crash of this process: `FATAL_HANDLER_SOURCE` turns an uncaught error or rejection inside the worker into a failed verdict that wakes the waiting thread, and the `error` listener here records the same for an error only this side hears (the worker running out of memory, say) so that it never reaches the process as an unhandled event. The probe source runs through `new Function`, so a source that does not parse also arrives as an error inside the worker.
+ *
+ * The probe sources embed the source text of functions from this bundle (`Function.prototype.toString`), and the text must run on its own in the worker: it can reference nothing but its own parameters. A bundler option that rewrites function bodies (esbuild's `keepNames` injects calls to a `__name` helper that exists only in the bundle) would make the worker throw a ReferenceError, so `scripts/build.mts` sets none and `probe.test.ts` bundles this module and fails if the embedded text refers to a helper.
+ */
+export function startProbeWorker(source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number, spawn: ProbeWorkerSpawn = spawnRealWorker): { readonly verdict: () => ListenerVerdict } {
   const startLimit = performance.now() + PROBE_WORKER_START_LIMIT_MS;
   const shared = new SharedArrayBuffer(HEADER_SLOTS * INT32_BYTES + REASON_BYTES);
   const header = new Int32Array(shared, 0, HEADER_SLOTS);
-  const worker = new Worker(source, {
+  const worker = spawn(`${FATAL_HANDLER_SOURCE}\nnew Function("require", ${JSON.stringify(source)})(require);`, {
     eval: true,
-    workerData: { ...data, timeoutMs, shared, ok: VERDICT_OK, failed: VERDICT_FAILED, headerSlots: HEADER_SLOTS, startedSlot: STARTED_SLOT },
+    workerData: { ...data, timeoutMs, shared, ok: VERDICT_OK, failed: VERDICT_FAILED, headerSlots: HEADER_SLOTS, startedSlot: STARTED_SLOT, failurePrefix: PROBE_WORKER_FAILURE_PREFIX },
+  });
+  worker.on("error", (error: Error) => {
+    if (Atomics.compareExchange(header, 0, VERDICT_PENDING, VERDICT_FAILED) !== VERDICT_PENDING) {
+      return;
+    }
+    const bytes = Buffer.from(PROBE_WORKER_FAILURE_PREFIX + error.message, "utf8").subarray(0, REASON_BYTES);
+    new Uint8Array(shared, HEADER_SLOTS * INT32_BYTES).set(bytes);
+    Atomics.store(header, 1, bytes.length);
+    Atomics.store(header, STARTED_SLOT, 1);
   });
   // The worker must never keep the launcher alive: the verdict is all this thread needs from it.
   worker.unref();

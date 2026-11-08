@@ -1,9 +1,10 @@
+import { EventEmitter } from "node:events";
 import * as net from "node:net";
 import { Worker } from "node:worker_threads";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial, type LeafCert } from "./connect";
-import { PROBE_WAIT_MARGIN_MS, STARTED_SIGNAL_SOURCE, probeFrontDoorSync, probeListenerAcceptSync, startProbeWorker } from "./probe";
+import { PROBE_WAIT_MARGIN_MS, PROBE_WORKER_FAILURE_PREFIX, STARTED_SIGNAL_SOURCE, probeFrontDoorSync, probeListenerAcceptSync, startProbeWorker } from "./probe";
 import * as probe from "./probe";
 
 /** Enough time for the pure-JS 2048-bit keypairs this file generates. */
@@ -198,5 +199,64 @@ Atomics.store(header, 0, workerData.ok);
 Atomics.notify(header, 0);
 `;
     expect(startProbeWorker(source, {}, STARTUP_PROBE_BOUND_MS).verdict()).toEqual({ ok: true });
+  });
+});
+
+/** A worker that never runs anything: an emitter that can be told to report an error. */
+class FakeProbeWorker extends EventEmitter {
+  public unref(): this {
+    return this;
+  }
+  public async terminate(): Promise<number> {
+    return await Promise.resolve(0);
+  }
+}
+
+describe("a probe worker that fails", () => {
+  const FAILURE_MESSAGE = "probe-source-failure";
+
+  /** What every probe source declares before it uses `STARTED_SIGNAL_SOURCE`. */
+  const WORKER_DATA_SOURCE = `const { workerData } = require("node:worker_threads");`;
+
+  function expectFailureVerdict(source: string, reasonPart: string = FAILURE_MESSAGE): void {
+    const verdict = startProbeWorker(source, {}, STARTUP_PROBE_BOUND_MS).verdict();
+    expect(verdict.ok).toBe(false);
+    expect(verdict.ok ? "" : verdict.reason).toContain(reasonPart);
+  }
+
+  it("fails the probe, naming the error, when its source throws after it started", () => {
+    expectFailureVerdict(`${WORKER_DATA_SOURCE}\n${STARTED_SIGNAL_SOURCE}\nthrow new Error(${JSON.stringify(FAILURE_MESSAGE)});`);
+  });
+
+  it("fails the probe, naming the error, when its source throws before it signals that it started", () => {
+    expectFailureVerdict(`${WORKER_DATA_SOURCE}\nthrow new Error(${JSON.stringify(FAILURE_MESSAGE)});\n${STARTED_SIGNAL_SOURCE}`);
+  });
+
+  it("fails the probe when its source is not valid code", () => {
+    expectFailureVerdict(`${WORKER_DATA_SOURCE}\n${STARTED_SIGNAL_SOURCE}\nthrow new Error(${JSON.stringify(FAILURE_MESSAGE)}`, PROBE_WORKER_FAILURE_PREFIX);
+  });
+
+  it("fails the probe, naming the reason, when a promise inside it rejects", () => {
+    expectFailureVerdict(`${WORKER_DATA_SOURCE}\n${STARTED_SIGNAL_SOURCE}\nPromise.reject(new Error(${JSON.stringify(FAILURE_MESSAGE)}));`);
+  });
+
+  it("answers with the verdict a worker wrote before it failed", () => {
+    const source = `const { workerData } = require("node:worker_threads");
+${STARTED_SIGNAL_SOURCE}
+const header = new Int32Array(workerData.shared, 0, workerData.headerSlots);
+Atomics.store(header, 0, workerData.ok);
+Atomics.notify(header, 0);
+throw new Error(${JSON.stringify(FAILURE_MESSAGE)});`;
+    expect(startProbeWorker(source, {}, READ_VERDICT_TIMEOUT_MS).verdict()).toEqual({ ok: true });
+  });
+
+  it("does not let an error event on the worker reach the process, and reads as a failed probe", () => {
+    const fake = new FakeProbeWorker();
+    const probeWorker = startProbeWorker("", {}, STARTUP_PROBE_BOUND_MS, () => fake);
+    // An EventEmitter with no listener for "error" throws it, as a real Worker does into the process.
+    expect(() => fake.emit("error", new Error(FAILURE_MESSAGE))).not.toThrow();
+    const verdict = probeWorker.verdict();
+    expect(verdict.ok).toBe(false);
+    expect(verdict.ok ? "" : verdict.reason).toContain(FAILURE_MESSAGE);
   });
 });
