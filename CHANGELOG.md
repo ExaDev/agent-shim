@@ -1,3 +1,19 @@
+## [12.2.0](https://github.com/ExaDev/agent-shim/compare/v12.1.0...v12.2.0) (2026-11-08)
+
+### Features
+
+* **doctor:** fail a provider whose base URL accepts no connection ([f26ba6f](https://github.com/ExaDev/agent-shim/commit/f26ba6f558b6cbb7e4342c6d18588d8522e6b6c4)), references [#752](https://github.com/ExaDev/agent-shim/issues/752)
+* **launch:** refuse a launch on a provider whose base URL is unreachable ([ec2154f](https://github.com/ExaDev/agent-shim/commit/ec2154f141fb9a9553c04268af16f03e717fc927)), references [#752](https://github.com/ExaDev/agent-shim/issues/752)
+* **providers:** add a per-provider connect timeout ([6647937](https://github.com/ExaDev/agent-shim/commit/664793705ab1d69dc7e85b75f45212c9b2d6f9ba)), references [#752](https://github.com/ExaDev/agent-shim/issues/752)
+
+### Bug Fixes
+
+* **frontdoor:** give up on a provider connect after its bound and name it ([15a7213](https://github.com/ExaDev/agent-shim/commit/15a7213e5fb6a106bf406b19c6fabc7641a256d4)), references [#752](https://github.com/ExaDev/agent-shim/issues/752)
+
+### Documentation
+
+* describe the provider connect timeout and its reports ([2056a73](https://github.com/ExaDev/agent-shim/commit/2056a73c250a9372c01ce495cd6e1229fee83efd)), references [#752](https://github.com/ExaDev/agent-shim/issues/752)
+
 ## [12.1.0](https://github.com/ExaDev/agent-shim/compare/v12.0.1...v12.1.0) (2026-11-08)
 
 ### Features
