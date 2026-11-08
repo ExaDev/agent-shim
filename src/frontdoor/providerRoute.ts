@@ -27,7 +27,7 @@ import { withoutContextMarker } from "../models/identity";
 import type { TargetObservation } from "../selection/signals";
 import type { UsageSnapshot } from "../usage/schema";
 import { PROVIDER_PATH_PREFIX, directOrigin, parseProviderPath, type FrontDoorRoute, type ModelChoice, type RoutedRequest } from "./route";
-import { followingMainLoop, withModel, type MainLoopRouteRecord } from "./mainLoopRoute";
+import { followingMainLoop, withModel, type HelperModel, type MainLoopRouteRecord } from "./mainLoopRoute";
 import { TIER_ENV_VARIABLES, claudeTierOf } from "../models/tiers";
 import { scanRequestHead } from "./requestScan";
 
@@ -571,29 +571,35 @@ export function createProviderRouteResolver(deps: {
   };
 
   /**
-   * The model name a helper's Claude model name is sent to `provider` under, through the provider's own tier mapping: an `http` provider's tier environment variable, a router's `models.tiers` pointer. A codex or antigravity provider maps a Claude name by tier in its own translator, so its helpers keep the name they asked for; so does a qualified ref (`<provider>/<model>`), which the routing loop resolves by name, and a name that selects no tier the provider maps.
+   * What `provider` does with a helper's Claude model name, through its own tier mapping: an `http` provider's tier environment variable or a router's `models.tiers` pointer names the model it is sent under, and a router with no pointer for the tier refuses the helper. A codex or antigravity provider maps a Claude name by tier in its own translator, so its helpers keep the name they asked for; so does a qualified ref (`<provider>/<model>`), which the routing loop resolves by name, and a name that selects no tier the provider maps.
    */
-  const helperModel = (provider: string, session: RoutedRequest["session"], requested: string): string | undefined => {
+  const helperModel = (provider: string, session: RoutedRequest["session"], requested: string): HelperModel => {
+    const asIs: HelperModel = { kind: "as-is" };
     const tier = requested.includes("/") ? undefined : claudeTierOf(requested);
     if (tier === undefined) {
-      return undefined;
+      return asIs;
     }
     let definition;
     try {
       definition = loadProvider(deps.providersDir, provider, deps.fs);
     } catch {
       // An invalid provider file is the routing loop's own refusal to report, with its reason, when the helper reaches it.
-      return undefined;
+      return asIs;
     }
     if (definition === undefined) {
-      return undefined;
+      return asIs;
     }
     if (isHttpProvider(definition)) {
       const model = definition.env?.[TIER_ENV_VARIABLES[tier]];
       // The variable may carry the `[1m]` context marker Claude Code reads, which is no part of the model's name.
-      return model === undefined || model === "" ? undefined : withoutContextMarker(model);
+      return model === undefined || model === "" ? asIs : { kind: "mapped", model: withoutContextMarker(model) };
     }
-    return isRouterProvider(definition) ? deps.models?.(session)?.tiers?.[tier] : undefined;
+    if (!isRouterProvider(definition)) {
+      return asIs;
+    }
+    const pointer = deps.models?.(session)?.tiers?.[tier];
+    // A router serves no Claude name: with no pointer the helper would reach a listener that refuses it without saying why.
+    return pointer === undefined ? { kind: "refused", message: `provider "${provider}" routes by model name and the models block has no ${tier} tier pointer, so this ${tier}-tier request of the session cannot be routed; set models.tiers.${tier}` } : { kind: "mapped", model: pointer };
   };
 
   return followingMainLoop(

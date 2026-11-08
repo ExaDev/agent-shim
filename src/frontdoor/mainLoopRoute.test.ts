@@ -145,7 +145,12 @@ interface World {
 }
 
 /** A door serving an `http` provider `z` (whose tier environment maps haiku) and a `codex` provider `cx`, with the usage middleware recording into `records`. */
-async function startWorld(record: MainLoopRouteRecord = mainLoopRoutesOfLiveSessions(), upstreamStatus: number = HTTP_STATUS.ok, models?: ModelsConfig): Promise<World> {
+async function startWorld(
+  record: MainLoopRouteRecord = mainLoopRoutesOfLiveSessions(),
+  upstreamStatus: number = HTTP_STATUS.ok,
+  models?: ModelsConfig,
+  zTierEnv: Readonly<Record<string, string>> = { ANTHROPIC_DEFAULT_HAIKU_MODEL: Z_HAIKU_MODEL, ANTHROPIC_DEFAULT_SONNET_MODEL: Z_SONNET_MODEL, ANTHROPIC_DEFAULT_OPUS_MODEL: Z_OPUS_MODEL },
+): Promise<World> {
   const upstream = await fakeUpstream(upstreamStatus);
   const gemini = await fakeGeminiBackend();
   const codexFetch = recordingFetch(() => fakeResponse({ events: TEXT_TURN }));
@@ -153,7 +158,7 @@ async function startWorld(record: MainLoopRouteRecord = mainLoopRoutesOfLiveSess
   const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0,
     mainLoopRoutes: record,
     fs: fakeFs({
-      [`${PROVIDERS_DIR}/z.json`]: { displayName: "Z", baseUrl: `http://127.0.0.1:${String(upstream.port)}`, credential: { sources: [{ literal: "z-token" }] }, env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: Z_HAIKU_MODEL, ANTHROPIC_DEFAULT_SONNET_MODEL: Z_SONNET_MODEL, ANTHROPIC_DEFAULT_OPUS_MODEL: Z_OPUS_MODEL } },
+      [`${PROVIDERS_DIR}/z.json`]: { displayName: "Z", baseUrl: `http://127.0.0.1:${String(upstream.port)}`, credential: { sources: [{ literal: "z-token" }] }, env: zTierEnv },
       [`${PROVIDERS_DIR}/ag.json`]: { kind: "antigravity", displayName: "Antigravity", credential: { sources: [{ literal: "ag-token" }] }, antigravity: { mode: "cloud", cloud: { endpoint: gemini.endpoint } } },
       [`${PROVIDERS_DIR}/cx.json`]: { kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "placeholder" }] } },
 
@@ -244,6 +249,33 @@ describe("a provider-less session's helper requests follow its main loop", () =>
     try {
       expect((await send(world, { model: HAIKU_NAME, requestClass: "auxiliary" })).status).toBe(HTTP_STATUS.ok);
       expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-5.3"]);
+    } finally {
+      await world.close();
+    }
+  });
+
+  it("sends a helper to an http provider under its tier variable's model name without the context marker the variable may carry", async () => {
+    const world = await startWorld(mainLoopRoutesOfLiveSessions(), HTTP_STATUS.ok, undefined, { ANTHROPIC_DEFAULT_HAIKU_MODEL: `${Z_HAIKU_MODEL}[1m]` });
+    try {
+      expect((await send(world, { model: "z/glm-5.3", requestClass: "main" })).status).toBe(HTTP_STATUS.ok);
+      expect((await send(world, { model: HAIKU_NAME, requestClass: "auxiliary" })).status).toBe(HTTP_STATUS.ok);
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-5.3", Z_HAIKU_MODEL]);
+    } finally {
+      await world.close();
+    }
+  });
+
+  it("refuses a helper of a router session whose models block has no pointer for the helper's tier, naming the tier and the provider and reaching no upstream", async () => {
+    const stored = inMemoryRouteStore();
+    stored.write({ pid: 1, startedAt: 1 }, { kind: "provider", provider: "r" });
+    const world = await startWorld(createMainLoopRouteRecord({ launchOfSession: () => ({ pid: 1, startedAt: 1 }), holdsLaunch: () => true, stored }), HTTP_STATUS.ok, { tiers: { sonnet: "z/glm-4.7" } });
+    try {
+      const helper = await send(world, { model: HAIKU_NAME, requestClass: "auxiliary" });
+      expect(helper.status).toBe(HTTP_STATUS.badRequest);
+      expect(helper.text).toContain("haiku");
+      expect(helper.text).toContain('provider \\"r\\"');
+      expect(world.upstream.seen).toEqual([]);
+      expect(world.toAnthropic).toEqual([]);
     } finally {
       await world.close();
     }
@@ -710,7 +742,7 @@ describe("followingMainLoop over a resolver that records what it is asked", () =
       return Promise.resolve({ ok: true, route: { name: "stand-in", headroomEligible: false, headroomUpstream: undefined, serve: async () => Promise.resolve() } });
     };
     const follow = async (url: string, requestClass: string | undefined, session = "s-1"): Promise<RouteResolution> =>
-      await followingMainLoop(resolve, { record, helperModel: () => undefined })({
+      await followingMainLoop(resolve, { record, helperModel: () => ({ kind: "as-is" }) })({
         method: "POST",
         url,
         headers: requestClass === undefined ? {} : { "x-claude-code-request-class": requestClass },
