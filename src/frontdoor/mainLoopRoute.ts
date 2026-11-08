@@ -53,6 +53,8 @@ export interface MainLoopRoutePorts {
     readonly read: (launch: Readonly<FrontDoorLaunch>) => MainLoopRoute | undefined;
     readonly write: (launch: Readonly<FrontDoorLaunch>, route: MainLoopRoute) => void;
   };
+  /** Where a failure of the durable copy is reported: the record is best-effort state, so a failed write never reaches the request that recorded it. */
+  readonly log: (line: string) => void;
 }
 
 /** Whether two routes name the same destination. */
@@ -65,19 +67,29 @@ function sameRoute(a: MainLoopRoute, b: MainLoopRoute): boolean {
  */
 export function createMainLoopRouteRecord(ports: MainLoopRoutePorts): MainLoopRouteRecord {
   const routes = new Map<string, { readonly launch: FrontDoorLaunch; readonly route: MainLoopRoute }>();
+  // The launches whose durable copy failed to write, so a store that keeps failing is reported once per launch, not once per request.
+  const failed = new Set<string>();
   return {
     record: (launch, route) => {
       const key = launchKeyOf(launch);
       for (const [held, entry] of routes) {
         if (held !== key && !ports.holdsLaunch(entry.launch)) {
           routes.delete(held);
+          failed.delete(held);
         }
       }
       const held = routes.get(key)?.route;
       routes.set(key, { launch, route });
       // Written only when it changes: the main loop's every request records, and the route rarely moves.
       if (held === undefined || !sameRoute(held, route)) {
-        ports.stored.write(launch, route);
+        try {
+          ports.stored.write(launch, route);
+        } catch (error) {
+          if (!failed.has(key)) {
+            failed.add(key);
+            ports.log(`agent-shim front door: could not record where launch ${String(launch.pid)}'s main loop went, so its helpers follow it only until the door restarts: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
       }
     },
     routeOf: (launch) => {

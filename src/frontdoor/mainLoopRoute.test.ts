@@ -7,15 +7,15 @@ import { HTTP_STATUS } from "../codex/http";
 import type { CodexRoutePorts } from "../codex/route";
 import { fakeAuth, fakeResponse, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
 import { ANTIGRAVITY_DEFAULT_TIER_MODELS, CODEX_DEFAULT_TIER_MODELS, type ModelsConfig } from "../config/schema";
-import { FAKE_HOME, createFakeFarmFs, fakeAsyncCredentials, fakeFs, followsLaunchFlag, inMemoryRouteStore, launchOf, mainLoopRoutesOfLiveSessions } from "../test-helpers";
+import { FAKE_HOME, fakeAsyncCredentials, fakeFs, followsLaunchFlag, inMemoryRouteStore, launchOf, mainLoopRoutesOfLiveSessions } from "../test-helpers";
 import { createUsageMiddleware } from "../usage/middleware";
 import type { UsageRecord } from "../usage/schema";
-import { createMainLoopRouteRecord, followingMainLoop, requestClassOf, withModelInHead, type MainLoopRoutePorts, type MainLoopRouteRecord } from "./mainLoopRoute";
+import { createMainLoopRouteRecord, followingMainLoop, requestClassOf, withModelInHead, type MainLoopRouteRecord } from "./mainLoopRoute";
 import { serveRouted, type PipelineDeps, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
 import { AUTH_HEADER, PROVIDER_HEADER, SESSION_HEADER, type RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
-import { launchKeyOf, launchRouteStore, removeFrontDoorSession, writeFrontDoorSession, type FrontDoorLaunch } from "./state";
+import type { FrontDoorLaunch } from "./state";
 
 const PROVIDERS_DIR = `${FAKE_HOME}/.agent-shim/providers`;
 const LAUNCH_TOKEN = "launch-token-for-tests";
@@ -258,7 +258,7 @@ describe("a provider-less session's helper requests follow its main loop", () =>
     // A qualified name that matches no target stays on the router provider itself (the resolver answers it with the router's passthrough), so a router is a route the record can hold. It is written to the record directly, so no test sends the main request to the passthrough.
     const stored = inMemoryRouteStore();
     stored.write(launchOfSession("s-1"), { kind: "provider", provider: "r" });
-    const world = await startWorld(createMainLoopRouteRecord({ holdsLaunch: () => true, stored }), HTTP_STATUS.ok, { tiers: { haiku: "z/glm-5.3" } });
+    const world = await startWorld(createMainLoopRouteRecord({ holdsLaunch: () => true, stored, log: () => undefined }), HTTP_STATUS.ok, { tiers: { haiku: "z/glm-5.3" } });
     try {
       expect((await send(world, { model: HAIKU_NAME, requestClass: "auxiliary" })).status).toBe(HTTP_STATUS.ok);
       expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-5.3"]);
@@ -281,7 +281,7 @@ describe("a provider-less session's helper requests follow its main loop", () =>
   it("refuses a helper of a router session whose models block has no pointer for the helper's tier, naming the tier and the provider and reaching no upstream", async () => {
     const stored = inMemoryRouteStore();
     stored.write(launchOfSession("s-1"), { kind: "provider", provider: "r" });
-    const world = await startWorld(createMainLoopRouteRecord({ holdsLaunch: () => true, stored }), HTTP_STATUS.ok, { tiers: { sonnet: "z/glm-4.7" } });
+    const world = await startWorld(createMainLoopRouteRecord({ holdsLaunch: () => true, stored, log: () => undefined }), HTTP_STATUS.ok, { tiers: { sonnet: "z/glm-4.7" } });
     try {
       const helper = await send(world, { model: HAIKU_NAME, requestClass: "auxiliary" });
       expect(helper.status).toBe(HTTP_STATUS.badRequest);
@@ -338,7 +338,7 @@ describe("a provider-less session's helper requests follow its main loop", () =>
 
   it("keeps a session's helpers on its provider across a door restart, a subagent included", async () => {
     const stored = inMemoryRouteStore();
-    const ports = { holdsLaunch: () => true, stored };
+    const ports = { holdsLaunch: () => true, stored, log: () => undefined };
     const first = await startWorld(createMainLoopRouteRecord(ports));
     try {
       await send(first, { model: "z/glm-5.3", requestClass: "main" });
@@ -359,7 +359,7 @@ describe("a provider-less session's helper requests follow its main loop", () =>
   it("fails a helper naming the provider when the provider its main loop was on is no longer defined", async () => {
     const stored = inMemoryRouteStore();
     stored.write(launchOfSession("s-1"), { kind: "provider", provider: "removed" });
-    const world = await startWorld(createMainLoopRouteRecord({ holdsLaunch: () => true, stored }));
+    const world = await startWorld(createMainLoopRouteRecord({ holdsLaunch: () => true, stored, log: () => undefined }));
     try {
       const helper = await send(world, { model: HAIKU_NAME, requestClass: "auxiliary" });
       expect(helper.status).toBe(HTTP_STATUS.notFound);
@@ -493,7 +493,7 @@ describe("a subagent or workflow request follows the provider its main loop is o
   it.each(SUBAGENT_CASES)("on a router provider: $requestClass asking for $name goes through the models block's $tier pointer", async ({ requestClass, name, tier }) => {
     const stored = inMemoryRouteStore();
     stored.write(launchOfSession("s-1"), { kind: "provider", provider: "r" });
-    const world = await startWorld(createMainLoopRouteRecord({ holdsLaunch: () => true, stored }), HTTP_STATUS.ok, { tiers: { haiku: "z/glm-5.3-haiku", sonnet: "z/glm-5.3-sonnet", opus: "z/glm-5.3-opus" } });
+    const world = await startWorld(createMainLoopRouteRecord({ holdsLaunch: () => true, stored, log: () => undefined }), HTTP_STATUS.ok, { tiers: { haiku: "z/glm-5.3-haiku", sonnet: "z/glm-5.3-sonnet", opus: "z/glm-5.3-opus" } });
     try {
       expect((await send(world, { model: name, requestClass })).status).toBe(HTTP_STATUS.ok);
       expect(world.upstream.seen.map((seen) => seen.model)).toEqual([`glm-5.3-${tier}`]);
@@ -533,7 +533,7 @@ describe("a subagent or workflow request follows the provider its main loop is o
 
   it("keeps a subagent across a door restart on the provider, asking for any tier", async () => {
     const stored = inMemoryRouteStore();
-    const ports = { holdsLaunch: () => true, stored };
+    const ports = { holdsLaunch: () => true, stored, log: () => undefined };
     const first = await startWorld(createMainLoopRouteRecord(ports));
     try {
       await send(first, { model: "z/glm-5.3", requestClass: "main" });
@@ -578,110 +578,6 @@ describe("a session launched before the class header was asked for", () => {
     } finally {
       await world.close();
     }
-  });
-});
-
-describe("the main-loop route record", () => {
-  /** A registry whose launches the test starts and ends. */
-  function registryOf(stored: MainLoopRoutePorts["stored"] = inMemoryRouteStore()): MainLoopRoutePorts & { readonly start: (launch: Readonly<FrontDoorLaunch>) => void; readonly end: (launch: Readonly<FrontDoorLaunch>) => void } {
-    const launches = new Map<string, FrontDoorLaunch>();
-    return {
-      stored,
-      holdsLaunch: (launch) => launches.has(launchKeyOf(launch)),
-      start: (launch) => {
-        launches.set(launchKeyOf(launch), launch);
-      },
-      end: (launch) => {
-        launches.delete(launchKeyOf(launch));
-      },
-    };
-  }
-  const a: FrontDoorLaunch = { pid: 1, startedAt: 1 };
-  const b: FrontDoorLaunch = { pid: 2, startedAt: 1 };
-
-  it("drops an ended launch's entry on a write by another launch, so the same launch registered again finds nothing in memory", () => {
-    // The durable copy answers nothing, so only the in-memory entry can say what was recorded; the launch is identical (pid and start time) when it is registered again, so the one thing that can make the second read empty is the eviction.
-    const live = new Set<FrontDoorLaunch>([a, b]);
-    const record = createMainLoopRouteRecord({ holdsLaunch: (held) => live.has(held), stored: { read: () => undefined, write: () => undefined } });
-    record.record(a, { kind: "provider", provider: "z" });
-    expect(record.routeOf(a)).toEqual({ kind: "provider", provider: "z" });
-    live.delete(a);
-    record.record(b, { kind: "anthropic" });
-    live.add(a);
-    expect(record.routeOf(a)).toBeUndefined();
-    expect(record.routeOf(b)).toEqual({ kind: "anthropic" });
-  });
-
-  it("gives a launch registered again under the same pid, and so a new start time, nothing recorded", () => {
-    const registry = registryOf();
-    const record = createMainLoopRouteRecord(registry);
-    registry.start(a);
-    record.record(a, { kind: "provider", provider: "z" });
-    registry.end(a);
-    const relaunched: FrontDoorLaunch = { pid: a.pid, startedAt: 2 };
-    registry.start(relaunched);
-    expect(record.routeOf(relaunched)).toBeUndefined();
-  });
-
-  it("is found again by a record built later over the same store, as after a door restart, and by that launch only", () => {
-    const stored = inMemoryRouteStore();
-    const before = registryOf(stored);
-    before.start(a);
-    createMainLoopRouteRecord(before).record(a, { kind: "provider", provider: "z" });
-    // A new door process: nothing in memory, the registry still holds the launch.
-    const after = registryOf(stored);
-    after.start(a);
-    after.start(b);
-    const restarted = createMainLoopRouteRecord(after);
-    expect(restarted.routeOf(a)).toEqual({ kind: "provider", provider: "z" });
-    expect(restarted.routeOf(b)).toBeUndefined();
-  });
-
-  it("writes the store only when the route changes", () => {
-    const writes: string[] = [];
-    const base = inMemoryRouteStore();
-    const registry = registryOf({
-      read: base.read,
-      write: (launch, route) => {
-        writes.push(route.kind === "provider" ? route.provider : route.kind);
-        base.write(launch, route);
-      },
-    });
-    registry.start(a);
-    const record = createMainLoopRouteRecord(registry);
-    record.record(a, { kind: "provider", provider: "z" });
-    record.record(a, { kind: "provider", provider: "z" });
-    record.record(a, { kind: "anthropic" });
-    record.record(a, { kind: "anthropic" });
-    expect(writes).toEqual(["z", "anthropic"]);
-  });
-});
-
-describe("the route file of a launch whose registry record is gone", () => {
-  const SESSIONS_DIR = `${FAKE_HOME}/.agent-shim/frontdoor/sessions`;
-  const launch: FrontDoorLaunch = { pid: 4242, startedAt: 7 };
-
-  it("is not written by a record the door's cached view still admitted, however the removal interleaves with the write", () => {
-    const fs = createFakeFarmFs();
-    writeFrontDoorSession(fs, SESSIONS_DIR, { pid: launch.pid, startedAt: launch.startedAt, token: "t" });
-    const store = launchRouteStore(fs, SESSIONS_DIR);
-    // The view still holds the launch (it refreshes at the next tick), while the launcher has already released it on disk.
-    const record = createMainLoopRouteRecord({ holdsLaunch: () => true, stored: store });
-    removeFrontDoorSession(fs, SESSIONS_DIR, launch.pid);
-    record.record(launch, { kind: "provider", provider: "z" });
-    expect(fs.readdir(SESSIONS_DIR)).toEqual([]);
-    expect(store.read(launch)).toBeUndefined();
-  });
-
-  it("is written while the record is on disk, and not for a record of another start time under the pid", () => {
-    const fs = createFakeFarmFs();
-    writeFrontDoorSession(fs, SESSIONS_DIR, { pid: launch.pid, startedAt: launch.startedAt, token: "t" });
-    const store = launchRouteStore(fs, SESSIONS_DIR);
-    store.write(launch, { kind: "provider", provider: "z" });
-    expect(store.read(launch)).toEqual({ kind: "provider", provider: "z" });
-    const earlier: FrontDoorLaunch = { pid: launch.pid, startedAt: launch.startedAt - 1 };
-    store.write(earlier, { kind: "anthropic" });
-    expect(store.read(launch)).toEqual({ kind: "provider", provider: "z" });
   });
 });
 

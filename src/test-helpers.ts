@@ -516,7 +516,7 @@ export function launchOf(label: string): FrontDoorLaunch {
 
 /** The registry ports of a world in which every launch is live for ever, for tests whose launches have no registry record to bound the main-loop route record by. */
 function everyLaunchLive(): MainLoopRoutePorts {
-  return { holdsLaunch: () => true, stored: inMemoryRouteStore() };
+  return { holdsLaunch: () => true, stored: inMemoryRouteStore(), log: () => undefined };
 }
 
 /** A main-loop route record over `everyLaunchLive`. */
