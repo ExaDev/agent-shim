@@ -75,9 +75,11 @@ describe("the main-loop route record", () => {
     const record = createMainLoopRouteRecord(registry);
     record.record(a, { kind: "provider", provider: "z" });
     record.record(a, { kind: "provider", provider: "z" });
+    record.record(a, { kind: "provider", provider: "y" });
+    record.record(a, { kind: "provider", provider: "y" });
     record.record(a, { kind: "anthropic" });
     record.record(a, { kind: "anthropic" });
-    expect(writes).toEqual(["z", "anthropic"]);
+    expect(writes).toEqual(["z", "y", "anthropic"]);
   });
 });
 
@@ -102,6 +104,35 @@ describe("a main-loop record whose store fails", () => {
     expect(record.routeOf(launch)).toEqual({ kind: "anthropic" });
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatch(/^front door: .*disk full$/);
+  });
+
+  it("reports once for each launch, and again for a launch whose entry was evicted and that is registered again", () => {
+    const lines: string[] = [];
+    const first: FrontDoorLaunch = { pid: 1, startedAt: 1 };
+    const second: FrontDoorLaunch = { pid: 2, startedAt: 1 };
+    const live = new Set<FrontDoorLaunch>([first, second]);
+    const record = createMainLoopRouteRecord({
+      holdsLaunch: (held) => live.has(held),
+      stored: {
+        read: () => undefined,
+        write: () => {
+          throw new Error("disk full");
+        },
+      },
+      log: (line) => {
+        lines.push(line);
+      },
+    });
+    record.record(first, { kind: "provider", provider: "z" });
+    record.record(first, { kind: "anthropic" });
+    expect(lines).toHaveLength(1);
+    record.record(second, { kind: "provider", provider: "z" });
+    expect(lines).toHaveLength(2);
+    live.delete(first);
+    record.record(second, { kind: "anthropic" });
+    live.add(first);
+    record.record(first, { kind: "provider", provider: "z" });
+    expect(lines.map((line) => /launch (\d+)'s/.exec(line)?.[1])).toEqual(["1", "2", "1"]);
   });
 });
 
