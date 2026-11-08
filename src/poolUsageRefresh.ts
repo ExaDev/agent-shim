@@ -8,11 +8,12 @@ import { decideIdentity, readActiveIdentity } from "./launcher/identity";
 import { refreshStalePoolMembers } from "./launcher/poolRefresh";
 import { resolveLayoutPaths, type LayoutPaths } from "./paths";
 import { identityIdOf } from "./identityStore";
+import { realMemberProviderResolver } from "./poolProviderWiring";
 import { readPools } from "./poolStore";
 import { realFarmFs, realFsPort, type DaemonSpawner } from "./realPorts";
 import { createAccountReader } from "./usage/account";
 import type { AnthropicUsageRefresher } from "./usage/anthropicUsageRefresh";
-import { loadPoolMembers } from "./usage/poolPick";
+import { loadPoolMembers, type ProviderOf } from "./usage/poolPick";
 import { createUsageStore } from "./usage/store";
 
 /** What `refreshPools` needs: the pools, the directory launches are planned for, how daemons start, and where refresh failures are reported. */
@@ -28,6 +29,8 @@ export interface RefreshPoolsParams {
   readonly log: (line: string) => void;
   /** Refreshes by other means than Claude Code's usage report; the real one when absent. */
   readonly refresher?: AnthropicUsageRefresher;
+  /** The provider each member's launch spends: a member that names one is not refreshed, since its pick reads that provider's quota and not its Claude account's. Every member is refreshed on its Claude account when absent. */
+  readonly providerOf?: ProviderOf;
 }
 
 /**
@@ -42,7 +45,7 @@ export async function refreshPools(params: RefreshPoolsParams): Promise<void> {
   await refreshStalePoolMembers({
     poolNames: params.poolNames,
     pools: readPools(paths),
-    loadMembers: (identities) => loadPoolMembers(realFarmFs, paths, identities, Date.now(), (name) => identityIdOf(paths, name)),
+    loadMembers: (identities) => loadPoolMembers(realFarmFs, paths, identities, Date.now(), (name) => identityIdOf(paths, name), params.providerOf),
     refresher,
   });
 }
@@ -73,6 +76,8 @@ export interface RefreshPoolUsageParams {
   readonly log?: (line: string) => void;
   /** Refreshes by other means than Claude Code's usage report; the real one when absent. */
   readonly refresher?: AnthropicUsageRefresher;
+  /** The provider each member's launch spends: a member that names one is not refreshed, since a pick for it reads that provider's quota, which is refreshed by the requests that pass the front door. Every member is refreshed on its Claude account when absent. */
+  readonly providerOf?: ProviderOf;
 }
 
 /**
@@ -88,6 +93,7 @@ export async function refreshPoolUsage(params: RefreshPoolUsageParams): Promise<
     spawnDaemon: daemonSpawnerFor(params.agentShim),
     log: params.log ?? (() => undefined),
     ...(params.refresher === undefined ? {} : { refresher: params.refresher }),
+    ...(params.providerOf === undefined ? {} : { providerOf: params.providerOf }),
   });
 }
 
@@ -114,12 +120,18 @@ export function poolSelectedByLaunch(options: Pick<PrepareClaudeLaunchOptions, "
 }
 
 /**
- * Refreshes the stale usage of the pool a launch would select (`poolSelectedByLaunch`), so the pick that launch makes ranks on current figures. Run it before `prepareClaudeLaunch`, which stays synchronous and ranks on whatever is recorded; `runClaudeLaunch` does. Does nothing when the launch selects no pool. See `refreshPoolUsage` for what a refresh asks, and for the Agent SDK requirement.
+ * Refreshes the stale usage of the pool a launch would select (`poolSelectedByLaunch`), so the pick that launch makes ranks on current figures. A member whose launch spends a provider is left out, since the pick ranks it on that provider's quota. Run it before `prepareClaudeLaunch`, which stays synchronous and ranks on whatever is recorded; `runClaudeLaunch` does. Does nothing when the launch selects no pool. See `refreshPoolUsage` for what a refresh asks, and for the Agent SDK requirement.
  */
 export async function refreshLaunchPoolUsage(options: RefreshLaunchPoolUsageOptions): Promise<void> {
   const pool = poolSelectedByLaunch(options);
+  const paths = options.paths ?? resolveLayoutPaths();
+  const parsed = parseLauncherArgv(options.argv);
   await refreshPoolUsage({
-    ...(options.paths === undefined ? {} : { paths: options.paths }),
+    paths,
+    // The provider each member's launch will spend, resolved as the launch resolves it, so a launch through a provider probes no Claude account.
+    ...(pool === undefined
+      ? {}
+      : { providerOf: realMemberProviderResolver({ paths, cwd: options.cwd, env: options.env, ...(parsed.provider === undefined ? {} : { cliProvider: parsed.provider }), ...(parsed.configProfile === undefined ? {} : { cliFlagConfigProfile: parsed.configProfile }) }) }),
     cwd: options.cwd,
     poolNames: pool === undefined ? [] : [pool],
     ...(options.agentShim === undefined ? {} : { agentShim: options.agentShim }),
