@@ -281,6 +281,18 @@ describe("a provider-less session's helper requests follow its main loop", () =>
     }
   });
 
+  it("sends a helper to an http provider under a tier model name holding a multi-byte character, intact", async () => {
+    const model = "glm-4.5-空气";
+    const world = await startWorld(mainLoopRoutesOfLiveSessions(), HTTP_STATUS.ok, undefined, { ANTHROPIC_DEFAULT_HAIKU_MODEL: model });
+    try {
+      expect((await send(world, { model: "z/glm-5.3", requestClass: "main" })).status).toBe(HTTP_STATUS.ok);
+      expect((await send(world, { model: HAIKU_NAME, requestClass: "auxiliary" })).status).toBe(HTTP_STATUS.ok);
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-5.3", model]);
+    } finally {
+      await world.close();
+    }
+  });
+
   it("sends a helper to an http provider under its tier variable's model name without the context marker the variable may carry", async () => {
     const world = await startWorld(mainLoopRoutesOfLiveSessions(), HTTP_STATUS.ok, undefined, { ANTHROPIC_DEFAULT_HAIKU_MODEL: `${Z_HAIKU_MODEL}[1m]` });
     try {
