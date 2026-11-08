@@ -23,7 +23,7 @@ import { isClaudeSubcommand } from "./launcher/claudeSubcommand";
 import { diagnosticLines, printDiagnosticLines, reportDiagnostics, type DiagnosticLine } from "./launcher/diagnostics";
 import { holdBeforeLaunch, LAUNCH_CANCELLED_EXIT, type HoldOutcome, type HoldPort } from "./launcher/hold";
 import type { Candidate } from "./usage/pick";
-import { decisionRows, farmRow, noteRow, pinnedVersionRow, routingRows, type BillingFacts, type LastRanAs } from "./launcher/launchReport";
+import { decisionRows, farmRow, noteRow, pinnedVersionRow, routingRows, warningRow, type BillingFacts, type LastRanAs } from "./launcher/launchReport";
 import { modelPickerSettingsFromRows, routedModelRows } from "./launcher/modelPicker";
 import { readFrontDoorCodexRecord, readFrontDoorState } from "./frontdoor/state";
 import { catalogueBindingPath, catalogueCachePath, parseCatalogueCache, type CatalogueModel } from "./providerCatalogue";
@@ -115,7 +115,7 @@ export interface PrepareLaunchParams {
   readonly frontdoor?: FrontDoorPort;
   /** Resolves credential blocks (a provider's, or the launching identity's own). Omitted by a caller that cannot read secret files or run commands; a launch that needs a credential is then refused rather than started without it. */
   readonly credentials?: CredentialPort;
-  /** Opens one connection to an http provider's base URL, bounded by the provider's connect timeout. With it, a launch on an http provider whose base URL accepts no connection is refused with the line naming the URL, instead of starting a session no request of which can be answered; a caller that cannot open connections omits it and launches without asking. */
+  /** Opens one connection to an http provider's base URL, bounded by the provider's connect timeout. With it, a launch on an http provider whose base URL accepts no connection carries a warning naming the URL on its report, and goes ahead; a caller that cannot open connections omits it and reports nothing. */
   readonly probeBaseUrl?: BaseUrlProbe;
   /** True when the user was asked on a terminal whether to create the selected configuration profile and chose to launch without it. Without that explicit choice, a selected profile with no file is refused rather than silently skipped. */
   readonly allowMissingConfigProfile?: boolean;
@@ -809,11 +809,10 @@ function prepareRegisteredLaunch(params: PrepareLaunchParams, onRecorded: (remov
     }
   }
 
-  // A provider whose base URL accepts no connection cannot answer the session's first request, so the launch says so, naming the URL, instead of starting a session every turn of which would wait out the connect bound and fail. Only the launch's own provider is probed: a provider the models block routes some requests to is reported by the door when a request reaches it.
+  // A provider whose base URL accepts no connection now cannot answer the session's first request, so the launch report says so, naming the URL. The launch still goes ahead, because the probe can be wrong about later: a tunnel that comes up a moment after, a base URL reachable only once the door is up, a provider reached through a proxy the probe does not use. When it is still down the door's answer and `doctor` say the same. Only the launch's own provider is probed: a provider the models block routes some requests to is reported by the door when a request reaches it.
   const unreachable = resolvedProvider === undefined ? undefined : unreachableProviderLine(resolvedProvider.name, resolvedProvider.definition, params.probeBaseUrl);
   if (unreachable !== undefined) {
-    log.error(`agent-shim: ${unreachable}`);
-    proc.exit(1);
+    rows.push(warningRow(unreachable));
   }
 
   // The front door comes up first, before headroom: every routed session (a provider's, or headroom's) enters through it, and headroom's allowlist must hold the door's direct origin, which is what every provider session routed through headroom (a codex session's included) is forwarded back to, and the headroom supervisor lists the origin of a door that has served. `ensure` authenticates the door's listener over TLS before returning anything, so the address the child is handed below (and sends its credential to) belongs to a listener holding a leaf from agent-shim's CA.

@@ -226,3 +226,8 @@ export function farmRow(links: number, builtDirectories: number, adopted: number
 export function noteRow(text: string): ReportRow {
   return { label: "note", value: text };
 }
+
+/** A row for something about the launch that will probably make its session fail, set apart from the plain facts; the launch goes ahead regardless. */
+export function warningRow(text: string): ReportRow {
+  return { label: "warning", value: text, notice: true };
+}
