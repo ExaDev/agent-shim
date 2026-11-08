@@ -2,12 +2,16 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import * as esbuild from "esbuild";
 
 import { buildLayoutPaths } from "../paths";
 import { realFarmFs } from "../realPorts";
 import { frontDoorApiClient } from "./controlApi";
+import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS } from "../providerReachability";
+import { PROBE_WAIT_MARGIN_MS, PROBE_WORKER_START_LIMIT_MS } from "./probe";
+import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, createReportProgressReader, type ReportProgress } from "./reportProgress";
 import { readFrontDoorState } from "./state";
 
 const BUNDLE_TARGET = "node22";
@@ -97,5 +101,29 @@ describe.skipIf(process.platform === "win32")("the front door's check and doctor
     expect(unreachable?.message).toContain(`provider refused could not connect to ${REFUSED_BASE_URL}`);
     const check = await api.check.run({ path: project });
     expect(check.providerReachability).toMatchObject({ ok: false });
+  }, SUITE_TIMEOUT_MS);
+
+  it("has the bundled doctor announce the provider probe's step and its end on the descriptor it is given", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "door-reports-progress-e2e-"));
+    cleanups.push(() => {
+      fs.rmSync(home, { recursive: true, force: true });
+    });
+    const layout = buildLayoutPaths(home);
+    fs.mkdirSync(layout.providersDir, { recursive: true });
+    fs.writeFileSync(path.join(layout.providersDir, "refused.json"), JSON.stringify({ displayName: "Refused", baseUrl: REFUSED_BASE_URL, credential: { sources: [{ literal: "placeholder" }] } }));
+    const cli = await bundleCli(home);
+    const child = spawn(process.execPath, [cli, "doctor", "--json"], { env: { ...process.env, AGENT_SHIM_HOME: home, [REPORT_PROGRESS_FD_ENV]: String(REPORT_PROGRESS_FD) }, stdio: ["ignore", "ignore", "ignore", "pipe"] });
+    const events: ReportProgress[] = [];
+    const progress = child.stdio[REPORT_PROGRESS_FD];
+    if (!(progress instanceof Readable)) {
+      throw new Error("the progress pipe was not opened");
+    }
+    progress.setEncoding("utf8");
+    progress.on("data", createReportProgressReader((event) => { events.push(event); }));
+    await new Promise<void>((resolve) => { child.once("close", () => { resolve(); }); });
+    const probeBoundMs = PROBE_WORKER_START_LIMIT_MS + DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS + PROBE_WAIT_MARGIN_MS;
+    expect(events).toContainEqual({ kind: "begin", boundMs: probeBoundMs });
+    // Every announced step ends before the next begins, and the last one ends.
+    expect(events.map((event) => event.kind).join(",")).toMatch(/^(begin,end,)*begin,end$/);
   }, SUITE_TIMEOUT_MS);
 });

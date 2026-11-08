@@ -8,8 +8,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { enterProcessRole } from "../processRole";
 import { MAX_TIMER_DELAY_MS } from "../config/schema";
 import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS } from "../providerReachability";
-import { PROBE_TIMEOUT_MS, PROBE_WAIT_MARGIN_MS, PROBE_WORKER_START_LIMIT_MS } from "./probe";
-import { createDoorReports, reportChildTimeoutMs } from "./doorReports";
+import { PROBE_WAIT_MARGIN_MS } from "./probe";
+import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV } from "./reportProgress";
+import { REPORT_QUIET_MS, createDoorReports } from "./doorReports";
 
 const DOCTOR = { ok: false, findings: [{ section: "provider", severity: "fail", message: "provider spark could not connect to http://192.0.2.1:8000: no connection accepted within 1500ms", subject: "spark" }] };
 
@@ -37,59 +38,67 @@ afterEach(() => {
   leaveRole = undefined;
 });
 
-const HTTP = { displayName: "p", credential: { sources: [{ env: "T" }] } };
-/** An http provider with the given bound, standing in for a provider file. */
-function httpProvider(connectTimeoutMs: number | undefined) {
-  return { ...HTTP, baseUrl: "http://127.0.0.1:1", ...(connectTimeoutMs === undefined ? {} : { connectTimeoutMs }) };
+/** What a child writes to the progress descriptor to announce a blocking step that may take `boundMs`, then a hang: a stuck step. */
+function announcingThenHanging(announcements: string): (args: readonly string[]) => { readonly command: string; readonly args: readonly string[] } {
+  return nodeRunning(`require("node:fs").writeSync(Number(process.env.${REPORT_PROGRESS_FD_ENV}), ${JSON.stringify(announcements)}); setInterval(() => undefined, ${String(HOLD_MS)});`);
 }
 
 describe("the bound on a report child", () => {
-  const SLOW_PROBE_FACTOR = 5;
-  const GROWTH_IDENTITIES = 3;
-  const SHORT_PROBE_MS = DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS / 2;
-  /** Longer than any provider probe bound the other phases could have been mistaken for. */
-  const SLOW_PROBE_MS = DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS * SLOW_PROBE_FACTOR;
-  /** One probe phase: the worker's start limit, the bound, and the margin the caller waits past it. */
-  const phase = (boundMs: number) => PROBE_WORKER_START_LIMIT_MS + boundMs + PROBE_WAIT_MARGIN_MS;
-  /** The doctor report's two listener probes at the default bound, one after the other. */
-  const LISTENER_PHASES_MS = 2 * phase(PROBE_TIMEOUT_MS);
-  /** The start-up and git query of a report, each allowed a whole default probe bound. */
-  const FIXED_LOCAL_MS = 2 * DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS;
+  /** How many quiet bounds a test waits inside a long step to show the quiet bound does not apply there. */
+  const QUIET_BOUNDS_WAITED = 3;
 
-  it("covers the provider probe at the longest bound among the providers, both listener probes, and the local steps, each probe with its start limit and margin", () => {
-    expect(reportChildTimeoutMs([httpProvider(undefined), httpProvider(SLOW_PROBE_MS), httpProvider(SHORT_PROBE_MS)], 0)).toBe(phase(SLOW_PROBE_MS) + LISTENER_PHASES_MS + FIXED_LOCAL_MS);
+  it("is quiet bound of two default probe bounds, which the margin of a blocking step is not part of", () => {
+    expect(REPORT_QUIET_MS).toBe(2 * DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS);
   });
 
-  it("covers the default probe bound when no provider names one, or none is an http provider", () => {
-    const expected = phase(DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS) + LISTENER_PHASES_MS + FIXED_LOCAL_MS;
-    expect(reportChildTimeoutMs([], 0)).toBe(expected);
-    expect(reportChildTimeoutMs([{ kind: "codex", displayName: "c", credential: HTTP.credential }], 0)).toBe(expected);
+  it("gives a child inside an announced step the step's bound and margin, not the quiet bound", async () => {
+    const reports = createDoorReports({ selfInvocation: announcingThenHanging(`begin ${String(HOLD_MS)}\n`), env: {}, quietMs: SHORT_BOUND_MS });
+    const controller = new AbortController();
+    const answered = reports.doctorReport(controller.signal);
+    const settled = expect(answered).rejects.toMatchObject({ name: "AbortError" });
+    // Well past the quiet bound: a child killed by it would have rejected with the progress message already.
+    await new Promise<void>((resolve) => { setTimeout(resolve, SHORT_BOUND_MS * QUIET_BOUNDS_WAITED); });
+    controller.abort();
+    await settled;
   });
 
-  it("grows by one default probe bound for each identity doctor reads the keychain for", () => {
-    expect(reportChildTimeoutMs([], GROWTH_IDENTITIES) - reportChildTimeoutMs([], 0)).toBe(GROWTH_IDENTITIES * DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS);
+  it("kills a child that stays inside a step past its announced bound and the margin", async () => {
+    const reports = createDoorReports({ selfInvocation: announcingThenHanging(`begin ${String(SHORT_BOUND_MS)}\n`), env: {}, quietMs: LONG_BOUND_MS });
+    await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`made no progress within ${String(SHORT_BOUND_MS + PROBE_WAIT_MARGIN_MS)}ms`);
   });
 
-  it("never exceeds the longest delay a timer takes, past which it would fire at once", () => {
-    expect(reportChildTimeoutMs([httpProvider(MAX_TIMER_DELAY_MS)], 0)).toBe(MAX_TIMER_DELAY_MS);
+  it("holds a child to the quiet bound again once it announces the end of a step", async () => {
+    const reports = createDoorReports({ selfInvocation: announcingThenHanging(`begin ${String(HOLD_MS)}\nend\n`), env: {}, quietMs: SHORT_BOUND_MS });
+    await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`made no progress within ${String(SHORT_BOUND_MS)}ms`);
   });
 
-  it("is the bound a report child is given, read from the providers as each request arrives", async () => {
+  it("holds a child that announces nothing to the quiet bound from its start", async () => {
+    const reports = createDoorReports({ selfInvocation: nodeRunning(`setInterval(() => undefined, ${String(HOLD_MS)});`), env: {}, quietMs: SHORT_BOUND_MS });
+    await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`made no progress within ${String(SHORT_BOUND_MS)}ms`);
+  });
+
+  it("never sets a timer past the longest delay a timer takes", async () => {
     const delays: number[] = [];
     const real = globalThis.setTimeout;
     const timers = vi.spyOn(globalThis, "setTimeout").mockImplementation(((handler: () => void, delay?: number) => {
       delays.push(delay ?? 0);
       return real(handler, delay);
     }) as typeof setTimeout);
-    const IDENTITIES = 2;
-    let providers = [httpProvider(SLOW_PROBE_MS)];
-    const reports = createDoorReports({ selfInvocation: nodeRunning("process.stdout.write('{}');"), env: {}, identityCount: () => IDENTITIES, providers: () => providers });
-    await reports.doctorReport(new AbortController().signal).catch(() => undefined);
-    providers = [httpProvider(undefined)];
-    await reports.doctorReport(new AbortController().signal).catch(() => undefined);
+    const reports = createDoorReports({ selfInvocation: announcingThenHanging(`begin ${String(MAX_TIMER_DELAY_MS * 2)}\n`), env: {}, quietMs: SHORT_BOUND_MS });
+    const controller = new AbortController();
+    const answered = reports.doctorReport(controller.signal).catch(() => undefined);
+    await new Promise<void>((resolve) => { real(resolve, SHORT_BOUND_MS); });
+    controller.abort();
+    await answered;
     timers.mockRestore();
-    expect(delays).toContain(reportChildTimeoutMs([httpProvider(SLOW_PROBE_MS)], IDENTITIES));
-    expect(delays).toContain(reportChildTimeoutMs([httpProvider(undefined)], IDENTITIES));
+    expect(Math.max(...delays)).toBeLessThanOrEqual(MAX_TIMER_DELAY_MS);
+  });
+
+  it("starts its child with the descriptor its progress is announced on", async () => {
+    const reports = createDoorReports({ selfInvocation: nodeRunning(`process.stdout.write(JSON.stringify({ fd: process.env.${REPORT_PROGRESS_FD_ENV} }));`), env: {} });
+    await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow();
+    const seen = createDoorReports({ selfInvocation: nodeRunning(`process.stderr.write(process.env.${REPORT_PROGRESS_FD_ENV} ?? "none"); process.exitCode = 1;`), env: {} });
+    await expect(seen.doctorReport(new AbortController().signal)).rejects.toThrow(String(REPORT_PROGRESS_FD));
   });
 });
 
@@ -104,7 +113,6 @@ describe("the door's check and doctor reports", () => {
         return nodeRunning(`process.stdout.write(${JSON.stringify(JSON.stringify(DOCTOR))}); process.exitCode = 1;`)(args);
       },
       env: {},
-      identityCount: () => 0, providers: () => [],
     });
     expect(await reports.doctorReport(new AbortController().signal)).toEqual(DOCTOR);
     expect(asked).toEqual([["doctor", "--json"]]);
@@ -118,19 +126,18 @@ describe("the door's check and doctor reports", () => {
         return nodeRunning("process.stdout.write('{}');")(args);
       },
       env: {},
-      identityCount: () => 0, providers: () => [],
     });
     await expect(reports.checkReport("/work", "personal", new AbortController().signal)).rejects.toThrow();
     expect(asked).toEqual([["check", "/work", "--identity", "personal", "--json"]]);
   });
 
   it("fails with what the child said when it printed no report", async () => {
-    const reports = createDoorReports({ selfInvocation: nodeRunning("process.stderr.write('agent-shim: no identity named ghost\\n'); process.exitCode = 1;"), env: {}, identityCount: () => 0, providers: () => [] });
+    const reports = createDoorReports({ selfInvocation: nodeRunning("process.stderr.write('agent-shim: no identity named ghost\\n'); process.exitCode = 1;"), env: {} });
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow("agent-shim: no identity named ghost");
   });
 
   it("refuses a report that does not match its schema", async () => {
-    const reports = createDoorReports({ selfInvocation: nodeRunning("process.stdout.write('{\"ok\":\"yes\"}');"), env: {}, identityCount: () => 0, providers: () => [] });
+    const reports = createDoorReports({ selfInvocation: nodeRunning("process.stdout.write('{\"ok\":\"yes\"}');"), env: {} });
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow();
   });
 
@@ -166,8 +173,8 @@ describe("the door's check and doctor reports", () => {
 
   it("kills a child that has not reported within its bound, and fails naming the bound", async () => {
     const recorded = recordingSpawn();
-    const reports = createDoorReports({ selfInvocation: hungChild, env: {}, identityCount: () => 0, providers: () => [], timeoutMs: SHORT_BOUND_MS, spawn: recorded.spawn });
-    await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`did not report within ${String(SHORT_BOUND_MS)}ms`);
+    const reports = createDoorReports({ selfInvocation: hungChild, env: {}, quietMs: SHORT_BOUND_MS, spawn: recorded.spawn });
+    await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`made no progress within ${String(SHORT_BOUND_MS)}ms`);
     const pid = recorded.children[0]?.pid;
     if (pid === undefined) {
       throw new Error("the child did not start");
@@ -177,7 +184,7 @@ describe("the door's check and doctor reports", () => {
 
   it("kills the child of a request whose client went away", async () => {
     const recorded = recordingSpawn();
-    const reports = createDoorReports({ selfInvocation: hungChild, env: {}, identityCount: () => 0, providers: () => [], timeoutMs: LONG_BOUND_MS, spawn: recorded.spawn });
+    const reports = createDoorReports({ selfInvocation: hungChild, env: {}, quietMs: LONG_BOUND_MS, spawn: recorded.spawn });
     const controller = new AbortController();
     const answered = reports.checkReport("/work", undefined, controller.signal);
     // The abort, not the bound, must be what ends the call.
@@ -194,7 +201,7 @@ describe("the door's check and doctor reports", () => {
   it("ends the child of an aborted request and of an expired bound with the same signal", async () => {
     const endedBy = async (abort: boolean): Promise<NodeJS.Signals | null> => {
       const recorded = recordingSpawn();
-      const reports = createDoorReports({ selfInvocation: hungChild, env: {}, identityCount: () => 0, providers: () => [], timeoutMs: abort ? LONG_BOUND_MS : SHORT_BOUND_MS, spawn: recorded.spawn });
+      const reports = createDoorReports({ selfInvocation: hungChild, env: {}, quietMs: abort ? LONG_BOUND_MS : SHORT_BOUND_MS, spawn: recorded.spawn });
       const controller = new AbortController();
       const answered = reports.doctorReport(controller.signal).catch(() => undefined);
       if (abort) {
@@ -217,7 +224,7 @@ describe("the door's check and doctor reports", () => {
     const spawnsGrandchild = nodeRunning(
       `const child = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => undefined, ${String(HOLD_MS)})"], { stdio: "ignore" }); require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); setInterval(() => undefined, ${String(HOLD_MS)});`,
     );
-    const reports = createDoorReports({ selfInvocation: spawnsGrandchild, env: {}, identityCount: () => 0, providers: () => [], timeoutMs: LONG_BOUND_MS });
+    const reports = createDoorReports({ selfInvocation: spawnsGrandchild, env: {}, quietMs: LONG_BOUND_MS });
     const controller = new AbortController();
     const answered = reports.doctorReport(controller.signal).catch(() => undefined);
     let grandchild: number | undefined;
@@ -247,7 +254,7 @@ describe("the door's check and doctor reports", () => {
     const recorded = recordingSpawn();
     const limit = 1_024;
     const endless = nodeRunning(`const line = "x".repeat(${String(limit)}); setInterval(() => process.stdout.write(line), 1);`);
-    const reports = createDoorReports({ selfInvocation: endless, env: {}, identityCount: () => 0, providers: () => [], timeoutMs: LONG_BOUND_MS, stdoutLimitBytes: limit, spawn: recorded.spawn });
+    const reports = createDoorReports({ selfInvocation: endless, env: {}, quietMs: LONG_BOUND_MS, stdoutLimitBytes: limit, spawn: recorded.spawn });
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`printed more than ${String(limit)} bytes`);
     const pid = recorded.children[0]?.pid;
     if (pid === undefined) {
@@ -257,7 +264,7 @@ describe("the door's check and doctor reports", () => {
   });
 
   it("names what the child wrote to stderr when its stdout is not JSON", async () => {
-    const reports = createDoorReports({ selfInvocation: nodeRunning("process.stderr.write('warning: the keychain is locked\\n'); process.stdout.write('not json at all');"), env: {}, identityCount: () => 0, providers: () => [] });
+    const reports = createDoorReports({ selfInvocation: nodeRunning("process.stderr.write('warning: the keychain is locked\\n'); process.stdout.write('not json at all');"), env: {} });
     const failure = await reports.doctorReport(new AbortController().signal).catch((caught: unknown) => caught);
     expect(failure).toBeInstanceOf(Error);
     expect((failure as Error).message).toContain("agent-shim doctor --json printed output that is not JSON");
@@ -265,7 +272,7 @@ describe("the door's check and doctor reports", () => {
   });
 
   it("keeps only the end of a long stderr in what it reports", async () => {
-    const reports = createDoorReports({ selfInvocation: nodeRunning("process.stderr.write('FIRST' + 'x'.repeat(100000) + 'LAST'); process.exitCode = 3;"), env: {}, identityCount: () => 0, providers: () => [] });
+    const reports = createDoorReports({ selfInvocation: nodeRunning("process.stderr.write('FIRST' + 'x'.repeat(100000) + 'LAST'); process.exitCode = 3;"), env: {} });
     const failure = await reports.doctorReport(new AbortController().signal).catch((caught: unknown) => caught);
     expect((failure as Error).message).toContain("LAST");
     expect((failure as Error).message).not.toContain("FIRST");

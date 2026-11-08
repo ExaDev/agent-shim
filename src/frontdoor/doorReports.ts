@@ -1,9 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { Readable } from "node:stream";
 
 import { CheckReportJsonSchema, type CheckReportJson } from "../checkReportSchema";
-import { MAX_TIMER_DELAY_MS, isHttpProvider, type Provider } from "../config/schema";
-import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS, providerConnectTimeoutMs } from "../providerReachability";
-import { PROBE_TIMEOUT_MS, PROBE_WAIT_MARGIN_MS, PROBE_WORKER_START_LIMIT_MS } from "./probe";
+import { MAX_TIMER_DELAY_MS } from "../config/schema";
+import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS } from "../providerReachability";
+import { PROBE_WAIT_MARGIN_MS } from "./probe";
+import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, createReportProgressReader } from "./reportProgress";
 import { DoctorRunOutputSchema } from "./controlSchemas";
 import type { DoctorReport } from "../doctorReport";
 
@@ -19,31 +21,17 @@ export interface DoorReports {
 /** The exit statuses after which a report command has printed its report: `doctor` exits 1 when any finding fails, and still prints the report. */
 const REPORTED_STATUSES: ReadonlySet<number | null> = new Set([0, 1]);
 
-/** The steps of a report that block on something outside the child but answer from local state: its own start-up, and the git query a check makes for a rule that depends on the branch. */
-const REPORT_FIXED_LOCAL_STEPS = 2;
-
-/** The synchronous listener probes `doctor` makes in turn, the provider listener and then the CONNECT surface (`readFrontDoorListeners`); each starts a worker that may take its whole start limit before its own bound begins. */
-const REPORT_LISTENER_PROBES = 2;
+/** How many default probe bounds a stretch of local work is allowed: the child's start-up, and the work between one blocking step and the next. Neither is itself a blocking step, so each is held to the order of one: it answers from local state, and the margin covers a loaded host. */
+const REPORT_QUIET_BOUNDS = 2;
 
 /**
- * The time a report child gets for the blocking steps besides its provider probe that do not wait on the network: each answers from local state, far inside one default probe bound, and is allowed a whole one, so they fit back to back whatever the host's load. The fixed steps are `REPORT_FIXED_LOCAL_STEPS`; `doctor` also reads the keychain once for each identity (`identityCount`).
+ * The longest a report child may go without announcing a blocking step or the end of one (see `REPORT_PROGRESS_FD_ENV`). Each blocking step the child takes announces its own bound (an external command its timeout, a probe wait its start limit, bound and margin), so the child's bound follows what it actually does, with no count of identities, sessions or providers to keep exact; only the stretches of local work between steps are bounded by this.
  */
-function reportLocalAllowanceMs(identityCount: number): number {
-  return DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS * (REPORT_FIXED_LOCAL_STEPS + identityCount);
-}
+export const REPORT_QUIET_MS = DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS * REPORT_QUIET_BOUNDS;
 
-/** What a synchronous probe with bound `boundMs` can take in all: its worker's start limit, the bound and the margin its caller waits past the bound. */
-function probePhaseMs(boundMs: number): number {
-  return PROBE_WORKER_START_LIMIT_MS + boundMs + PROBE_WAIT_MARGIN_MS;
-}
-
-/**
- * How long a report child may run before the door kills it and fails the request: the sum of its serial blocking phases, capped at the longest delay a timer takes, since a longer one would fire at once. The provider probe is one phase (every provider's probe together, so the longest probe bound among the providers, each one's own `connectTimeoutMs` else the default); the listener probes of `doctor` are `REPORT_LISTENER_PROBES` more, each at the default probe bound (`PROBE_TIMEOUT_MS`); every probe phase includes its worker's start limit and the wait margin (`probePhaseMs`). The local steps are `reportLocalAllowanceMs`, which grows with the identities `doctor` reads the keychain for.
- */
-export function reportChildTimeoutMs(providers: readonly Provider[], identityCount: number): number {
-  const longestProbeMs = Math.max(DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS, ...providers.filter(isHttpProvider).map(providerConnectTimeoutMs));
-  const phases = probePhaseMs(longestProbeMs) + REPORT_LISTENER_PROBES * probePhaseMs(PROBE_TIMEOUT_MS) + reportLocalAllowanceMs(identityCount);
-  return Math.min(phases, MAX_TIMER_DELAY_MS);
+/** The longest a timer may be set for, past which it would fire at once. */
+function timerDelay(ms: number): number {
+  return Math.min(ms, MAX_TIMER_DELAY_MS);
 }
 
 const BYTES_PER_MIB = 1_048_576;
@@ -73,21 +61,30 @@ function endChild(child: ChildProcess): void {
   child.kill(END_SIGNAL);
 }
 
+/** The child's stream at `index` of its stdio, which `runSelfJson` opened as a pipe the child writes and the door reads; the standard tuple types only describe three entries, so the fourth (the progress pipe) is read through the generic list. */
+function readablePipe(child: ChildProcess, index: number): Readable {
+  const stream = child.stdio[index];
+  if (!(stream instanceof Readable)) {
+    throw new Error(`the report child has no pipe at descriptor ${String(index)}`);
+  }
+  return stream;
+}
+
 /** What `runSelfJson` is bounded by, and the process it starts. */
 interface RunLimits {
-  readonly timeoutMs: number;
+  readonly quietMs: number;
   readonly stdoutLimitBytes: number;
   readonly signal: AbortSignal | undefined;
   readonly spawn: typeof spawn;
 }
 
-/** Runs the door's own executable with `args` and reads the JSON it prints, failing with what it wrote to stderr when it printed none, or when what it printed is not JSON. The child leads its own process group and is ended, with everything it started, and the call fails, once `limit.timeoutMs` has passed, `limit.signal` aborts (the request's client went away) or it has printed more than `limit.stdoutLimitBytes`. */
+/** Runs the door's own executable with `args` and reads the JSON it prints, failing with what it wrote to stderr when it printed none, or when what it printed is not JSON. The child leads its own process group and is ended, with everything it started, and the call fails, once it has gone `limit.quietMs` without announcing a blocking step or the end of one, or longer than a step's announced bound and `PROBE_WAIT_MARGIN_MS` (the margin a probe's caller waits past its bound, which also covers a killed command being reaped) inside it (the child announces each on `REPORT_PROGRESS_FD`, see `reportProgress.ts`), `limit.signal` aborts (the request's client went away) or it has printed more than `limit.stdoutLimitBytes`. */
 async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEnv, args: readonly string[], limit: RunLimits): Promise<unknown> {
   const invocation = selfInvocation(args);
   const command = `agent-shim ${args.join(" ")}`;
   limit.signal?.throwIfAborted();
   const { status, stdout, stderr } = await new Promise<{ readonly status: number | null; readonly stdout: string; readonly stderr: string }>((resolve, reject) => {
-    const child = limit.spawn(invocation.command, [...invocation.args], { stdio: ["ignore", "pipe", "pipe"], env, detached: true });
+    const child = limit.spawn(invocation.command, [...invocation.args], { stdio: ["ignore", "pipe", "pipe", "pipe"], env: { ...env, [REPORT_PROGRESS_FD_ENV]: String(REPORT_PROGRESS_FD) }, detached: true });
     const releases: (() => void)[] = [];
     const finish = (settle: () => void): void => {
       for (const release of releases) {
@@ -99,16 +96,29 @@ async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEn
       endChild(child);
       finish(() => { reject(error instanceof Error ? error : new Error(String(error))); });
     };
-    const deadline = setTimeout(() => { fail(new Error(`${command} did not report within ${String(limit.timeoutMs)}ms`)); }, limit.timeoutMs);
-    releases.push(() => { clearTimeout(deadline); });
+    // The watchdog is re-armed by each announcement: inside a step for its bound and margin, between steps for the quiet bound.
+    let watchdog: NodeJS.Timeout;
+    const arm = (allowedMs: number): void => {
+      clearTimeout(watchdog);
+      watchdog = setTimeout(() => { fail(new Error(`${command} made no progress within ${String(allowedMs)}ms`)); }, timerDelay(allowedMs));
+    };
+    arm(limit.quietMs);
+    releases.push(() => { clearTimeout(watchdog); });
+    const outPipe = readablePipe(child, 1);
+    const errPipe = readablePipe(child, 2);
+    const progress = readablePipe(child, REPORT_PROGRESS_FD);
+    progress.setEncoding("utf8");
+    progress.on("data", createReportProgressReader((event) => {
+      arm(event.kind === "begin" ? event.boundMs + PROBE_WAIT_MARGIN_MS : limit.quietMs);
+    }));
     const onAbort = (): void => { fail(limit.signal?.reason); };
     limit.signal?.addEventListener("abort", onAbort, { once: true });
     releases.push(() => { limit.signal?.removeEventListener("abort", onAbort); });
     let out = "";
     let outBytes = 0;
     let err = "";
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
+    outPipe.setEncoding("utf8");
+    outPipe.on("data", (chunk: string) => {
       outBytes += Buffer.byteLength(chunk);
       if (outBytes > limit.stdoutLimitBytes) {
         fail(new Error(`${command} printed more than ${String(limit.stdoutLimitBytes)} bytes`));
@@ -116,8 +126,8 @@ async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEn
       }
       out += chunk;
     });
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk: string) => {
+    errPipe.setEncoding("utf8");
+    errPipe.on("data", (chunk: string) => {
       err = (err + chunk).slice(-STDERR_TAIL_CHARS);
     });
     child.once("error", (error) => { finish(() => { reject(error); }); });
@@ -139,13 +149,13 @@ async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEn
 /**
  * The door's `check` and `doctor` reports, each collected by a child of the door's own executable (`agent-shim check --json`, `agent-shim doctor --json`) rather than in the door's process: collecting them runs commands, reads the keychain and probes listeners and provider base URLs, every one of which blocks the calling thread, and the door's thread is the event loop that answers every session (see `refuseToBlockInRole`). The child prints exactly the JSON `check --json` and `doctor --json` print, which is the control API's contract, validated here against the same schemas the API's output is.
  */
-export function createDoorReports(deps: Readonly<{ selfInvocation: SelfInvocation; env: NodeJS.ProcessEnv; providers: () => readonly Provider[]; identityCount: () => number; timeoutMs?: number; stdoutLimitBytes?: number; spawn?: typeof spawn }>): DoorReports {
+export function createDoorReports(deps: Readonly<{ selfInvocation: SelfInvocation; env: NodeJS.ProcessEnv; quietMs?: number; stdoutLimitBytes?: number; spawn?: typeof spawn }>): DoorReports {
   const spawnChild = deps.spawn ?? spawn;
   const stdoutLimitBytes = deps.stdoutLimitBytes ?? REPORT_STDOUT_LIMIT_BYTES;
-  // `timeoutMs` fixes the bound for a test; otherwise it is derived from the providers and identities as each request arrives.
-  const boundOfRequest = () => deps.timeoutMs ?? reportChildTimeoutMs(deps.providers(), deps.identityCount());
+  // `quietMs` fixes the quiet bound for a test.
+  const quietMs = deps.quietMs ?? REPORT_QUIET_MS;
   return {
-    checkReport: async (path, identity, signal) => CheckReportJsonSchema.parse(await runSelfJson(deps.selfInvocation, deps.env, ["check", path, ...(identity === undefined ? [] : ["--identity", identity]), "--json"], { timeoutMs: boundOfRequest(), stdoutLimitBytes, signal, spawn: spawnChild })),
-    doctorReport: async (signal) => DoctorRunOutputSchema.parse(await runSelfJson(deps.selfInvocation, deps.env, ["doctor", "--json"], { timeoutMs: boundOfRequest(), stdoutLimitBytes, signal, spawn: spawnChild })),
+    checkReport: async (path, identity, signal) => CheckReportJsonSchema.parse(await runSelfJson(deps.selfInvocation, deps.env, ["check", path, ...(identity === undefined ? [] : ["--identity", identity]), "--json"], { quietMs, stdoutLimitBytes, signal, spawn: spawnChild })),
+    doctorReport: async (signal) => DoctorRunOutputSchema.parse(await runSelfJson(deps.selfInvocation, deps.env, ["doctor", "--json"], { quietMs, stdoutLimitBytes, signal, spawn: spawnChild })),
   };
 }

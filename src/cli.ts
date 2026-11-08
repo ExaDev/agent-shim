@@ -10,6 +10,7 @@ import { resolveLayoutPaths } from "./paths";
 import { realRunPort } from "./realPorts";
 import { buildProgram } from "./program";
 import { runClaude } from "./runClaude";
+import { installReportProgress } from "./frontdoor/reportProgress";
 
 /**
  * The single entrypoint backing both the `claude` and `agent-shim` binaries: one compiled artifact, dispatching on which name it was invoked as (`path.basename(process.argv[1])`). The former name, `claude-use`, is a second name for `agent-shim` and reaches the same program.
@@ -24,6 +25,7 @@ import { runClaude } from "./runClaude";
  */
 async function main(): Promise<void> {
   aliasLegacyEnv(process.env);
+  installReportProgress(process.env);
   const invokedName = path.basename(process.argv[1] ?? "agent-shim");
   if (isInvokedAsClaude(invokedName)) {
     await runClaude();
