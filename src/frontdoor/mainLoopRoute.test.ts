@@ -76,7 +76,10 @@ afterEach(async () => {
   );
 });
 
-/** An Anthropic-compatible upstream that records each request's path and model, answering `status`. */
+/** The model recorded for a request whose body is not JSON, so a test that corrupts a body fails on its assertion at once. */
+const UNPARSEABLE_BODY = "(the body was not JSON)";
+
+/** An Anthropic-compatible upstream that records each request's path and model, answering `status`, and answering 400 to a body that is not JSON. */
 async function fakeUpstream(status: number = HTTP_STATUS.ok): Promise<{ readonly port: number; readonly seen: UpstreamSeen[] }> {
   const seen: UpstreamSeen[] = [];
   const server = http.createServer((incoming, response) => {
@@ -85,7 +88,15 @@ async function fakeUpstream(status: number = HTTP_STATUS.ok): Promise<{ readonly
       chunks.push(chunk);
     });
     incoming.on("end", () => {
-      const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      } catch {
+        seen.push({ url: incoming.url ?? "", model: UNPARSEABLE_BODY });
+        response.writeHead(HTTP_STATUS.badRequest, { "content-type": "application/json" });
+        response.end("{}");
+        return;
+      }
       seen.push({ url: incoming.url ?? "", model: typeof parsed === "object" && parsed !== null && "model" in parsed ? parsed.model : undefined });
       response.writeHead(status, { "content-type": "application/json" });
       response.end(status === HTTP_STATUS.ok ? JSON.stringify({ type: "message", model: Z_HAIKU_MODEL, usage: { input_tokens: 1, output_tokens: 1 } }) : JSON.stringify({ type: "error", error: { type: "rate_limit_error", message: "slow down" } }));
