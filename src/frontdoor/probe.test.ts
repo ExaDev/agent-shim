@@ -188,8 +188,6 @@ describe("probeListenerAcceptSync", () => {
 const STARTUP_PROBE_BOUND_MS = 50;
 /** How much longer than the whole waiting budget a slow start-up takes, so that the budget is certainly overrun by start-up alone. */
 const START_UP_OVERRUN_MS = 200;
-/** How long the worker takes to answer after it has signalled that it started: more than the waiting thread needs to wake from its start wait, so the verdict is still unset when it begins waiting for one, and well inside the probe's bound plus margin, so a clock running from the start still sees it. Without this pause a worker that answers at once lets a clock measured from the spawn pass too, since a wait with no time left returns at once when the verdict is already set. */
-
 
 describe("a probe worker's clock", () => {
   it("starts when the worker starts, so a slow start-up is not counted against the probe's bound", () => {
@@ -259,9 +257,11 @@ describe("a probe worker that fails", () => {
   const claimAndStoreSilently = (verdict: string): string => `{ const slots = new Int32Array(workerData.shared, 0, workerData.headerSlots); Atomics.compareExchange(slots, workerData.claimSlot, 0, 1); Atomics.store(slots, 0, ${verdict}); }`;
 
   it("keeps the verdict a worker published before it failed, since only the first verdict counts", () => {
-    // The only wake is the failure handler's, which comes after the claimed `ok` was stored: a handler that overwrote the verdict would be read.
+    // The only wake is the failure handler's, which comes after the claimed `ok` was stored: a handler that overwrote the verdict would be read. The probe's bound is the start limit, so a wake that never came would wait out the bound and not return promptly.
     const source = `${WORKER_DATA_SOURCE}\n${STARTED_SIGNAL_SOURCE}\n${SETTLE_SOURCE}\n${claimAndStoreSilently("workerData.ok")}\nthrow new Error(${JSON.stringify(FAILURE_MESSAGE)});`;
-    expect(startProbeWorker(source, {}, STARTUP_PROBE_BOUND_MS).verdict()).toEqual({ ok: true });
+    const startedAt = performance.now();
+    expect(startProbeWorker(source, {}, PROBE_WORKER_START_LIMIT_MS).verdict()).toEqual({ ok: true });
+    expect(performance.now() - startedAt).toBeLessThan(PROBE_WORKER_START_LIMIT_MS / PROMPT_WAKE_DIVISOR);
   });
 
   it("keeps a failure when an ok is written after it", () => {
@@ -322,7 +322,10 @@ finishProbe(workerData.failed, ${JSON.stringify(FAILURE_MESSAGE)});`;
     const error = new Error(FAILURE_MESSAGE);
     error.stack = "STACK-TEXT at /some/private/path";
     expect(() => fake.emit("error", error)).not.toThrow();
+    const startedAt = performance.now();
     const verdict = probeWorker.verdict();
+    // Only the listener's started mark ends the start wait: the fake worker runs nothing, so a listener that wrote the verdict without it would leave the waiter sitting out the start limit.
+    expect(performance.now() - startedAt).toBeLessThan(PROBE_WORKER_START_LIMIT_MS / PROMPT_WAKE_DIVISOR);
     expect(verdict.ok ? "" : verdict.reason).toBe(`${PROBE_WORKER_FAILURE_PREFIX}${FAILURE_MESSAGE}`);
   });
 });
