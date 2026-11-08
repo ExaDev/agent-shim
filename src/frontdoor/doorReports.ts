@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { CheckReportJsonSchema, type CheckReportJson } from "../checkReportSchema";
 import { MAX_TIMER_DELAY_MS, isHttpProvider, type Provider } from "../config/schema";
 import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS, providerConnectTimeoutMs } from "../providerReachability";
-import { PROBE_WAIT_MARGIN_MS } from "./probe";
+import { PROBE_TIMEOUT_MS, PROBE_WAIT_MARGIN_MS, PROBE_WORKER_START_LIMIT_MS } from "./probe";
 import { DoctorRunOutputSchema } from "./controlSchemas";
 import type { DoctorReport } from "../doctorReport";
 
@@ -19,20 +19,31 @@ export interface DoorReports {
 /** The exit statuses after which a report command has printed its report: `doctor` exits 1 when any finding fails, and still prints the report. */
 const REPORTED_STATUSES: ReadonlySet<number | null> = new Set([0, 1]);
 
-/** The steps of a report besides the provider probe that block on something outside the child: its own start-up, a git query, the keychain read and the listener probe. */
-const REPORT_LOCAL_STEPS = 4;
+/** The steps of a report that block on something outside the child but answer from local state: its own start-up, and the git query a check makes for a rule that depends on the branch. */
+const REPORT_FIXED_LOCAL_STEPS = 2;
+
+/** The synchronous listener probes `doctor` makes in turn, the provider listener and then the CONNECT surface (`readFrontDoorListeners`); each starts a worker that may take its whole start limit before its own bound begins. */
+const REPORT_LISTENER_PROBES = 2;
 
 /**
- * The time a report child gets besides its provider probe: each of its `REPORT_LOCAL_STEPS` other blocking steps answers from local state, far inside one default probe bound, and is allowed a whole one, so they fit back to back whatever the host's load.
+ * The time a report child gets for the blocking steps besides its provider probe that do not wait on the network: each answers from local state, far inside one default probe bound, and is allowed a whole one, so they fit back to back whatever the host's load. The fixed steps are `REPORT_FIXED_LOCAL_STEPS`; `doctor` also reads the keychain once for each identity (`identityCount`).
  */
-export const REPORT_STARTUP_ALLOWANCE_MS = DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS * REPORT_LOCAL_STEPS;
+function reportLocalAllowanceMs(identityCount: number): number {
+  return DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS * (REPORT_FIXED_LOCAL_STEPS + identityCount);
+}
+
+/** What a synchronous probe with bound `boundMs` can take in all: its worker's start limit, the bound and the margin its caller waits past the bound. */
+function probePhaseMs(boundMs: number): number {
+  return PROBE_WORKER_START_LIMIT_MS + boundMs + PROBE_WAIT_MARGIN_MS;
+}
 
 /**
- * How long a report child may run before the door kills it and fails the request. The only step of either report that waits on the network is the provider probe, which runs once with every provider's probe together, so it lasts the longest probe bound among the providers (each provider's own `connectTimeoutMs`, else the default) plus the margin the probe's caller waits past it (`PROBE_WAIT_MARGIN_MS`); `REPORT_STARTUP_ALLOWANCE_MS` covers everything else. The sum is capped at the longest delay a timer takes, since a longer one would fire at once.
+ * How long a report child may run before the door kills it and fails the request: the sum of its serial blocking phases, capped at the longest delay a timer takes, since a longer one would fire at once. The provider probe is one phase (every provider's probe together, so the longest probe bound among the providers, each one's own `connectTimeoutMs` else the default); the listener probes of `doctor` are `REPORT_LISTENER_PROBES` more, each at the default probe bound (`PROBE_TIMEOUT_MS`); every probe phase includes its worker's start limit and the wait margin (`probePhaseMs`). The local steps are `reportLocalAllowanceMs`, which grows with the identities `doctor` reads the keychain for.
  */
-export function reportChildTimeoutMs(providers: readonly Provider[]): number {
+export function reportChildTimeoutMs(providers: readonly Provider[], identityCount: number): number {
   const longestProbeMs = Math.max(DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS, ...providers.filter(isHttpProvider).map(providerConnectTimeoutMs));
-  return Math.min(longestProbeMs + PROBE_WAIT_MARGIN_MS + REPORT_STARTUP_ALLOWANCE_MS, MAX_TIMER_DELAY_MS);
+  const phases = probePhaseMs(longestProbeMs) + REPORT_LISTENER_PROBES * probePhaseMs(PROBE_TIMEOUT_MS) + reportLocalAllowanceMs(identityCount);
+  return Math.min(phases, MAX_TIMER_DELAY_MS);
 }
 
 const BYTES_PER_MIB = 1_048_576;
@@ -128,11 +139,11 @@ async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEn
 /**
  * The door's `check` and `doctor` reports, each collected by a child of the door's own executable (`agent-shim check --json`, `agent-shim doctor --json`) rather than in the door's process: collecting them runs commands, reads the keychain and probes listeners and provider base URLs, every one of which blocks the calling thread, and the door's thread is the event loop that answers every session (see `refuseToBlockInRole`). The child prints exactly the JSON `check --json` and `doctor --json` print, which is the control API's contract, validated here against the same schemas the API's output is.
  */
-export function createDoorReports(deps: Readonly<{ selfInvocation: SelfInvocation; env: NodeJS.ProcessEnv; providers: () => readonly Provider[]; timeoutMs?: number; stdoutLimitBytes?: number; spawn?: typeof spawn }>): DoorReports {
+export function createDoorReports(deps: Readonly<{ selfInvocation: SelfInvocation; env: NodeJS.ProcessEnv; providers: () => readonly Provider[]; identityCount: () => number; timeoutMs?: number; stdoutLimitBytes?: number; spawn?: typeof spawn }>): DoorReports {
   const spawnChild = deps.spawn ?? spawn;
   const stdoutLimitBytes = deps.stdoutLimitBytes ?? REPORT_STDOUT_LIMIT_BYTES;
-  // `timeoutMs` fixes the bound for a test; otherwise it is derived from the providers as each request arrives.
-  const boundOfRequest = () => deps.timeoutMs ?? reportChildTimeoutMs(deps.providers());
+  // `timeoutMs` fixes the bound for a test; otherwise it is derived from the providers and identities as each request arrives.
+  const boundOfRequest = () => deps.timeoutMs ?? reportChildTimeoutMs(deps.providers(), deps.identityCount());
   return {
     checkReport: async (path, identity, signal) => CheckReportJsonSchema.parse(await runSelfJson(deps.selfInvocation, deps.env, ["check", path, ...(identity === undefined ? [] : ["--identity", identity]), "--json"], { timeoutMs: boundOfRequest(), stdoutLimitBytes, signal, spawn: spawnChild })),
     doctorReport: async (signal) => DoctorRunOutputSchema.parse(await runSelfJson(deps.selfInvocation, deps.env, ["doctor", "--json"], { timeoutMs: boundOfRequest(), stdoutLimitBytes, signal, spawn: spawnChild })),
