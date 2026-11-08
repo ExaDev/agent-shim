@@ -40,6 +40,7 @@ import { loadConfigFile } from "./config/load";
 import { flattenLayers } from "./resolve/flatten";
 import { assembleCascade } from "./resolve/walk";
 import { CREDENTIAL_TARGET_VARS, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type LaunchFlags, type Pool, type UpdateMode, isRouterProvider } from "./config/schema";
+import { unreachableProviderLine, type BaseUrlProbe } from "./providerReachability";
 import { GlobalConfigSchema } from "./config/schema";
 import { CREDENTIAL_UNAVAILABLE_EXIT, credentialVariables, describeSource, identityCacheKey, resolveCredential, summariseCredential, type CredentialPort, type CredentialSummary, type ResolvedCredential } from "./credential";
 import type { CascadeInput } from "./resolve/walk";
@@ -114,6 +115,8 @@ export interface PrepareLaunchParams {
   readonly frontdoor?: FrontDoorPort;
   /** Resolves credential blocks (a provider's, or the launching identity's own). Omitted by a caller that cannot read secret files or run commands; a launch that needs a credential is then refused rather than started without it. */
   readonly credentials?: CredentialPort;
+  /** Opens one connection to an http provider's base URL, bounded by the provider's connect timeout. With it, a launch on an http provider whose base URL accepts no connection is refused with the line naming the URL, instead of starting a session no request of which can be answered; a caller that cannot open connections omits it and launches without asking. */
+  readonly probeBaseUrl?: BaseUrlProbe;
   /** True when the user was asked on a terminal whether to create the selected configuration profile and chose to launch without it. Without that explicit choice, a selected profile with no file is refused rather than silently skipped. */
   readonly allowMissingConfigProfile?: boolean;
   /** The user-global `update.mode`, resolved from the same global config the launcher already loads. Absent means `off`, and `off` runs no launch-time update check at all. */
@@ -804,6 +807,13 @@ function prepareRegisteredLaunch(params: PrepareLaunchParams, onRecorded: (remov
       log.error(check.message);
       proc.exit(check.status);
     }
+  }
+
+  // A provider whose base URL accepts no connection cannot answer the session's first request, so the launch says so, naming the URL, instead of starting a session every turn of which would wait out the connect bound and fail. Only the launch's own provider is probed: a provider the models block routes some requests to is reported by the door when a request reaches it.
+  const unreachable = resolvedProvider === undefined ? undefined : unreachableProviderLine(resolvedProvider.name, resolvedProvider.definition, params.probeBaseUrl);
+  if (unreachable !== undefined) {
+    log.error(`agent-shim: ${unreachable}`);
+    proc.exit(1);
   }
 
   // The front door comes up first, before headroom: every routed session (a provider's, or headroom's) enters through it, and headroom's allowlist must hold the door's direct origin, which is what every provider session routed through headroom (a codex session's included) is forwarded back to, and the headroom supervisor lists the origin of a door that has served. `ensure` authenticates the door's listener over TLS before returning anything, so the address the child is handed below (and sends its credential to) belongs to a listener holding a leaf from agent-shim's CA.

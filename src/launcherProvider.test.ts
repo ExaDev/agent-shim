@@ -110,6 +110,46 @@ describe("runLauncher provider selection", () => {
     expect(log.errors).toEqual(["agent-shim: provider z has no usable credential: env Z_API_TOKEN is unset or empty"]);
   });
 
+  it("refuses with exit 1, naming the provider and its base URL, when the base URL accepts no connection, probed within the provider's own bound", () => {
+    const spawn = fakeSpawn();
+    const log = fakeLog();
+    const asked: [string, number][] = [];
+    // A provider's own connect timeout, distinct from the default so a probe given the default would be caught.
+    const ownConnectTimeoutMs = 1_500;
+
+    const code = launch({
+      paths,
+      fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/z.json`]: { ...providerZ, connectTimeoutMs: ownConnectTimeoutMs } }),
+      spawn,
+      proc: fakeProc({ Z_API_TOKEN: "tok-z" }, ["--provider", "z"]),
+      log,
+      resolveClaudeBinary: () => discovered,
+      probeBaseUrl: (baseUrl, timeoutMs) => {
+        asked.push([baseUrl, timeoutMs]);
+        return { ok: false, reason: "no connection accepted within 1500ms" };
+      },
+    });
+
+    expect(code).toBe(1);
+    expect(asked).toEqual([[providerZ.baseUrl, ownConnectTimeoutMs]]);
+    expect(spawn.spawnSync).not.toHaveBeenCalled();
+    expect(log.errors).toEqual([`agent-shim: provider z could not connect to ${providerZ.baseUrl}: no connection accepted within 1500ms`]);
+  });
+
+  it("launches on a provider whose base URL accepts a connection", () => {
+    const spawn = fakeSpawn();
+    launch({
+      paths,
+      fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/z.json`]: providerZ }),
+      spawn,
+      proc: fakeProc({ Z_API_TOKEN: "tok-z" }, ["--provider", "z", "--print"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+      probeBaseUrl: () => ({ ok: true }),
+    });
+    expect(spawn.spawnSync).toHaveBeenCalledTimes(1);
+  });
+
   it("launches a local-proxy provider with a literal placeholder credential and nothing in the environment", () => {
     const spawn = fakeSpawn();
 
