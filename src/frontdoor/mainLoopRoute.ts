@@ -63,7 +63,7 @@ function sameRoute(a: MainLoopRoute, b: MainLoopRoute): boolean {
 }
 
 /**
- * Builds the record, bounded by the door's session registry: an entry lives exactly as long as the registry holds its launch. Every write drops the entries of launches that have ended, and a read of an ended launch's entry drops it, so the record never holds more launches than the registry did since the last write.
+ * Builds the record, bounded by the door's session registry: an entry lives exactly as long as the registry holds its launch. Every write drops the entries of launches that have ended, and a read finds an entry only through a launch the registry still carries, so the record never holds more launches than the registry did since the last write.
  */
 export function createMainLoopRouteRecord(ports: MainLoopRoutePorts): MainLoopRouteRecord {
   const routes = new Map<string, { readonly launch: FrontDoorLaunch; readonly route: MainLoopRoute }>();
