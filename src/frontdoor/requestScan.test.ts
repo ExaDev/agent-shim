@@ -96,6 +96,15 @@ describe("scanRequestHead over a body that was already read to its end", () => {
   });
 });
 
+describe("scanRequestHead over a model name written with an escaped quote", () => {
+  it("reads the whole JSON string, escapes included, instead of stopping at the escaped quote", async () => {
+    const body = new PassThrough();
+    body.end('{"model":"a\\"b","messages":[]}');
+    const scanned = await scanRequestHead(requestOver(body));
+    expect(scanned.model).toBe('a\\"b');
+  });
+});
+
 describe("scanRequestHead over a body whose characters span chunks", () => {
   it("decodes a multi-byte character split across a chunk boundary whole, so a rewrite from the text keeps the body", async () => {
     const body = JSON.stringify({ model: "claude-haiku-5-5", messages: [{ role: "user", content: "naïve 漢字 🙂" }] });
