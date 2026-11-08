@@ -1,3 +1,4 @@
+import { withBlockingStep } from "../blockingSteps";
 import { refuseToBlockInRole } from "../processRole";
 import { Worker, type WorkerOptions } from "node:worker_threads";
 
@@ -195,7 +196,7 @@ export type ProbeWorkerSpawn = (source: string, options: WorkerOptions) => Probe
 const spawnRealWorker: ProbeWorkerSpawn = (source, options) => new Worker(source, options);
 
 /**
- * Starts one probe source on a worker thread; `verdict` blocks this thread until the worker answers. The probe's clock runs from the moment the worker signals that it started, for `timeoutMs` plus the margin the worker's own timeout verdict is allowed, so a slow start-up is never counted against the probe's bound; a worker that has not started within `PROBE_WORKER_START_LIMIT_MS` fails the probe.
+ * Starts one probe source on a worker thread; `verdict` blocks this thread until the worker answers. The probe's clock runs from the moment the worker signals that it started, for `timeoutMs` plus the margin the worker's own timeout verdict is allowed, so a slow start-up is never counted against the probe's bound; a worker that has not started within `PROBE_WORKER_START_LIMIT_MS` fails the probe. The wait is one blocking step (`withBlockingStep`) bounded by the start limit, the probe's bound and the margin.
  *
  * A worker that breaks is a failed probe, never a crash of this process: `WORKER_PRELUDE_SOURCE` turns an uncaught error or rejection inside the worker into a failed verdict that wakes the waiting thread. The `error` listener here exists only so that an error event never reaches the process as an unhandled one; it writes the same claimed verdict, but the waiting thread blocks this thread's event loop and every caller reads `verdict()` straight after starting, so the listener cannot wake a wait that is already under way. A worker that dies with no one to write a verdict (running out of memory, say) therefore ends as the bounded "did not finish" verdict. The probe source runs through `new Function`, so a source that does not parse also arrives as an error inside the worker.
  *
@@ -222,7 +223,7 @@ export function startProbeWorker(source: string, data: Readonly<Record<string, u
   // The worker must never keep the launcher alive: the verdict is all this thread needs from it.
   worker.unref();
   return {
-    verdict: () => {
+    verdict: () => withBlockingStep(PROBE_WORKER_START_LIMIT_MS + timeoutMs + PROBE_WAIT_MARGIN_MS, () => {
       try {
         Atomics.wait(header, STARTED_SLOT, WORKER_NOT_STARTED, Math.max(0, startLimit - performance.now()));
         // A worker that answered already has started, whether or not its signal was seen first.
@@ -242,6 +243,6 @@ export function startProbeWorker(source: string, data: Readonly<Record<string, u
       } finally {
         void worker.terminate();
       }
-    },
+    }),
   };
 }
