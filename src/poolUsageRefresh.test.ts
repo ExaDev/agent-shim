@@ -7,7 +7,7 @@ import { addDirectoryRule } from "./directoryRulesStore";
 import { addIdentity } from "./identityStore";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { addPool } from "./poolStore";
-import { poolSelectedByLaunch, refreshPoolUsage } from "./poolUsageRefresh";
+import { poolSelectedByLaunch, refreshLaunchPoolUsage, refreshPoolUsage } from "./poolUsageRefresh";
 import type { AnthropicUsageRefresher } from "./usage/anthropicUsageRefresh";
 import type { PoolMember } from "./usage/pick";
 
@@ -77,6 +77,23 @@ describe("pool usage refresh", () => {
       await refreshPoolUsage({ paths, cwd: project, poolNames: ["outer"], refresher });
       expect(batches).toHaveLength(1);
       expect([...(batches[0] ?? [])].sort()).toEqual(["extra", "personal", "work"]);
+    });
+
+    it("asks the refresher about no member whose launch spends a provider, so a provider launch makes no Claude probe", async () => {
+      const { refresher, batches } = recordingRefresher();
+      await refreshPoolUsage({ paths, cwd: project, poolNames: ["outer"], refresher, providerOf: (identity) => (identity === "work" ? "spark" : undefined) });
+      expect([...(batches[0] ?? [])].sort()).toEqual(["extra", "personal"]);
+      batches.length = 0;
+      await refreshPoolUsage({ paths, cwd: project, poolNames: ["outer"], refresher, providerOf: () => "spark" });
+      expect(batches).toEqual([[]]);
+    });
+
+    it("reads the provider a launch spends from its own flag, so a launch with --provider probes no Claude account", async () => {
+      const { refresher, batches } = recordingRefresher();
+      await refreshLaunchPoolUsage({ argv: ["@pool:main", "--provider", "spark", "--print"], cwd: project, env: {}, paths, refresher });
+      expect(batches).toEqual([[]]);
+      await refreshLaunchPoolUsage({ argv: ["@pool:main", "--print"], cwd: project, env: {}, paths, refresher });
+      expect([...(batches[1] ?? [])].sort()).toEqual(["personal", "work"]);
     });
 
     it("refreshes nothing, and builds nothing, when no pool is named", async () => {

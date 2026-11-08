@@ -36,6 +36,16 @@ describe("refreshStalePoolMembers", () => {
     expect(loadMembers).toHaveBeenCalledWith(["a", "b", "c"]);
   });
 
+  it("leaves out members whose launch spends a provider, or whose provider could not be read, since their Claude windows are not what the pick ranks on", async () => {
+    const { refresher, refreshStale } = fakes();
+    const loadMembers = (identities: readonly string[]): readonly PoolMember[] =>
+      identities.map((identity) => ({ identity, records: [], ...(identity === "a" ? { provider: "p" } : {}), ...(identity === "b" ? { providerError: "unreadable" } : {}) }));
+
+    await refreshStalePoolMembers({ poolNames: ["subs", "extra"], pools, loadMembers, refresher });
+
+    expect(refreshStale).toHaveBeenCalledWith([{ identity: "c", records: [] }]);
+  });
+
   it("does nothing when no pool was selected", async () => {
     const { refresher, loadMembers, refreshStale } = fakes();
 

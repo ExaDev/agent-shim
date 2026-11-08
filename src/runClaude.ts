@@ -6,6 +6,7 @@ import { pickLaunchIdentity } from "./launchPicker";
 import { buildFarmRuntime, realClaudeBinaryResolver, realPrepareLaunchParams } from "./launchWiring";
 import { resolveLayoutPaths } from "./paths";
 import { readyTerminalIdentity } from "./terminalIdentity";
+import { realMemberProviderResolver } from "./poolProviderWiring";
 import { refreshPools } from "./poolUsageRefresh";
 import { runSupervised, supervisesLaunch } from "./supervise/launch";
 import { prepareLaunch, runLauncher } from "./launcher";
@@ -88,8 +89,19 @@ export async function runClaude(argvOverride?: readonly string[]): Promise<void>
   }
 
   // A pool pick ranks on recorded usage, which only moves when a request passes the front door; members whose record has gone stale are asked for current figures first.
+  // A member whose launch spends a provider is ranked on that provider's quota, which the requests passing the door refresh, so it is not probed on its Claude account.
   const refreshUsage = async (poolName: string | undefined): Promise<void> => {
-    await refreshPools({ paths, cwd: process.cwd(), poolNames: poolName === undefined ? [] : [poolName], spawnDaemon: spawnDetachedSupervisor, log: realLogPort.warn });
+    if (poolName === undefined) {
+      return;
+    }
+    const providerOf = realMemberProviderResolver({
+      paths,
+      cwd: process.cwd(),
+      env: procForDecision.env,
+      ...(nativeArgv.provider === undefined ? {} : { cliProvider: nativeArgv.provider }),
+      ...(nativeArgv.configProfile === undefined ? {} : { cliFlagConfigProfile: nativeArgv.configProfile }),
+    });
+    await refreshPools({ paths, cwd: process.cwd(), poolNames: [poolName], spawnDaemon: spawnDetachedSupervisor, log: realLogPort.warn, providerOf });
   };
   await refreshUsage(identityDecision.pool);
 
