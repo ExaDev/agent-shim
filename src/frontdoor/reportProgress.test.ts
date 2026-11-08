@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { withBlockingStep } from "../blockingSteps";
+import { noteLocalWork, withBlockingStep } from "../blockingSteps";
 import {
   REPORT_PROGRESS_FD_ENV,
   REPORT_UNBOUNDED_STEP_LIMIT_MS,
   createReportProgressReader,
   encodeReportProgress,
   installReportProgress,
+  LOCAL_WORK_ANNOUNCE_INTERVAL_MS,
   type ReportProgress,
 } from "./reportProgress";
 
@@ -42,6 +43,10 @@ describe("the progress stream", () => {
     expect(readAll(["begin 12", "3\n"])).toEqual([{ kind: "begin", boundMs: 123 }]);
   });
 
+  it("reads a work line", () => {
+    expect(readAll([encodeReportProgress({ kind: "work" })])).toEqual([{ kind: "work" }]);
+  });
+
   it("ignores a line that is not an announcement, and a bound that is not a positive number", () => {
     expect(readAll(["hello\nbegin soon\nbegin 0\nbegin -5\nbegin \n"])).toEqual([]);
   });
@@ -66,5 +71,31 @@ describe("installReportProgress", () => {
       { fd: DESCRIPTOR, text: `begin ${String(REPORT_UNBOUNDED_STEP_LIMIT_MS)}\n` },
       { fd: DESCRIPTOR, text: "end\n" },
     ]);
+  });
+});
+
+describe("local work announcements", () => {
+  it("are written at most once per interval, counted from the last announcement of any kind", () => {
+    const written: string[] = [];
+    let clock = 0;
+    uninstall = installReportProgress({ [REPORT_PROGRESS_FD_ENV]: String(DESCRIPTOR) }, (_fd, text) => { written.push(text); }, () => clock);
+    noteLocalWork();
+    expect(written).toEqual([]);
+    clock = LOCAL_WORK_ANNOUNCE_INTERVAL_MS - 1;
+    noteLocalWork();
+    expect(written).toEqual([]);
+    clock = LOCAL_WORK_ANNOUNCE_INTERVAL_MS;
+    noteLocalWork();
+    expect(written).toEqual(["work\n"]);
+    noteLocalWork();
+    expect(written).toEqual(["work\n"]);
+    clock += LOCAL_WORK_ANNOUNCE_INTERVAL_MS - 1;
+    withBlockingStep(STEP_BOUND_MS, () => undefined);
+    clock += LOCAL_WORK_ANNOUNCE_INTERVAL_MS - 1;
+    noteLocalWork();
+    expect(written).toHaveLength(1 + 2);
+    clock += 1;
+    noteLocalWork();
+    expect(written).toHaveLength(1 + 2 + 1);
   });
 });

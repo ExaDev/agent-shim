@@ -1,7 +1,8 @@
-/** What a process that wants to know about its blocking steps registers: `begin` is told how long a step may take at most, `end` that it has finished, and `unboundedStepLimitMs` is the limit a step gets when its caller names none. */
+/** What a process that wants to know about its blocking steps registers: `begin` is told how long a step may take at most, `end` that it has finished, `localWork` that a loop over local data has done another unit of its work, and `unboundedStepLimitMs` is the limit a step gets when its caller names none. */
 export interface BlockingStepObserver {
   readonly begin: (boundMs: number) => void;
   readonly end: () => void;
+  readonly localWork: () => void;
   readonly unboundedStepLimitMs: number;
 }
 
@@ -31,4 +32,11 @@ export function withBlockingStep<T>(declaredBoundMs: number | undefined, run: (b
   } finally {
     observer.end();
   }
+}
+
+/**
+ * Tells the registered observer that a loop over local data (the entries of a directory tree, the files of a directory) has done another unit of its work. The loop calls it once per unit, at the edge where the unit's filesystem call is made, so a loop that grows with the user's data reports progress for as long as it makes any, instead of looking like a stall. A no-op without an observer.
+ */
+export function noteLocalWork(): void {
+  observer?.localWork();
 }

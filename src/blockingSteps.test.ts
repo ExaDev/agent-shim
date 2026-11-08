@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { spawnSyncBlocking } from "./blockingSpawn";
-import { observeBlockingSteps, withBlockingStep } from "./blockingSteps";
+import { noteLocalWork, observeBlockingSteps, withBlockingStep } from "./blockingSteps";
 import { startProbeWorker, PROBE_WAIT_MARGIN_MS, PROBE_WORKER_START_LIMIT_MS } from "./frontdoor/probe";
 import { EventEmitter } from "node:events";
 
@@ -20,11 +20,12 @@ const HOLD_SECONDS = "30";
 const DECLARED_MS = 5_000;
 
 /** What an observer was told, in order: a bound for each begin and "end" for each end. */
-function recordingObserver(): { readonly told: (number | "end")[]; readonly stop: () => void } {
-  const told: (number | "end")[] = [];
+function recordingObserver(): { readonly told: (number | "end" | "work")[]; readonly stop: () => void } {
+  const told: (number | "end" | "work")[] = [];
   const stop = observeBlockingSteps({
     begin: (ms) => { told.push(ms); },
     end: () => { told.push("end"); },
+    localWork: () => { told.push("work"); },
     unboundedStepLimitMs: UNBOUNDED_LIMIT_MS,
   });
   return { told, stop };
@@ -62,6 +63,17 @@ describe("withBlockingStep", () => {
   it("passes the bound through untouched, and announces nothing, without an observer", () => {
     expect(withBlockingStep(undefined, (bound) => bound)).toBeUndefined();
     expect(withBlockingStep(DECLARED_MS, (bound) => bound)).toBe(DECLARED_MS);
+  });
+});
+
+describe("noteLocalWork", () => {
+  it("tells the observer about each unit of work, and does nothing without one", () => {
+    expect(() => { noteLocalWork(); }).not.toThrow();
+    const { told, stop } = recordingObserver();
+    stopObserving = stop;
+    noteLocalWork();
+    noteLocalWork();
+    expect(told).toEqual(["work", "work"]);
   });
 });
 

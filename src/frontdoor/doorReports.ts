@@ -3,9 +3,8 @@ import { Readable } from "node:stream";
 
 import { CheckReportJsonSchema, type CheckReportJson } from "../checkReportSchema";
 import { MAX_TIMER_DELAY_MS } from "../config/schema";
-import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS } from "../providerReachability";
 import { PROBE_WAIT_MARGIN_MS } from "./probe";
-import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, createReportProgressReader } from "./reportProgress";
+import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, REPORT_QUIET_MS, createReportProgressReader } from "./reportProgress";
 import { DoctorRunOutputSchema } from "./controlSchemas";
 import type { DoctorReport } from "../doctorReport";
 
@@ -20,14 +19,6 @@ export interface DoorReports {
 
 /** The exit statuses after which a report command has printed its report: `doctor` exits 1 when any finding fails, and still prints the report. */
 const REPORTED_STATUSES: ReadonlySet<number | null> = new Set([0, 1]);
-
-/** How many default probe bounds a stretch of local work is allowed: the child's start-up, and the work between one blocking step and the next. Neither is itself a blocking step, so each is held to the order of one: it answers from local state, and the margin covers a loaded host. */
-const REPORT_QUIET_BOUNDS = 2;
-
-/**
- * The longest a report child may go without announcing a blocking step or the end of one (see `REPORT_PROGRESS_FD_ENV`). Each blocking step the child takes announces its own bound (an external command its timeout, a probe wait its start limit, bound and margin), so the child's bound follows what it actually does, with no count of identities, sessions or providers to keep exact; only the stretches of local work between steps are bounded by this.
- */
-export const REPORT_QUIET_MS = DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS * REPORT_QUIET_BOUNDS;
 
 /** The longest a timer may be set for, past which it would fire at once. */
 function timerDelay(ms: number): number {

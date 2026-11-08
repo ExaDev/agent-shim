@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { noteLocalWork } from "./blockingSteps";
 import { ConfigFileNotJsonError, ConfigValidationError } from "./config/load";
 import { FileNameSchema, UnsafeNameError, isStoredName } from "./config/names";
 import { applyPatch, nodeStoreFs, readJson, writeJsonAtomic, writeTextAtomic } from "./config/store";
@@ -480,6 +481,7 @@ export function listIdentityDirectories(paths: LayoutPaths): IdentityDirectoryLi
   const unreachable: UnreachableIdentityEntry[] = [];
   if (fs.existsSync(paths.identitiesDir)) {
     for (const entry of fs.readdirSync(paths.identitiesDir, { withFileTypes: true })) {
+      noteLocalWork();
       if (!isIdentityDirectoryName(entry.name)) {
         continue;
       }

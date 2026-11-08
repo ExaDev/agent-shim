@@ -9,8 +9,8 @@ import { enterProcessRole } from "../processRole";
 import { MAX_TIMER_DELAY_MS } from "../config/schema";
 import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS } from "../providerReachability";
 import { PROBE_WAIT_MARGIN_MS } from "./probe";
-import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV } from "./reportProgress";
-import { REPORT_QUIET_MS, createDoorReports } from "./doorReports";
+import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, REPORT_QUIET_MS } from "./reportProgress";
+import { createDoorReports } from "./doorReports";
 
 const DOCTOR = { ok: false, findings: [{ section: "provider", severity: "fail", message: "provider spark could not connect to http://192.0.2.1:8000: no connection accepted within 1500ms", subject: "spark" }] };
 
@@ -70,6 +70,16 @@ describe("the bound on a report child", () => {
   it("holds a child to the quiet bound again once it announces the end of a step", async () => {
     const reports = createDoorReports({ selfInvocation: announcingThenHanging(`begin ${String(HOLD_MS)}\nend\n`), env: {}, quietMs: SHORT_BOUND_MS });
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`made no progress within ${String(SHORT_BOUND_MS)}ms`);
+  });
+
+  it("keeps a child that announces local work alive past the quiet bound, for as long as it announces", async () => {
+    const WORK_ROUNDS = 8;
+    const reports = createDoorReports({
+      selfInvocation: nodeRunning(`const fs = require("node:fs"); const fd = Number(process.env.${REPORT_PROGRESS_FD_ENV}); let rounds = 0; const timer = setInterval(() => { fs.writeSync(fd, "work\\n"); rounds += 1; if (rounds === ${String(WORK_ROUNDS)}) { clearInterval(timer); process.stdout.write(JSON.stringify(${JSON.stringify(DOCTOR)})); } }, ${String(SHORT_BOUND_MS / 2)});`),
+      env: {},
+      quietMs: SHORT_BOUND_MS,
+    });
+    await expect(reports.doctorReport(new AbortController().signal)).resolves.toMatchObject({ ok: false });
   });
 
   it("holds a child that announces nothing to the quiet bound from its start", async () => {
