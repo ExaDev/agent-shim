@@ -106,6 +106,34 @@ describe("a main-loop record whose store fails", () => {
     expect(lines[0]).toMatch(/^front door: .*disk full$/);
   });
 
+  it("rewrites the stale durable copy once the store recovers, on the next request that records the current route", () => {
+    const launch: FrontDoorLaunch = { pid: 9, startedAt: 1 };
+    const store = inMemoryRouteStore();
+    let failing = true;
+    const ports: MainLoopRoutePorts = {
+      holdsLaunch: () => true,
+      stored: {
+        read: store.read,
+        write: (written, route) => {
+          if (failing) {
+            throw new Error("disk full");
+          }
+          store.write(written, route);
+        },
+      },
+      log: () => undefined,
+    };
+    const record = createMainLoopRouteRecord(ports);
+    failing = false;
+    record.record(launch, { kind: "provider", provider: "z" });
+    failing = true;
+    record.record(launch, { kind: "anthropic" });
+    failing = false;
+    record.record(launch, { kind: "anthropic" });
+    expect(store.read(launch)).toEqual({ kind: "anthropic" });
+    expect(createMainLoopRouteRecord(ports).routeOf(launch)).toEqual({ kind: "anthropic" });
+  });
+
   it("reports once for each launch, and again for a launch whose entry was evicted and that is registered again", () => {
     const lines: string[] = [];
     const first: FrontDoorLaunch = { pid: 1, startedAt: 1 };

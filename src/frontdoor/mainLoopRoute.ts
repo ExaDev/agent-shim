@@ -66,8 +66,9 @@ function sameRoute(a: MainLoopRoute, b: MainLoopRoute): boolean {
  * Builds the record, bounded by the door's session registry: an entry lives exactly as long as the registry holds its launch. Every write drops the entries of launches that have ended, so the record never holds more launches than the registry did since the last write, and a launch is only ever named by a request that presented its live capability.
  */
 export function createMainLoopRouteRecord(ports: MainLoopRoutePorts): MainLoopRouteRecord {
-  const routes = new Map<string, { readonly launch: FrontDoorLaunch; readonly route: MainLoopRoute }>();
-  // The launches whose durable copy failed to write, so a store that keeps failing is reported once per launch, not once per request.
+  // `persisted` is what the durable copy holds, which differs from `route` after a failed write and until a later write succeeds.
+  const routes = new Map<string, { readonly launch: FrontDoorLaunch; readonly route: MainLoopRoute; readonly persisted: MainLoopRoute | undefined }>();
+  // The launches whose durable copy failed to write, so a store that keeps failing is reported once per launch until a write succeeds, not once per request.
   const failed = new Set<string>();
   return {
     record: (launch, route) => {
@@ -78,19 +79,21 @@ export function createMainLoopRouteRecord(ports: MainLoopRoutePorts): MainLoopRo
           failed.delete(held);
         }
       }
-      const held = routes.get(key)?.route;
-      routes.set(key, { launch, route });
-      // Written only when it changes: the main loop's every request records, and the route rarely moves.
-      if (held === undefined || !sameRoute(held, route)) {
+      let persisted = routes.get(key)?.persisted;
+      // Written only when the durable copy differs: the main loop's every request records, and the route rarely moves. A failed write leaves the copy stale, so the next request retries it.
+      if (persisted === undefined || !sameRoute(persisted, route)) {
         try {
           ports.stored.write(launch, route);
+          persisted = route;
+          failed.delete(key);
         } catch (error) {
           if (!failed.has(key)) {
             failed.add(key);
-            ports.log(`front door: could not record where launch ${String(launch.pid)}'s main loop went, so its helpers follow it only until the door restarts: ${error instanceof Error ? error.message : String(error)}`);
+            ports.log(`front door: could not record where launch ${String(launch.pid)}'s main loop went, so a door restart would send its helpers to the route last stored: ${error instanceof Error ? error.message : String(error)}`);
           }
         }
       }
+      routes.set(key, { launch, route, persisted });
     },
     routeOf: (launch) => {
       const key = launchKeyOf(launch);
@@ -101,7 +104,7 @@ export function createMainLoopRouteRecord(ports: MainLoopRoutePorts): MainLoopRo
       // Nothing in memory: this door has not served the launch's main loop, or is not the process that did.
       const stored = ports.stored.read(launch);
       if (stored !== undefined) {
-        routes.set(key, { launch, route: stored });
+        routes.set(key, { launch, route: stored, persisted: stored });
       }
       return stored;
     },
