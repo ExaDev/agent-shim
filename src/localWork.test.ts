@@ -5,9 +5,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { observeBlockingSteps } from "./blockingSteps";
 import { nodeStoreFs } from "./config/store";
+import { strayNameRenameRecordFiles } from "./identityNameRenameRecord";
 import { listIdentityDirectories } from "./identityStore";
 import { buildEntryFacts } from "./launcher/farm";
 import { buildLayoutPaths } from "./paths";
+import { readProvider } from "./providersStore";
 import { findExecutableInDir, realFarmFs, realFsPort } from "./realPorts";
 
 /** Every loop over local data reports each unit of its work to the observer a report child registers, so a loop that grows with the user's data is never mistaken for a stall. */
@@ -61,6 +63,21 @@ describe("local work notes", () => {
       fs.mkdirSync(path.join(paths.identitiesDir, `id${String(index)}`));
     }
     expect(worksOf(() => listIdentityDirectories(paths))).toBe(ENTRIES);
+  });
+
+  it("notes a unit of work for each provider file read", () => {
+    const paths = buildLayoutPaths(root);
+    expect(worksOf(() => readProvider(paths, "absent"))).toBe(1);
+  });
+
+  it("notes a unit of work for each identity name rename record file listed", () => {
+    const paths = buildLayoutPaths(root);
+    const RECORDS = 3;
+    fs.mkdirSync(paths.identityNameRenamesDir, { recursive: true });
+    for (let index = 0; index < RECORDS; index += 1) {
+      fs.writeFileSync(path.join(paths.identityNameRenamesDir, `r${String(index)}.json`), "{}");
+    }
+    expect(worksOf(() => strayNameRenameRecordFiles(paths))).toBeGreaterThanOrEqual(RECORDS);
   });
 
   it("notes at least one unit of work for each entry the fact walk of a tree visits", () => {
