@@ -1,6 +1,6 @@
 import { isHttpProvider, type HttpProvider, type Provider } from "./config/schema";
 import { displayBaseUrl } from "./baseUrlDisplay";
-import { probeAddressesAcceptSync, type ListenerVerdict } from "./frontdoor/probe";
+import { probeAddressesAcceptSync, type ListenerVerdict, type ProbeWorkers } from "./frontdoor/probe";
 
 /**
  * The retransmission timeout a TCP sender uses before it has measured any round trip, which is the case for every connection's SYN: RFC 6298 section 2.1 sets it to one second, and both macOS and Linux start their SYN retransmissions from it.
@@ -55,10 +55,10 @@ export type BaseUrlBatchProbe = (targets: readonly BaseUrlTarget[]) => readonly 
 /** The verdict for a base URL whose scheme nothing dials. */
 const UNDIALLABLE: ListenerVerdict = { ok: false, reason: "the base URL is neither http nor https" };
 
-/** The real batch probe: each connect on a worker thread, all started before the calling thread blocks on any, refused in a process whose event loop serves others. */
-export const realBaseUrlBatchProbe: BaseUrlBatchProbe = (targets) => {
+/** The real batch probe, with the source of its workers injectable so a test can observe their order: each connect on a worker thread, all started before the calling thread blocks on any, refused in a process whose event loop serves others. */
+export const realBaseUrlBatchProbe = (targets: readonly BaseUrlTarget[], workers?: ProbeWorkers): readonly ListenerVerdict[] => {
   const dialled = targets.map((target) => ({ dial: dialTargetOf(target.baseUrl), timeoutMs: target.timeoutMs }));
-  const verdicts = probeAddressesAcceptSync(dialled.flatMap((entry) => (entry.dial === undefined ? [] : [{ ...entry.dial, timeoutMs: entry.timeoutMs }])));
+  const verdicts = probeAddressesAcceptSync(dialled.flatMap((entry) => (entry.dial === undefined ? [] : [{ ...entry.dial, timeoutMs: entry.timeoutMs }])), workers);
   let next = 0;
   return dialled.map((entry) => {
     if (entry.dial === undefined) {
