@@ -2,7 +2,7 @@ import { refuseToBlockInRole } from "../processRole";
 import { Worker } from "node:worker_threads";
 
 import { DOOR_SOURCE_PORT_END, DOOR_SOURCE_PORT_START, SourcePortRange } from "./connectEffects";
-import { createDoorLookup, doorDial, probeAccept } from "./doorDial";
+import { createDoorLookup, doorDial, probeAccept, runAcceptProbe } from "./doorDial";
 
 /** The outcome of authenticating the listener a front-door state file names. */
 export type ListenerVerdict = { readonly ok: true } | { readonly ok: false; readonly reason: string };
@@ -122,10 +122,9 @@ const SourcePortRange = ${SourcePortRange.toString()};
 const createDoorLookup = ${createDoorLookup.toString()};
 const doorDial = ${doorDial.toString()};
 const probeAccept = ${probeAccept.toString()};
-const lookup = createDoorLookup({ isIP: net.isIP, resolve4: (name, callback) => { dns.resolve4(name, callback); } });
-const io = { connect: (options) => net.connect(options), lookup, isIP: net.isIP };
+const runAcceptProbe = ${runAcceptProbe.toString()};
 const startTimer = (callback, ms) => { const timer = setTimeout(callback, ms); return () => { clearTimeout(timer); }; };
-probeAccept(() => doorDial(io, { host, port }, new SourcePortRange(portStart, portEnd)), timeoutMs, startTimer).then((verdict) => {
+runAcceptProbe({ net, dns, createDoorLookup, doorDial, probeAccept, SourcePortRange }, { host, port, portStart, portEnd, timeoutMs }, startTimer).then((verdict) => {
   finish(verdict.ok ? ok : failed, verdict.ok ? "" : verdict.reason);
 });
 `;
@@ -138,14 +137,22 @@ export function probeListenerAcceptSync(port: number, timeoutMs: number = PROBE_
   return runProbeWorker(ACCEPT_PROBE_SOURCE, { host: "127.0.0.1", port, portStart: DOOR_SOURCE_PORT_START, portEnd: DOOR_SOURCE_PORT_END }, timeoutMs);
 }
 
+/** Where probe workers come from: `start` begins one and returns what blocks the calling thread on its verdict. Injected so a test can observe that every worker has started before any is waited on. */
+export interface ProbeWorkers {
+  readonly start: (source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number) => { readonly verdict: () => ListenerVerdict };
+}
+
+const realProbeWorkers: ProbeWorkers = { start: (source, data, timeoutMs) => startProbeWorker(source, data, timeoutMs) };
+
 /**
  * Whether the door's own dial reaches each address within its bound: one connect each, closed again the moment it is accepted, so no request reaches a listener. Every probe's worker is started before any is waited on, so the probes run together and the whole takes about the longest bound, not their sum. Verdicts come back in the order the targets were given. What `doctor`, `check` and a launch ask of providers' base URLs.
  */
-export function probeAddressesAcceptSync(targets: readonly { readonly host: string; readonly port: number; readonly timeoutMs: number }[]): readonly ListenerVerdict[] {
+export function probeAddressesAcceptSync(targets: readonly { readonly host: string; readonly port: number; readonly timeoutMs: number }[], workers: ProbeWorkers = realProbeWorkers): readonly ListenerVerdict[] {
   refuseToBlockInRole("a synchronous probe of a provider's address");
-  const started = targets.map((target) => startProbeWorker(ACCEPT_PROBE_SOURCE, { host: target.host, port: target.port, portStart: DOOR_SOURCE_PORT_START, portEnd: DOOR_SOURCE_PORT_END }, target.timeoutMs));
+  const started = targets.map((target) => workers.start(ACCEPT_PROBE_SOURCE, { host: target.host, port: target.port, portStart: DOOR_SOURCE_PORT_START, portEnd: DOOR_SOURCE_PORT_END }, target.timeoutMs));
   return started.map((probe) => probe.verdict());
 }
+
 
 /** Runs one probe source on a worker thread and blocks this thread on its verdict, whatever the probe asks, for at most `timeoutMs` plus the margin the waiting thread allows the worker's own timeout verdict. */
 function runProbeWorker(source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number): ListenerVerdict {

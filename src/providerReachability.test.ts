@@ -8,6 +8,7 @@ import {
   TCP_INITIAL_RETRANSMISSION_TIMEOUT_MS,
   couldNotConnectMessage,
   dialTargetOf,
+  probeProviderReachabilities,
   probeProviderReachability,
   providerConnectTimeoutMs,
   realBaseUrlBatchProbe,
@@ -158,5 +159,37 @@ describe("a base URL in what the probe and the door report", () => {
     expect(line).toBe("provider z could not connect to https://provider.example:8443/api/anthropic: ECONNREFUSED");
     expect(line).not.toContain("hunter2");
     expect(line).not.toContain("abc123");
+  });
+});
+
+describe("probeProviderReachabilities", () => {
+  const HTTP = { displayName: "Http", credential: { sources: [{ literal: "placeholder" }] } };
+
+  it("probes only the http providers, each within its own bound, and reports each failure under its provider's name", () => {
+    const asked: (readonly { readonly baseUrl: string; readonly timeoutMs: number }[])[] = [];
+    const lines = probeProviderReachabilities(
+      [
+        { name: "first", provider: { ...HTTP, baseUrl: "http://192.0.2.1:1", connectTimeoutMs: OWN_CONNECT_TIMEOUT_MS } },
+        { name: "codex", provider: { kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "placeholder" }] } } },
+        { name: "second", provider: { ...HTTP, baseUrl: "http://192.0.2.1:2" } },
+        { name: "third", provider: { ...HTTP, baseUrl: "http://192.0.2.1:3" } },
+      ],
+      (targets) => {
+        asked.push(targets);
+        return [{ ok: true }, { ok: false, reason: "refused" }, { ok: true }];
+      },
+    );
+    expect(asked).toEqual([
+      [
+        { baseUrl: "http://192.0.2.1:1", timeoutMs: OWN_CONNECT_TIMEOUT_MS },
+        { baseUrl: "http://192.0.2.1:2", timeoutMs: DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS },
+        { baseUrl: "http://192.0.2.1:3", timeoutMs: DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS },
+      ],
+    ]);
+    expect([...lines]).toEqual([["second", couldNotConnectMessage("provider second", "http://192.0.2.1:2", "refused")]]);
+  });
+
+  it("fails loudly when the probe answers fewer verdicts than it was given targets", () => {
+    expect(() => probeProviderReachabilities([{ name: "first", provider: { ...HTTP, baseUrl: "http://192.0.2.1:1" } }], () => [])).toThrow("fewer verdicts");
   });
 });

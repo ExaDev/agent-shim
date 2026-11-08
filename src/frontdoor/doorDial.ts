@@ -116,3 +116,22 @@ export async function probeAccept<S extends DialSocket>(dial: () => Promise<Dial
     });
   });
 }
+
+/** The modules the probe's setup draws on, and the door's dial functions it assembles them with: all passed in, because the probe's worker embeds `runAcceptProbe` as source text and so cannot import them. */
+export interface AcceptProbeDeps {
+  readonly net: { readonly connect: DoorDialIo<DialSocket>["connect"]; readonly isIP: (host: string) => number };
+  readonly dns: { readonly resolve4: DoorLookupIo["resolve4"] };
+  readonly createDoorLookup: typeof createDoorLookup;
+  readonly doorDial: typeof doorDial;
+  readonly probeAccept: typeof probeAccept;
+  readonly SourcePortRange: new (start: number, end: number) => PortRotation;
+}
+
+/**
+ * The accept probe's whole setup, as the worker runs it: the door's lookup over `dns.resolve4` (never the hosts file) and the door's reserved source-port range, handed to the door's own dial. It is the one place the probe's dial is assembled, so a test of it with fake modules pins that the probe dials as the door does.
+ */
+export async function runAcceptProbe(deps: AcceptProbeDeps, data: { readonly host: string; readonly port: number; readonly portStart: number; readonly portEnd: number; readonly timeoutMs: number }, startTimer: StartTimer): Promise<AcceptVerdict> {
+  const lookup = deps.createDoorLookup({ isIP: deps.net.isIP, resolve4: (name, callback) => { deps.dns.resolve4(name, callback); } });
+  const io = { connect: (options: Parameters<DoorDialIo<DialSocket>["connect"]>[0]) => deps.net.connect(options), lookup, isIP: deps.net.isIP };
+  return await deps.probeAccept(async () => await deps.doorDial(io, { host: data.host, port: data.port }, new deps.SourcePortRange(data.portStart, data.portEnd)), data.timeoutMs, startTimer);
+}
