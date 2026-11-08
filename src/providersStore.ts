@@ -7,6 +7,7 @@ import {
   CREDENTIAL_TARGET_VARS,
   isAntigravityProvider,
   isCodexProvider,
+  isHttpProvider,
   type AntigravityProviderConfig,
   type CodexProviderConfig,
   type CredentialCache,
@@ -258,6 +259,8 @@ export interface AddProviderInput {
   readonly pickerModels?: readonly PickerModel[];
   /** Opt an http provider into listing its own model catalogue in `/model`. */
   readonly catalogue?: ProviderCatalogue;
+  /** An http provider's bound on opening a connection to its base URL, in milliseconds; absent keeps the derived default. */
+  readonly connectTimeoutMs?: number;
   readonly codex?: CodexProviderConfig;
   readonly antigravity?: AntigravityProviderConfig;
 }
@@ -316,6 +319,9 @@ export function addProvider(paths: LayoutPaths, name: string, input: AddProvider
   if (kind !== "http" && kind !== "router" && input.catalogue !== undefined) {
     throw new ProviderKindMismatchError("A model catalogue applies only to an http provider.");
   }
+  if (kind !== "http" && input.connectTimeoutMs !== undefined) {
+    throw new ProviderKindMismatchError("A connect timeout applies only to an http provider, the one kind that dials a base URL.");
+  }
   if (kind !== "codex" && !isEmptyCodexConfig(input.codex)) {
     throw new ProviderKindMismatchError("Codex settings apply only to a codex provider (--kind codex).");
   }
@@ -335,7 +341,7 @@ export function addProvider(paths: LayoutPaths, name: string, input: AddProvider
       ? { kind, ...shared, ...(isEmptyCodexConfig(input.codex) ? {} : { codex: input.codex }) }
       : kind === "antigravity"
       ? { kind, ...shared, ...(isEmptyAntigravityConfig(input.antigravity) ? {} : { antigravity: input.antigravity }) }
-      : { ...shared, baseUrl: input.baseUrl, ...(input.catalogue === undefined ? {} : { catalogue: input.catalogue }) },
+      : { ...shared, baseUrl: input.baseUrl, ...(input.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: input.connectTimeoutMs }), ...(input.catalogue === undefined ? {} : { catalogue: input.catalogue }) },
   );
   if (!parsed.success) {
     throw new ConfigValidationError(providerJsonPath(paths, name), parsed.error.issues);
@@ -362,6 +368,8 @@ export interface UpdateProviderInput {
   readonly unsetPickerModels?: readonly string[];
   /** The provider's whole new catalogue setting, or false to remove it; undefined leaves the existing one. Applies only to an http provider. */
   readonly catalogue?: ProviderCatalogue | false;
+  /** A new connect timeout in milliseconds, or false to go back to the derived default; undefined leaves the existing one. Applies only to an http provider. */
+  readonly connectTimeoutMs?: number | false;
   /** Merged over a codex provider's existing settings: a field given here replaces that field, and `models` entries merge per tier. */
   readonly codex?: CodexProviderConfig;
   /** Merged over an antigravity provider's existing settings: a field given here replaces that field, and `models` entries merge per tier. */
@@ -394,6 +402,9 @@ export function updateProvider(paths: LayoutPaths, name: string, input: UpdatePr
   }
   if (isAntigravityProvider(existing) && input.baseUrl !== undefined) {
     throw new ProviderKindMismatchError(`Provider "${name}" is an antigravity provider, which has no base URL.`);
+  }
+  if (!isHttpProvider(existing) && input.connectTimeoutMs !== undefined) {
+    throw new ProviderKindMismatchError(`Provider "${name}" is not an http provider; a connect timeout applies only to an http provider, the one kind that dials a base URL.`);
   }
   if ((isCodexProvider(existing) || isAntigravityProvider(existing)) && input.catalogue !== undefined && input.catalogue !== false) {
     throw new ProviderKindMismatchError(`Provider "${name}" is not an http provider; a model catalogue applies only to an http provider.`);
@@ -437,7 +448,8 @@ export function updateProvider(paths: LayoutPaths, name: string, input: UpdatePr
     candidate = { kind: "router", ...shared };
   } else {
     const catalogue = input.catalogue === undefined ? existing.catalogue : input.catalogue === false ? undefined : input.catalogue;
-    candidate = { ...existing, ...shared, catalogue, ...(input.baseUrl === undefined ? {} : { baseUrl: input.baseUrl }) };
+    const connectTimeoutMs = input.connectTimeoutMs === undefined ? existing.connectTimeoutMs : input.connectTimeoutMs === false ? undefined : input.connectTimeoutMs;
+    candidate = { ...existing, ...shared, catalogue, connectTimeoutMs, ...(input.baseUrl === undefined ? {} : { baseUrl: input.baseUrl }) };
   }
   const parsed = ProviderSchema.safeParse(candidate);
   if (!parsed.success) {
