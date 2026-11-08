@@ -579,15 +579,21 @@ describe("a model choice among alternatives", () => {
     expect(record).not.toHaveProperty("candidateProviders");
   });
 
-  it("records no reconstructed choice when the served model is the name the request carried, however the request travelled: the requested name is the served one", () => {
+  it("records no reconstructed choice when the served model is the name the request carried, however the request travelled", () => {
     const h = harness();
     const body = begin(h, event({ requestedModel: "claude-sonnet-4-5" }));
     body.chunk(bytes(sse("message_start", { type: "message_start", message: { id: "msg_1", model: "claude-sonnet-4-5", content: [], usage: { input_tokens: 5, output_tokens: 1 } } })));
     finishBody(h, body);
     h.flush();
-    const record = singleRecord(h);
-    expect(record.requestedModel).toBe(record.model);
-    expect(record).not.toHaveProperty("candidateProviders");
+    expect(singleRecord(h)).not.toHaveProperty("requestedModel");
+  });
+
+  it("records the requested name of a response that names no model, an error response above all", () => {
+    const h = harness();
+    const body = begin(h, event({ requestedModel: "claude-haiku-5-5", status: 429, headers: { "content-type": "application/json" } }));
+    finishBody(h, body);
+    h.flush();
+    expect(singleRecord(h).requestedModel).toBe("claude-haiku-5-5");
   });
 
   it("keeps an explicitly noted choice over a reconstructed one, and records its providers when there were several", () => {

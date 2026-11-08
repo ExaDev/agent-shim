@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { enrichStatuslinePayload, identityOf } from "./enrich";
-import type { UsageSnapshot } from "../usage/schema";
+import { enrichStatuslinePayload, identityOf, lastMainLoopRecord } from "./enrich";
+import { USAGE_SCHEMA_VERSION, type UsageRecord, type UsageSnapshot } from "../usage/schema";
 
 const NOW_MS = Date.parse("2026-10-15T18:00:00.000Z");
 const GEMINI_WEEKLY_USED_PERCENT = 28;
@@ -526,5 +526,34 @@ describe("a model choice among alternatives", () => {
     expect(summary.modelChoice).toEqual(modelChoice);
     const enriched = payload as { agent_shim?: { modelChoice?: unknown } };
     expect(enriched.agent_shim?.modelChoice).toEqual(modelChoice);
+  });
+});
+
+describe("the record the statusline draws a session's model from", () => {
+  const record = (overrides: Partial<UsageRecord>): UsageRecord => ({
+    schemaVersion: USAGE_SCHEMA_VERSION,
+    at: "2026-10-15T18:00:00.000Z",
+    sessionId: "s-1",
+    provider: "z",
+    route: "z",
+    method: "POST",
+    endpoint: "/v1/messages",
+    status: 200,
+    latencyMs: 1,
+    durationMs: 1,
+    outcome: "completed",
+    ...overrides,
+  });
+
+  it("passes over a helper's record, which carries the main loop's provider under a mapped name, for the main loop's own", () => {
+    const main = record({ model: "glm-5.3", requestedModel: "z/glm-5.3", requestClass: "main" });
+    const helper = record({ model: "glm-4.5-air", requestedModel: "claude-haiku-5-5", requestClass: "auxiliary" });
+    expect(lastMainLoopRecord([main, helper], "s-1")).toBe(main);
+    expect(lastMainLoopRecord([helper], "s-1")).toBeUndefined();
+  });
+
+  it("counts a record with no class as the main loop's, and keeps to the session asked for", () => {
+    const classless = record({ model: "glm-5.3" });
+    expect(lastMainLoopRecord([classless, record({ sessionId: "s-2", requestClass: "main" })], "s-1")).toBe(classless);
   });
 });
