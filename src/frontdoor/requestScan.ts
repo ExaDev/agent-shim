@@ -62,7 +62,7 @@ export async function scanRequestHead(request: RoutedRequest, wholeBody = false)
   const replay = new PassThrough();
   // Destroying the replay with the body's failure emits `error` on it, and a stream with no `error` listener turns that into an uncaught exception that ends the process. A client aborting its upload fails the body whether or not the route has attached to the replay yet, so the scan owns a listener; a consumer reading the replay still receives the same error through the stream itself.
   replay.on("error", () => undefined);
-  const modelIn = (): string | undefined => /"model"\s*:\s*"([^"]+)"/.exec(text)?.[1];
+  const modelIn = (): string | undefined => /"model"\s*:\s*"((?:[^"\\]|\\.)+)"/.exec(text)?.[1];
 
   const settled = new Promise<RequestScan>((resolve) => {
     const settle = (): void => {
