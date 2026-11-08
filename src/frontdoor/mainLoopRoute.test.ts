@@ -7,15 +7,17 @@ import { HTTP_STATUS } from "../codex/http";
 import type { CodexRoutePorts } from "../codex/route";
 import { fakeAuth, fakeResponse, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
 import { ANTIGRAVITY_DEFAULT_TIER_MODELS, CODEX_DEFAULT_TIER_MODELS, type ModelsConfig } from "../config/schema";
-import { FAKE_HOME, fakeAsyncCredentials, fakeFs, followsLaunchFlag, inMemoryRouteStore, launchOf, mainLoopRoutesOfLiveSessions } from "../test-helpers";
+import { FAKE_HOME, createFakeFarmFs, fakeAsyncCredentials, fakeFs, followsLaunchFlag, inMemoryRouteStore, launchOf, mainLoopRoutesOfLiveSessions } from "../test-helpers";
 import { createUsageMiddleware } from "../usage/middleware";
 import type { UsageRecord } from "../usage/schema";
 import { createMainLoopRouteRecord, followingMainLoop, requestClassOf, withModelInHead, type MainLoopRouteRecord } from "./mainLoopRoute";
+import { admitLaunch } from "./assembly";
+import { createLiveSessionRegistry } from "./liveSessionRegistry";
 import { serveRouted, type PipelineDeps, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
 import { AUTH_HEADER, PROVIDER_HEADER, SESSION_HEADER, type RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
-import type { FrontDoorLaunch } from "./state";
+import { writeFrontDoorSession, type FrontDoorLaunch } from "./state";
 
 const PROVIDERS_DIR = `${FAKE_HOME}/.agent-shim/providers`;
 const LAUNCH_TOKEN = "launch-token-for-tests";
@@ -163,6 +165,7 @@ async function startWorld(
   upstreamStatus: number = HTTP_STATUS.ok,
   models?: ModelsConfig,
   zTierEnv: Readonly<Record<string, string>> = { ANTHROPIC_DEFAULT_HAIKU_MODEL: Z_HAIKU_MODEL, ANTHROPIC_DEFAULT_SONNET_MODEL: Z_SONNET_MODEL, ANTHROPIC_DEFAULT_OPUS_MODEL: Z_OPUS_MODEL },
+  admit: PipelineDeps["admit"] = admitLaunchPerSession,
 ): Promise<World> {
   const upstream = await fakeUpstream(upstreamStatus);
   const gemini = await fakeGeminiBackend();
@@ -200,7 +203,7 @@ async function startWorld(
     async (pipelineRequest) => {
       await serveRouted(pipelineRequest, { resolveRoute: standingInForAnthropic(resolve, (requestClass) => {
           toAnthropic.push(requestClass);
-        }), canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [usage], admit: admitLaunchPerSession, now: () => 0, log: () => undefined });
+        }), canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [usage], admit, now: () => 0, log: () => undefined });
     },
     () => undefined,
   );
@@ -223,6 +226,17 @@ async function send(world: World, options: { readonly model: string; readonly se
     body: JSON.stringify({ model: options.model, stream: false, max_tokens: options.maxTokens ?? ORDINARY_MAX_TOKENS, messages: [{ role: "user", content: "hi" }] }),
   });
   return { status: response.status, text: await response.text() };
+}
+
+/** Sends one Messages request as a client that ignores the proxy would: only the capability the connection authenticated with, no session header and no provider. */
+async function sendBare(world: World, options: { readonly model: string; readonly requestClass: string }, token: string): Promise<{ readonly status: number }> {
+  const response = await fetch(`${world.url}/v1/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json", [AUTH_HEADER]: token, "x-claude-code-request-class": options.requestClass },
+    body: JSON.stringify({ model: options.model, stream: false, max_tokens: ORDINARY_MAX_TOKENS, messages: [{ role: "user", content: "hi" }] }),
+  });
+  await response.text();
+  return { status: response.status };
 }
 
 /** The model the codex translator sent its backend on its `index`th call. */
@@ -421,6 +435,25 @@ describe("a provider-less session's helper requests follow its main loop", () =>
       } finally {
         await world.close();
       }
+    }
+  });
+
+  it("leaves the clients of the door's own transparent-surface session out of the record, so one client's main loop is never another's route", async () => {
+    const fs = createFakeFarmFs();
+    const dir = `${FAKE_HOME}/.agent-shim/frontdoor/sessions`;
+    writeFrontDoorSession(fs, dir, { pid: 4242, startedAt: 1, token: "transparent-token" });
+    const registry = createLiveSessionRegistry({ fs, sessionsDir: dir });
+    registry.rescan();
+    const admit = admitLaunch(registry.admits, registry.identityOf, registry.launchOfToken);
+    const world = await startWorld(mainLoopRoutesOfLiveSessions(), HTTP_STATUS.ok, undefined, undefined, admit);
+    try {
+      // Redirected clients carry no session header and no provider: both share the transparent session's capability.
+      await sendBare(world, { model: "z/glm-5.3", requestClass: "main" }, "transparent-token");
+      expect((await sendBare(world, { model: HAIKU_NAME, requestClass: "subagent" }, "transparent-token")).status).toBe(HTTP_STATUS.badGateway);
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-5.3"]);
+      expect(world.toAnthropic).toEqual(["subagent"]);
+    } finally {
+      await world.close();
     }
   });
 

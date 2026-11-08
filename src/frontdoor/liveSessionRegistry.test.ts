@@ -305,6 +305,15 @@ describe("live session registry", () => {
       expect(registry.holdsLaunch({ pid: LIVE, startedAt: 1 })).toBe(false);
     });
 
+    it("names no launch for a record that carries no session id, such as the door's own transparent-surface session", () => {
+      const { fs } = countedWorld();
+      writeFrontDoorSession(fs, dir, { pid: LIVE, startedAt: 1, token: "transparent" });
+      const registry = createLiveSessionRegistry({ fs, sessionsDir: dir });
+      registry.rescan();
+      expect(registry.admits("transparent")).toBe(true);
+      expect(registry.launchOfToken("transparent")).toBeUndefined();
+    });
+
     it("names each of two live launches that carry one session id by its own token", () => {
       const { fs } = countedWorld();
       writeFrontDoorSession(fs, dir, { pid: LIVE, startedAt: 1, token: "first", ...recordOf({ sessionId: "s-shared" }) });

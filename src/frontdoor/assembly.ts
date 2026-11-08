@@ -36,7 +36,7 @@ function singleValue(value: string | readonly string[] | undefined): string | un
 }
 
 /** The client-facing listeners' admission: the request must present a live launch's capability, and is routed with its headers unchanged; it also states the identity the launch recorded, which stands for a request carrying no identity header of its own. */
-function admitLaunch(isLiveToken: (token: string) => boolean, identityOfToken: (token: string) => string | undefined, launchOfToken: (token: string) => FrontDoorLaunch | undefined): PipelineDeps["admit"] {
+export function admitLaunch(isLiveToken: (token: string) => boolean, identityOfToken: (token: string) => string | undefined, launchOfToken: (token: string) => FrontDoorLaunch | undefined): PipelineDeps["admit"] {
   return (request) => {
     const token = singleValue(request.headers[AUTH_HEADER]);
     if (token === undefined || !isLiveToken(token)) {
