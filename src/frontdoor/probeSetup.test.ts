@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { SourcePortRange } from "./connectEffects";
+import { DOOR_SOURCE_PORT_END, DOOR_SOURCE_PORT_START, SourcePortRange } from "./connectEffects";
 import { createDoorLookup, doorDial, probeAccept, runAcceptProbe, type AcceptProbeDeps, type DialSocket } from "./doorDial";
-import { probeAddressesAcceptSync, type ProbeWorkers } from "./probe";
+import { probeAddressesAcceptSync, probeListenerAcceptSync, type ProbeWorkers } from "./probe";
 
 const RANGE_START = 47_900;
 const RANGE_END = 47_902;
@@ -134,5 +134,44 @@ describe("a batch of provider probes", () => {
       { ok: false, reason: "verdict for 2" },
       { ok: false, reason: "verdict for 3" },
     ]);
+  });
+
+  it("hands each worker the door's reserved source-port range", () => {
+    const startedData: Readonly<Record<string, unknown>>[] = [];
+    const workers: ProbeWorkers = {
+      start: (_source, data) => {
+        startedData.push(data);
+        return { verdict: () => ({ ok: true }) };
+      },
+    };
+    probeAddressesAcceptSync(TARGETS, workers);
+    expect(startedData).toHaveLength(TARGETS.length);
+    for (const [index, data] of startedData.entries()) {
+      expect(data).toMatchObject({
+        host: TARGETS[index]?.host,
+        port: TARGETS[index]?.port,
+        portStart: DOOR_SOURCE_PORT_START,
+        portEnd: DOOR_SOURCE_PORT_END,
+      });
+    }
+  });
+});
+
+describe("probeListenerAcceptSync", () => {
+  it("passes the listener target and the door's reserved source-port range to its worker", () => {
+    let startedData: Readonly<Record<string, unknown>> | undefined;
+    const workers: ProbeWorkers = {
+      start: (_source, data) => {
+        startedData = data;
+        return { verdict: () => ({ ok: true }) };
+      },
+    };
+    expect(probeListenerAcceptSync(PORT, PROBE_BOUND_MS, workers)).toEqual({ ok: true });
+    expect(startedData).toEqual({
+      host: "127.0.0.1",
+      port: PORT,
+      portStart: DOOR_SOURCE_PORT_START,
+      portEnd: DOOR_SOURCE_PORT_END,
+    });
   });
 });
