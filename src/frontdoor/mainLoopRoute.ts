@@ -4,7 +4,7 @@ import { Readable } from "node:stream";
 import type { RouteResolution } from "./pipeline";
 import { PROVIDER_PATH_PREFIX, parseProviderPath, type FrontDoorRoute, type RoutedRequest } from "./route";
 import { scanRequestHead } from "./requestScan";
-import { launchKeyOf, type FrontDoorLaunch } from "./state";
+import { launchKeyOf, type FrontDoorLaunch, type MainLoopRoute } from "./state";
 
 /**
  * The header Claude Code names each request's class in. Read from the strings of Claude Code 2.1.319, which sets it on every API request whose query source it knows, with one of `REQUEST_CLASSES`; the query source itself is never sent, only this class derived from it (and, for an agent's requests, the agent type in `x-claude-code-agent-type`).
@@ -20,11 +20,8 @@ export function requestClassOf(headers: Readonly<IncomingHttpHeaders>): string |
   return typeof value === "string" && value !== "" ? value : undefined;
 }
 
-/** Where one launch's main loop last went: the Anthropic route (Claude Code's own API) or a provider by name. */
-type MainLoopRoute = { readonly kind: "anthropic" } | { readonly kind: "provider"; readonly provider: string };
-
 /**
- * What the door remembers about each launch's main loop: where its most recent main-loop request was served, so the launch's helper requests (hook judges, titles, compaction summaries, subagents, side replies) follow it there. Keyed on the launch carrying the session id (its pid and start time), not on the session id alone: a `--resume` or an account-move relaunch carries the same session id, and must start with nothing recorded.
+ * What the door remembers about each launch's main loop: where its most recent main-loop request was served, so the launch's helper requests (hook judges, titles, compaction summaries, subagents, side replies) follow it there. Keyed on the launch carrying the session id (its pid and start time), not on the session id alone: a `--resume` or an account-move relaunch carries the same session id, and must start with nothing recorded. Persisted beside the launch's registry record, so a restarted or replacing door keeps a session's helpers on the provider its main loop is on.
  */
 export interface MainLoopRouteRecord {
   /** Records where `sessionId`'s launch's latest main-loop request was served; nothing is recorded for a session id no live launch carries. */
@@ -39,6 +36,16 @@ export interface MainLoopRoutePorts {
   readonly launchOfSession: (sessionId: string) => FrontDoorLaunch | undefined;
   /** Whether a launch is still registered. */
   readonly holdsLaunch: (launch: Readonly<FrontDoorLaunch>) => boolean;
+  /** The durable copy, which lives and dies with the launch's registry entry: where a launch's main loop last went, as an earlier door process wrote it. */
+  readonly stored: {
+    readonly read: (launch: Readonly<FrontDoorLaunch>) => MainLoopRoute | undefined;
+    readonly write: (launch: Readonly<FrontDoorLaunch>, route: MainLoopRoute) => void;
+  };
+}
+
+/** Whether two routes name the same destination. */
+function sameRoute(a: MainLoopRoute, b: MainLoopRoute): boolean {
+  return a.kind === b.kind && (a.kind !== "provider" || (b.kind === "provider" && a.provider === b.provider));
 }
 
 /**
@@ -58,13 +65,26 @@ export function createMainLoopRouteRecord(ports: MainLoopRoutePorts): MainLoopRo
           routes.delete(held);
         }
       }
+      const held = routes.get(key)?.route;
       routes.set(key, { launch, route });
+      // Written only when it changes: the main loop's every request records, and the route rarely moves.
+      if (held === undefined || !sameRoute(held, route)) {
+        ports.stored.write(launch, route);
+      }
     },
     routeOf: (sessionId) => {
       const launch = ports.launchOfSession(sessionId);
       const key = launch === undefined ? undefined : launchKeyOf(launch);
       const entry = key === undefined ? undefined : routes.get(key);
-      return entry?.route;
+      if (entry !== undefined || launch === undefined || key === undefined) {
+        return entry?.route;
+      }
+      // Nothing in memory: this door has not served the launch's main loop, or is not the process that did.
+      const stored = ports.stored.read(launch);
+      if (stored !== undefined) {
+        routes.set(key, { launch, route: stored });
+      }
+      return stored;
     },
   };
 }

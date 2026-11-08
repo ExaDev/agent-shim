@@ -58,6 +58,10 @@ export type FrontDoorSession = z.infer<typeof FrontDoorSessionSchema>;
 /** What names one launch: its launcher's pid and the time it registered. A launcher that registers again under its own pid (a relaunch after an account move, a `--resume`) writes a new start time, so per-launch state the door keeps never passes from one launch to the next, even when both carry the same session id. */
 export type FrontDoorLaunch = Pick<FrontDoorSession, "pid" | "startedAt">;
 
+/** Where a launch's main loop last went: the Anthropic route (Claude Code's own API) or a provider by name. */
+export const MainLoopRouteSchema = z.union([z.strictObject({ kind: z.literal("anthropic") }), z.strictObject({ kind: z.literal("provider"), provider: z.string().min(1) })]);
+export type MainLoopRoute = z.infer<typeof MainLoopRouteSchema>;
+
 /** The key one launch is known by in a map. */
 export function launchKeyOf(launch: Readonly<FrontDoorLaunch>): string {
   return `${String(launch.pid)}-${String(launch.startedAt)}`;
@@ -302,11 +306,23 @@ export function recordOf(details: FrontDoorSessionDetails | undefined): Pick<Fro
   return details === undefined ? {} : { sessionId: details.sessionId, ...(details.identity === undefined ? {} : { identity: details.identity }), ...(details.models === undefined ? {} : { models: details.models }) };
 }
 
+/** The durable store a door keeps launches' main-loop routes in: the registry directory, which outlives any door process. */
+export function launchRouteStore(fs: HeadroomFs, sessionsDir: string): { readonly read: (launch: Readonly<FrontDoorLaunch>) => MainLoopRoute | undefined; readonly write: (launch: Readonly<FrontDoorLaunch>, route: MainLoopRoute) => void } {
+  return {
+    read: (launch) => readLaunchRoute(fs, sessionsDir, launch),
+    write: (launch, route) => {
+      writeLaunchRoute(fs, sessionsDir, launch, route);
+    },
+  };
+}
+
 /**
  * Writes one launch's session record: the registry entry that both keeps the door from idling out and holds the token that launch's requests must present. The token is a bearer capability, so the directory is created owner-only (0700) and the record written owner-only (0600): on a multi-user host another local account must be able neither to list nor to read it, since presenting it to a listener would spend the victim's provider credential or Codex login.
  */
 export function writeFrontDoorSession(fs: HeadroomFs, sessionsDir: string, session: Readonly<FrontDoorSession>): void {
   fs.mkdirPrivate(sessionsDir);
+  // A launch registering again under this pid is a new launch: the route the pid's earlier launch left is not its own.
+  fs.removeRecursive(path.join(sessionsDir, launchRouteName(session.pid)));
   fs.writeFilePrivate(path.join(sessionsDir, sessionRecordName(session.pid)), `${JSON.stringify(session, null, 2)}\n`);
 }
 
@@ -320,7 +336,30 @@ export function sessionRecordName(pid: number): string {
 
 /** Whether `name` is a registry entry's file name, as opposed to anything else a directory listing returns. */
 export function isSessionRecordName(name: string): boolean {
-  return name.endsWith(".json");
+  return /^[1-9]\d*\.json$/.test(name);
+}
+
+/** The file beside launcher `pid`'s registry record that holds where the launch's main loop last went. Not a field of the record: the launcher owns the record, and a door rewriting it could overwrite a launcher that registered again in the meantime. */
+function launchRouteName(pid: number): string {
+  return `${String(pid)}.route.json`;
+}
+
+const LaunchRouteFileSchema = z.strictObject({ startedAt: z.number(), route: MainLoopRouteSchema });
+
+/** Records where `launch`'s main loop last went, in the registry directory beside the launch's own record, so a restarted or replacing door finds it and the launch's helper requests keep following it. */
+export function writeLaunchRoute(fs: HeadroomFs, sessionsDir: string, launch: Readonly<FrontDoorLaunch>, route: MainLoopRoute): void {
+  fs.mkdirPrivate(sessionsDir);
+  fs.writeFilePrivate(path.join(sessionsDir, launchRouteName(launch.pid)), `${JSON.stringify({ startedAt: launch.startedAt, route })}\n`);
+}
+
+/** Where `launch`'s main loop last went, or undefined when none was recorded, the file is unreadable, or it belongs to an earlier launch under the same pid (a different start time). */
+export function readLaunchRoute(fs: Pick<HeadroomFs, "readFileUtf8">, sessionsDir: string, launch: Readonly<FrontDoorLaunch>): MainLoopRoute | undefined {
+  try {
+    const parsed = LaunchRouteFileSchema.safeParse(JSON.parse(fs.readFileUtf8(path.join(sessionsDir, launchRouteName(launch.pid))) ?? ""));
+    return parsed.success && parsed.data.startedAt === launch.startedAt ? parsed.data.route : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** What a registry record shows without its capability: the one projection every listing uses, so a token can never ride along into something that prints or serialises a session. */
@@ -352,9 +391,10 @@ export function listFrontDoorSessions(fs: HeadroomFs, sessionsDir: string): read
   return sessions.sort((a, b) => a.pid - b.pid);
 }
 
-/** Removes one launcher's registry entry, and with it that launch's capability. Idempotent. */
+/** Removes one launcher's registry entry, and with it that launch's capability and its recorded main-loop route. Idempotent. */
 export function removeFrontDoorSession(fs: HeadroomFs, sessionsDir: string, pid: number): void {
   fs.removeRecursive(path.join(sessionsDir, sessionRecordName(pid)));
+  fs.removeRecursive(path.join(sessionsDir, launchRouteName(pid)));
 }
 
 /**
