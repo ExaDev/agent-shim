@@ -1,5 +1,4 @@
 import { spawnSyncBlocking } from "./blockingSpawn";
-import { noteLocalWork } from "./blockingSteps";
 import { refuseToBlockInRole } from "./processRole";
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -37,7 +36,6 @@ function isEnoent(error: unknown): boolean {
 export const realFsPort: FsPort = {
   sameDirectory,
   fileRevision(filePath) {
-    noteLocalWork();
     try {
       const stat = fs.statSync(filePath, { bigint: true });
       return [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].map(String).join(":");
@@ -47,7 +45,6 @@ export const realFsPort: FsPort = {
     }
   },
   readFileUtf8(filePath) {
-    noteLocalWork();
     try {
       return fs.readFileSync(filePath, "utf8");
     } catch (error) {
@@ -59,7 +56,6 @@ export const realFsPort: FsPort = {
   },
   readConfigFile: cosmiconfigReader(),
   readdir(dirPath) {
-    noteLocalWork();
     try {
       return fs.readdirSync(dirPath);
     } catch (error) {
@@ -121,7 +117,6 @@ function flushDirectory(directory: string): void {
 
 export const realFarmFs: FarmFs = {
   lstat(filePath) {
-    noteLocalWork();
     let stat: fs.Stats;
     try {
       stat = fs.lstatSync(filePath);
@@ -135,7 +130,6 @@ export const realFarmFs: FarmFs = {
     return { kind, mtimeMs: stat.mtimeMs, sizeBytes: stat.size };
   },
   readdir(dirPath) {
-    noteLocalWork();
     try {
       return fs.readdirSync(dirPath);
     } catch (error) {
@@ -161,7 +155,6 @@ export const realFarmFs: FarmFs = {
     fs.cpSync(from, to, { recursive: true, force: true, verbatimSymlinks: true });
   },
   readFileUtf8(filePath) {
-    noteLocalWork();
     try {
       return fs.readFileSync(filePath, "utf8");
     } catch (error) {
@@ -843,7 +836,6 @@ function realStatFileMode(candidate: string): number | undefined {
 
 /** Looks for a file literally named `name` inside `dir` and confirms it's runnable. Exported so `src/claudeShim.ts`'s PATH-shadow and shim-redirect checks can reuse the exact same semantics `discoverClaudeBinary`'s own PATH fallback already uses, rather than shelling out to a shell builtin like `command -v`. Real-wired convenience over `resolveExecutableCandidate` — see that function for the actual decision logic and its own tests. */
 export function findExecutableInDir(dir: string, name: string): string | undefined {
-  noteLocalWork();
   return resolveExecutableCandidate(dir, name, {
     platform: process.platform,
     pathext: process.env.PATHEXT,

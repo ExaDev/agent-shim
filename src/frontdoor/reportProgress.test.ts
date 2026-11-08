@@ -98,4 +98,21 @@ describe("local work announcements", () => {
     noteLocalWork();
     expect(written).toHaveLength(1 + 2 + 1);
   });
+
+  it("counts a synchronous call of the file system module as local work, and puts it back on uninstall", () => {
+    const written: string[] = [];
+    let clock = 0;
+    const module = { statSync: () => "stat" };
+    const original = module.statSync;
+    const stop = installReportProgress({ [REPORT_PROGRESS_FD_ENV]: String(DESCRIPTOR) }, (_fd, text) => { written.push(text); }, () => clock, module);
+    uninstall = stop;
+    expect(module.statSync()).toBe("stat");
+    expect(written).toEqual([]);
+    clock = LOCAL_WORK_ANNOUNCE_INTERVAL_MS;
+    expect(module.statSync()).toBe("stat");
+    expect(written).toEqual(["work\n"]);
+    stop?.();
+    uninstall = undefined;
+    expect(module.statSync).toBe(original);
+  });
 });

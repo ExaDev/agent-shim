@@ -1,6 +1,5 @@
 import fs from "node:fs";
 
-import { noteLocalWork } from "./blockingSteps";
 import { ConfigFileNotJsonError, ConfigValidationError } from "./config/load";
 import { writeJsonAtomic } from "./config/store";
 import { parseIgnoringUnrecognisedKeys, noteIgnoredKeys } from "./config/unrecognisedKeys";
@@ -159,7 +158,6 @@ function parseProviderFile(filePath: string, raw: unknown): Provider {
 
 /** Reads and validates one provider definition, or undefined when it does not exist. Throws `ConfigFileNotJsonError` for a file that is not JSON, and what `parseProviderFile` throws for one that is not a valid definition. */
 export function readProvider(paths: LayoutPaths, name: string): Provider | undefined {
-  noteLocalWork();
   const filePath = providerJsonPath(paths, name);
   if (!fs.existsSync(filePath)) {
     return undefined;

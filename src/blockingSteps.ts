@@ -40,3 +40,31 @@ export function withBlockingStep<T>(declaredBoundMs: number | undefined, run: (b
 export function noteLocalWork(): void {
   observer?.localWork();
 }
+
+/** The suffix every synchronous function of `node:fs` carries. */
+const SYNC_SUFFIX = "Sync";
+
+/**
+ * Makes every synchronous function of `fsModule` (every export whose name ends in `Sync`) note a unit of local work before it runs, which is the one place a loop over the user's files can be seen from: a loop written later is counted without naming this module. Returns what puts the originals back. Meant for a process that reports progress (a report child) and applied to the one module object every importer shares, so an import written as a property access at the call site (as a bundler emits it) is wrapped as well.
+ */
+export function noteFileSystemWork(fsModule: object): () => void {
+  const originals = new Map<string, unknown>();
+  for (const name of Object.keys(fsModule).filter((candidate) => candidate.endsWith(SYNC_SUFFIX))) {
+    const original: unknown = Reflect.get(fsModule, name);
+    if (typeof original !== "function") {
+      continue;
+    }
+    const wrapped = function (this: unknown, ...args: readonly unknown[]): unknown {
+      noteLocalWork();
+      return Reflect.apply(original, this, args);
+    };
+    Object.defineProperties(wrapped, Object.getOwnPropertyDescriptors(original));
+    originals.set(name, original);
+    Reflect.set(fsModule, name, wrapped);
+  }
+  return () => {
+    for (const [name, original] of originals) {
+      Reflect.set(fsModule, name, original);
+    }
+  };
+}

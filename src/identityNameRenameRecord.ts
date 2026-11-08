@@ -1,6 +1,4 @@
 import fs from "node:fs";
-
-import { noteLocalWork } from "./blockingSteps";
 import path from "node:path";
 
 import { z } from "zod";
@@ -49,7 +47,6 @@ function readRecordFiles(paths: LayoutPaths): readonly RecordFile[] {
     return [];
   }
   return fs.readdirSync(paths.identityNameRenamesDir).flatMap((entry) => {
-    noteLocalWork();
     if (!entry.endsWith(RECORD_SUFFIX)) {
       return [];
     }

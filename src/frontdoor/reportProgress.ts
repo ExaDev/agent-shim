@@ -1,6 +1,6 @@
 import fs from "node:fs";
 
-import { observeBlockingSteps } from "../blockingSteps";
+import { noteFileSystemWork, observeBlockingSteps } from "../blockingSteps";
 import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS } from "../providerReachability";
 
 /** The environment variable that tells a report child which file descriptor to announce its blocking steps on. Set by the door that starts the child, read by `installReportProgress`. */
@@ -68,9 +68,9 @@ export function createReportProgressReader(onEvent: (event: ReportProgress) => v
 }
 
 /**
- * Makes this process announce each of its blocking steps on the descriptor `env` names (`REPORT_PROGRESS_FD_ENV`), and gives a step that names no bound `REPORT_UNBOUNDED_STEP_LIMIT_MS`; nothing happens when `env` names no descriptor. `write` is `fs.writeSync` and `now` the monotonic clock in production; `work` is announced at most once per `LOCAL_WORK_ANNOUNCE_INTERVAL_MS`, counted from the last announcement of any kind. Returns what stops the announcing, or undefined when it was never started.
+ * Makes this process announce each of its blocking steps on the descriptor `env` names (`REPORT_PROGRESS_FD_ENV`), gives a step that names no bound `REPORT_UNBOUNDED_STEP_LIMIT_MS`, and counts every synchronous call of `fsModule` (`node:fs`) as local work (`noteFileSystemWork`); nothing happens when `env` names no descriptor. `write` is `fs.writeSync` and `now` the monotonic clock in production; `work` is announced at most once per `LOCAL_WORK_ANNOUNCE_INTERVAL_MS`, counted from the last announcement of any kind. Returns what stops the announcing, or undefined when it was never started.
  */
-export function installReportProgress(env: Readonly<Record<string, string | undefined>>, write: (fd: number, text: string) => void = (fd, text) => { fs.writeSync(fd, text); }, now: () => number = () => performance.now()): (() => void) | undefined {
+export function installReportProgress(env: Readonly<Record<string, string | undefined>>, write: (fd: number, text: string) => void = (fd, text) => { fs.writeSync(fd, text); }, now: () => number = () => performance.now(), fsModule: object = fs): (() => void) | undefined {
   const fd = env[REPORT_PROGRESS_FD_ENV];
   if (fd === undefined) {
     return undefined;
@@ -81,7 +81,7 @@ export function installReportProgress(env: Readonly<Record<string, string | unde
     lastAnnouncedMs = now();
     write(descriptor, encodeReportProgress(event));
   };
-  return observeBlockingSteps({
+  const stopObserving = observeBlockingSteps({
     begin: (boundMs) => { announce({ kind: "begin", boundMs }); },
     end: () => { announce({ kind: "end" }); },
     localWork: () => {
@@ -91,4 +91,9 @@ export function installReportProgress(env: Readonly<Record<string, string | unde
     },
     unboundedStepLimitMs: REPORT_UNBOUNDED_STEP_LIMIT_MS,
   });
+  const restoreFileSystem = noteFileSystemWork(fsModule);
+  return () => {
+    restoreFileSystem();
+    stopObserving();
+  };
 }

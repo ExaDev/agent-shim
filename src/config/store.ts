@@ -3,7 +3,6 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { z } from "zod";
 
-import { noteLocalWork } from "../blockingSteps";
 import { ConfigFileNotJsonError, ConfigValidationError } from "./load";
 import { noteIgnoredKeys, parseIgnoringUnrecognisedKeys, restoreIgnoredKeys } from "./unrecognisedKeys";
 
@@ -35,7 +34,6 @@ function isEnoent(error: unknown): boolean {
 /** The real `node:fs`-backed implementation of `StoreFs`, used by every CLI adapter in normal operation. */
 export const nodeStoreFs: StoreFs = {
   readFileUtf8(filePath) {
-    noteLocalWork();
     try {
       return fs.readFileSync(filePath, "utf8");
     } catch (error) {
