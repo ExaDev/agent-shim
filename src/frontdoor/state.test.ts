@@ -8,7 +8,7 @@ import * as state from "./state";
 import path from "node:path";
 import { catalogueCachePath } from "../providerCatalogue";
 import { MAX_TCP_PORT } from "../baseUrlDial";
-import { recordOf, listFrontDoorDirectRecords, listFrontDoorSessions, pruneMalformedFrontDoorDirectFiles, pruneDeadFrontDoorSessions, readFrontDoorCodexHome, readFrontDoorCodexRecord, readFrontDoorState, removeFrontDoorSession, writeFrontDoorCodexHome, writeFrontDoorSession, writeFrontDoorState } from "./state";
+import { recordOf, listFrontDoorDirectRecords, listFrontDoorSessions, pruneMalformedFrontDoorDirectFiles, pruneDeadFrontDoorSessions, readFrontDoorCodexHome, readFrontDoorCodexRecord, readFrontDoorState, readLaunchRoute, removeFrontDoorSession, writeFrontDoorCodexHome, writeFrontDoorSession, writeFrontDoorState, writeLaunchRoute } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 
@@ -149,6 +149,36 @@ describe("front-door session registry", () => {
     removeFrontDoorSession(fs, paths.frontdoorSessionsDir, LIVE);
     removeFrontDoorSession(fs, paths.frontdoorSessionsDir, LIVE);
     expect(listFrontDoorSessions(fs, paths.frontdoorSessionsDir)).toEqual([]);
+  });
+
+  it("keeps a launch's main-loop route beside its record, for that launch only, and removes it with the record", () => {
+    const fs = createFakeFarmFs({});
+    const dir = paths.frontdoorSessionsDir;
+    writeFrontDoorSession(fs, dir, { pid: LIVE, startedAt: 1, token: "t" });
+    writeLaunchRoute(fs, dir, { pid: LIVE, startedAt: 1 }, { kind: "provider", provider: "z" });
+    expect(readLaunchRoute(fs, dir, { pid: LIVE, startedAt: 1 })).toEqual({ kind: "provider", provider: "z" });
+    // The route file is no registry record: a listing and the live registry see one launch.
+    expect(listFrontDoorSessions(fs, dir).map((session) => session.pid)).toEqual([LIVE]);
+    expect(createLiveSessionRegistry({ fs, sessionsDir: dir }).rescan()).toHaveLength(1);
+    // Another start time under the same pid is another launch.
+    expect(readLaunchRoute(fs, dir, { pid: LIVE, startedAt: 2 })).toBeUndefined();
+    removeFrontDoorSession(fs, dir, LIVE);
+    expect(readLaunchRoute(fs, dir, { pid: LIVE, startedAt: 1 })).toBeUndefined();
+    expect(fs.readdir(dir)).toEqual([]);
+  });
+
+  it("drops the route an earlier launch left under a pid when a launcher registers under it again", () => {
+    const fs = createFakeFarmFs({});
+    const dir = paths.frontdoorSessionsDir;
+    writeFrontDoorSession(fs, dir, { pid: LIVE, startedAt: 1, token: "first" });
+    writeLaunchRoute(fs, dir, { pid: LIVE, startedAt: 1 }, { kind: "anthropic" });
+    writeFrontDoorSession(fs, dir, { pid: LIVE, startedAt: 2, token: "second" });
+    expect(fs.readdir(dir)).toEqual([`${String(LIVE)}.json`]);
+  });
+
+  it("reads no route from a malformed route file", () => {
+    const fs = createFakeFarmFs({ [`${paths.frontdoorSessionsDir}/${String(LIVE)}.route.json`]: "not json" });
+    expect(readLaunchRoute(fs, paths.frontdoorSessionsDir, { pid: LIVE, startedAt: 1 })).toBeUndefined();
   });
 
   it("writes the registry directory owner-only and each capability record owner-only", () => {

@@ -21,7 +21,7 @@ import type { DiscoveredClaudeBinary } from "./versionDiscovery";
 import type { PipelineDeps } from "./frontdoor/pipeline";
 import { AUTH_HEADER } from "./frontdoor/route";
 import { createMainLoopRouteRecord, type MainLoopRoutePorts, type MainLoopRouteRecord } from "./frontdoor/mainLoopRoute";
-import type { FrontDoorLaunch } from "./frontdoor/state";
+import { launchKeyOf, type FrontDoorLaunch, type MainLoopRoute } from "./frontdoor/state";
 import type { FrontDoorSessionDetails } from "./frontdoor/state";
 
 /** The shipped classification map, parsed once, for use as the default in tests. */
@@ -494,6 +494,17 @@ export function fakeFrontDoorEnv(identity?: string, extra: Readonly<Record<strin
   };
 }
 
+/** A durable route store held in memory, standing for the registry directory that outlives a door process. */
+export function inMemoryRouteStore(): MainLoopRoutePorts["stored"] {
+  const held = new Map<string, MainLoopRoute>();
+  return {
+    read: (launch) => held.get(launchKeyOf(launch)),
+    write: (launch, route) => {
+      held.set(launchKeyOf(launch), route);
+    },
+  };
+}
+
 /** The registry ports of a world in which every session id is carried by its own live launch for ever, for tests whose sessions have no registry record to bound the main-loop route record by. */
 function everyLaunchLive(): MainLoopRoutePorts {
   const launches = new Map<string, FrontDoorLaunch>();
@@ -504,6 +515,7 @@ function everyLaunchLive(): MainLoopRoutePorts {
       return held;
     },
     holdsLaunch: () => true,
+    stored: inMemoryRouteStore(),
   };
 }
 

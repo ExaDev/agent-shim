@@ -95,7 +95,7 @@ import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_COOLDOWN_CAP_MS, DOOR_RESPAWN_DELAY_EN
 import { PROBE_TIMEOUT_MS } from "./probe";
 import { readFrontDoorListeners, realFrontDoorListenerProbes } from "./listenerReadings";
 import { collectFrontDoorStatus, formatFrontDoorListeners, formatFrontDoorStatus, headroomSocketTarget } from "./status";
-import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, removeFrontDoorSession, writeCatalogueStatus, writeFrontDoorSession } from "./state";
+import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, launchRouteStore, removeFrontDoorSession, writeCatalogueStatus, writeFrontDoorSession } from "./state";
 import { declareThisProcessTheFrontDoor } from "./selfIdentity";
 import { awaitPidExit, runFrontDoorSupervisor, watchedInstallEntry, type FrontDoorSupervisorPorts, type OwnExecutableStat } from "./supervisor";
 import { createAccountReader } from "../usage/account";
@@ -324,7 +324,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       ...(rcSelfHostSurface === undefined ? {} : { rcSelfHostRoute: rcSelfHostSurface.route }),
       log, now: () => Date.now(),
       // Where each provider-less session's main loop last went, which its helper requests follow: held for as long as the registry view holds the launch, and empty again after a restart until each session's next main-loop request.
-      mainLoopRoutes: createMainLoopRouteRecord(sessionRegistry),
+      mainLoopRoutes: createMainLoopRouteRecord({ launchOfSession: sessionRegistry.launchOfSession, holdsLaunch: sessionRegistry.holdsLaunch, stored: launchRouteStore(realFarmFs, paths.frontdoorSessionsDir) }),
     }),
     rcTracker,
     rcHub,

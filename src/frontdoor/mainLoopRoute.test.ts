@@ -6,7 +6,7 @@ import { HTTP_STATUS } from "../codex/http";
 import type { CodexRoutePorts } from "../codex/route";
 import { fakeAuth, fakeResponse, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
 import { ANTIGRAVITY_DEFAULT_TIER_MODELS, CODEX_DEFAULT_TIER_MODELS } from "../config/schema";
-import { FAKE_HOME, admitLaunchToken, fakeAsyncCredentials, fakeFs, followsLaunchFlag, mainLoopRoutesOfLiveSessions } from "../test-helpers";
+import { FAKE_HOME, admitLaunchToken, fakeAsyncCredentials, fakeFs, followsLaunchFlag, inMemoryRouteStore, mainLoopRoutesOfLiveSessions } from "../test-helpers";
 import { createUsageMiddleware } from "../usage/middleware";
 import type { UsageRecord } from "../usage/schema";
 import { createMainLoopRouteRecord, type MainLoopRoutePorts, type MainLoopRouteRecord } from "./mainLoopRoute";
@@ -253,6 +253,40 @@ describe("a provider-less session's helper requests follow its main loop", () =>
     }
   });
 
+  it("keeps a session's helpers on its provider across a door restart, a subagent included", async () => {
+    const stored = inMemoryRouteStore();
+    const ports = { launchOfSession: () => ({ pid: 1, startedAt: 1 }), holdsLaunch: () => true, stored };
+    const first = await startWorld(createMainLoopRouteRecord(ports));
+    try {
+      await send(first, { model: "z/glm-5.3", requestClass: "main" });
+    } finally {
+      await first.close();
+    }
+    // The replacement door has the registry directory and nothing else.
+    const second = await startWorld(createMainLoopRouteRecord(ports));
+    try {
+      expect((await send(second, { model: HAIKU_NAME, requestClass: "subagent" })).status).toBe(HTTP_STATUS.ok);
+      expect(second.upstream.seen.map((seen) => seen.model)).toEqual([Z_HAIKU_MODEL]);
+      expect(second.toAnthropic).toEqual([]);
+    } finally {
+      await second.close();
+    }
+  });
+
+  it("fails a helper naming the provider when the provider its main loop was on is no longer defined", async () => {
+    const stored = inMemoryRouteStore();
+    stored.write({ pid: 1, startedAt: 1 }, { kind: "provider", provider: "removed" });
+    const world = await startWorld(createMainLoopRouteRecord({ launchOfSession: () => ({ pid: 1, startedAt: 1 }), holdsLaunch: () => true, stored }));
+    try {
+      const helper = await send(world, { model: HAIKU_NAME, requestClass: "auxiliary" });
+      expect(helper.status).toBe(HTTP_STATUS.notFound);
+      expect(helper.text).toContain('no provider named \\"removed\\"');
+      expect(world.toAnthropic).toEqual([]);
+    } finally {
+      await world.close();
+    }
+  });
+
   it("leaves a session launched on a provider routing by its launch header, helpers included", async () => {
     const record = mainLoopRoutesOfLiveSessions();
     const world = await startWorld(record);
@@ -300,9 +334,10 @@ describe("a provider-less session's helper requests follow its main loop", () =>
 
 describe("the main-loop route record", () => {
   /** A registry whose launches the test starts and ends, each by session id. */
-  function registryOf(): MainLoopRoutePorts & { readonly start: (sessionId: string, startedAt: number) => void; readonly end: (sessionId: string) => void } {
+  function registryOf(stored: MainLoopRoutePorts["stored"] = inMemoryRouteStore()): MainLoopRoutePorts & { readonly start: (sessionId: string, startedAt: number) => void; readonly end: (sessionId: string) => void } {
     const launches = new Map<string, FrontDoorLaunch>();
     return {
+      stored,
       launchOfSession: (sessionId) => launches.get(sessionId),
       holdsLaunch: (launch) => [...launches.values()].some((held) => held.pid === launch.pid && held.startedAt === launch.startedAt),
       start: (sessionId, startedAt) => {
@@ -339,6 +374,39 @@ describe("the main-loop route record", () => {
     registry.end("s-resumed");
     registry.start("s-resumed", 2);
     expect(record.routeOf("s-resumed")).toBeUndefined();
+  });
+
+  it("is found again by a record built later over the same store, as after a door restart, and by that launch only", () => {
+    const stored = inMemoryRouteStore();
+    const before = registryOf(stored);
+    before.start("s-a", 1);
+    createMainLoopRouteRecord(before).record("s-a", { kind: "provider", provider: "z" });
+    // A new door process: nothing in memory, the registry still holds the launch.
+    const after = registryOf(stored);
+    after.start("s-a", 1);
+    after.start("s-relaunched", 2);
+    const restarted = createMainLoopRouteRecord(after);
+    expect(restarted.routeOf("s-a")).toEqual({ kind: "provider", provider: "z" });
+    expect(restarted.routeOf("s-relaunched")).toBeUndefined();
+  });
+
+  it("writes the store only when the route changes", () => {
+    const writes: string[] = [];
+    const base = inMemoryRouteStore();
+    const registry = registryOf({
+      read: base.read,
+      write: (launch, route) => {
+        writes.push(route.kind === "provider" ? route.provider : route.kind);
+        base.write(launch, route);
+      },
+    });
+    registry.start("s-a", 1);
+    const record = createMainLoopRouteRecord(registry);
+    record.record("s-a", { kind: "provider", provider: "z" });
+    record.record("s-a", { kind: "provider", provider: "z" });
+    record.record("s-a", { kind: "anthropic" });
+    record.record("s-a", { kind: "anthropic" });
+    expect(writes).toEqual(["z", "anthropic"]);
   });
 
   it("records nothing for a session id no live launch carries", () => {
