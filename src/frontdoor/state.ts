@@ -391,6 +391,12 @@ export function listFrontDoorSessions(fs: HeadroomFs, sessionsDir: string): read
   return sessions.sort((a, b) => a.pid - b.pid);
 }
 
+/** The pid a route file's name belongs to, or undefined for any other name. */
+function routeFilePid(name: string): number | undefined {
+  const match = /^([1-9]\d*)\.route\.json$/.exec(name);
+  return match?.[1] === undefined ? undefined : Number(match[1]);
+}
+
 /** Removes one launcher's registry entry, and with it that launch's capability and its recorded main-loop route. Idempotent. */
 export function removeFrontDoorSession(fs: HeadroomFs, sessionsDir: string, pid: number): void {
   fs.removeRecursive(path.join(sessionsDir, sessionRecordName(pid)));
@@ -401,6 +407,8 @@ export function removeFrontDoorSession(fs: HeadroomFs, sessionsDir: string, pid:
  * Removes every entry of `listed` whose launcher is no longer running, so a dead launch's capability stops being accepted and cannot keep the door awake. The predicate must be zombie-aware, as for headroom's.
  *
  * `listed` is the listing `isRunning` was computed over, never a fresh read of the directory: a launch that registered after that listing was taken has not been checked, so the predicate would call it dead and delete a live session's capability.
+ *
+ * It also removes every route file with no registry record beside it. The door writes a route after finding its launch, and a prune between the two leaves the file behind; a launch registering under that pid later removes it itself, but until then nothing would. A route file is only ever written for a launch whose record exists, so one without a record is a leftover, and a launch that registered after the listing has its record and keeps its file.
  */
 export function pruneDeadFrontDoorSessions(fs: HeadroomFs, sessionsDir: string, listed: readonly FrontDoorSessionSummary[], isRunning: (pid: number) => boolean): readonly number[] {
   const removed: number[] = [];
@@ -408,6 +416,13 @@ export function pruneDeadFrontDoorSessions(fs: HeadroomFs, sessionsDir: string, 
     if (!isRunning(session.pid)) {
       removeFrontDoorSession(fs, sessionsDir, session.pid);
       removed.push(session.pid);
+    }
+  }
+  const names = fs.readdir(sessionsDir);
+  for (const name of names) {
+    const pid = routeFilePid(name);
+    if (pid !== undefined && !names.includes(sessionRecordName(pid))) {
+      fs.removeRecursive(path.join(sessionsDir, name));
     }
   }
   return removed;

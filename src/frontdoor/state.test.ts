@@ -143,6 +143,17 @@ describe("front-door session registry", () => {
     expect(registry.admits("dead-token")).toBe(false);
   });
 
+  it("removes a route file whose registry record is gone, as when the supervisor pruned the launch between the lookup and the write, and keeps one whose record exists", () => {
+    const fs = createFakeFarmFs({});
+    writeFrontDoorSession(fs, paths.frontdoorSessionsDir, { pid: LIVE, startedAt: 0, token: "live-token" });
+    writeLaunchRoute(fs, paths.frontdoorSessionsDir, { pid: LIVE, startedAt: 0 }, { kind: "provider", provider: "z" });
+    writeLaunchRoute(fs, paths.frontdoorSessionsDir, { pid: DEAD, startedAt: 0 }, { kind: "provider", provider: "z" });
+    pruneDeadFrontDoorSessions(fs, paths.frontdoorSessionsDir, listFrontDoorSessions(fs, paths.frontdoorSessionsDir), (pid) => pid === LIVE);
+    expect(readLaunchRoute(fs, paths.frontdoorSessionsDir, { pid: DEAD, startedAt: 0 })).toBeUndefined();
+    expect(fs.readdir(paths.frontdoorSessionsDir)).not.toContain(`${String(DEAD)}.route.json`);
+    expect(readLaunchRoute(fs, paths.frontdoorSessionsDir, { pid: LIVE, startedAt: 0 })).toEqual({ kind: "provider", provider: "z" });
+  });
+
   it("removes one launcher's record idempotently", () => {
     const fs = createFakeFarmFs({});
     writeFrontDoorSession(fs, paths.frontdoorSessionsDir, { pid: LIVE, startedAt: 0, token: "t" });
