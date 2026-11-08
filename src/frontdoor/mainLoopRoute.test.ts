@@ -799,6 +799,12 @@ describe("rewriting the model field in a body's head", () => {
     return Buffer.concat(out);
   }
 
+  it("rewrites a model key written with whitespace before its colon, as the scan finds it", async () => {
+    const body = Buffer.from('{"model" : "' + HAIKU_NAME + '", "messages": []}', "utf8");
+    const out = await rewrittenBytes([body], body.length, HAIKU_NAME, "glm-4.5-air");
+    expect(out.toString("utf8")).toBe('{"model":"glm-4.5-air", "messages": []}');
+  });
+
   it("changes only the model field and leaves a multi-byte character split across the head's end, and everything after, byte for byte", async () => {
     const body = Buffer.from(JSON.stringify({ model: HAIKU_NAME, messages: [{ role: "user", content: "日本語の会話🙂".repeat(REPEATS) }] }), "utf8");
     // The head ends inside a three-byte character, and the chunks split the body at other odd places too.

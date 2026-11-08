@@ -187,7 +187,7 @@ function asBytes(value: string): string {
  * `request` with the model field in the first `headBytes` bytes of its body changed from `from` to `to`, and every other byte, the head's and the rest's, passed through exactly as it came: the rest streams on under the replay's backpressure and is never held. Unlike `withModel` it needs no copy of the body, which is what lets a helper that carries a whole conversation be rewritten without reading it. The framing header goes, because the new name is a different length.
  */
 export function withModelInHead(request: RoutedRequest, headBytes: number, from: string, to: string): RoutedRequest {
-  const pattern = new RegExp('"model":\\s*"' + asBytes(from).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + '"');
+  const pattern = new RegExp('"model"\\s*:\\s*"' + asBytes(from).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + '"');
   const rewriteHead = (head: Buffer): Buffer => Buffer.from(head.toString("latin1").replace(pattern, () => `"model":${asBytes(JSON.stringify(to))}`), "latin1");
   async function* rewritten(): AsyncGenerator<Buffer> {
     let held = Buffer.alloc(0);
@@ -221,7 +221,7 @@ export function withModelInHead(request: RoutedRequest, headBytes: number, from:
  */
 export function withModel(request: RoutedRequest, text: string, from: string, to: string): RoutedRequest {
   // A function replacement, so nothing in the new name is read as a replacement pattern.
-  const rewritten = text.replace(new RegExp('"model":\\s*"' + from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + '"'), () => `"model":${JSON.stringify(to)}`);
+  const rewritten = text.replace(new RegExp('"model"\\s*:\\s*"' + from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + '"'), () => `"model":${JSON.stringify(to)}`);
   const headers = Object.fromEntries(Object.entries(request.headers).filter(([name]) => name.toLowerCase() !== "content-length"));
   return { ...request, headers, body: Readable.from([Buffer.from(rewritten, "utf8")]) };
 }
