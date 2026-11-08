@@ -1,6 +1,9 @@
 import { refuseToBlockInRole } from "../processRole";
 import { Worker } from "node:worker_threads";
 
+import { DOOR_SOURCE_PORT_END, DOOR_SOURCE_PORT_START, SourcePortRange } from "./connectEffects";
+import { createDoorLookup, doorDial, probeAccept } from "./doorDial";
+
 /** The outcome of authenticating the listener a front-door state file names. */
 export type ListenerVerdict = { readonly ok: true } | { readonly ok: false; readonly reason: string };
 
@@ -99,28 +102,32 @@ export function probeFrontDoorSync(port: number, caPem: string, timeoutMs: numbe
 }
 
 /**
- * The accept probe, run on a worker thread for the same reason: one TCP connect to `host` that succeeds as soon as the listener accepts and is closed again at once, so nothing is sent to the surface it asks about.
+ * The accept probe, run on a worker thread for the same reason: the door's own dial (`doorDial`, over the door's lookup and from its reserved source ports for a name), so what passes is what the door itself can connect to, closed the moment it connects so nothing is sent to the listener. The worker cannot load this bundle, so it is handed the source text of the dial's functions and of `SourcePortRange`, each of which references nothing but its own parameters.
  */
 const ACCEPT_PROBE_SOURCE = `
 const { workerData } = require("node:worker_threads");
 const net = require("node:net");
-const { host, port, timeoutMs, shared, ok, failed, headerSlots } = workerData;
+const dns = require("node:dns");
+const { host, port, portStart, portEnd, timeoutMs, shared, ok, failed, headerSlots } = workerData;
 const header = new Int32Array(shared, 0, headerSlots);
 const reason = new Uint8Array(shared, headerSlots * 4);
-let done = false;
 const finish = (verdict, message) => {
-  if (done) return;
-  done = true;
   const bytes = Buffer.from(String(message), "utf8").subarray(0, reason.length);
   reason.set(bytes);
   Atomics.store(header, 1, bytes.length);
   Atomics.store(header, 0, verdict);
   Atomics.notify(header, 0);
 };
-const socket = net.connect({ host, port });
-socket.once("connect", () => { socket.destroy(); finish(ok, ""); });
-socket.once("error", (error) => finish(failed, (error.code ? error.code + ": " : "") + error.message));
-setTimeout(() => { socket.destroy(); finish(failed, "no connection accepted within " + String(timeoutMs) + "ms"); }, timeoutMs);
+const SourcePortRange = ${SourcePortRange.toString()};
+const createDoorLookup = ${createDoorLookup.toString()};
+const doorDial = ${doorDial.toString()};
+const probeAccept = ${probeAccept.toString()};
+const lookup = createDoorLookup({ isIP: net.isIP, resolve4: (name, callback) => { dns.resolve4(name, callback); } });
+const io = { connect: (options) => net.connect(options), lookup, isIP: net.isIP };
+const startTimer = (callback, ms) => { const timer = setTimeout(callback, ms); return () => { clearTimeout(timer); }; };
+probeAccept(() => doorDial(io, { host, port }, new SourcePortRange(portStart, portEnd)), timeoutMs, startTimer).then((verdict) => {
+  finish(verdict.ok ? ok : failed, verdict.ok ? "" : verdict.reason);
+});
 `;
 
 /**
@@ -128,15 +135,15 @@ setTimeout(() => { socket.destroy(); finish(failed, "no connection accepted with
  */
 export function probeListenerAcceptSync(port: number, timeoutMs: number = PROBE_TIMEOUT_MS): ListenerVerdict {
   refuseToBlockInRole("a synchronous probe of a front door listener");
-  return runProbeWorker(ACCEPT_PROBE_SOURCE, { host: "127.0.0.1", port }, timeoutMs);
+  return runProbeWorker(ACCEPT_PROBE_SOURCE, { host: "127.0.0.1", port, portStart: DOOR_SOURCE_PORT_START, portEnd: DOOR_SOURCE_PORT_END }, timeoutMs);
 }
 
 /**
- * Whether anything at `host`:`port` accepts a TCP connection within `timeoutMs`: one connect (the name resolved by the system resolver, as any dial would), closed again the moment it is accepted, so no request reaches the listener. What `doctor`, `check` and a launch ask of a provider's base URL.
+ * Whether the door's own dial reaches `host`:`port` within `timeoutMs`: one connect, closed again the moment it is accepted, so no request reaches the listener. What `doctor`, `check` and a launch ask of a provider's base URL.
  */
 export function probeAddressAcceptSync(host: string, port: number, timeoutMs: number): ListenerVerdict {
   refuseToBlockInRole("a synchronous probe of a provider's address");
-  return runProbeWorker(ACCEPT_PROBE_SOURCE, { host, port }, timeoutMs);
+  return runProbeWorker(ACCEPT_PROBE_SOURCE, { host, port, portStart: DOOR_SOURCE_PORT_START, portEnd: DOOR_SOURCE_PORT_END }, timeoutMs);
 }
 
 /** Runs one probe source on a worker thread and blocks this thread on its verdict, whatever the probe asks, for at most `timeoutMs` plus the margin the waiting thread allows the worker's own timeout verdict. */
