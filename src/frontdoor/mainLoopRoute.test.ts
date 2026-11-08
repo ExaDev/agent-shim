@@ -293,6 +293,37 @@ describe("a provider-less session's helper requests follow its main loop", () =>
     }
   });
 
+  it("serves every request of a launch whose route store fails to write, on the route kept in memory, and reports the failure once", async () => {
+    const lines: string[] = [];
+    const record = createMainLoopRouteRecord({
+      holdsLaunch: () => true,
+      stored: {
+        read: () => undefined,
+        write: () => {
+          throw new Error("disk full");
+        },
+      },
+      log: (line) => {
+        lines.push(line);
+      },
+    });
+    const world = await startWorld(record);
+    try {
+      expect((await send(world, { model: "z/glm-5.3", requestClass: "main" })).status).toBe(HTTP_STATUS.ok);
+      expect((await send(world, { model: HAIKU_NAME, requestClass: "auxiliary" })).status).toBe(HTTP_STATUS.ok);
+      expect((await send(world, { model: "cx/gpt-5.6", requestClass: "main" })).status).toBe(HTTP_STATUS.ok);
+      expect((await send(world, { model: HAIKU_NAME, requestClass: "subagent" })).status).toBe(HTTP_STATUS.ok);
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-5.3", Z_HAIKU_MODEL]);
+      expect(codexModel(world, 1)).toBe(CODEX_DEFAULT_TIER_MODELS.haiku);
+      expect(world.toAnthropic).toEqual([]);
+      expect(lines).toHaveLength(1);
+      // The door's own log prefixes the process, so the line starts with the subsystem and repeats no product name.
+      expect(lines[0]).toMatch(/^front door: could not record where launch \d+'s main loop went.*disk full$/);
+    } finally {
+      await world.close();
+    }
+  });
+
   it("sends a helper to an http provider under its tier variable's model name without the context marker the variable may carry", async () => {
     const world = await startWorld(mainLoopRoutesOfLiveSessions(), HTTP_STATUS.ok, undefined, { ANTHROPIC_DEFAULT_HAIKU_MODEL: `${Z_HAIKU_MODEL}[1m]` });
     try {
