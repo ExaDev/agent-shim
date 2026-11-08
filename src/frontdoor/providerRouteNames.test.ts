@@ -27,7 +27,7 @@ function codexPorts(): Omit<CodexRoutePorts, "loadProvider"> {
 }
 
 function resolver(files: Record<string, unknown>, models?: ModelsConfig, accountMoves?: (sessionId: string, to: string, model: string) => Promise<boolean>): ReturnType<typeof createProviderRouteResolver> {
-  return createProviderRouteResolver({
+  return createProviderRouteResolver({ log: () => undefined, now: () => 0,
     fs: fakeFs(files),
     providersDir: PROVIDERS_DIR,
     codexPorts: codexPorts(),

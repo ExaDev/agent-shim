@@ -36,7 +36,7 @@ describe("createProviderRouteResolver and a provider file that is not JSON", () 
     const upstream = recordingFetch(() => {
       throw new Error("a refused request must not reach an upstream");
     });
-    const resolve = createProviderRouteResolver({
+    const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0,
       fs: { ...fakeFs({}), readConfigFile: cosmiconfigReader() },
       providersDir,
       codexPorts: { upstreams: sameUpstreamForEveryLogin({ fetch: upstream.fetch, auth: fakeAuth(), timers: { after: () => () => undefined }, randomId: () => "random" }), writeUsageSnapshot: () => undefined, now: () => 0, log: () => undefined },

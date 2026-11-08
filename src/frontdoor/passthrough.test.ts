@@ -4,12 +4,19 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
 import { admitLaunchToken, followsLaunchFlag } from "../test-helpers";
-import { createPassthroughRoute } from "./passthrough";
+import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS } from "../providerReachability";
+import { armConnectDeadline, createPassthroughRoute, type PassthroughTarget } from "./passthrough";
 import { serveRouted } from "./pipeline";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
 import { AUTH_HEADER, HEADROOM_FLAG_HEADER, IDENTITY_HEADER } from "./route";
 
 const servers: http.Server[] = [];
+
+/** A connect bound short enough that a test waiting it out stays quick, and far above what a loopback connect takes, so a reachable loopback upstream never trips it. */
+const SHORT_CONNECT_BOUND_MS = 200;
+
+/** An address reserved for documentation (RFC 5737) that nothing answers: where the machine routes it, the SYN goes unanswered and only the connect bound ends the wait. */
+const UNANSWERED_BASE_URL = "http://192.0.2.1:9";
 
 /** Characters in a refusal body that put it past what the route holds to read (16,384 bytes). */
 const REFUSAL_BODY_PAST_LIMIT = 20_000;
@@ -67,8 +74,8 @@ async function fakeUpstream(): Promise<{ readonly port: number; readonly seen: (
 }
 
 /** Starts a door serving exactly one pass-through route at the given target. */
-async function startDoor(target: { readonly baseUrl: string; readonly stripPrefix: string | undefined; readonly headroomUpstream: string | undefined }): Promise<{ readonly url: string; readonly close: () => Promise<void> }> {
-  const route = createPassthroughRoute("http:z", target);
+async function startDoor(target: { readonly baseUrl: string; readonly stripPrefix: string | undefined; readonly headroomUpstream: string | undefined } & Partial<Pick<PassthroughTarget, "connectTimeoutMs" | "couldNotConnect">>): Promise<{ readonly url: string; readonly close: () => Promise<void> }> {
+  const route = createPassthroughRoute("http:z", { subject: "provider z", connectTimeoutMs: DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS, couldNotConnect: () => undefined, ...target });
   const server = createFrontDoorServer(
     async (request) => {
       await serveRouted(request, {
@@ -243,13 +250,76 @@ describe("the pass-through route", () => {
       });
     });
     servers.splice(servers.indexOf(probe), 1);
-    const door = await startDoor({ baseUrl: `http://127.0.0.1:${String(deadPort)}`, stripPrefix: "/providers/z", headroomUpstream: undefined });
+    const told: string[] = [];
+    const baseUrl = `http://127.0.0.1:${String(deadPort)}`;
+    const door = await startDoor({ baseUrl, stripPrefix: "/providers/z", headroomUpstream: undefined, couldNotConnect: (line) => {
+      told.push(line);
+    } });
     try {
       const response = await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", headers: { [AUTH_HEADER]: "launch-token-for-tests" }, body: "{}" });
       expect(response.status).toBe(HTTP_STATUS.badGateway);
-      expect(await response.json()).toMatchObject({ type: "error", error: { type: "api_error" } });
+      expect(told).toHaveLength(1);
+      expect(told[0]).toMatch(new RegExp(`^provider z could not connect to ${baseUrl.replaceAll(".", "\\.")}: .*ECONNREFUSED`));
+      // The client is answered with the same line the log is told.
+      expect(await response.json()).toMatchObject({ type: "error", error: { type: "api_error", message: told[0] } });
     } finally {
       await door.close();
     }
+  });
+
+  it("gives up on an upstream that never accepts the connection after its connect bound, naming the provider and its base URL", async () => {
+    // Where the machine does not route the address the dial fails at once instead; either way the client hears the provider could not be connected to, long before the operating system's own connect timeout.
+    const told: string[] = [];
+    const door = await startDoor({ baseUrl: UNANSWERED_BASE_URL, stripPrefix: "/providers/z", headroomUpstream: undefined, connectTimeoutMs: SHORT_CONNECT_BOUND_MS, couldNotConnect: (line) => {
+      told.push(line);
+    } });
+    try {
+      const response = await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", headers: { [AUTH_HEADER]: "launch-token-for-tests" }, body: "{}" });
+      expect(response.status).toBe(HTTP_STATUS.badGateway);
+      expect(told).toHaveLength(1);
+      expect(told[0]).toMatch(/^provider z could not connect to http:\/\/192\.0\.2\.1:9: /);
+      expect(await response.json()).toMatchObject({ type: "error", error: { type: "api_error", message: told[0] } });
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("bounds only the connect: an upstream that accepts at once and answers after the connect bound is served", async () => {
+    const server = http.createServer((_request, response) => {
+      setTimeout(() => {
+        response.writeHead(HTTP_STATUS.ok, { "content-type": "application/json" });
+        response.end('{"ok":true}');
+      }, SHORT_CONNECT_BOUND_MS + SHORT_CONNECT_BOUND_MS);
+    });
+    const port = await listen(server);
+    const door = await startDoor({ baseUrl: `http://127.0.0.1:${String(port)}`, stripPrefix: "/providers/z", headroomUpstream: undefined, connectTimeoutMs: SHORT_CONNECT_BOUND_MS });
+    try {
+      const response = await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", headers: { [AUTH_HEADER]: "launch-token-for-tests" }, body: "{}" });
+      expect(response.status).toBe(HTTP_STATUS.ok);
+      expect(await response.json()).toEqual({ ok: true });
+    } finally {
+      await door.close();
+    }
+  });
+});
+
+describe("armConnectDeadline", () => {
+  /** An agent whose dial never settles: the stand-in for a host that never answers the SYN, reached through the asynchronous dial form the door's reserved-port agent uses. */
+  class NeverConnectingAgent extends http.Agent {
+    createConnection(): undefined {
+      return undefined;
+    }
+  }
+
+  it("destroys a request whose connection has not opened within the bound, and says it never connected", async () => {
+    const forward = http.request({ host: "127.0.0.1", port: 9, agent: new NeverConnectingAgent() });
+    let connection: { readonly connected: () => boolean } | undefined;
+    const error = await new Promise<Error>((resolve) => {
+      connection = armConnectDeadline(forward, SHORT_CONNECT_BOUND_MS, resolve);
+      forward.end();
+    });
+    expect(forward.destroyed).toBe(true);
+    expect(error.message).toBe(`no connection within ${String(SHORT_CONNECT_BOUND_MS)}ms`);
+    expect(connection?.connected()).toBe(false);
   });
 });

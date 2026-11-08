@@ -5,6 +5,7 @@ import { admitEverything, followsLaunchFlag } from "../test-helpers";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS } from "../providerReachability";
 import { createPassthroughRoute } from "./passthrough";
 import { serveRouted } from "./pipeline";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
@@ -58,7 +59,7 @@ describe("the added hop's latency", () => {
       response.end('{"ok":true}');
     });
     const upstreamPort = await listen(upstream);
-    const route = createPassthroughRoute("http:z", { baseUrl: `http://127.0.0.1:${String(upstreamPort)}`, stripPrefix: "/providers/z", headroomUpstream: undefined });
+    const route = createPassthroughRoute("http:z", { baseUrl: `http://127.0.0.1:${String(upstreamPort)}`, stripPrefix: "/providers/z", headroomUpstream: undefined, subject: "provider z", connectTimeoutMs: DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS, couldNotConnect: () => undefined });
     const door = createFrontDoorServer(
       async (request) => {
         await serveRouted(request, { resolveRoute: async () => await Promise.resolve({ ok: true, route }), canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [], admit: admitEverything, now: () => 0, log: () => undefined });
