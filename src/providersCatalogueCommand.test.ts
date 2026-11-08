@@ -45,6 +45,28 @@ it("shows a cached Codex catalogue belonging to the current account", async () =
   expect(parsed).toMatchObject({ listed: ["gpt-test"] });
 });
 
+it.each([["text", []], ["JSON", ["--json"]]])("redacts the userinfo and query of a Codex catalogue's URL in the %s of provider models", async (_format, flags) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-provider-models-url-"));
+  roots.push(root);
+  const paths = buildLayoutPaths(root);
+  const codexHome = path.join(root, "codex");
+  vi.stubEnv("CODEX_HOME", codexHome);
+  fs.mkdirSync(paths.providersDir, { recursive: true });
+  fs.mkdirSync(paths.catalogueDir, { recursive: true });
+  fs.mkdirSync(codexHome, { recursive: true });
+  fs.writeFileSync(path.join(paths.providersDir, "c.json"), JSON.stringify({ kind: "codex", displayName: "C", credential: { sources: [{ literal: "unused" }] } }));
+  fs.writeFileSync(path.join(codexHome, "auth.json"), JSON.stringify({ tokens: { access_token: "account-token", account_id: "workspace" } }));
+  fs.writeFileSync(path.join(paths.catalogueDir, "c.json"), JSON.stringify({ fetchedAt: 1, url: "https://user:hunter2@example.test/models?key=abc123", models: [{ id: "gpt-test" }], credentialFingerprint: catalogueCredentialFingerprint(true, "account-token", "workspace") }));
+  const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+  const program = new Command().exitOverride();
+  registerProviderCommand(program, fakeCommandDeps(paths));
+  await program.parseAsync(["provider", "models", "c", ...flags], { from: "user" });
+  const output = log.mock.calls.map((call) => String(call[0])).join("\n");
+  expect(output).toContain("https://example.test/models");
+  expect(output).not.toContain("hunter2");
+  expect(output).not.toContain("abc123");
+});
+
 it("shows the serving front door's isolated Codex catalogue", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-provider-models-"));
   roots.push(root);
