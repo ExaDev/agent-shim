@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { displayBaseUrl } from "./baseUrlDisplay";
+import { displayBaseUrl, redactUrlIn } from "./baseUrlDisplay";
 
 describe("displayBaseUrl", () => {
   it("drops userinfo, query and fragment", () => {
@@ -17,5 +17,13 @@ describe("displayBaseUrl", () => {
     expect(displayBaseUrl("https://host/?key=x")).toBe("https://host/");
     expect(displayBaseUrl("https://host/#frag")).toBe("https://host/");
     expect(displayBaseUrl("https://host#frag")).toBe("https://host");
+  });
+});
+
+describe("redactUrlIn", () => {
+  it("replaces the URL as written and as normalised, leaving the rest of the text", () => {
+    const written = "https://user:pw@HOST/api?key=k";
+    const text = `bad ${written} and ${new URL(written).href}`;
+    expect(redactUrlIn(text, written)).toBe("bad https://host/api and https://host/api");
   });
 });

@@ -2,7 +2,7 @@ import picomatch from "picomatch";
 import path from "node:path";
 import { z } from "zod";
 
-import { displayBaseUrl } from "./baseUrlDisplay";
+import { displayBaseUrl, redactUrlIn } from "./baseUrlDisplay";
 import type { ResolvedCredential } from "./credential";
 import type { HttpProvider, ProviderCatalogue } from "./config/schema";
 import type { LayoutPaths } from "./paths";
@@ -182,7 +182,7 @@ export async function fetchCatalogue(params: Readonly<FetchCatalogueParams>): Pr
       }
       outcomes.push(`${displayBaseUrl(url)}: ${succeeded ? "no models listed" : `status ${String(response.status)}`}`);
     } catch (error) {
-      outcomes.push(`${displayBaseUrl(url)}: ${error instanceof Error ? error.message : String(error)}`);
+      outcomes.push(`${displayBaseUrl(url)}: ${redactUrlIn(error instanceof Error ? error.message : String(error), url)}`);
     }
   }
   throw new CatalogueFetchError(`no catalogue from ${outcomes.join("; ")}`);

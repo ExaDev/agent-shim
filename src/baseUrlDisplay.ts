@@ -6,3 +6,11 @@ export function displayBaseUrl(baseUrl: string): string {
   const writtenBeforeQuery = baseUrl.split(/[?#]/, 1)[0] ?? baseUrl;
   return `${url.protocol}//${url.host}${url.pathname === "/" && !writtenBeforeQuery.endsWith("/") ? "" : url.pathname}`;
 }
+
+/**
+ * `text` with every occurrence of `url`, as written and as `URL` normalises it, replaced by `displayBaseUrl(url)`: for an error message a dial or fetch raised, which quotes the URL it was given whole (userinfo and query included). Only the URL as a whole is replaced, and that is how the platform quotes it.
+ */
+export function redactUrlIn(text: string, url: string): string {
+  const shown = displayBaseUrl(url);
+  return text.split(url).join(shown).split(new URL(url).href).join(shown);
+}
