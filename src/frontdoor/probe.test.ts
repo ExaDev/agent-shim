@@ -224,6 +224,9 @@ describe("a probe worker that fails", () => {
 
   /** How many times shorter than the start limit a prompt wake must be: a wake that did not happen waits out the whole limit, and a loaded machine's start-up and scheduling stay well inside half of it. */
   const PROMPT_WAKE_DIVISOR = 2;
+  /** How many start limits the probe bound of a test is whose waiter must be woken by the failure handler alone. */
+  const LOST_WAKE_START_LIMITS = 6;
+  const LOST_WAKE_BOUND_MS = PROBE_WORKER_START_LIMIT_MS * LOST_WAKE_START_LIMITS;
 
   function failureReason(source: string): string {
     const verdict = startProbeWorker(source, {}, STARTUP_PROBE_BOUND_MS).verdict();
@@ -259,11 +262,11 @@ describe("a probe worker that fails", () => {
   const claimAndStoreSilently = (verdict: string): string => `{ const slots = new Int32Array(workerData.shared, 0, workerData.headerSlots); Atomics.compareExchange(slots, workerData.claimSlot, 0, 1); Atomics.store(slots, 0, ${verdict}); }`;
 
   it("keeps the verdict a worker published before it failed, since only the first verdict counts", () => {
-    // The only wake is the failure handler's, which comes after the claimed `ok` was stored: a handler that overwrote the verdict would be read. The probe's bound is the start limit, so a wake that never came would wait out the bound and not return promptly.
+    // The only wake is the failure handler's, which comes after the claimed `ok` was stored: a handler that overwrote the verdict would be read. The probe's bound is many start limits, so a wake that never came would wait out that bound, far past what even a heavily loaded host takes to start a worker and run its handler.
     const source = `${WORKER_DATA_SOURCE}\n${STARTED_SIGNAL_SOURCE}\n${SETTLE_SOURCE}\n${claimAndStoreSilently("workerData.ok")}\nthrow new Error(${JSON.stringify(FAILURE_MESSAGE)});`;
     const startedAt = performance.now();
-    expect(startProbeWorker(source, {}, PROBE_WORKER_START_LIMIT_MS).verdict()).toEqual({ ok: true });
-    expect(performance.now() - startedAt).toBeLessThan(PROBE_WORKER_START_LIMIT_MS / PROMPT_WAKE_DIVISOR);
+    expect(startProbeWorker(source, {}, LOST_WAKE_BOUND_MS).verdict()).toEqual({ ok: true });
+    expect(performance.now() - startedAt).toBeLessThan(LOST_WAKE_BOUND_MS / PROMPT_WAKE_DIVISOR);
   });
 
   it("keeps a failure when an ok is written after it", () => {
