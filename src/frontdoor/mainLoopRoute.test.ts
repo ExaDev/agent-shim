@@ -27,8 +27,12 @@ const SECOND_SPLIT = 5;
 /** The output budget of an ordinary request, as against a quota check's single token. */
 const ORDINARY_MAX_TOKENS = 16;
 const HAIKU_NAME = "claude-haiku-5-5";
-/** The model the `http` provider's own tier environment names for the haiku tier. */
+/** The models the `http` provider's own tier environment names for each tier. */
 const Z_HAIKU_MODEL = "glm-4.5-air";
+const Z_SONNET_MODEL = "glm-4.7";
+const Z_OPUS_MODEL = "glm-5.3-pro";
+/** The models an http provider serves per tier, as the tier environment names them. */
+const Z_TIER_MODELS = { haiku: Z_HAIKU_MODEL, sonnet: Z_SONNET_MODEL, opus: Z_OPUS_MODEL } as const;
 
 /** A complete Responses API text turn, the shape the codex translator turns into an Anthropic reply. */
 const TEXT_TURN = [
@@ -132,6 +136,8 @@ interface World {
   readonly url: string;
   readonly upstream: { readonly seen: UpstreamSeen[] };
   readonly codexCalls: readonly { readonly init: { readonly body?: string } }[];
+  /** The model each generation call the antigravity provider's backend received named. */
+  readonly generated: readonly string[];
   readonly records: UsageRecord[];
   /** The class of each request that reached the stand-in for the Anthropic route. */
   readonly toAnthropic: string[];
@@ -141,12 +147,14 @@ interface World {
 /** A door serving an `http` provider `z` (whose tier environment maps haiku) and a `codex` provider `cx`, with the usage middleware recording into `records`. */
 async function startWorld(record: MainLoopRouteRecord = mainLoopRoutesOfLiveSessions(), upstreamStatus: number = HTTP_STATUS.ok, models?: ModelsConfig): Promise<World> {
   const upstream = await fakeUpstream(upstreamStatus);
+  const gemini = await fakeGeminiBackend();
   const codexFetch = recordingFetch(() => fakeResponse({ events: TEXT_TURN }));
   const codexPorts = codexPortsOver(codexFetch.fetch);
   const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0,
     mainLoopRoutes: record,
     fs: fakeFs({
-      [`${PROVIDERS_DIR}/z.json`]: { displayName: "Z", baseUrl: `http://127.0.0.1:${String(upstream.port)}`, credential: { sources: [{ literal: "z-token" }] }, env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: Z_HAIKU_MODEL } },
+      [`${PROVIDERS_DIR}/z.json`]: { displayName: "Z", baseUrl: `http://127.0.0.1:${String(upstream.port)}`, credential: { sources: [{ literal: "z-token" }] }, env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: Z_HAIKU_MODEL, ANTHROPIC_DEFAULT_SONNET_MODEL: Z_SONNET_MODEL, ANTHROPIC_DEFAULT_OPUS_MODEL: Z_OPUS_MODEL } },
+      [`${PROVIDERS_DIR}/ag.json`]: { kind: "antigravity", displayName: "Antigravity", credential: { sources: [{ literal: "ag-token" }] }, antigravity: { mode: "cloud", cloud: { endpoint: gemini.endpoint } } },
       [`${PROVIDERS_DIR}/cx.json`]: { kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "placeholder" }] } },
 
       [`${PROVIDERS_DIR}/r.json`]: { kind: "router", displayName: "Router" },
@@ -179,11 +187,11 @@ async function startWorld(record: MainLoopRouteRecord = mainLoopRoutesOfLiveSess
     () => undefined,
   );
   const handle = await listenFrontDoor(server);
-  return { url: `http://127.0.0.1:${String(handle.port)}`, upstream, codexCalls: codexFetch.calls, records, toAnthropic, close: handle.close };
+  return { url: `http://127.0.0.1:${String(handle.port)}`, upstream, codexCalls: codexFetch.calls, generated: gemini.generated, records, toAnthropic, close: handle.close };
 }
 
 /** Sends one Messages request as a launch's child would: its capability, its session id, and, when given, the class Claude Code states and a launch provider. */
-async function send(world: World, options: { readonly model: string; readonly session?: string; readonly requestClass?: string; readonly provider?: string; readonly maxTokens?: number }): Promise<{ readonly status: number; readonly text: string }> {
+async function send(world: World, options: { readonly model: string; readonly session?: string; readonly requestClass?: string; readonly agentId?: string; readonly provider?: string; readonly maxTokens?: number }): Promise<{ readonly status: number; readonly text: string }> {
   const response = await fetch(`${world.url}/v1/messages`, {
     method: "POST",
     headers: {
@@ -191,6 +199,7 @@ async function send(world: World, options: { readonly model: string; readonly se
       [AUTH_HEADER]: LAUNCH_TOKEN,
       [SESSION_HEADER]: options.session ?? "s-1",
       ...(options.requestClass === undefined ? {} : { "x-claude-code-request-class": options.requestClass }),
+      ...(options.agentId === undefined ? {} : { "x-claude-code-agent-id": options.agentId }),
       ...(options.provider === undefined ? {} : { [PROVIDER_HEADER]: options.provider }),
     },
     body: JSON.stringify({ model: options.model, stream: false, max_tokens: options.maxTokens ?? ORDINARY_MAX_TOKENS, messages: [{ role: "user", content: "hi" }] }),
@@ -355,6 +364,148 @@ describe("a provider-less session's helper requests follow its main loop", () =>
         { provider: "z", status: HTTP_STATUS.tooManyRequests, requestClass: "main", requestedModel: "z/glm-5.3" },
         { provider: "z", status: HTTP_STATUS.tooManyRequests, requestClass: "auxiliary", requestedModel: HAIKU_NAME },
       ]);
+    } finally {
+      await world.close();
+    }
+  });
+});
+
+/** Every Claude name a subagent asks for, with the tier it selects: the versioned names and the unversioned family names. */
+const CLAUDE_NAMES = [
+  ["claude-opus-5-5", "opus"],
+  ["opus", "opus"],
+  ["claude-sonnet-5-5", "sonnet"],
+  ["sonnet", "sonnet"],
+  ["claude-haiku-5-5", "haiku"],
+  ["haiku", "haiku"],
+] as const;
+const AGENT_CLASSES = ["subagent", "workflow"] as const;
+/** One case per class and Claude name. */
+const SUBAGENT_CASES = AGENT_CLASSES.flatMap((requestClass) => CLAUDE_NAMES.map(([name, tier]) => ({ requestClass, name, tier })));
+
+describe("a subagent or workflow request follows the provider its main loop is on, under that provider's tier mapping", () => {
+  it.each(SUBAGENT_CASES)("on an http provider: $requestClass asking for $name is served as the provider's $tier model", async ({ requestClass, name, tier }) => {
+    const world = await startWorld();
+    try {
+      await send(world, { model: "z/glm-5.3", requestClass: "main" });
+      expect((await send(world, { model: name, requestClass })).status).toBe(HTTP_STATUS.ok);
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-5.3", Z_TIER_MODELS[tier]]);
+      expect(world.toAnthropic).toEqual([]);
+    } finally {
+      await world.close();
+    }
+  });
+
+  it.each(SUBAGENT_CASES)("on a codex provider: $requestClass asking for $name is served as the codex $tier model", async ({ requestClass, name, tier }) => {
+    const world = await startWorld();
+    try {
+      await send(world, { model: "cx/gpt-5.6", requestClass: "main" });
+      expect((await send(world, { model: name, requestClass })).status).toBe(HTTP_STATUS.ok);
+      expect(codexModel(world, 1)).toBe(CODEX_DEFAULT_TIER_MODELS[tier]);
+      expect(world.toAnthropic).toEqual([]);
+    } finally {
+      await world.close();
+    }
+  });
+
+  it.each(SUBAGENT_CASES)("on an antigravity provider: $requestClass asking for $name is served as the antigravity $tier model", async ({ requestClass, name, tier }) => {
+    const world = await startWorld();
+    try {
+      await send(world, { model: "ag/auto", requestClass: "main" });
+      expect((await send(world, { model: name, requestClass })).status).toBe(HTTP_STATUS.ok);
+      expect(world.generated).toHaveLength(2);
+      expect(world.generated[1]).toBe(ANTIGRAVITY_DEFAULT_TIER_MODELS[tier][0]);
+      expect(world.toAnthropic).toEqual([]);
+    } finally {
+      await world.close();
+    }
+  });
+
+  it.each(SUBAGENT_CASES)("on a router provider: $requestClass asking for $name goes through the models block's $tier pointer", async ({ requestClass, name, tier }) => {
+    const stored = inMemoryRouteStore();
+    stored.write({ pid: 1, startedAt: 1 }, { kind: "provider", provider: "r" });
+    const world = await startWorld(createMainLoopRouteRecord({ launchOfSession: () => ({ pid: 1, startedAt: 1 }), holdsLaunch: () => true, stored }), HTTP_STATUS.ok, { tiers: { haiku: "z/glm-5.3-haiku", sonnet: "z/glm-5.3-sonnet", opus: "z/glm-5.3-opus" } });
+    try {
+      expect((await send(world, { model: name, requestClass })).status).toBe(HTTP_STATUS.ok);
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual([`glm-5.3-${tier}`]);
+      expect(world.toAnthropic).toEqual([]);
+    } finally {
+      await world.close();
+    }
+  });
+
+  it.each(AGENT_CLASSES)("leaves a %s that inherits the main model, and so arrives with its qualified name, exactly as it is", async (requestClass) => {
+    const world = await startWorld();
+    try {
+      await send(world, { model: "z/glm-5.3", requestClass: "main" });
+      expect((await send(world, { model: "z/glm-5.3", requestClass })).status).toBe(HTTP_STATUS.ok);
+      // The same name as the main loop, not a tier-mapped one.
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-5.3", "glm-5.3"]);
+      expect(world.toAnthropic).toEqual([]);
+    } finally {
+      await world.close();
+    }
+  });
+
+  it.each(AGENT_CLASSES)("sends a %s of a session whose main loop is on Anthropic to Anthropic, whatever Claude name it asks for", async (requestClass) => {
+    const world = await startWorld();
+    try {
+      await send(world, { model: "claude-opus-5-5", requestClass: "main" });
+      await send(world, { model: "claude-sonnet-5-5", requestClass });
+      await send(world, { model: HAIKU_NAME, requestClass });
+      expect(world.toAnthropic).toEqual(["main", requestClass, requestClass]);
+      expect(world.upstream.seen).toEqual([]);
+      expect(world.codexCalls).toEqual([]);
+      expect(world.generated).toEqual([]);
+    } finally {
+      await world.close();
+    }
+  });
+
+  it("keeps a subagent across a door restart on the provider, asking for any tier", async () => {
+    const stored = inMemoryRouteStore();
+    const ports = { launchOfSession: () => ({ pid: 1, startedAt: 1 }), holdsLaunch: () => true, stored };
+    const first = await startWorld(createMainLoopRouteRecord(ports));
+    try {
+      await send(first, { model: "z/glm-5.3", requestClass: "main" });
+    } finally {
+      await first.close();
+    }
+    const second = await startWorld(createMainLoopRouteRecord(ports));
+    try {
+      await send(second, { model: "claude-opus-5-5", requestClass: "subagent" });
+      await send(second, { model: "claude-sonnet-5-5", requestClass: "workflow" });
+      expect(second.upstream.seen.map((seen) => seen.model)).toEqual([Z_OPUS_MODEL, Z_SONNET_MODEL]);
+      expect(second.toAnthropic).toEqual([]);
+    } finally {
+      await second.close();
+    }
+  });
+});
+
+describe("a session launched before the class header was asked for", () => {
+  it("sends a request carrying only an agent id, which Claude Code attaches to every non-main agent's request whatever the header setting, to the main loop's provider", async () => {
+    const world = await startWorld();
+    try {
+      await send(world, { model: "z/glm-5.3" });
+      expect((await send(world, { model: "claude-opus-5-5", agentId: "agent-1" })).status).toBe(HTTP_STATUS.ok);
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-5.3", Z_OPUS_MODEL]);
+      expect(world.toAnthropic).toEqual([]);
+      // The agent's request did not move the main loop: a request with neither header is still the main loop's.
+      expect((await send(world, { model: "z/glm-5.3" })).status).toBe(HTTP_STATUS.ok);
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-5.3", Z_OPUS_MODEL, "glm-5.3"]);
+    } finally {
+      await world.close();
+    }
+  });
+
+  it("still counts a request with neither header as the main loop, which re-points the record", async () => {
+    const world = await startWorld();
+    try {
+      await send(world, { model: "z/glm-5.3" });
+      await send(world, { model: "claude-opus-5-5" });
+      await send(world, { model: "claude-sonnet-5-5", agentId: "agent-1" });
+      expect(world.toAnthropic).toEqual(["(no class)", "(no class)"]);
     } finally {
       await world.close();
     }
@@ -530,6 +681,14 @@ describe("the request class header", () => {
     expect(requestClassOf({ "X-Claude-Code-Request-Class": "side_reply" })).toBe("side_reply");
     expect(requestClassOf({ "x-claude-code-request-class": "something-new" })).toBe("unknown");
     expect(requestClassOf({ "x-claude-code-request-class": "" })).toBe("unknown");
+  });
+
+  it("is subagent for a request that names no class but carries an agent id, the one signal of a subagent a launch not asked for the class header still sends, and the stated class wins over it", () => {
+    expect(requestClassOf({ "x-claude-code-agent-id": "agent-1" })).toBe("subagent");
+    expect(requestClassOf({ "X-Claude-Code-Agent-Id": "agent-1" })).toBe("subagent");
+    expect(requestClassOf({ "x-claude-code-agent-id": "" })).toBeUndefined();
+    expect(requestClassOf({ "x-claude-code-agent-id": "agent-1", "x-claude-code-request-class": "main" })).toBe("main");
+    expect(requestClassOf({ "x-claude-code-agent-id": "agent-1", "x-claude-code-request-class": "workflow" })).toBe("workflow");
   });
 
   it("is unknown for a header sent twice, which Node joins into one string, and never carries the client's own text", () => {

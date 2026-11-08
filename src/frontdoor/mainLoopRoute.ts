@@ -12,16 +12,22 @@ import { launchKeyOf, type FrontDoorLaunch, type MainLoopRoute } from "./state";
  */
 const REQUEST_CLASS_HEADER = "x-claude-code-request-class";
 
+/**
+ * The header Claude Code 2.1.319 names the requesting agent's id in. It is attached to every request made from a non-main agent context (a subagent, a workflow's agent, a teammate) whatever `CLAUDE_CODE_GATEWAY_HINT_HEADERS` says, since only the class and agent-type headers sit behind that gate, and never to a request made from the main thread's own context. So it identifies a subagent request for a session launched without the class header.
+ */
+const AGENT_ID_HEADER = "x-claude-code-agent-id";
+
 /** The class of a request on the conversation's own loop: the turns the person drives, which are what `/model` changes. */
 const MAIN_REQUEST_CLASS = "main";
 
 /**
- * The request's class as the client stated it: one of the classes Claude Code sends, `unknown` for any other value (a repeated header, which Node joins into one string, included, so a client-chosen string is neither logged nor echoed), and undefined when it sent none (a launch whose child was not asked for the header, or a request whose query source Claude Code does not know). The header is found whatever its case, like every internal header.
+ * The request's class as the client stated it: one of the classes Claude Code sends, `unknown` for any other value (a repeated header, which Node joins into one string, included, so a client-chosen string is neither logged nor echoed). With no class stated (a launch whose child was not asked for the header, or a request whose query source Claude Code does not know) a request that carries an agent id is `subagent`, the class Claude Code gives an agent's own requests, and any other is undefined. The headers are found whatever their case, like every internal header.
  */
 export function requestClassOf(headers: Readonly<IncomingHttpHeaders>): RequestClass | undefined {
   const value = internalHeaderValue(headers, REQUEST_CLASS_HEADER);
   if (value === undefined) {
-    return undefined;
+    const agentId = internalHeaderValue(headers, AGENT_ID_HEADER);
+    return agentId === undefined || agentId === "" ? undefined : "subagent";
   }
   const parsed = RequestClassSchema.safeParse(value);
   return parsed.success ? parsed.data : "unknown";
