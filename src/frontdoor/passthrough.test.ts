@@ -324,6 +324,44 @@ describe("the pass-through route", () => {
     }
   });
 
+  it("names the base URL without its userinfo or query when the upstream drops the connection before answering", async () => {
+    const upstream = http.createServer((request) => {
+      request.socket.destroy();
+    });
+    const port = await listen(upstream);
+    const door = await startDoor({ baseUrl: `http://user:hunter2@127.0.0.1:${String(port)}/v1?key=abc123`, stripPrefix: "/providers/z", headroomUpstream: undefined, couldNotConnect: () => undefined });
+    try {
+      const response = await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", headers: { [AUTH_HEADER]: "launch-token-for-tests" }, body: "{}" });
+      const printed = await response.text();
+      expect(printed).toContain(`http://127.0.0.1:${String(port)}/v1 dropped the connection before answering`);
+      expect(printed).not.toContain("hunter2");
+      expect(printed).not.toContain("abc123");
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("names the base URL without its userinfo or query when the upstream drops a held refusal body before the head went out", async () => {
+    const upstream = http.createServer((request, response) => {
+      response.writeHead(HTTP_STATUS.tooManyRequests, { "content-type": "application/json" });
+      response.write("{");
+      setTimeout(() => {
+        request.socket.destroy();
+      }, 0);
+    });
+    const port = await listen(upstream);
+    const door = await startDoor({ baseUrl: `http://user:hunter2@127.0.0.1:${String(port)}/v1?key=abc123`, stripPrefix: "/providers/z", headroomUpstream: undefined, couldNotConnect: () => undefined });
+    try {
+      const response = await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", headers: { [AUTH_HEADER]: "launch-token-for-tests" }, body: "{}" });
+      const printed = await response.text();
+      expect(printed).toContain(`http://127.0.0.1:${String(port)}/v1 dropped the connection`);
+      expect(printed).not.toContain("hunter2");
+      expect(printed).not.toContain("abc123");
+    } finally {
+      await door.close();
+    }
+  });
+
   it("bounds only the connect: an upstream that accepts at once and answers after the connect bound is served", async () => {
     const server = http.createServer((_request, response) => {
       setTimeout(() => {
