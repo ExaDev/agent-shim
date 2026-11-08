@@ -151,6 +151,21 @@ describe("ranking a pool for a launch through a provider", () => {
     expect(ranking.pick?.identity).toBe("b");
   });
 
+  it("ranks a provider window used in full with no reset time as ineligible with no return time, naming the window", () => {
+    const spent = quotaSlice([{ measures: "gemini-5h", periodMs: FIVE_HOURS_MS, utilization: FULL }]);
+    const ranking = rank([member("a", { anthropic: ANTHROPIC_OPEN, p: spent }, "p"), member("unread", { anthropic: ANTHROPIC_OPEN }, "p")]);
+    const candidate = candidateOf(ranking, "a");
+    expect(candidate.class).toBe("ineligible");
+    expect(candidate.blockedUntilMs).toBeUndefined();
+    expect(candidate.reasons.join("\n")).toContain("5h");
+    expect(ranking.pick?.identity).toBe("unread");
+  });
+
+  it("leaves a Claude account window used in full with no reset time ranked as before", () => {
+    const spent: ProviderUsageState = { lastRequestAt: at(-HOUR_MS), rateLimit: { observedAt: at(-MINUTE_MS), headers: {}, unified: { fiveHour: { utilization: FULL, status: "rejected" } } } };
+    expect(candidateOf(rank([member("a", { anthropic: spent })]), "a").class).toBe("scored");
+  });
+
   it("ranks a member whose pulled windows have no length it knows as unknown", () => {
     const pulled = quotaSlice([{ measures: "credits", period: "prepaid", utilization: U30 }]);
     expect(candidateOf(rank([member("a", { anthropic: ANTHROPIC_SPENT, p: pulled }, "p")]), "a")).toMatchObject({ class: "unknown" });
