@@ -15,7 +15,7 @@ import { readUsageSnapshot } from "../usage/read";
 import { headroomSocketTarget } from "../frontdoor/status";
 import { antigravityStacksWithDefault, isAntigravityPayload } from "./client";
 import { fetchHeadroomSessionStats, headroomSessionIdOf, headroomTargetOf, realHeadroomGet } from "./headroom";
-import { enrichStatuslinePayload, identityOf } from "./enrich";
+import { enrichStatuslinePayload, identityOf, lastMainLoopRecord } from "./enrich";
 import { readUsageLog } from "../usage/read";
 import { readModels } from "../modelsStore";
 import { readDoorCostUsd } from "./doorCost";
@@ -112,7 +112,7 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
       let modelChoice: { readonly requested: string; readonly served: string; readonly provider: string; readonly providers: readonly string[] } | undefined;
       if (sessionHeader !== undefined) {
         try {
-          const last = readUsageLog(realFarmFs, deps.paths.usageLogDir, { sinceMs: nowMs - ROUTED_TARGET_LOOKBACK_MS }).records.filter((record) => record.sessionId === sessionHeader).at(-1);
+          const last = lastMainLoopRecord(readUsageLog(realFarmFs, deps.paths.usageLogDir, { sinceMs: nowMs - ROUTED_TARGET_LOOKBACK_MS }).records, sessionHeader);
           if (last?.model !== undefined) {
             if (last.provider !== providerName) {
               routedTarget = `${last.provider}/${last.model}`;

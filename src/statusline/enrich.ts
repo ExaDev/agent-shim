@@ -1,6 +1,13 @@
 import { antigravityFamilyBuckets, selectAntigravityBuckets, type AntigravityQuotaBucket, type AntigravityQuotaMap } from "../antigravity/quota";
-import type { AccountMetadata, QuotaWindow, UsageSnapshot } from "../usage/schema";
+import type { AccountMetadata, QuotaWindow, UsageRecord, UsageSnapshot } from "../usage/schema";
 import type { HeadroomStats } from "./headroom";
+
+/**
+ * The record of `sessionId`'s latest main-loop request: the one that says where the session's own loop is, and so what the statusline draws. A helper's record (a hook judge, a title, a compaction, a subagent) is passed over, because its model is a mapping to what the main loop is on and drawn as the session's choice it would show a Claude haiku name served by a provider the person never typed. A record with no class (a launch whose child was not asked for one) counts as main, as the door treats such a request.
+ */
+export function lastMainLoopRecord(records: readonly UsageRecord[], sessionId: string): UsageRecord | undefined {
+  return records.filter((record) => record.sessionId === sessionId && (record.requestClass === undefined || record.requestClass === "main")).at(-1);
+}
 
 /** What the door knows about the session whose statusline this is: the one source a renderer can trust for whose quota the windows describe. The `Used` fields are whole percentages (0 to 100); the door's own records carry fractions, the form the real API's headers use. */
 const FULL_PERCENT = 100;
