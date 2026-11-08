@@ -62,6 +62,12 @@ describe("catalogueUrls", () => {
   });
 });
 
+describe("catalogueUrls with a base URL carrying a query", () => {
+  it("appends the catalogue path to the path, before the query, which is kept for the request", () => {
+    expect(catalogueUrls({ baseUrl: "https://api.example.com/anthropic?key=abc123" }, {})).toEqual(["https://api.example.com/anthropic/v1/models?key=abc123", "https://api.example.com/v1/models?key=abc123"]);
+  });
+});
+
 describe("parseCatalogueBody", () => {
   it("reads Anthropic's and OpenAI's data list with display names", () => {
     expect(parseCatalogueBody({ data: [{ id: "a", display_name: "Model A" }, { id: "b", name: "Model B" }, { id: "c" }] })).toEqual([{ id: "a", name: "Model A" }, { id: "b", name: "Model B" }, { id: "c" }]);
@@ -163,5 +169,35 @@ describe("fetchCatalogue", () => {
     expect(error).toBeInstanceOf(CatalogueFetchError);
     expect((error as Error).message).toBe("no catalogue from https://api.example.com/anthropic/v1/models: no models listed; https://api.example.com/v1/models: timed out");
     expect((error as Error).message).not.toContain("secret-token");
+  });
+});
+
+describe("fetchCatalogue with a base URL carrying a credential", () => {
+  const SECRET_PROVIDER = { baseUrl: "https://user:hunter2@api.example.com/anthropic?key=abc123" };
+  const params = (fetch: CatalogueFetch) => ({ provider: SECRET_PROVIDER, catalogue: {}, credential: CREDENTIAL, fetch, now: () => NOW });
+
+  it("requests the whole URL but stores and reports it without userinfo or query", async () => {
+    const fetch = vi.fn<CatalogueFetch>().mockResolvedValue({ status: 200, body: { data: [{ id: "a" }] } });
+
+    const cache = await fetchCatalogue(params(fetch));
+
+    expect(fetch.mock.calls[0]?.[0]).toContain("key=abc123");
+    expect(cache.url).toBe("https://api.example.com/anthropic/v1/models");
+  });
+
+  it("names no userinfo or query in the failure message", async () => {
+    const fetch = vi.fn<CatalogueFetch>().mockResolvedValueOnce({ status: 404, body: undefined }).mockRejectedValueOnce(new Error("timed out"));
+
+    const error = await fetchCatalogue(params(fetch)).catch((caught: unknown) => caught);
+
+    expect((error as Error).message).toBe("no catalogue from https://api.example.com/anthropic/v1/models: status 404; https://api.example.com/v1/models: timed out");
+  });
+
+  it("names no userinfo or query when the configured catalogue URL carries them", async () => {
+    const fetch = vi.fn<CatalogueFetch>().mockResolvedValue({ status: 500, body: undefined });
+
+    const error = await fetchCatalogue({ ...params(fetch), catalogue: { url: "https://user:hunter2@api.example.com/models?key=abc123" } }).catch((caught: unknown) => caught);
+
+    expect((error as Error).message).toBe("no catalogue from https://api.example.com/models: status 500");
   });
 });

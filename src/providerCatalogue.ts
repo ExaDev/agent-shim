@@ -2,6 +2,7 @@ import picomatch from "picomatch";
 import path from "node:path";
 import { z } from "zod";
 
+import { displayBaseUrl } from "./baseUrlDisplay";
 import type { ResolvedCredential } from "./credential";
 import type { HttpProvider, ProviderCatalogue } from "./config/schema";
 import type { LayoutPaths } from "./paths";
@@ -84,8 +85,13 @@ export function catalogueUrls(provider: Readonly<Pick<HttpProvider, "baseUrl">>,
   if (catalogue.url !== undefined) {
     return [catalogue.url];
   }
-  const base = provider.baseUrl.replace(/\/+$/, "");
-  return [...new Set([`${base}/v1/models`, `${new URL(base).origin}/v1/models`])];
+  // The catalogue path belongs to the URL's path, never to its query, which stays on the request because a base URL may carry the provider's key there.
+  const base = new URL(provider.baseUrl);
+  const underBase = new URL(base);
+  underBase.pathname = `${base.pathname.replace(/\/+$/, "")}/v1/models`;
+  const underHost = new URL(base);
+  underHost.pathname = "/v1/models";
+  return [...new Set([underBase.href, underHost.href])];
 }
 
 /** Whether `value` is a plain object. */
@@ -152,7 +158,7 @@ export interface FetchCatalogueParams {
   readonly now: () => number;
 }
 
-/** Raised when no candidate URL returned a catalogue; the message names each URL and what it answered, never the credential. */
+/** Raised when no candidate URL returned a catalogue; the message names each URL (as `displayBaseUrl` shows it, without userinfo or query) and what it answered, never the credential. */
 export class CatalogueFetchError extends Error {
   constructor(message: string) {
     super(message);
@@ -161,7 +167,7 @@ export class CatalogueFetchError extends Error {
 }
 
 /**
- * Asks each candidate URL for the catalogue in order and returns the first that lists at least one model. Throws `CatalogueFetchError` naming every URL's outcome when none does, so a misconfigured provider says which endpoints it tried.
+ * Asks each candidate URL for the catalogue in order and returns the first that lists at least one model, recording its URL as `displayBaseUrl` shows it. Throws `CatalogueFetchError` naming every URL's outcome when none does, so a misconfigured provider says which endpoints it tried.
  */
 export async function fetchCatalogue(params: Readonly<FetchCatalogueParams>): Promise<CatalogueCache> {
   const headers = catalogueHeaders(params.credential);
@@ -172,11 +178,11 @@ export async function fetchCatalogue(params: Readonly<FetchCatalogueParams>): Pr
       const succeeded = response.status >= HTTP_OK && response.status < HTTP_MULTIPLE_CHOICES;
       const models = succeeded ? parseCatalogueBody(response.body) : [];
       if (models.length > 0) {
-        return { fetchedAt: params.now(), url, models: [...models] };
+        return { fetchedAt: params.now(), url: displayBaseUrl(url), models: [...models] };
       }
-      outcomes.push(`${url}: ${succeeded ? "no models listed" : `status ${String(response.status)}`}`);
+      outcomes.push(`${displayBaseUrl(url)}: ${succeeded ? "no models listed" : `status ${String(response.status)}`}`);
     } catch (error) {
-      outcomes.push(`${url}: ${error instanceof Error ? error.message : String(error)}`);
+      outcomes.push(`${displayBaseUrl(url)}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   throw new CatalogueFetchError(`no catalogue from ${outcomes.join("; ")}`);
