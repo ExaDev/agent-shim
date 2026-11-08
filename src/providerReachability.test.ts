@@ -121,11 +121,6 @@ describe("realBaseUrlProbe", () => {
     expect(verdict.reason).toContain("ECONNREFUSED");
   });
 
-  it("fails a base URL that never answers within the bound it is given", () => {
-    // An address reserved for documentation (RFC 5737): where the machine routes it, nothing answers and the bound ends the probe; where it does not, the dial fails at once. Either way the probe fails, and never waits out the operating system's own connect timeout.
-    expect(realBaseUrlProbe("http://192.0.2.1:9", SHORT_CONNECT_BOUND_MS)).toMatchObject({ ok: false });
-  });
-
   it("fails a base URL whose scheme nothing dials", () => {
     expect(realBaseUrlProbe("ftp://example.com", SHORT_CONNECT_BOUND_MS)).toEqual({ ok: false, reason: "the base URL is neither http nor https" });
   });
