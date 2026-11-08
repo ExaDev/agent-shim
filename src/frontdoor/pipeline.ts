@@ -32,7 +32,7 @@ export interface RoutedResponseEvent {
   readonly requestedModel: string | undefined;
   /** Claude Code's own id for the conversation, from the request's `x-claude-code-session-id` header; undefined when the client sent none. Unlike the launch's session id it changes when the conversation is cleared, so it is what ties a request to the client's per-conversation cost. */
   readonly clientSessionId: string | undefined;
-  /** The request's class as Claude Code stated it in `x-claude-code-request-class` (`main`, `subagent`, `workflow`, `compaction`, `auxiliary`, `side_reply`); undefined when the client sent none. */
+  /** The request's class as Claude Code stated it in `x-claude-code-request-class` (`main`, `subagent`, `workflow`, `compaction`, `auxiliary`, `side_reply`); `subagent` for a request that states no class but carries `x-claude-code-agent-id` (a launch not asked for the class header); undefined when the client sent neither. */
   readonly requestClass: RequestClass | undefined;
   readonly status: number;
   readonly headers: Readonly<Record<string, string>>;
