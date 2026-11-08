@@ -82,7 +82,7 @@ describe("the main-loop route record", () => {
 });
 
 describe("a main-loop record whose store fails", () => {
-  it("keeps the route in memory, reports the failure once and lets the request through", () => {
+  it("keeps the route in memory and reports a failing store once per launch", () => {
     const lines: string[] = [];
     const launch: FrontDoorLaunch = { pid: 9, startedAt: 1 };
     const record = createMainLoopRouteRecord({
