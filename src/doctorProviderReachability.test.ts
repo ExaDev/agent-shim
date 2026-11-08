@@ -41,6 +41,21 @@ describe("doctor and a provider's base URL", () => {
     ]);
   });
 
+  it("reports every unreachable provider, each under its own name and URL, and none for a reachable one between them", () => {
+    const verdicts = [{ ok: false, reason: "refused by the first" }, { ok: true }, { ok: false, reason: "refused by the third" }] as const;
+    const providers = [
+      provider("first", { ...SPARK, baseUrl: "http://user:hunter2@192.0.2.1:1/v1?key=abc123" }),
+      provider("middle", { ...SPARK, baseUrl: "http://192.0.2.1:2" }),
+      provider("third", { ...SPARK, baseUrl: "http://192.0.2.1:3" }),
+    ];
+    const report = runDoctor(baseParams({ providers, probeBaseUrls: (targets) => targets.map((_target, index) => verdicts[index] ?? { ok: false, reason: "unexpected target" }) }));
+    const failures = findingsFor(report, "provider").filter((finding) => finding.severity === "fail");
+    expect(failures.map((finding) => [finding.subject, finding.message])).toEqual([
+      ["first", "provider first could not connect to http://192.0.2.1:1/v1: refused by the first"],
+      ["third", "provider third could not connect to http://192.0.2.1:3: refused by the third"],
+    ]);
+  });
+
   it("adds nothing for a reachable one", () => {
     const report = runDoctor(baseParams({ providers: [provider("spark", SPARK)], probeBaseUrls: recordingProbe({ ok: true }).probe }));
     expect(findingsFor(report, "provider").filter((finding) => finding.severity === "fail")).toEqual([]);

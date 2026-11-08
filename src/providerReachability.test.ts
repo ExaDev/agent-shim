@@ -70,6 +70,13 @@ const OWN_CONNECT_TIMEOUT_MS = 1_500;
 /** A probe bound short enough that a test waiting it out stays quick. */
 const SHORT_CONNECT_BOUND_MS = 200;
 
+/** How many silent targets the overlap test probes: enough that running them one after another cannot fit inside a single bound plus the worker start-up. */
+const SILENT_TARGETS = 4;
+/** A port on the silent addresses; nothing is listening on them, so the port only has to be valid. */
+const SILENT_PORT = 8000;
+/** The bound each silent target is probed within. */
+const SILENT_BOUND_MS = 500;
+
 describe("the provider connect timeout", () => {
   it("defaults to the original SYN and each tolerated retransmission, each waiting the backed-off timeout", () => {
     let total = 0;
@@ -143,6 +150,19 @@ describe("realBaseUrlProbe", () => {
     expect(undialled).toEqual({ ok: false, reason: "the base URL is neither http nor https" });
     expect(accepted).toEqual({ ok: true });
     expect(rest).toEqual([]);
+  });
+
+  it("probes silent targets together: the whole takes less than their bounds added up", () => {
+    // RFC 5737 documentation addresses nothing answers, so each probe runs out its own bound. Run one after another, the targets would take at least their bounds summed.
+    const targets = Array.from({ length: SILENT_TARGETS }, (_unused, index) => ({ baseUrl: `http://192.0.2.${String(index + 1)}:${String(SILENT_PORT)}`, timeoutMs: SILENT_BOUND_MS }));
+    const started = performance.now();
+    const verdicts = realBaseUrlBatchProbe(targets);
+    const elapsedMs = performance.now() - started;
+    // Each probe must have ended at its own bound, or the comparison below says nothing about running together.
+    for (const verdict of verdicts) {
+      expect(verdict).toEqual({ ok: false, reason: `no connection accepted within ${String(SILENT_BOUND_MS)}ms` });
+    }
+    expect(elapsedMs).toBeLessThan(SILENT_TARGETS * SILENT_BOUND_MS);
   });
 });
 
