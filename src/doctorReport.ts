@@ -346,9 +346,6 @@ function signInProblem(signIn: NonNullable<RunDoctorParams["chatgptSignIn"]>): s
   }
 }
 
-/**
- * Reports one provider file: an old-format file (before the credential block) fails with the old fields named and the whole file rewritten in the current format, since that is the one change converting it needs; any other invalid file fails with its validation errors; a valid one passes with its credential described by source kind and target.
- */
 /** One provider file's definition, when it is valid JSON in the current format: what is probed, while `pushProvider` reports every way a file can fail to be one. */
 function validProviderOf(entry: DoctorProviderInput): readonly { readonly name: string; readonly provider: Provider }[] {
   if (entry.raw === undefined) {
@@ -364,6 +361,9 @@ function validProviderOf(entry: DoctorProviderInput): readonly { readonly name: 
   return validated.success && legacyProviderConversion(parsed) === undefined ? [{ name: entry.name, provider: validated.data }] : [];
 }
 
+/**
+ * Reports one provider file: an old-format file (before the credential block) fails with the old fields named and the whole file rewritten in the current format, since that is the one change converting it needs; any other invalid file fails with its validation errors; a valid one passes with its credential described by source kind and target.
+ */
 function pushProvider(push: (section: DoctorSection, severity: DoctorSeverity, message: string, subject?: string) => void, entry: DoctorProviderInput, cacheEnv: CredentialCacheEnv | undefined, signIn: RunDoctorParams["chatgptSignIn"], unreachable: string | undefined): void {
   if (entry.raw === undefined) {
     push("provider", "fail", `${entry.path} is missing.`, entry.name);
