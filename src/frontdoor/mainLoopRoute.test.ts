@@ -759,6 +759,9 @@ describe("followingMainLoop over a resolver that records what it is asked", () =
     const record = mainLoopRoutesOfLiveSessions();
     const resolve = async (request: RoutedRequest): Promise<RouteResolution> => {
       asked.push(request.url);
+      if (request.url.startsWith("/providers/removed/")) {
+        return Promise.resolve({ ok: false, status: HTTP_STATUS.notFound, message: 'no provider named "removed"' });
+      }
       if (refuseMain && request.headers["x-claude-code-request-class"] === "main") {
         return Promise.resolve({ ok: false, status: HTTP_STATUS.notFound, message: "refused" });
       }
@@ -781,6 +784,14 @@ describe("followingMainLoop over a resolver that records what it is asked", () =
     record.record("s-1", { kind: "provider", provider: "z" });
     expect((await follow("/v1/messages", "main")).ok).toBe(false);
     expect(record.routeOf("s-1")).toEqual({ kind: "provider", provider: "z" });
+  });
+
+  it("answers a helper with the refusal of the provider its main loop was on, never resolving it again on the route it was launched on", async () => {
+    const { follow, asked, record } = fixture();
+    record.record("s-1", { kind: "provider", provider: "removed" });
+    const resolution = await follow("/v1/messages", "auxiliary");
+    expect(resolution).toMatchObject({ ok: false, status: HTTP_STATUS.notFound });
+    expect(asked).toEqual(["/providers/removed/v1/messages"]);
   });
 
   it("records a request with no class header as a main request, so a launch that was not asked for the header behaves as every request main", async () => {
