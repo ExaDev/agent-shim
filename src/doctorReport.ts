@@ -17,13 +17,13 @@ import { credentialsFilePath, decideSignIn, keychainHasItem } from "./usage/sign
 import { describeAccountHolder, groupSharedLogins, joinNames, loginKeyOf, readIdentityAccount, summariseIdentityAccount } from "./identityAccounts";
 import { readUsageSnapshot, UsageSnapshotError } from "./usage/read";
 import type { AccountMetadata, UsageSnapshot } from "./usage/schema";
-import { realBaseUrlProbe, unreachableProviderLine, type BaseUrlProbe } from "./providerReachability";
+import { probeProviderReachabilities, realBaseUrlBatchProbe, type BaseUrlBatchProbe } from "./providerReachability";
 import { pushNameFinding } from "./doctorNameFinding";
 import { parseSiwcFile } from "./codex/siwcStore";
 import { SIWC_PLAN_SCOPE } from "./codex/siwc";
 import { ConfigValidationError } from "./config/load";
 import { describeIgnoredKeys, parseIgnoringUnrecognisedKeys } from "./config/unrecognisedKeys";
-import { CategoryClassificationOverlaySchema, ConfigProfileSchema, DirectoryRulesSchema, GlobalConfigSchema, IdentitySchema, isCodexProvider, poolMemberIdentity, ProviderSchema, type Credential, type ModelsConfig, isRouterProvider } from "./config/schema";
+import { CategoryClassificationOverlaySchema, ConfigProfileSchema, DirectoryRulesSchema, GlobalConfigSchema, IdentitySchema, isCodexProvider, poolMemberIdentity, ProviderSchema, type Credential, type Provider, type ModelsConfig, isRouterProvider } from "./config/schema";
 import { describeCredential, identityCacheKey, type CredentialCacheEnv } from "./credential";
 import { describeCachedCredential, formatCachedCredentialState } from "./credentialCache";
 import { realCredentialCacheEnv } from "./realCredentialCache";
@@ -180,7 +180,7 @@ export interface RunDoctorParams {
   /** The recorded former names of renamed providers. Omit to leave them out of the findings. */
   readonly providerAliases?: ProviderAliases;
   /** Opens one connection to an http provider's base URL, bounded by the provider's connect timeout. Omit to leave reachability out of the findings; with it, a valid http provider whose base URL accepts no connection fails, naming the URL. */
-  readonly probeBaseUrl?: BaseUrlProbe;
+  readonly probeBaseUrls?: BaseUrlBatchProbe;
   /** The journals of identity renames that were left unfinished, and the files in their directory that are not journals. Omit to leave renames out of the findings. */
   readonly renameJournals?: RenameJournalListing;
   /** The entries of the identities directory that cannot be reached (a symlink the filesystem would not follow, or a directory nobody can enter), which are not counted as identities. Omit to leave them out of the findings. */
@@ -349,7 +349,22 @@ function signInProblem(signIn: NonNullable<RunDoctorParams["chatgptSignIn"]>): s
 /**
  * Reports one provider file: an old-format file (before the credential block) fails with the old fields named and the whole file rewritten in the current format, since that is the one change converting it needs; any other invalid file fails with its validation errors; a valid one passes with its credential described by source kind and target.
  */
-function pushProvider(push: (section: DoctorSection, severity: DoctorSeverity, message: string, subject?: string) => void, entry: DoctorProviderInput, cacheEnv: CredentialCacheEnv | undefined, signIn: RunDoctorParams["chatgptSignIn"], probeBaseUrl: BaseUrlProbe | undefined): void {
+/** One provider file's definition, when it is valid JSON in the current format: what is probed, while `pushProvider` reports every way a file can fail to be one. */
+function validProviderOf(entry: DoctorProviderInput): readonly { readonly name: string; readonly provider: Provider }[] {
+  if (entry.raw === undefined) {
+    return [];
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(entry.raw);
+  } catch {
+    return [];
+  }
+  const validated = parseIgnoringUnrecognisedKeys(ProviderSchema, parsed);
+  return validated.success && legacyProviderConversion(parsed) === undefined ? [{ name: entry.name, provider: validated.data }] : [];
+}
+
+function pushProvider(push: (section: DoctorSection, severity: DoctorSeverity, message: string, subject?: string) => void, entry: DoctorProviderInput, cacheEnv: CredentialCacheEnv | undefined, signIn: RunDoctorParams["chatgptSignIn"], unreachable: string | undefined): void {
   if (entry.raw === undefined) {
     push("provider", "fail", `${entry.path} is missing.`, entry.name);
     return;
@@ -382,7 +397,6 @@ function pushProvider(push: (section: DoctorSection, severity: DoctorSeverity, m
   if (!router && validated.data.env?.ENABLE_TOOL_SEARCH === undefined) {
     push("provider", "warn", `${entry.name} does not set ENABLE_TOOL_SEARCH: a session on this provider keeps Claude Code's own API as its base URL, so it defers MCP tool loading and sends tool_reference payloads the upstream backend must understand. Set ENABLE_TOOL_SEARCH=false in the provider's env block to load tools upfront instead, when the backend does not support them.`, entry.name);
   }
-  const unreachable = unreachableProviderLine(entry.name, validated.data, probeBaseUrl);
   if (unreachable !== undefined) {
     push("provider", "fail", unreachable, entry.name);
   }
@@ -657,11 +671,13 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     return poolName === undefined ? validIdentityAgents.has(selector) : poolName in pools;
   };
 
+  // Every http provider's base URL is probed in one batch before any finding is pushed, so their bounds run at once rather than adding up.
+  const unreachableLines = params.probeBaseUrls === undefined ? new Map<string, string>() : probeProviderReachabilities(params.providers.flatMap(validProviderOf), params.probeBaseUrls);
   for (const entry of params.providers) {
     if (!pushNameFinding(push, "provider", "provider", entry)) {
       continue;
     }
-    pushProvider(push, entry, params.credentialCache, params.chatgptSignIn, params.probeBaseUrl);
+    pushProvider(push, entry, params.credentialCache, params.chatgptSignIn, unreachableLines.get(entry.name));
   }
   const providerNames = new Set(params.providers.map((entry) => entry.name));
   for (const finding of aliasFindings(params.providerAliases ?? {}, providerNames)) {
@@ -1026,7 +1042,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
     configProfiles,
     providers,
     providerAliases: readProviderAliases(paths),
-    probeBaseUrl: realBaseUrlProbe,
+    probeBaseUrls: realBaseUrlBatchProbe,
     renameJournals: listRenameJournals(realFarmFs, paths.identityRenamesDir),
     unreachableIdentities,
     identityRecords: { all: records, displaced: displacedIdentities.map((record) => ({ ...record, directoryPresent: fs.existsSync(path.join(paths.identitiesDir, record.id)) })), nameRenames: unfinishedNameRenames(paths).map((record) => ({ from: record.from, description: describeInterruptedNameRename(paths, record) })), strayNameRenameFiles: strayNameRenameRecordFiles(paths) },

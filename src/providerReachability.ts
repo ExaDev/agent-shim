@@ -1,6 +1,6 @@
 import { isHttpProvider, type HttpProvider, type Provider } from "./config/schema";
 import { displayBaseUrl } from "./baseUrlDisplay";
-import { probeAddressAcceptSync, type ListenerVerdict } from "./frontdoor/probe";
+import { probeAddressesAcceptSync, type ListenerVerdict } from "./frontdoor/probe";
 
 /**
  * The retransmission timeout a TCP sender uses before it has measured any round trip, which is the case for every connection's SYN: RFC 6298 section 2.1 sets it to one second, and both macOS and Linux start their SYN retransmissions from it.
@@ -43,13 +43,43 @@ export function couldNotConnectMessage(subject: string, baseUrl: string, reason:
 /** Opens one TCP connection to `baseUrl`'s host and port within `timeoutMs` and closes it at once, sending nothing. */
 export type BaseUrlProbe = (baseUrl: string, timeoutMs: number) => ListenerVerdict;
 
-/** The real probe: a connect on a worker thread the calling thread blocks on, refused in a process whose event loop serves others. */
+/** One base URL to probe, within its own bound. */
+export interface BaseUrlTarget {
+  readonly baseUrl: string;
+  readonly timeoutMs: number;
+}
+
+/** `BaseUrlProbe` for several base URLs at once, run together; verdicts in the order the targets were given. */
+export type BaseUrlBatchProbe = (targets: readonly BaseUrlTarget[]) => readonly ListenerVerdict[];
+
+/** The verdict for a base URL whose scheme nothing dials. */
+const UNDIALLABLE: ListenerVerdict = { ok: false, reason: "the base URL is neither http nor https" };
+
+/** The real batch probe: each connect on a worker thread, all started before the calling thread blocks on any, refused in a process whose event loop serves others. */
+export const realBaseUrlBatchProbe: BaseUrlBatchProbe = (targets) => {
+  const dialled = targets.map((target) => ({ dial: dialTargetOf(target.baseUrl), timeoutMs: target.timeoutMs }));
+  const verdicts = probeAddressesAcceptSync(dialled.flatMap((entry) => (entry.dial === undefined ? [] : [{ ...entry.dial, timeoutMs: entry.timeoutMs }])));
+  let next = 0;
+  return dialled.map((entry) => {
+    if (entry.dial === undefined) {
+      return UNDIALLABLE;
+    }
+    const verdict = verdicts[next];
+    next += 1;
+    if (verdict === undefined) {
+      throw new Error("the batch probe answered fewer verdicts than it was given addresses");
+    }
+    return verdict;
+  });
+};
+
+/** The real probe of one base URL: a batch of one. */
 export const realBaseUrlProbe: BaseUrlProbe = (baseUrl, timeoutMs) => {
-  const target = dialTargetOf(baseUrl);
-  if (target === undefined) {
-    return { ok: false, reason: "the base URL is neither http nor https" };
+  const [verdict] = realBaseUrlBatchProbe([{ baseUrl, timeoutMs }]);
+  if (verdict === undefined) {
+    throw new Error("the batch probe answered no verdict for one base URL");
   }
-  return probeAddressAcceptSync(target.host, target.port, timeoutMs);
+  return verdict;
 };
 
 /** Whether a provider's base URL accepts a connection within its connect bound, with the line to report when it does not. */
@@ -68,4 +98,21 @@ export function unreachableProviderLine(name: string, provider: Provider, probe:
   }
   const reachability = probeProviderReachability(name, provider, probe);
   return reachability.ok ? undefined : reachability.message;
+}
+
+/** The line to report for each of `providers` whose base URL accepts no connection, by name, from one batch probe of every http provider among them, each within its own connect bound. A provider that dials no base URL, or that accepts a connection, has no line. */
+export function probeProviderReachabilities(providers: readonly { readonly name: string; readonly provider: Provider }[], probe: BaseUrlBatchProbe): ReadonlyMap<string, string> {
+  const http = providers.flatMap((entry) => (isHttpProvider(entry.provider) ? [{ name: entry.name, provider: entry.provider }] : []));
+  const verdicts = probe(http.map((entry) => ({ baseUrl: entry.provider.baseUrl, timeoutMs: providerConnectTimeoutMs(entry.provider) })));
+  const lines = new Map<string, string>();
+  http.forEach((entry, index) => {
+    const verdict = verdicts[index];
+    if (verdict === undefined) {
+      throw new Error("the batch probe answered fewer verdicts than it was given base URLs");
+    }
+    if (!verdict.ok) {
+      lines.set(entry.name, couldNotConnectMessage(`provider ${entry.name}`, entry.provider.baseUrl, verdict.reason));
+    }
+  });
+  return lines;
 }

@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import * as net from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { probeAddressAcceptSync } from "./probe";
+import { probeAddressesAcceptSync } from "./probe";
 import { createDoorLookup, doorDial, probeAccept, type DialSocket } from "./doorDial";
 import { SourcePortRange } from "./connectEffects";
 
@@ -170,7 +170,7 @@ describe("the provider probe on its worker thread", () => {
     if (address === null || typeof address === "string") {
       throw new Error("listener has no TCP address");
     }
-    expect(probeAddressAcceptSync("127.0.0.1", address.port, SHORT_BOUND_MS)).toEqual({ ok: true });
+    expect(probeAddressesAcceptSync([{ host: "127.0.0.1", port: address.port, timeoutMs: SHORT_BOUND_MS }])).toEqual([{ ok: true }]);
     await new Promise<void>((resolve) => {
       const wait = (): void => {
         if (closed) {

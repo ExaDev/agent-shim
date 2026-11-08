@@ -139,15 +139,22 @@ export function probeListenerAcceptSync(port: number, timeoutMs: number = PROBE_
 }
 
 /**
- * Whether the door's own dial reaches `host`:`port` within `timeoutMs`: one connect, closed again the moment it is accepted, so no request reaches the listener. What `doctor`, `check` and a launch ask of a provider's base URL.
+ * Whether the door's own dial reaches each address within its bound: one connect each, closed again the moment it is accepted, so no request reaches a listener. Every probe's worker is started before any is waited on, so the probes run together and the whole takes about the longest bound, not their sum. Verdicts come back in the order the targets were given. What `doctor`, `check` and a launch ask of providers' base URLs.
  */
-export function probeAddressAcceptSync(host: string, port: number, timeoutMs: number): ListenerVerdict {
+export function probeAddressesAcceptSync(targets: readonly { readonly host: string; readonly port: number; readonly timeoutMs: number }[]): readonly ListenerVerdict[] {
   refuseToBlockInRole("a synchronous probe of a provider's address");
-  return runProbeWorker(ACCEPT_PROBE_SOURCE, { host, port, portStart: DOOR_SOURCE_PORT_START, portEnd: DOOR_SOURCE_PORT_END }, timeoutMs);
+  const started = targets.map((target) => startProbeWorker(ACCEPT_PROBE_SOURCE, { host: target.host, port: target.port, portStart: DOOR_SOURCE_PORT_START, portEnd: DOOR_SOURCE_PORT_END }, target.timeoutMs));
+  return started.map((probe) => probe.verdict());
 }
 
 /** Runs one probe source on a worker thread and blocks this thread on its verdict, whatever the probe asks, for at most `timeoutMs` plus the margin the waiting thread allows the worker's own timeout verdict. */
 function runProbeWorker(source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number): ListenerVerdict {
+  return startProbeWorker(source, data, timeoutMs).verdict();
+}
+
+/** Starts one probe source on a worker thread; `verdict` blocks this thread until the worker answers, for at most `timeoutMs` plus the margin from when the worker was started. */
+function startProbeWorker(source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number): { readonly verdict: () => ListenerVerdict } {
+  const deadline = performance.now() + timeoutMs + PROBE_WAIT_MARGIN_MS;
   const shared = new SharedArrayBuffer(HEADER_SLOTS * INT32_BYTES + REASON_BYTES);
   const header = new Int32Array(shared, 0, HEADER_SLOTS);
   const worker = new Worker(source, {
@@ -156,18 +163,22 @@ function runProbeWorker(source: string, data: Readonly<Record<string, unknown>>,
   });
   // The worker must never keep the launcher alive: the verdict is all this thread needs from it.
   worker.unref();
-  try {
-    const waited = Atomics.wait(header, 0, VERDICT_PENDING, timeoutMs + PROBE_WAIT_MARGIN_MS);
-    const verdict = Atomics.load(header, 0);
-    if (waited === "timed-out" || verdict === VERDICT_PENDING) {
-      return { ok: false, reason: `the probe did not finish within ${String(timeoutMs + PROBE_WAIT_MARGIN_MS)}ms` };
-    }
-    if (verdict === VERDICT_OK) {
-      return { ok: true };
-    }
-    const length = Atomics.load(header, 1);
-    return { ok: false, reason: Buffer.from(new Uint8Array(shared, HEADER_SLOTS * INT32_BYTES, length)).toString("utf8") };
-  } finally {
-    void worker.terminate();
-  }
+  return {
+    verdict: () => {
+      try {
+        const waited = Atomics.wait(header, 0, VERDICT_PENDING, Math.max(0, deadline - performance.now()));
+        const verdict = Atomics.load(header, 0);
+        if (waited === "timed-out" || verdict === VERDICT_PENDING) {
+          return { ok: false, reason: `the probe did not finish within ${String(timeoutMs + PROBE_WAIT_MARGIN_MS)}ms` };
+        }
+        if (verdict === VERDICT_OK) {
+          return { ok: true };
+        }
+        const length = Atomics.load(header, 1);
+        return { ok: false, reason: Buffer.from(new Uint8Array(shared, HEADER_SLOTS * INT32_BYTES, length)).toString("utf8") };
+      } finally {
+        void worker.terminate();
+      }
+    },
+  };
 }
