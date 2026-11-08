@@ -339,6 +339,18 @@ function assessIdentity(member: PoolMember, nowMs: number): Assessment {
   const overageWindow = soleOverageWindow(unified);
   const overage = overageWindow === undefined ? undefined : effectiveWindow(overageWindow, nowMs);
   const overageReasons = overageWindow === undefined || overage === undefined ? [] : [describeWindow("extra usage", overageWindow, overage, nowMs)];
+  // A provider's window used in full with no reset time refuses the member for as long as it lasts and says nothing of when that ends, so it is ineligible with no return time rather than scored on an empty window (which would rank a spent member ahead of one with no reading). The Claude account keeps the ranking it has always had for such a window.
+  if (member.provider !== undefined) {
+    const spent = [
+      { name: "5h", window: five },
+      { name: "7d", window: seven },
+    ]
+      .filter(({ window }) => window?.status === "rejected" && window.resetsAtMs === undefined)
+      .map(({ name }) => name);
+    if (spent.length > 0) {
+      return { candidate: { ...base, class: "ineligible", reasons: [`provider ${member.provider} ${spent.join(" and ")} window used in full with no reset time reported, so it is refused until it reports one`, ...windowReasons, ...planReasons] } };
+    }
+  }
   const blockedUntil = Math.max(
     windowBlockedUntil([five, seven, overage].flatMap((window) => (window === undefined ? [] : [window]))) ?? 0,
     limitBlockedUntil(state, nowMs) ?? 0,
