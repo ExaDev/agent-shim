@@ -1,4 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -38,69 +40,128 @@ afterEach(() => {
   leaveRole = undefined;
 });
 
-/** What a child writes to the progress descriptor to announce a blocking step that may take `boundMs`, then a hang: a stuck step. */
-function announcingThenHanging(announcements: string): (args: readonly string[]) => { readonly command: string; readonly args: readonly string[] } {
-  return nodeRunning(`require("node:fs").writeSync(Number(process.env.${REPORT_PROGRESS_FD_ENV}), ${JSON.stringify(announcements)}); setInterval(() => undefined, ${String(HOLD_MS)});`);
+/** A report child that is only streams the test writes to, so the watchdog is driven by announcements and fake timers alone, with no process start-up for a loaded host to stretch. */
+function fakeReportChild(): { readonly spawn: typeof spawn; readonly progress: PassThrough; readonly killed: () => boolean } {
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  const progress = new PassThrough();
+  class FakeChild extends EventEmitter {
+    public readonly stdio = [null, stdout, stderr, progress];
+    public killed = false;
+    // A real child closes after the kill has been sent, never inside it.
+    public kill(): boolean {
+      this.killed = true;
+      queueMicrotask(() => { this.emit("close", null); });
+      return true;
+    }
+  }
+  const child = new FakeChild();
+  return { spawn: (() => child) as unknown as typeof spawn, progress, killed: () => child.killed };
 }
 
 describe("the bound on a report child", () => {
-  /** How many quiet bounds a test waits inside a long step to show the quiet bound does not apply there. */
-  const QUIET_BOUNDS_WAITED = 3;
+  const QUIET_MS = 1_000;
+  const STEP_MS = 5_000;
+  /** Well past every bound of these tests, in fake time. */
+  const LONG_WAIT_MS = 100_000;
 
-  it("is quiet bound of two default probe bounds, which the margin of a blocking step is not part of", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Starts a doctor report on a fake child; `announce` writes a progress line and lets it arrive. */
+  function startReport() {
+    vi.useFakeTimers();
+    const fake = fakeReportChild();
+    const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, quietMs: QUIET_MS, spawn: fake.spawn });
+    const controller = new AbortController();
+    const outcome = reports.doctorReport(controller.signal).then(() => "reported", (error: unknown) => (error instanceof Error ? error.message : String(error)));
+    return {
+      fake,
+      outcome,
+      controller,
+      announce: async (line: string) => {
+        fake.progress.write(line);
+        await vi.advanceTimersByTimeAsync(0);
+      },
+      wait: async (ms: number) => { await vi.advanceTimersByTimeAsync(ms); },
+    };
+  }
+
+  it("is two default probe bounds of silence", () => {
     expect(REPORT_QUIET_MS).toBe(2 * DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS);
   });
 
-  it("gives a child inside an announced step the step's bound and margin, not the quiet bound", async () => {
-    const reports = createDoorReports({ selfInvocation: announcingThenHanging(`begin ${String(HOLD_MS)}\n`), env: {}, quietMs: SHORT_BOUND_MS });
-    const controller = new AbortController();
-    const answered = reports.doctorReport(controller.signal);
-    const settled = expect(answered).rejects.toMatchObject({ name: "AbortError" });
-    // Well past the quiet bound: a child killed by it would have rejected with the progress message already.
-    await new Promise<void>((resolve) => { setTimeout(resolve, SHORT_BOUND_MS * QUIET_BOUNDS_WAITED); });
-    controller.abort();
-    await settled;
+  it("holds a child that announces nothing to the quiet bound from its start", async () => {
+    const run = startReport();
+    await run.wait(QUIET_MS - 1);
+    expect(run.fake.killed()).toBe(false);
+    await run.wait(1);
+    expect(await run.outcome).toBe(`agent-shim doctor --json made no progress within ${String(QUIET_MS)}ms`);
+    expect(run.fake.killed()).toBe(true);
   });
 
-  it("kills a child that stays inside a step past its announced bound and the margin", async () => {
-    const reports = createDoorReports({ selfInvocation: announcingThenHanging(`begin ${String(SHORT_BOUND_MS)}\n`), env: {}, quietMs: LONG_BOUND_MS });
-    await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`made no progress within ${String(SHORT_BOUND_MS + PROBE_WAIT_MARGIN_MS)}ms`);
+  it("gives a child inside an announced step the step's bound and margin, not the quiet bound", async () => {
+    const run = startReport();
+    await run.announce(`begin ${String(STEP_MS)}\n`);
+    await run.wait(STEP_MS + PROBE_WAIT_MARGIN_MS - 1);
+    expect(run.fake.killed()).toBe(false);
+    await run.wait(1);
+    expect(await run.outcome).toBe(`agent-shim doctor --json made no progress within ${String(STEP_MS + PROBE_WAIT_MARGIN_MS)}ms`);
   });
 
   it("holds a child to the quiet bound again once it announces the end of a step", async () => {
-    const reports = createDoorReports({ selfInvocation: announcingThenHanging(`begin ${String(HOLD_MS)}\nend\n`), env: {}, quietMs: SHORT_BOUND_MS });
-    await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`made no progress within ${String(SHORT_BOUND_MS)}ms`);
+    const run = startReport();
+    await run.announce(`begin ${String(LONG_WAIT_MS)}\n`);
+    await run.wait(QUIET_MS * 2);
+    expect(run.fake.killed()).toBe(false);
+    await run.announce("end\n");
+    await run.wait(QUIET_MS - 1);
+    expect(run.fake.killed()).toBe(false);
+    await run.wait(1);
+    expect(await run.outcome).toBe(`agent-shim doctor --json made no progress within ${String(QUIET_MS)}ms`);
   });
 
   it("keeps a child that announces local work alive past the quiet bound, for as long as it announces", async () => {
     const WORK_ROUNDS = 8;
-    const reports = createDoorReports({
-      selfInvocation: nodeRunning(`const fs = require("node:fs"); const fd = Number(process.env.${REPORT_PROGRESS_FD_ENV}); let rounds = 0; const timer = setInterval(() => { fs.writeSync(fd, "work\\n"); rounds += 1; if (rounds === ${String(WORK_ROUNDS)}) { clearInterval(timer); process.stdout.write(JSON.stringify(${JSON.stringify(DOCTOR)})); } }, ${String(SHORT_BOUND_MS / 2)});`),
-      env: {},
-      quietMs: SHORT_BOUND_MS,
-    });
-    await expect(reports.doctorReport(new AbortController().signal)).resolves.toMatchObject({ ok: false });
+    const run = startReport();
+    for (let round = 0; round < WORK_ROUNDS; round += 1) {
+      await run.wait(QUIET_MS - 1);
+      await run.announce("work\n");
+    }
+    expect(run.fake.killed()).toBe(false);
+    await run.wait(QUIET_MS);
+    expect(await run.outcome).toBe(`agent-shim doctor --json made no progress within ${String(QUIET_MS)}ms`);
   });
 
-  it("holds a child that announces nothing to the quiet bound from its start", async () => {
-    const reports = createDoorReports({ selfInvocation: nodeRunning(`setInterval(() => undefined, ${String(HOLD_MS)});`), env: {}, quietMs: SHORT_BOUND_MS });
-    await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`made no progress within ${String(SHORT_BOUND_MS)}ms`);
+  it("ends the call with the abort of a child inside a long step", async () => {
+    const run = startReport();
+    await run.announce(`begin ${String(LONG_WAIT_MS)}\n`);
+    await run.wait(QUIET_MS * 2);
+    run.controller.abort();
+    await run.wait(0);
+    expect(run.fake.killed()).toBe(true);
+    expect(await run.outcome).toMatch(/abort/i);
   });
 
   it("never sets a timer past the longest delay a timer takes", async () => {
+    vi.useFakeTimers();
     const delays: number[] = [];
     const real = globalThis.setTimeout;
     const timers = vi.spyOn(globalThis, "setTimeout").mockImplementation(((handler: () => void, delay?: number) => {
       delays.push(delay ?? 0);
       return real(handler, delay);
     }) as typeof setTimeout);
-    const reports = createDoorReports({ selfInvocation: announcingThenHanging(`begin ${String(MAX_TIMER_DELAY_MS * 2)}\n`), env: {}, quietMs: SHORT_BOUND_MS });
+    const fake = fakeReportChild();
+    const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, quietMs: QUIET_MS, spawn: fake.spawn });
     const controller = new AbortController();
-    const answered = reports.doctorReport(controller.signal).catch(() => undefined);
-    await new Promise<void>((resolve) => { real(resolve, SHORT_BOUND_MS); });
+    const outcome = reports.doctorReport(controller.signal).catch(() => undefined);
+    fake.progress.write(`begin ${String(MAX_TIMER_DELAY_MS * 2)}\n`);
+    await vi.advanceTimersByTimeAsync(0);
     controller.abort();
-    await answered;
+    await outcome;
     timers.mockRestore();
+    expect(delays.length).toBeGreaterThan(0);
     expect(Math.max(...delays)).toBeLessThanOrEqual(MAX_TIMER_DELAY_MS);
   });
 
