@@ -189,6 +189,7 @@ export {
   type DoorApiDeps,
   type DoorApiRouter,
 } from "./frontdoor/controlApi";
+export { createDoorReports, type DoorReports, type SelfInvocation } from "./frontdoor/doorReports";
 export { createConfigApiRouter, type ConfigApiDeps, type ConfigApiRouter } from "./frontdoor/configApi";
 export {
   ConfigIdentityAddInputSchema,

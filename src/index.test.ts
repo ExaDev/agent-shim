@@ -294,6 +294,7 @@ describe("library surface", () => {
       "createDoorApiRouter",
       "createDoorEventHub",
       "createDoorHealthPublisher",
+      "createDoorReports",
       "createEventsApiRouter",
       "createLaunchApiRouter",
       "createLaunchEventPublisher",
