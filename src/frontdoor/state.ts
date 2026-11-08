@@ -55,6 +55,14 @@ export const FRONT_DOOR_HANDOVER_PROTOCOL = 6;
 const FrontDoorSessionSchema = z.strictObject({ pid: z.number().int().positive(), startedAt: z.number(), token: z.string().min(1), supervisorPid: z.number().int().positive().optional(), sessionId: z.string().min(1).optional(), identity: z.string().min(1).optional(), models: ModelsConfigSchema.optional() });
 export type FrontDoorSession = z.infer<typeof FrontDoorSessionSchema>;
 
+/** What names one launch: its launcher's pid and the time it registered. A launcher that registers again under its own pid (a relaunch after an account move, a `--resume`) writes a new start time, so per-launch state the door keeps never passes from one launch to the next, even when both carry the same session id. */
+export type FrontDoorLaunch = Pick<FrontDoorSession, "pid" | "startedAt">;
+
+/** The key one launch is known by in a map. */
+export function launchKeyOf(launch: Readonly<FrontDoorLaunch>): string {
+  return `${String(launch.pid)}-${String(launch.startedAt)}`;
+}
+
 /**
  * The front-door supervisor's state.json under `<home>/frontdoor/`. Every field is optional because the file exists in stages, exactly like headroom's and the old codex daemon's: a fresh supervisor writes its own pid before the listener is up, and a shut-down front door leaves only the sticky `lastPort` and any `lastError` worth surfacing.
  */
