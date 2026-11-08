@@ -87,7 +87,7 @@ export function createMainLoopRouteRecord(ports: MainLoopRoutePorts): MainLoopRo
         } catch (error) {
           if (!failed.has(key)) {
             failed.add(key);
-            ports.log(`agent-shim front door: could not record where launch ${String(launch.pid)}'s main loop went, so its helpers follow it only until the door restarts: ${error instanceof Error ? error.message : String(error)}`);
+            ports.log(`front door: could not record where launch ${String(launch.pid)}'s main loop went, so its helpers follow it only until the door restarts: ${error instanceof Error ? error.message : String(error)}`);
           }
         }
       }

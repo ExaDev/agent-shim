@@ -101,7 +101,7 @@ describe("a main-loop record whose store fails", () => {
     record.record(launch, { kind: "anthropic" });
     expect(record.routeOf(launch)).toEqual({ kind: "anthropic" });
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain("disk full");
+    expect(lines[0]).toMatch(/^front door: .*disk full$/);
   });
 });
 
