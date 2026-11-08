@@ -14,14 +14,13 @@ import { codexHome, collectCodexStatus, createCodexRoutePorts, runCodexLogout } 
 import type { LayoutPaths } from "../paths";
 import { realSessionFs } from "../agents/realFs";
 import { collectSessionList, showSession } from "../agents/sessions";
-import { identityDirectoryOfName, listIdentities } from "../identityStore";
 import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessAlive, realIsProcessRunning, realRunningAmong, realAsyncCredentialPort, realContentSourcePath, realOwnExecutablePath, selfInvocation, spawnDetachedSupervisor, spawnSelfDetached } from "../realPorts";
 import { createHeadroomKeeper } from "../headroom/keeper";
 import { HEADROOM_POLL_MS } from "../headroom/supervisor";
 import { requestAccountMove } from "../supervise/registry";
 import { createTargetObservationStore } from "../selection/targetStore";
 import { checkForUpdate } from "../update/commands";
-import { createIdentityNameReader, identityIdOf, identityLabeller, listAnchoredIdentities, usageSnapshotOfName } from "../identityStore";
+import { createIdentityNameReader, identityDirectoryOfName, identityIdOf, identityLabeller, listAnchoredIdentities, listIdentities, usageSnapshotOfName } from "../identityStore";
 import { readJobs } from "../jobStore";
 import { refreshStalePoolMembers } from "../launcher/poolRefresh";
 import { ANTHROPIC_USAGE_FRESHNESS_MS } from "../usage/anthropicUsageRefresh";
@@ -322,9 +321,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       observations: (target) => observations.observation(target),
       accountMoves: async (sessionId, to, model) => await requestAccountMove({ fs: realFarmFs, paths, runningAmong: realRunningAmong, idOf: (name) => identityIdOf(paths, name), now: () => Date.now() }, sessionId, to, model),
       ...(rcSelfHostSurface === undefined ? {} : { rcSelfHostRoute: rcSelfHostSurface.route }),
-      log, now: () => Date.now(),
-      // Where each provider-less session's main loop last went, which its helper requests follow: held for as long as the registry view holds the launch, and empty again after a restart until each session's next main-loop request.
-      mainLoopRoutes: createMainLoopRouteRecord({ launchOfSession: sessionRegistry.launchOfSession, holdsLaunch: sessionRegistry.holdsLaunch, stored: launchRouteStore(realFarmFs, paths.frontdoorSessionsDir) }),
+      log, now: () => Date.now(), mainLoopRoutes: createMainLoopRouteRecord({ launchOfSession: sessionRegistry.launchOfSession, holdsLaunch: sessionRegistry.holdsLaunch, stored: launchRouteStore(realFarmFs, paths.frontdoorSessionsDir) }),
     }),
     rcTracker,
     rcHub,
