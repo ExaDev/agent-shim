@@ -147,7 +147,9 @@ describe("front-door session registry", () => {
     const fs = createFakeFarmFs({});
     writeFrontDoorSession(fs, paths.frontdoorSessionsDir, { pid: LIVE, startedAt: 0, token: "live-token" });
     writeLaunchRoute(fs, paths.frontdoorSessionsDir, { pid: LIVE, startedAt: 0 }, { kind: "provider", provider: "z" });
-    writeLaunchRoute(fs, paths.frontdoorSessionsDir, { pid: DEAD, startedAt: 0 }, { kind: "provider", provider: "z" });
+    // The orphan is written directly: `writeLaunchRoute` refuses a launch with no record, which is the case the prune backs up.
+    fs.writeFilePrivate(`${paths.frontdoorSessionsDir}/${String(DEAD)}.route.json`, `${JSON.stringify({ startedAt: 0, route: { kind: "provider", provider: "z" } })}\n`);
+    expect(readLaunchRoute(fs, paths.frontdoorSessionsDir, { pid: DEAD, startedAt: 0 })).toEqual({ kind: "provider", provider: "z" });
     pruneDeadFrontDoorSessions(fs, paths.frontdoorSessionsDir, listFrontDoorSessions(fs, paths.frontdoorSessionsDir), (pid) => pid === LIVE);
     expect(readLaunchRoute(fs, paths.frontdoorSessionsDir, { pid: DEAD, startedAt: 0 })).toBeUndefined();
     expect(fs.readdir(paths.frontdoorSessionsDir)).not.toContain(`${String(DEAD)}.route.json`);
