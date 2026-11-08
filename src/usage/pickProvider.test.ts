@@ -143,6 +143,14 @@ describe("ranking a pool for a launch through a provider", () => {
     expect(candidateOf(rank([member("a", { anthropic: ANTHROPIC_OPEN, p: pulled }, "p")]), "a")).toMatchObject({ class: "ineligible", blockedUntilMs: NOW_MS + HOUR_MS });
   });
 
+  it("ranks a member whose provider reports a pay-per-use level and no windows as billed by use, as the Claude path ranks that plan", () => {
+    const billed = quotaSlice([], "zero");
+    const ranking = rank([member("a", { anthropic: ANTHROPIC_OPEN, p: billed }, "p"), member("b", { anthropic: ANTHROPIC_OPEN, p: headerSlice({ seven: window(U60, SIX_DAYS_MS) }) }, "p")]);
+    expect(candidateOf(ranking, "a")).toMatchObject({ class: "pay-per-use", usageUnrecorded: true, provider: "p" });
+    expect(candidateOf(ranking, "a").reasons.join("\n")).toContain("provider p");
+    expect(ranking.pick?.identity).toBe("b");
+  });
+
   it("ranks a member whose pulled windows have no length it knows as unknown", () => {
     const pulled = quotaSlice([{ measures: "credits", period: "prepaid", utilization: U30 }]);
     expect(candidateOf(rank([member("a", { anthropic: ANTHROPIC_SPENT, p: pulled }, "p")]), "a")).toMatchObject({ class: "unknown" });

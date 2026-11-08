@@ -287,11 +287,15 @@ function sliceOf(member: PoolMember): ProviderUsageState | undefined {
   return member.snapshot?.providers[member.provider ?? ANTHROPIC_PROVIDER];
 }
 
-/** A member whose launch routes through a provider and whose slice for it reports no plan window to rank on: refused while the refusal its provider last answered with still binds, and otherwise unknown, since another provider's windows (the Claude account's included) say nothing about it. */
+/** A member whose launch routes through a provider and whose slice for it reports no plan window to rank on: refused while the refusal its provider last answered with still binds, then billed by use when the level its provider reported says so, and otherwise unknown, since another provider's windows (the Claude account's included) say nothing about it. */
 function assessProviderWithoutWindows(member: PoolMember, provider: string, state: ProviderUsageState | undefined, base: Pick<Candidate, "identity" | "plan">, planReasons: readonly string[], nowMs: number): Assessment {
   const blockedUntil = limitBlockedUntil(state, nowMs);
   if (blockedUntil !== undefined) {
     return { candidate: { ...base, class: "ineligible", blockedUntilMs: blockedUntil, reasons: [`refused until ${new Date(blockedUntil).toISOString()} (in ${formatAge(blockedUntil - nowMs)})`, ...planReasons] } };
+  }
+  // A provider whose own quota level classifies as billed by use is a class of its own whether or not it reports windows, as on the Claude path: ranking it `unknown` would put a billed member ahead of every plan member of the same class.
+  if (base.plan.kind === "pay-per-use") {
+    return { candidate: { ...base, class: "pay-per-use", usageUnrecorded: true, reasons: [...planReasons, `provider ${provider} reports no plan windows, so its spend is not tracked`] } };
   }
   const why = state === undefined ? `no usage recorded for provider ${provider} yet, so its quota is unknown` : `provider ${provider} reports no plan windows, so its quota is unknown`;
   return { candidate: { ...base, class: "unknown", reasons: [why, ...planReasons] } };
