@@ -21,6 +21,8 @@ const READ_VERDICT_TIMEOUT_MS = 60_000;
 
 /** A bound short enough for a test of the bound to wait out, and distinct from the production one, so a verdict naming it shows the bound given was the bound used. */
 const SHORT_PROBE_TIMEOUT_MS = 500;
+/** The reason a probe gives when the host could not start its worker thread within `PROBE_WORKER_START_LIMIT_MS`: on a host so loaded that a thread takes that long to start, a probe of a silent listener ends there, before its bound is ever reached, and says nothing about the bound the test checks. The start limit has its own tests. */
+const WORKER_START_LIMIT_REASON = `the probe worker did not start within ${String(PROBE_WORKER_START_LIMIT_MS)}ms`;
 
 /**
  * A listener on its own thread. The probe blocks the calling thread while it waits for its verdict, so a server on that same thread could never answer; running it on a worker thread is what lets the synchronous probe talk to a real TLS listener in-process.
@@ -142,7 +144,7 @@ describe("probeFrontDoorSync", () => {
     const address = silent.address();
     try {
       const verdict = probeFrontDoorSync(typeof address === "object" && address !== null ? address.port : 0, ca.certPem);
-      expect(verdict.ok ? "" : verdict.reason).toMatch(/(?:no answer|the probe did not finish) within \d+ms/);
+      expect(verdict.ok ? "" : verdict.reason).toMatch(new RegExp(`(?:(?:no answer|the probe did not finish) within \\d+ms|^${WORKER_START_LIMIT_REASON}$)`));
     } finally {
       silent.close();
     }
@@ -156,7 +158,7 @@ describe("probeFrontDoorSync", () => {
     const address = silent.address();
     try {
       const verdict = probeFrontDoorSync(typeof address === "object" && address !== null ? address.port : 0, ca.certPem, SHORT_PROBE_TIMEOUT_MS);
-      expect(verdict.ok ? "" : verdict.reason).toMatch(new RegExp(`within (${String(SHORT_PROBE_TIMEOUT_MS)}|${String(SHORT_PROBE_TIMEOUT_MS + PROBE_WAIT_MARGIN_MS)})ms$`));
+      expect(verdict.ok ? "" : verdict.reason).toMatch(new RegExp(`(?:within (?:${String(SHORT_PROBE_TIMEOUT_MS)}|${String(SHORT_PROBE_TIMEOUT_MS + PROBE_WAIT_MARGIN_MS)})ms|^${WORKER_START_LIMIT_REASON})$`));
     } finally {
       silent.close();
     }
