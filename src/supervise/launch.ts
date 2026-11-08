@@ -120,6 +120,7 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
       });
       compaction = { ...baseCompaction, live: { ready: () => sessionControlReady(plugin), compact: async (conversationId, signal) => await compactInSession(plugin, conversationId, { signal, expiresInMs: COMPACT_TIMEOUT_MS }) } };
   }
+  // The supervisor moves a session only after an Anthropic quota refusal, so both movers rank the pool on each member's Claude account and pass no `providerOf`.
   const mover = createMover({
     paths,
     fs: realFsPort,
