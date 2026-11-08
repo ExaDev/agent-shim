@@ -226,4 +226,3 @@ export function farmRow(links: number, builtDirectories: number, adopted: number
 export function noteRow(text: string): ReportRow {
   return { label: "note", value: text };
 }
-
