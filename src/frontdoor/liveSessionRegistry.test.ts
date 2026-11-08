@@ -291,6 +291,18 @@ describe("live session registry", () => {
       expect(registry.holdsLaunch({ pid: LIVE, startedAt: 7 })).toBe(false);
     });
 
+    it("holds a launch registered since the last rescan by reading its record", () => {
+      const { fs, counts, reset } = countedWorld();
+      writeFrontDoorSession(fs, dir, { pid: LIVE, startedAt: 7, token: "a", ...recordOf({ sessionId: "s-live" }) });
+      const registry = createLiveSessionRegistry({ fs, sessionsDir: dir });
+      registry.rescan();
+      writeFrontDoorSession(fs, dir, { pid: LATE, startedAt: 1, token: "late-token", ...recordOf({ sessionId: "s-late" }) });
+      reset();
+      expect(registry.holdsLaunch({ pid: LATE, startedAt: 1 })).toBe(true);
+      expect(counts.reads).toEqual([`${dir}/${String(LATE)}.json`]);
+      expect(registry.holdsLaunch({ pid: LIVE, startedAt: 7 })).toBe(true);
+    });
+
     it("gives a launcher that registers again under its own pid a new launch, though it carries the same session id", () => {
       const { fs } = countedWorld();
       writeFrontDoorSession(fs, dir, { pid: LIVE, startedAt: 1, token: "first", ...recordOf({ sessionId: "s-same" }) });
