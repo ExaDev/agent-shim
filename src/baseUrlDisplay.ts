@@ -3,5 +3,6 @@
  */
 export function displayBaseUrl(baseUrl: string): string {
   const url = new URL(baseUrl);
-  return `${url.protocol}//${url.host}${url.pathname === "/" && !baseUrl.endsWith("/") ? "" : url.pathname}`;
+  const writtenBeforeQuery = baseUrl.split(/[?#]/, 1)[0] ?? baseUrl;
+  return `${url.protocol}//${url.host}${url.pathname === "/" && !writtenBeforeQuery.endsWith("/") ? "" : url.pathname}`;
 }
