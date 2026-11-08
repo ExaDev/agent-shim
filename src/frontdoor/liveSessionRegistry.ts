@@ -4,7 +4,7 @@ import type { ModelsConfig } from "../config/schema";
 import type { HeadroomFs } from "../headroom/state";
 import type { FarmStat } from "../launcher/ports";
 import { isLiveCapability } from "./capability";
-import { isSessionRecordName, readFrontDoorSessionRecord, sessionRecordName, summaryOf, type FrontDoorSession, type FrontDoorSessionSummary } from "./state";
+import { isSessionRecordName, launchKeyOf, readFrontDoorSessionRecord, sessionRecordName, summaryOf, type FrontDoorLaunch, type FrontDoorSession, type FrontDoorSessionSummary } from "./state";
 
 /**
  * The door's in-memory view of the session registry: which capabilities are live, answered without reading the registry for the requests that present one the door already holds.
@@ -30,8 +30,10 @@ export interface LiveSessionRegistry {
    * The models block the launch carrying `sessionId` resolved for itself, or undefined when no live launch carries that id or the launch added nothing to the global block. A session id the view does not hold is looked up as `admits` looks up a token (one listing, a stat per record, a read of only what is new or changed), so a launch is found on its first request and an unknown id costs no record read.
    */
   readonly modelsOf: (sessionId: string) => ModelsConfig | undefined;
-  /** Whether a live launch carries `sessionId`, looked up as `modelsOf` looks one up: the bound on per-session state the door keeps in memory, which lives exactly as long as the launch it describes. */
-  readonly holdsSession: (sessionId: string) => boolean;
+  /** The live launch carrying `sessionId`, or undefined when none does; looked up as `modelsOf` looks one up. A launch is named by its pid and start time (`FrontDoorLaunch`), not by the session id, because a relaunch carries the same session id. */
+  readonly launchOfSession: (sessionId: string) => FrontDoorLaunch | undefined;
+  /** Whether `launch` is still registered, looked up as `modelsOf` looks one up: what bounds per-launch state the door keeps, which must live exactly as long as the launch it describes. */
+  readonly holdsLaunch: (launch: Readonly<FrontDoorLaunch>) => boolean;
   /** Drops the launches `pids` from the view, for the records the caller has just removed (the tick's prune), so their capabilities are refused at once rather than at the next `rescan`. */
   readonly forget: (pids: readonly number[]) => void;
 }
@@ -59,6 +61,8 @@ export function createLiveSessionRegistry(ports: LiveSessionRegistryPorts): Live
   let byToken: ReadonlyMap<string, FrontDoorSession> = new Map();
   /** The records by the session id their requests carry; a record with none is not in it. */
   let bySessionId: ReadonlyMap<string, FrontDoorSession> = new Map();
+  /** The keys of the live launches. */
+  let launches: ReadonlySet<string> = new Set();
 
   const recordNames = (): readonly string[] => fs.readdir(sessionsDir).filter(isSessionRecordName);
 
@@ -67,6 +71,7 @@ export function createLiveSessionRegistry(ports: LiveSessionRegistryPorts): Live
     tokens = new Set(records.map((record) => record.token));
     byToken = new Map(records.map((record) => [record.token, record] as const));
     bySessionId = new Map(records.flatMap((record) => (record.sessionId === undefined ? [] : [[record.sessionId, record] as const])));
+    launches = new Set(records.map(launchKeyOf));
   };
 
   /** Reads one file into the view under `stat`, which the caller took first: a write landing between the stat and the read leaves the view holding newer content under an older stat, which the next look reads again, never older content under a newer stat. */
@@ -115,7 +120,11 @@ export function createLiveSessionRegistry(ports: LiveSessionRegistryPorts): Live
       const held = bySessionId.get(sessionId) ?? (reconcile() ? bySessionId.get(sessionId) : undefined);
       return held?.models;
     },
-    holdsSession: (sessionId) => bySessionId.has(sessionId) || (reconcile() && bySessionId.has(sessionId)),
+    launchOfSession: (sessionId) => {
+      const held = bySessionId.get(sessionId) ?? (reconcile() ? bySessionId.get(sessionId) : undefined);
+      return held === undefined ? undefined : { pid: held.pid, startedAt: held.startedAt };
+    },
+    holdsLaunch: (launch) => launches.has(launchKeyOf(launch)) || (reconcile() && launches.has(launchKeyOf(launch))),
     rescan: () => {
       known.clear();
       for (const name of recordNames()) {

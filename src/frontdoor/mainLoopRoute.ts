@@ -5,6 +5,7 @@ import { HTTP_STATUS } from "../codex/http";
 import type { RouteResolution } from "./pipeline";
 import { PROVIDER_PATH_PREFIX, parseProviderPath, type FrontDoorRoute, type RoutedRequest } from "./route";
 import { scanRequestHead } from "./requestScan";
+import { launchKeyOf, type FrontDoorLaunch } from "./state";
 
 /**
  * The header Claude Code names each request's class in. Read from the strings of Claude Code 2.1.319, which sets it on every API request whose query source it knows, with one of `REQUEST_CLASSES`; the query source itself is never sent, only this class derived from it (and, for an agent's requests, the agent type in `x-claude-code-agent-type`).
@@ -20,40 +21,51 @@ export function requestClassOf(headers: Readonly<IncomingHttpHeaders>): string |
   return typeof value === "string" && value !== "" ? value : undefined;
 }
 
-/** Where one session's main loop last went: the Anthropic route (Claude Code's own API) or a provider by name. */
+/** Where one launch's main loop last went: the Anthropic route (Claude Code's own API) or a provider by name. */
 type MainLoopRoute = { readonly kind: "anthropic" } | { readonly kind: "provider"; readonly provider: string };
 
 /**
- * What the door remembers about each session's main loop: where its most recent main-loop request was served, so the session's helper requests (hook judges, titles, compaction summaries, subagents, side replies) follow it there. Held in the door process's memory only, so a restarted door knows nothing until each session's next main-loop request.
+ * What the door remembers about each launch's main loop: where its most recent main-loop request was served, so the launch's helper requests (hook judges, titles, compaction summaries, subagents, side replies) follow it there. Keyed on the launch carrying the session id (its pid and start time), not on the session id alone: a `--resume` or an account-move relaunch carries the same session id, and must start with nothing recorded.
  */
 export interface MainLoopRouteRecord {
-  /** Records where `sessionId`'s latest main-loop request was served. */
+  /** Records where `sessionId`'s launch's latest main-loop request was served; nothing is recorded for a session id no live launch carries. */
   readonly record: (sessionId: string, route: MainLoopRoute) => void;
-  /** Where `sessionId`'s latest main-loop request was served, or undefined when none has been recorded since this door started, or the session's launch has ended. */
+  /** Where `sessionId`'s launch's latest main-loop request was served, or undefined when none has been recorded, or no live launch carries the id. */
   readonly routeOf: (sessionId: string) => MainLoopRoute | undefined;
 }
 
+/** What `createMainLoopRouteRecord` reads the registry through. */
+export interface MainLoopRoutePorts {
+  /** The live launch carrying a session id, or undefined when the registry holds none. */
+  readonly launchOfSession: (sessionId: string) => FrontDoorLaunch | undefined;
+  /** Whether a launch is still registered. */
+  readonly holdsLaunch: (launch: Readonly<FrontDoorLaunch>) => boolean;
+}
+
 /**
- * Builds the record, bounded by the door's session registry: an entry lives exactly as long as a live launch carries its session id, which `holdsSession` answers (the registry view's own lookup, refreshed by the supervisor's tick). Every write drops the entries of launches that have ended, and a read of an ended launch's entry drops it, so the record never holds more sessions than the registry did since the last write.
+ * Builds the record, bounded by the door's session registry: an entry lives exactly as long as the registry holds its launch. Every write drops the entries of launches that have ended, and a read of an ended launch's entry drops it, so the record never holds more launches than the registry did since the last write.
  */
-export function createMainLoopRouteRecord(ports: { readonly holdsSession: (sessionId: string) => boolean }): MainLoopRouteRecord {
-  const routes = new Map<string, MainLoopRoute>();
+export function createMainLoopRouteRecord(ports: MainLoopRoutePorts): MainLoopRouteRecord {
+  const routes = new Map<string, { readonly launch: FrontDoorLaunch; readonly route: MainLoopRoute }>();
   return {
     record: (sessionId, route) => {
-      for (const held of routes.keys()) {
-        if (held !== sessionId && !ports.holdsSession(held)) {
+      const launch = ports.launchOfSession(sessionId);
+      if (launch === undefined) {
+        return;
+      }
+      const key = launchKeyOf(launch);
+      for (const [held, entry] of routes) {
+        if (held !== key && !ports.holdsLaunch(entry.launch)) {
           routes.delete(held);
         }
       }
-      routes.set(sessionId, route);
+      routes.set(key, { launch, route });
     },
     routeOf: (sessionId) => {
-      const route = routes.get(sessionId);
-      if (route !== undefined && !ports.holdsSession(sessionId)) {
-        routes.delete(sessionId);
-        return undefined;
-      }
-      return route;
+      const launch = ports.launchOfSession(sessionId);
+      const key = launch === undefined ? undefined : launchKeyOf(launch);
+      const entry = key === undefined ? undefined : routes.get(key);
+      return entry?.route;
     },
   };
 }

@@ -6,14 +6,15 @@ import { HTTP_STATUS } from "../codex/http";
 import type { CodexRoutePorts } from "../codex/route";
 import { fakeAuth, fakeResponse, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
 import { ANTIGRAVITY_DEFAULT_TIER_MODELS, CODEX_DEFAULT_TIER_MODELS } from "../config/schema";
-import { FAKE_HOME, admitLaunchToken, fakeAsyncCredentials, fakeFs, followsLaunchFlag } from "../test-helpers";
+import { FAKE_HOME, admitLaunchToken, fakeAsyncCredentials, fakeFs, followsLaunchFlag, mainLoopRoutesOfLiveSessions } from "../test-helpers";
 import { createUsageMiddleware } from "../usage/middleware";
 import type { UsageRecord } from "../usage/schema";
-import { createMainLoopRouteRecord, type MainLoopRouteRecord } from "./mainLoopRoute";
+import { createMainLoopRouteRecord, type MainLoopRoutePorts, type MainLoopRouteRecord } from "./mainLoopRoute";
 import { serveRouted, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
 import { AUTH_HEADER, PROVIDER_HEADER, SESSION_HEADER, type RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
+import type { FrontDoorLaunch } from "./state";
 
 const PROVIDERS_DIR = `${FAKE_HOME}/.agent-shim/providers`;
 const LAUNCH_TOKEN = "launch-token-for-tests";
@@ -131,7 +132,7 @@ interface World {
 }
 
 /** A door serving an `http` provider `z` (whose tier environment maps haiku) and a `codex` provider `cx`, with the usage middleware recording into `records`. */
-async function startWorld(record: MainLoopRouteRecord = createMainLoopRouteRecord({ holdsSession: () => true }), upstreamStatus: number = HTTP_STATUS.ok): Promise<World> {
+async function startWorld(record: MainLoopRouteRecord = mainLoopRoutesOfLiveSessions(), upstreamStatus: number = HTTP_STATUS.ok): Promise<World> {
   const upstream = await fakeUpstream(upstreamStatus);
   const codexFetch = recordingFetch(() => fakeResponse({ events: TEXT_TURN }));
   const codexPorts = codexPortsOver(codexFetch.fetch);
@@ -248,7 +249,7 @@ describe("a provider-less session's helper requests follow its main loop", () =>
   });
 
   it("leaves a session launched on a provider routing by its launch header, helpers included", async () => {
-    const record = createMainLoopRouteRecord({ holdsSession: () => true });
+    const record = mainLoopRoutesOfLiveSessions();
     const world = await startWorld(record);
     try {
       // No main request first: the launch header alone routes the helper, as it always has.
@@ -277,7 +278,7 @@ describe("a provider-less session's helper requests follow its main loop", () =>
   });
 
   it("records the request class and the requested model in the usage log, on an error response too", async () => {
-    const world = await startWorld(createMainLoopRouteRecord({ holdsSession: () => true }), HTTP_STATUS.tooManyRequests);
+    const world = await startWorld(mainLoopRoutesOfLiveSessions(), HTTP_STATUS.tooManyRequests);
     try {
       await send(world, { model: "z/glm-5.3", requestClass: "main" });
       await send(world, { model: HAIKU_NAME, requestClass: "auxiliary" });
@@ -292,22 +293,54 @@ describe("a provider-less session's helper requests follow its main loop", () =>
 });
 
 describe("the main-loop route record", () => {
-  it("lives as long as the session's launch, dropping an ended launch's entry on a read and on any write", () => {
-    const live = new Set(["s-a", "s-b"]);
-    const record = createMainLoopRouteRecord({ holdsSession: (sessionId) => live.has(sessionId) });
+  /** A registry whose launches the test starts and ends, each by session id. */
+  function registryOf(): MainLoopRoutePorts & { readonly start: (sessionId: string, startedAt: number) => void; readonly end: (sessionId: string) => void } {
+    const launches = new Map<string, FrontDoorLaunch>();
+    return {
+      launchOfSession: (sessionId) => launches.get(sessionId),
+      holdsLaunch: (launch) => [...launches.values()].some((held) => held.pid === launch.pid && held.startedAt === launch.startedAt),
+      start: (sessionId, startedAt) => {
+        launches.set(sessionId, { pid: launches.size + 1, startedAt });
+      },
+      end: (sessionId) => {
+        launches.delete(sessionId);
+      },
+    };
+  }
+
+  it("lives as long as the launch, dropping an ended launch's entry on any write", () => {
+    const registry = registryOf();
+    const record = createMainLoopRouteRecord(registry);
+    registry.start("s-a", 1);
+    registry.start("s-b", 1);
     record.record("s-a", { kind: "provider", provider: "z" });
     record.record("s-b", { kind: "anthropic" });
-    live.delete("s-a");
+    registry.end("s-a");
     expect(record.routeOf("s-a")).toBeUndefined();
-    live.add("s-a");
-    // The entry went with the launch: a launch carrying the same id again starts with nothing recorded.
+    // A write by another launch drops the ended launch's entry: it does not come back with a launch that carries the same id.
+    record.record("s-b", { kind: "provider", provider: "z" });
+    registry.start("s-a", 2);
     expect(record.routeOf("s-a")).toBeUndefined();
-    record.record("s-a", { kind: "provider", provider: "z" });
-    live.delete("s-b");
-    record.record("s-a", { kind: "anthropic" });
-    live.add("s-b");
-    expect(record.routeOf("s-b")).toBeUndefined();
-    expect(record.routeOf("s-a")).toEqual({ kind: "anthropic" });
+    expect(record.routeOf("s-b")).toEqual({ kind: "provider", provider: "z" });
+  });
+
+  it("gives a launch that reuses an ended launch's session id nothing recorded, though nothing read or wrote between the two", () => {
+    const registry = registryOf();
+    const record = createMainLoopRouteRecord(registry);
+    registry.start("s-resumed", 1);
+    record.record("s-resumed", { kind: "provider", provider: "z" });
+    // The launch ends and a --resume registers under the same session id with no record read or write between.
+    registry.end("s-resumed");
+    registry.start("s-resumed", 2);
+    expect(record.routeOf("s-resumed")).toBeUndefined();
+  });
+
+  it("records nothing for a session id no live launch carries", () => {
+    const registry = registryOf();
+    const record = createMainLoopRouteRecord(registry);
+    record.record("s-unregistered", { kind: "provider", provider: "z" });
+    registry.start("s-unregistered", 1);
+    expect(record.routeOf("s-unregistered")).toBeUndefined();
   });
 });
 
@@ -344,7 +377,7 @@ describe("a native session on antigravity/auto", () => {
   it("sends the /goal judge's auxiliary request for a Claude haiku name to antigravity under its haiku mapping, and nothing to the Anthropic route", async () => {
     const backend = await fakeGeminiBackend();
     const resolveRoute = createProviderRouteResolver({ log: () => undefined, now: () => 0,
-      mainLoopRoutes: createMainLoopRouteRecord({ holdsSession: () => true }),
+      mainLoopRoutes: mainLoopRoutesOfLiveSessions(),
       fs: fakeFs({ [`${PROVIDERS_DIR}/antigravity.json`]: { kind: "antigravity", displayName: "Antigravity", credential: { sources: [{ literal: "ag-token" }] }, antigravity: { mode: "cloud", cloud: { endpoint: backend.endpoint } } } }),
       providersDir: PROVIDERS_DIR,
       codexPorts: unusedCodexPorts(),

@@ -273,21 +273,35 @@ describe("live session registry", () => {
       expect(registry.modelsOf("s-live")).toBeUndefined();
     });
   });
-  describe("whether a launch carries a session id", () => {
-    it("answers a held session id from memory, finds a launch that registered since the last rescan, and loses a launch with the launch", () => {
+  describe("a launch by its session id", () => {
+    it("names the launch carrying a session id by its pid and start time, finds one registered since the last rescan, and loses a launch with the launch", () => {
       const { fs, counts, reset } = countedWorld();
-      writeFrontDoorSession(fs, dir, { pid: LIVE, startedAt: 0, token: "a", ...recordOf({ sessionId: "s-live" }) });
+      writeFrontDoorSession(fs, dir, { pid: LIVE, startedAt: 7, token: "a", ...recordOf({ sessionId: "s-live" }) });
       const registry = createLiveSessionRegistry({ fs, sessionsDir: dir });
       registry.rescan();
       reset();
-      expect(registry.holdsSession("s-live")).toBe(true);
+      expect(registry.launchOfSession("s-live")).toEqual({ pid: LIVE, startedAt: 7 });
+      expect(registry.holdsLaunch({ pid: LIVE, startedAt: 7 })).toBe(true);
       expect(counts).toEqual({ readdirs: 0, stats: 0, reads: [] });
       writeFrontDoorSession(fs, dir, { pid: LATE, startedAt: 1, token: "late-token", ...recordOf({ sessionId: "s-late" }) });
-      expect(registry.holdsSession("s-late")).toBe(true);
-      expect(registry.holdsSession("unknown")).toBe(false);
+      expect(registry.launchOfSession("s-late")).toEqual({ pid: LATE, startedAt: 1 });
+      expect(registry.launchOfSession("unknown")).toBeUndefined();
       const listed = registry.rescan();
       registry.forget(pruneDeadFrontDoorSessions(fs, dir, listed, () => false));
-      expect(registry.holdsSession("s-live")).toBe(false);
+      expect(registry.holdsLaunch({ pid: LIVE, startedAt: 7 })).toBe(false);
+    });
+
+    it("gives a launcher that registers again under its own pid a new launch, though it carries the same session id", () => {
+      const { fs } = countedWorld();
+      writeFrontDoorSession(fs, dir, { pid: LIVE, startedAt: 1, token: "first", ...recordOf({ sessionId: "s-same" }) });
+      const registry = createLiveSessionRegistry({ fs, sessionsDir: dir });
+      registry.rescan();
+      const first = registry.launchOfSession("s-same");
+      expect(first).toEqual({ pid: LIVE, startedAt: 1 });
+      writeFrontDoorSession(fs, dir, { pid: LIVE, startedAt: 2, token: "second", ...recordOf({ sessionId: "s-same" }) });
+      registry.rescan();
+      expect(registry.launchOfSession("s-same")).toEqual({ pid: LIVE, startedAt: 2 });
+      expect(registry.holdsLaunch({ pid: LIVE, startedAt: 1 })).toBe(false);
     });
   });
 });

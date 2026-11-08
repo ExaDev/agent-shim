@@ -20,7 +20,8 @@ import type { CascadeInput } from "./resolve/walk";
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
 import type { PipelineDeps } from "./frontdoor/pipeline";
 import { AUTH_HEADER } from "./frontdoor/route";
-import { createMainLoopRouteRecord, type MainLoopRouteRecord } from "./frontdoor/mainLoopRoute";
+import { createMainLoopRouteRecord, type MainLoopRoutePorts, type MainLoopRouteRecord } from "./frontdoor/mainLoopRoute";
+import type { FrontDoorLaunch } from "./frontdoor/state";
 import type { FrontDoorSessionDetails } from "./frontdoor/state";
 
 /** The shipped classification map, parsed once, for use as the default in tests. */
@@ -493,9 +494,22 @@ export function fakeFrontDoorEnv(identity?: string, extra: Readonly<Record<strin
   };
 }
 
-/** A main-loop route record that holds every session it is told of, for tests whose sessions have no registry record to bound it by. */
+/** The registry ports of a world in which every session id is carried by its own live launch for ever, for tests whose sessions have no registry record to bound the main-loop route record by. */
+function everyLaunchLive(): MainLoopRoutePorts {
+  const launches = new Map<string, FrontDoorLaunch>();
+  return {
+    launchOfSession: (sessionId) => {
+      const held = launches.get(sessionId) ?? { pid: launches.size + 1, startedAt: 0 };
+      launches.set(sessionId, held);
+      return held;
+    },
+    holdsLaunch: () => true,
+  };
+}
+
+/** A main-loop route record over `everyLaunchLive`. */
 export function mainLoopRoutesOfLiveSessions(): MainLoopRouteRecord {
-  return createMainLoopRouteRecord({ holdsSession: () => true });
+  return createMainLoopRouteRecord(everyLaunchLive());
 }
 
 /** A headroom decision that always takes the routing the session's launch asked for, for tests that exercise the pipeline without caring about a session's earlier choice. */

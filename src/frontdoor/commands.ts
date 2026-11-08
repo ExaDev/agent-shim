@@ -323,8 +323,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       accountMoves: async (sessionId, to, model) => await requestAccountMove({ fs: realFarmFs, paths, runningAmong: realRunningAmong, idOf: (name) => identityIdOf(paths, name), now: () => Date.now() }, sessionId, to, model),
       ...(rcSelfHostSurface === undefined ? {} : { rcSelfHostRoute: rcSelfHostSurface.route }),
       log, now: () => Date.now(),
-      // Where each provider-less session's main loop last went, which its helper requests follow: held for as long as the registry view holds the session's launch, and empty again after a restart until each session's next main-loop request.
-      mainLoopRoutes: createMainLoopRouteRecord({ holdsSession: (sessionId) => sessionRegistry.holdsSession(sessionId) }),
+      // Where each provider-less session's main loop last went, which its helper requests follow: held for as long as the registry view holds the launch, and empty again after a restart until each session's next main-loop request.
+      mainLoopRoutes: createMainLoopRouteRecord(sessionRegistry),
     }),
     rcTracker,
     rcHub,
