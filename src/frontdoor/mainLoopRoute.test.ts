@@ -7,7 +7,7 @@ import { HTTP_STATUS } from "../codex/http";
 import type { CodexRoutePorts } from "../codex/route";
 import { fakeAuth, fakeResponse, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
 import { ANTIGRAVITY_DEFAULT_TIER_MODELS, CODEX_DEFAULT_TIER_MODELS, type ModelsConfig } from "../config/schema";
-import { FAKE_HOME, fakeAsyncCredentials, fakeFs, followsLaunchFlag, inMemoryRouteStore, launchOf, mainLoopRoutesOfLiveSessions } from "../test-helpers";
+import { FAKE_HOME, createFakeFarmFs, fakeAsyncCredentials, fakeFs, followsLaunchFlag, inMemoryRouteStore, launchOf, mainLoopRoutesOfLiveSessions } from "../test-helpers";
 import { createUsageMiddleware } from "../usage/middleware";
 import type { UsageRecord } from "../usage/schema";
 import { createMainLoopRouteRecord, followingMainLoop, requestClassOf, withModelInHead, type MainLoopRoutePorts, type MainLoopRouteRecord } from "./mainLoopRoute";
@@ -15,7 +15,7 @@ import { serveRouted, type PipelineDeps, type RouteResolution } from "./pipeline
 import { createProviderRouteResolver } from "./providerRoute";
 import { AUTH_HEADER, PROVIDER_HEADER, SESSION_HEADER, type RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
-import { launchKeyOf, type FrontDoorLaunch } from "./state";
+import { launchKeyOf, launchRouteStore, removeFrontDoorSession, writeFrontDoorSession, type FrontDoorLaunch } from "./state";
 
 const PROVIDERS_DIR = `${FAKE_HOME}/.agent-shim/providers`;
 const LAUNCH_TOKEN = "launch-token-for-tests";
@@ -654,6 +654,34 @@ describe("the main-loop route record", () => {
     record.record(a, { kind: "anthropic" });
     record.record(a, { kind: "anthropic" });
     expect(writes).toEqual(["z", "anthropic"]);
+  });
+});
+
+describe("the route file of a launch whose registry record is gone", () => {
+  const SESSIONS_DIR = `${FAKE_HOME}/.agent-shim/frontdoor/sessions`;
+  const launch: FrontDoorLaunch = { pid: 4242, startedAt: 7 };
+
+  it("is not written by a record the door's cached view still admitted, however the removal interleaves with the write", () => {
+    const fs = createFakeFarmFs();
+    writeFrontDoorSession(fs, SESSIONS_DIR, { pid: launch.pid, startedAt: launch.startedAt, token: "t" });
+    const store = launchRouteStore(fs, SESSIONS_DIR);
+    // The view still holds the launch (it refreshes at the next tick), while the launcher has already released it on disk.
+    const record = createMainLoopRouteRecord({ holdsLaunch: () => true, stored: store });
+    removeFrontDoorSession(fs, SESSIONS_DIR, launch.pid);
+    record.record(launch, { kind: "provider", provider: "z" });
+    expect(fs.readdir(SESSIONS_DIR)).toEqual([]);
+    expect(store.read(launch)).toBeUndefined();
+  });
+
+  it("is written while the record is on disk, and not for a record of another start time under the pid", () => {
+    const fs = createFakeFarmFs();
+    writeFrontDoorSession(fs, SESSIONS_DIR, { pid: launch.pid, startedAt: launch.startedAt, token: "t" });
+    const store = launchRouteStore(fs, SESSIONS_DIR);
+    store.write(launch, { kind: "provider", provider: "z" });
+    expect(store.read(launch)).toEqual({ kind: "provider", provider: "z" });
+    const earlier: FrontDoorLaunch = { pid: launch.pid, startedAt: launch.startedAt - 1 };
+    store.write(earlier, { kind: "anthropic" });
+    expect(store.read(launch)).toEqual({ kind: "provider", provider: "z" });
   });
 });
 
