@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { CodexRoutePorts } from "../codex/route";
 import { HTTP_STATUS } from "../codex/http";
 import { fakeAuth, fakeResponse, parseAnthropicSse, recordingFetch, sameUpstreamForEveryLogin, type RecordedCall } from "../codex/testing";
-import { FAKE_HOME, admitLaunchToken, fakeAsyncCredentials, fakeFs, followsLaunchFlag, mainLoopRoutesOfLiveSessions } from "../test-helpers";
+import { FAKE_HOME, admitLaunchToken, fakeAsyncCredentials, fakeFs, followsLaunchFlag, launchOf, mainLoopRoutesOfLiveSessions } from "../test-helpers";
 import type { SessionIdentity } from "./route";
 import { AUTH_HEADER, HEADROOM_FLAG_HEADER, IDENTITY_HEADER, SESSION_HEADER, type FrontDoorRoute } from "./route";
 import { serveRouted, type PipelineDeps, type RouteResolution } from "./pipeline";
@@ -211,7 +211,7 @@ describe("createFrontDoorServer", () => {
       expect(echoed).not.toContain(IDENTITY_HEADER);
       expect(echoed).not.toContain(SESSION_HEADER);
       expect(echoed).not.toContain(HEADROOM_FLAG_HEADER);
-      expect(seen?.session).toEqual({ identity: "work", sessionId: "session-1", headroom: true, projectId: undefined });
+      expect(seen?.session).toEqual({ identity: "work", sessionId: "session-1", headroom: true, projectId: undefined, launch: launchOf(LAUNCH_TOKEN) });
     } finally {
       await door.close();
     }

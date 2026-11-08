@@ -321,7 +321,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       observations: (target) => observations.observation(target),
       accountMoves: async (sessionId, to, model) => await requestAccountMove({ fs: realFarmFs, paths, runningAmong: realRunningAmong, idOf: (name) => identityIdOf(paths, name), now: () => Date.now() }, sessionId, to, model),
       ...(rcSelfHostSurface === undefined ? {} : { rcSelfHostRoute: rcSelfHostSurface.route }),
-      log, now: () => Date.now(), mainLoopRoutes: createMainLoopRouteRecord({ launchOfSession: sessionRegistry.launchOfSession, holdsLaunch: sessionRegistry.holdsLaunch, stored: launchRouteStore(realFarmFs, paths.frontdoorSessionsDir) }),
+      log, now: () => Date.now(), mainLoopRoutes: createMainLoopRouteRecord({ holdsLaunch: sessionRegistry.holdsLaunch, stored: launchRouteStore(realFarmFs, paths.frontdoorSessionsDir) }),
     }),
     rcTracker,
     rcHub,
@@ -493,7 +493,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
   const pipelines = createDoorPipelines({
     resolveRoute,
     isLiveToken,
-    identityOfToken: sessionRegistry.identityOf,
+    identityOfToken: sessionRegistry.identityOf, launchOfToken: sessionRegistry.launchOfToken,
     canonicalProvider,
     responseObservers: [usageMiddleware],
     now: () => Date.now(),

@@ -505,18 +505,18 @@ export function inMemoryRouteStore(): MainLoopRoutePorts["stored"] {
   };
 }
 
-/** The registry ports of a world in which every session id is carried by its own live launch for ever, for tests whose sessions have no registry record to bound the main-loop route record by. */
+const launchesByLabel = new Map<string, FrontDoorLaunch>();
+
+/** A launch of its own for each label, the same one every time the label is asked for: what a test's admission step attaches to the requests of one capability, so two labels are two launches whatever session id their requests carry. */
+export function launchOf(label: string): FrontDoorLaunch {
+  const held = launchesByLabel.get(label) ?? { pid: launchesByLabel.size + 1, startedAt: 0 };
+  launchesByLabel.set(label, held);
+  return held;
+}
+
+/** The registry ports of a world in which every launch is live for ever, for tests whose launches have no registry record to bound the main-loop route record by. */
 function everyLaunchLive(): MainLoopRoutePorts {
-  const launches = new Map<string, FrontDoorLaunch>();
-  return {
-    launchOfSession: (sessionId) => {
-      const held = launches.get(sessionId) ?? { pid: launches.size + 1, startedAt: 0 };
-      launches.set(sessionId, held);
-      return held;
-    },
-    holdsLaunch: () => true,
-    stored: inMemoryRouteStore(),
-  };
+  return { holdsLaunch: () => true, stored: inMemoryRouteStore() };
 }
 
 /** A main-loop route record over `everyLaunchLive`. */
@@ -532,7 +532,7 @@ export const admitEverything: PipelineDeps["admit"] = (request) => ({ ok: true, 
 
 /** An admission step that routes only requests presenting `token` as their launch capability, the way a client-facing listener admits a live launch. */
 export function admitLaunchToken(token: string): PipelineDeps["admit"] {
-  return (request) => (request.headers[AUTH_HEADER] === token ? { ok: true, headers: { ...request.forwardable } } : { ok: false, message: "no live capability" });
+  return (request) => (request.headers[AUTH_HEADER] === token ? { ok: true, headers: { ...request.forwardable }, launch: launchOf(token) } : { ok: false, message: "no live capability" });
 }
 
 /** A `LogPort` that records what it is given: `infos` holds information lines and the lines of every report rendered as plain text, `reports` the rows of each report as data. */

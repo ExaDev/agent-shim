@@ -7,18 +7,31 @@ import { HTTP_STATUS } from "../codex/http";
 import type { CodexRoutePorts } from "../codex/route";
 import { fakeAuth, fakeResponse, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
 import { ANTIGRAVITY_DEFAULT_TIER_MODELS, CODEX_DEFAULT_TIER_MODELS, type ModelsConfig } from "../config/schema";
-import { FAKE_HOME, admitLaunchToken, fakeAsyncCredentials, fakeFs, followsLaunchFlag, inMemoryRouteStore, mainLoopRoutesOfLiveSessions } from "../test-helpers";
+import { FAKE_HOME, fakeAsyncCredentials, fakeFs, followsLaunchFlag, inMemoryRouteStore, launchOf, mainLoopRoutesOfLiveSessions } from "../test-helpers";
 import { createUsageMiddleware } from "../usage/middleware";
 import type { UsageRecord } from "../usage/schema";
 import { createMainLoopRouteRecord, followingMainLoop, requestClassOf, withModelInHead, type MainLoopRoutePorts, type MainLoopRouteRecord } from "./mainLoopRoute";
-import { serveRouted, type RouteResolution } from "./pipeline";
+import { serveRouted, type PipelineDeps, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
 import { AUTH_HEADER, PROVIDER_HEADER, SESSION_HEADER, type RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
-import type { FrontDoorLaunch } from "./state";
+import { launchKeyOf, type FrontDoorLaunch } from "./state";
 
 const PROVIDERS_DIR = `${FAKE_HOME}/.agent-shim/providers`;
 const LAUNCH_TOKEN = "launch-token-for-tests";
+/** The capability the launch of the session labelled `session` holds in these tests: one launch per session label, whatever its session id says. */
+function tokenOf(session: string): string {
+  return `${LAUNCH_TOKEN}:${session}`;
+}
+/** Admits a request presenting any `tokenOf` capability as the launch that capability stands for. */
+const admitLaunchPerSession: PipelineDeps["admit"] = (admission) => {
+  const presented = admission.headers[AUTH_HEADER];
+  return typeof presented === "string" && presented.startsWith(`${LAUNCH_TOKEN}:`) ? { ok: true, headers: { ...admission.forwardable }, launch: launchOf(presented) } : { ok: false, message: "no live capability" };
+};
+/** The launch holding the capability of `tokenOf(session)`. */
+function launchOfSession(session: string): FrontDoorLaunch {
+  return launchOf(tokenOf(session));
+}
 const OWN_PORT = 4100;
 /** How many times the multi-byte sample repeats in a body, enough to run on past the head, and where the test splits the body into chunks, chosen to fall inside characters. */
 const REPEATS = 50;
@@ -187,7 +200,7 @@ async function startWorld(
     async (pipelineRequest) => {
       await serveRouted(pipelineRequest, { resolveRoute: standingInForAnthropic(resolve, (requestClass) => {
           toAnthropic.push(requestClass);
-        }), canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [usage], admit: admitLaunchToken(LAUNCH_TOKEN), now: () => 0, log: () => undefined });
+        }), canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [usage], admit: admitLaunchPerSession, now: () => 0, log: () => undefined });
     },
     () => undefined,
   );
@@ -196,12 +209,12 @@ async function startWorld(
 }
 
 /** Sends one Messages request as a launch's child would: its capability, its session id, and, when given, the class Claude Code states and a launch provider. */
-async function send(world: World, options: { readonly model: string; readonly session?: string; readonly requestClass?: string; readonly agentId?: string; readonly provider?: string; readonly maxTokens?: number }): Promise<{ readonly status: number; readonly text: string }> {
+async function send(world: World, options: { readonly model: string; readonly session?: string; readonly token?: string; readonly requestClass?: string; readonly agentId?: string; readonly provider?: string; readonly maxTokens?: number }): Promise<{ readonly status: number; readonly text: string }> {
   const response = await fetch(`${world.url}/v1/messages`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      [AUTH_HEADER]: LAUNCH_TOKEN,
+      [AUTH_HEADER]: options.token ?? tokenOf(options.session ?? "s-1"),
       [SESSION_HEADER]: options.session ?? "s-1",
       ...(options.requestClass === undefined ? {} : { "x-claude-code-request-class": options.requestClass }),
       ...(options.agentId === undefined ? {} : { "x-claude-code-agent-id": options.agentId }),
@@ -244,8 +257,8 @@ describe("a provider-less session's helper requests follow its main loop", () =>
   it("maps a helper of a session whose main loop is on a router provider through the models block's tier pointer", async () => {
     // A qualified name that matches no target stays on the router provider itself (the resolver answers it with the router's passthrough), so a router is a route the record can hold. It is written to the record directly, so no test sends the main request to the passthrough.
     const stored = inMemoryRouteStore();
-    stored.write({ pid: 1, startedAt: 1 }, { kind: "provider", provider: "r" });
-    const world = await startWorld(createMainLoopRouteRecord({ launchOfSession: () => ({ pid: 1, startedAt: 1 }), holdsLaunch: () => true, stored }), HTTP_STATUS.ok, { tiers: { haiku: "z/glm-5.3" } });
+    stored.write(launchOfSession("s-1"), { kind: "provider", provider: "r" });
+    const world = await startWorld(createMainLoopRouteRecord({ holdsLaunch: () => true, stored }), HTTP_STATUS.ok, { tiers: { haiku: "z/glm-5.3" } });
     try {
       expect((await send(world, { model: HAIKU_NAME, requestClass: "auxiliary" })).status).toBe(HTTP_STATUS.ok);
       expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-5.3"]);
@@ -267,8 +280,8 @@ describe("a provider-less session's helper requests follow its main loop", () =>
 
   it("refuses a helper of a router session whose models block has no pointer for the helper's tier, naming the tier and the provider and reaching no upstream", async () => {
     const stored = inMemoryRouteStore();
-    stored.write({ pid: 1, startedAt: 1 }, { kind: "provider", provider: "r" });
-    const world = await startWorld(createMainLoopRouteRecord({ launchOfSession: () => ({ pid: 1, startedAt: 1 }), holdsLaunch: () => true, stored }), HTTP_STATUS.ok, { tiers: { sonnet: "z/glm-4.7" } });
+    stored.write(launchOfSession("s-1"), { kind: "provider", provider: "r" });
+    const world = await startWorld(createMainLoopRouteRecord({ holdsLaunch: () => true, stored }), HTTP_STATUS.ok, { tiers: { sonnet: "z/glm-4.7" } });
     try {
       const helper = await send(world, { model: HAIKU_NAME, requestClass: "auxiliary" });
       expect(helper.status).toBe(HTTP_STATUS.badRequest);
@@ -284,9 +297,9 @@ describe("a provider-less session's helper requests follow its main loop", () =>
   it("records a router provider as the route of a main request whose qualified name matches no target, resolving it without serving it", async () => {
     const record = mainLoopRoutesOfLiveSessions();
     const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0, mainLoopRoutes: record, fs: fakeFs({ [`${PROVIDERS_DIR}/r.json`]: { kind: "router", displayName: "Router" } }), providersDir: PROVIDERS_DIR, codexPorts: unusedCodexPorts(), directPort: () => OWN_PORT, env: {}, credentials: fakeAsyncCredentials() });
-    const resolution = await resolve({ method: "POST", url: "/v1/messages", headers: { "x-claude-code-request-class": "main" }, body: Readable.from([Buffer.from(JSON.stringify({ model: "r/anything", messages: [] }))]), signal: new AbortController().signal, session: { identity: undefined, sessionId: "s-1", provider: undefined, headroom: false, projectId: undefined } });
+    const resolution = await resolve({ method: "POST", url: "/v1/messages", headers: { "x-claude-code-request-class": "main" }, body: Readable.from([Buffer.from(JSON.stringify({ model: "r/anything", messages: [] }))]), signal: new AbortController().signal, session: { identity: undefined, sessionId: "s-1", provider: undefined, headroom: false, projectId: undefined, launch: launchOfSession("s-1") } });
     expect(resolution.ok && resolution.route.name).toBe("router:r");
-    expect(record.routeOf("s-1")).toEqual({ kind: "provider", provider: "r" });
+    expect(record.routeOf(launchOfSession("s-1"))).toEqual({ kind: "provider", provider: "r" });
   });
 
   it("sends the helpers back to the Anthropic route once the main loop returns there", async () => {
@@ -325,7 +338,7 @@ describe("a provider-less session's helper requests follow its main loop", () =>
 
   it("keeps a session's helpers on its provider across a door restart, a subagent included", async () => {
     const stored = inMemoryRouteStore();
-    const ports = { launchOfSession: () => ({ pid: 1, startedAt: 1 }), holdsLaunch: () => true, stored };
+    const ports = { holdsLaunch: () => true, stored };
     const first = await startWorld(createMainLoopRouteRecord(ports));
     try {
       await send(first, { model: "z/glm-5.3", requestClass: "main" });
@@ -345,8 +358,8 @@ describe("a provider-less session's helper requests follow its main loop", () =>
 
   it("fails a helper naming the provider when the provider its main loop was on is no longer defined", async () => {
     const stored = inMemoryRouteStore();
-    stored.write({ pid: 1, startedAt: 1 }, { kind: "provider", provider: "removed" });
-    const world = await startWorld(createMainLoopRouteRecord({ launchOfSession: () => ({ pid: 1, startedAt: 1 }), holdsLaunch: () => true, stored }));
+    stored.write(launchOfSession("s-1"), { kind: "provider", provider: "removed" });
+    const world = await startWorld(createMainLoopRouteRecord({ holdsLaunch: () => true, stored }));
     try {
       const helper = await send(world, { model: HAIKU_NAME, requestClass: "auxiliary" });
       expect(helper.status).toBe(HTTP_STATUS.notFound);
@@ -365,7 +378,7 @@ describe("a provider-less session's helper requests follow its main loop", () =>
       expect((await send(world, { model: Z_HAIKU_MODEL, requestClass: "auxiliary", provider: "z" })).status).toBe(HTTP_STATUS.ok);
       expect((await send(world, { model: Z_HAIKU_MODEL, requestClass: "main", provider: "z" })).status).toBe(HTTP_STATUS.ok);
       expect(world.upstream.seen.map((seen) => seen.model)).toEqual([Z_HAIKU_MODEL, Z_HAIKU_MODEL]);
-      expect(record.routeOf("s-1")).toBeUndefined();
+      expect(record.routeOf(launchOfSession("s-1"))).toBeUndefined();
     } finally {
       await world.close();
     }
@@ -384,6 +397,30 @@ describe("a provider-less session's helper requests follow its main loop", () =>
       expect(codexModel(world, 1)).toBe(CODEX_DEFAULT_TIER_MODELS.haiku);
     } finally {
       await world.close();
+    }
+  });
+
+  it("keeps two live launches that carry one session id on routes of their own, whichever records first", async () => {
+    for (const order of [["a", "b"], ["b", "a"]] as const) {
+      const world = await startWorld();
+      try {
+        const models = { a: "z/glm-5.3", b: "cx/gpt-5.6" } as const;
+        for (const launch of order) {
+          await send(world, { model: models[launch], requestClass: "main", session: "s-shared", token: tokenOf(`${launch}-${order.join("")}`) });
+        }
+        const upstreamBefore = world.upstream.seen.length;
+        const codexBefore = world.codexCalls.length;
+        // Each launch's helper follows its own main loop though both present the same session id.
+        expect((await send(world, { model: HAIKU_NAME, requestClass: "auxiliary", session: "s-shared", token: tokenOf(`a-${order.join("")}`) })).status).toBe(HTTP_STATUS.ok);
+        expect(world.upstream.seen.length).toBe(upstreamBefore + 1);
+        expect(world.codexCalls.length).toBe(codexBefore);
+        expect((await send(world, { model: HAIKU_NAME, requestClass: "auxiliary", session: "s-shared", token: tokenOf(`b-${order.join("")}`) })).status).toBe(HTTP_STATUS.ok);
+        expect(world.upstream.seen.length).toBe(upstreamBefore + 1);
+        expect(world.codexCalls.length).toBe(codexBefore + 1);
+        expect(world.toAnthropic).toEqual([]);
+      } finally {
+        await world.close();
+      }
     }
   });
 
@@ -455,8 +492,8 @@ describe("a subagent or workflow request follows the provider its main loop is o
 
   it.each(SUBAGENT_CASES)("on a router provider: $requestClass asking for $name goes through the models block's $tier pointer", async ({ requestClass, name, tier }) => {
     const stored = inMemoryRouteStore();
-    stored.write({ pid: 1, startedAt: 1 }, { kind: "provider", provider: "r" });
-    const world = await startWorld(createMainLoopRouteRecord({ launchOfSession: () => ({ pid: 1, startedAt: 1 }), holdsLaunch: () => true, stored }), HTTP_STATUS.ok, { tiers: { haiku: "z/glm-5.3-haiku", sonnet: "z/glm-5.3-sonnet", opus: "z/glm-5.3-opus" } });
+    stored.write(launchOfSession("s-1"), { kind: "provider", provider: "r" });
+    const world = await startWorld(createMainLoopRouteRecord({ holdsLaunch: () => true, stored }), HTTP_STATUS.ok, { tiers: { haiku: "z/glm-5.3-haiku", sonnet: "z/glm-5.3-sonnet", opus: "z/glm-5.3-opus" } });
     try {
       expect((await send(world, { model: name, requestClass })).status).toBe(HTTP_STATUS.ok);
       expect(world.upstream.seen.map((seen) => seen.model)).toEqual([`glm-5.3-${tier}`]);
@@ -496,7 +533,7 @@ describe("a subagent or workflow request follows the provider its main loop is o
 
   it("keeps a subagent across a door restart on the provider, asking for any tier", async () => {
     const stored = inMemoryRouteStore();
-    const ports = { launchOfSession: () => ({ pid: 1, startedAt: 1 }), holdsLaunch: () => true, stored };
+    const ports = { holdsLaunch: () => true, stored };
     const first = await startWorld(createMainLoopRouteRecord(ports));
     try {
       await send(first, { model: "z/glm-5.3", requestClass: "main" });
@@ -545,84 +582,59 @@ describe("a session launched before the class header was asked for", () => {
 });
 
 describe("the main-loop route record", () => {
-  /** A registry whose launches the test starts and ends, each by session id. */
-  function registryOf(stored: MainLoopRoutePorts["stored"] = inMemoryRouteStore()): MainLoopRoutePorts & { readonly start: (sessionId: string, startedAt: number) => void; readonly end: (sessionId: string) => void } {
+  /** A registry whose launches the test starts and ends. */
+  function registryOf(stored: MainLoopRoutePorts["stored"] = inMemoryRouteStore()): MainLoopRoutePorts & { readonly start: (launch: Readonly<FrontDoorLaunch>) => void; readonly end: (launch: Readonly<FrontDoorLaunch>) => void } {
     const launches = new Map<string, FrontDoorLaunch>();
     return {
       stored,
-      launchOfSession: (sessionId) => launches.get(sessionId),
-      holdsLaunch: (launch) => [...launches.values()].some((held) => held.pid === launch.pid && held.startedAt === launch.startedAt),
-      start: (sessionId, startedAt) => {
-        launches.set(sessionId, { pid: launches.size + 1, startedAt });
+      holdsLaunch: (launch) => launches.has(launchKeyOf(launch)),
+      start: (launch) => {
+        launches.set(launchKeyOf(launch), launch);
       },
-      end: (sessionId) => {
-        launches.delete(sessionId);
+      end: (launch) => {
+        launches.delete(launchKeyOf(launch));
       },
     };
   }
-
-  it("lives as long as the launch, dropping an ended launch's entry on any write", () => {
-    const registry = registryOf();
-    const record = createMainLoopRouteRecord(registry);
-    registry.start("s-a", 1);
-    registry.start("s-b", 1);
-    record.record("s-a", { kind: "provider", provider: "z" });
-    record.record("s-b", { kind: "anthropic" });
-    registry.end("s-a");
-    expect(record.routeOf("s-a")).toBeUndefined();
-    // A write by another launch drops the ended launch's entry: it does not come back with a launch that carries the same id.
-    record.record("s-b", { kind: "provider", provider: "z" });
-    registry.start("s-a", 2);
-    expect(record.routeOf("s-a")).toBeUndefined();
-    expect(record.routeOf("s-b")).toEqual({ kind: "provider", provider: "z" });
-  });
+  const a: FrontDoorLaunch = { pid: 1, startedAt: 1 };
+  const b: FrontDoorLaunch = { pid: 2, startedAt: 1 };
 
   it("drops an ended launch's entry on a write by another launch, so the same launch registered again finds nothing in memory", () => {
     // The durable copy answers nothing, so only the in-memory entry can say what was recorded; the launch is identical (pid and start time) when it is registered again, so the one thing that can make the second read empty is the eviction.
-    const launch: FrontDoorLaunch = { pid: 1, startedAt: 1 };
-    const other: FrontDoorLaunch = { pid: 2, startedAt: 1 };
-    const live = new Set<FrontDoorLaunch>([launch, other]);
-    const bySession = new Map<string, FrontDoorLaunch>([
-      ["s-a", launch],
-      ["s-b", other],
-    ]);
-    const record = createMainLoopRouteRecord({
-      launchOfSession: (sessionId) => bySession.get(sessionId),
-      holdsLaunch: (held) => live.has(held),
-      stored: { read: () => undefined, write: () => undefined },
-    });
-    record.record("s-a", { kind: "provider", provider: "z" });
-    expect(record.routeOf("s-a")).toEqual({ kind: "provider", provider: "z" });
-    live.delete(launch);
-    record.record("s-b", { kind: "anthropic" });
-    live.add(launch);
-    expect(record.routeOf("s-a")).toBeUndefined();
-    expect(record.routeOf("s-b")).toEqual({ kind: "anthropic" });
+    const live = new Set<FrontDoorLaunch>([a, b]);
+    const record = createMainLoopRouteRecord({ holdsLaunch: (held) => live.has(held), stored: { read: () => undefined, write: () => undefined } });
+    record.record(a, { kind: "provider", provider: "z" });
+    expect(record.routeOf(a)).toEqual({ kind: "provider", provider: "z" });
+    live.delete(a);
+    record.record(b, { kind: "anthropic" });
+    live.add(a);
+    expect(record.routeOf(a)).toBeUndefined();
+    expect(record.routeOf(b)).toEqual({ kind: "anthropic" });
   });
 
-  it("gives a launch that reuses an ended launch's session id nothing recorded, though nothing read or wrote between the two", () => {
+  it("gives a launch registered again under the same pid, and so a new start time, nothing recorded", () => {
     const registry = registryOf();
     const record = createMainLoopRouteRecord(registry);
-    registry.start("s-resumed", 1);
-    record.record("s-resumed", { kind: "provider", provider: "z" });
-    // The launch ends and a --resume registers under the same session id with no record read or write between.
-    registry.end("s-resumed");
-    registry.start("s-resumed", 2);
-    expect(record.routeOf("s-resumed")).toBeUndefined();
+    registry.start(a);
+    record.record(a, { kind: "provider", provider: "z" });
+    registry.end(a);
+    const relaunched: FrontDoorLaunch = { pid: a.pid, startedAt: 2 };
+    registry.start(relaunched);
+    expect(record.routeOf(relaunched)).toBeUndefined();
   });
 
   it("is found again by a record built later over the same store, as after a door restart, and by that launch only", () => {
     const stored = inMemoryRouteStore();
     const before = registryOf(stored);
-    before.start("s-a", 1);
-    createMainLoopRouteRecord(before).record("s-a", { kind: "provider", provider: "z" });
+    before.start(a);
+    createMainLoopRouteRecord(before).record(a, { kind: "provider", provider: "z" });
     // A new door process: nothing in memory, the registry still holds the launch.
     const after = registryOf(stored);
-    after.start("s-a", 1);
-    after.start("s-relaunched", 2);
+    after.start(a);
+    after.start(b);
     const restarted = createMainLoopRouteRecord(after);
-    expect(restarted.routeOf("s-a")).toEqual({ kind: "provider", provider: "z" });
-    expect(restarted.routeOf("s-relaunched")).toBeUndefined();
+    expect(restarted.routeOf(a)).toEqual({ kind: "provider", provider: "z" });
+    expect(restarted.routeOf(b)).toBeUndefined();
   });
 
   it("writes the store only when the route changes", () => {
@@ -635,21 +647,13 @@ describe("the main-loop route record", () => {
         base.write(launch, route);
       },
     });
-    registry.start("s-a", 1);
+    registry.start(a);
     const record = createMainLoopRouteRecord(registry);
-    record.record("s-a", { kind: "provider", provider: "z" });
-    record.record("s-a", { kind: "provider", provider: "z" });
-    record.record("s-a", { kind: "anthropic" });
-    record.record("s-a", { kind: "anthropic" });
+    record.record(a, { kind: "provider", provider: "z" });
+    record.record(a, { kind: "provider", provider: "z" });
+    record.record(a, { kind: "anthropic" });
+    record.record(a, { kind: "anthropic" });
     expect(writes).toEqual(["z", "anthropic"]);
-  });
-
-  it("records nothing for a session id no live launch carries", () => {
-    const registry = registryOf();
-    const record = createMainLoopRouteRecord(registry);
-    record.record("s-unregistered", { kind: "provider", provider: "z" });
-    registry.start("s-unregistered", 1);
-    expect(record.routeOf("s-unregistered")).toBeUndefined();
   });
 });
 
@@ -700,7 +704,7 @@ describe("a native session on antigravity/auto", () => {
     });
     const server = createFrontDoorServer(
       async (pipelineRequest) => {
-        await serveRouted(pipelineRequest, { resolveRoute: guarded, canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [], admit: admitLaunchToken(LAUNCH_TOKEN), now: () => 0, log: () => undefined });
+        await serveRouted(pipelineRequest, { resolveRoute: guarded, canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [], admit: admitLaunchPerSession, now: () => 0, log: () => undefined });
       },
       () => undefined,
     );
@@ -710,7 +714,7 @@ describe("a native session on antigravity/auto", () => {
     const post = async (model: string, requestClass: string): Promise<number> => {
       const response = await fetch(`${url}/v1/messages`, {
         method: "POST",
-        headers: { "content-type": "application/json", [AUTH_HEADER]: LAUNCH_TOKEN, [SESSION_HEADER]: "s-native", "x-claude-code-request-class": requestClass },
+        headers: { "content-type": "application/json", [AUTH_HEADER]: tokenOf("s-native"), [SESSION_HEADER]: "s-native", "x-claude-code-request-class": requestClass },
         body: JSON.stringify({ model, stream: true, max_tokens: ORDINARY_MAX_TOKENS, messages: [{ role: "user", content: "hi" }] }),
       });
       await response.text();
@@ -774,21 +778,21 @@ describe("followingMainLoop over a resolver that records what it is asked", () =
         headers: requestClass === undefined ? {} : { "x-claude-code-request-class": requestClass },
         body: Readable.from([Buffer.from(JSON.stringify({ model: HAIKU_NAME, messages: [] }))]),
         signal: new AbortController().signal,
-        session: { identity: undefined, sessionId: session, provider: undefined, headroom: false, projectId: undefined },
+        session: { identity: undefined, sessionId: session, provider: undefined, headroom: false, projectId: undefined, launch: launchOfSession(session) },
       });
     return { follow, asked, record };
   }
 
   it("leaves a main request refused by the resolver out of the record", async () => {
     const { follow, record } = fixture(true);
-    record.record("s-1", { kind: "provider", provider: "z" });
+    record.record(launchOfSession("s-1"), { kind: "provider", provider: "z" });
     expect((await follow("/v1/messages", "main")).ok).toBe(false);
-    expect(record.routeOf("s-1")).toEqual({ kind: "provider", provider: "z" });
+    expect(record.routeOf(launchOfSession("s-1"))).toEqual({ kind: "provider", provider: "z" });
   });
 
   it("answers a helper with the refusal of the provider its main loop was on, never resolving it again on the route it was launched on", async () => {
     const { follow, asked, record } = fixture();
-    record.record("s-1", { kind: "provider", provider: "removed" });
+    record.record(launchOfSession("s-1"), { kind: "provider", provider: "removed" });
     const resolution = await follow("/v1/messages", "auxiliary");
     expect(resolution).toMatchObject({ ok: false, status: HTTP_STATUS.notFound });
     expect(asked).toEqual(["/providers/removed/v1/messages"]);
@@ -796,21 +800,21 @@ describe("followingMainLoop over a resolver that records what it is asked", () =
 
   it("records a request with no class header as a main request, so a launch that was not asked for the header behaves as every request main", async () => {
     const { follow, record } = fixture();
-    record.record("s-1", { kind: "provider", provider: "z" });
+    record.record(launchOfSession("s-1"), { kind: "provider", provider: "z" });
     await follow("/v1/messages", undefined);
-    expect(record.routeOf("s-1")).toEqual({ kind: "anthropic" });
+    expect(record.routeOf(launchOfSession("s-1"))).toEqual({ kind: "anthropic" });
   });
 
   it("sends a helper whose class is not one Claude Code sends where the main loop is, as it does any other helper", async () => {
     const { follow, asked, record } = fixture();
-    record.record("s-1", { kind: "provider", provider: "z" });
+    record.record(launchOfSession("s-1"), { kind: "provider", provider: "z" });
     await follow("/v1/messages", "main, main");
     expect(asked).toEqual(["/providers/z/v1/messages"]);
   });
 
   it("scopes a count_tokens helper under the provider too, and leaves a path that is no inference call alone", async () => {
     const { follow, asked, record } = fixture();
-    record.record("s-1", { kind: "provider", provider: "z" });
+    record.record(launchOfSession("s-1"), { kind: "provider", provider: "z" });
     await follow("/v1/messages/count_tokens?beta=true", "auxiliary");
     await follow("/v1/models", "auxiliary");
     expect(asked).toEqual(["/providers/z/v1/messages/count_tokens?beta=true", "/v1/models"]);

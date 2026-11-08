@@ -6,6 +6,7 @@ import type { HeadroomDecision } from "./headroomDecision";
 import { applyHeadroomHop, headroomReady, type HeadroomHopDeps } from "./headroomHop";
 import { requestClassOf } from "./mainLoopRoute";
 import type { Lineage } from "./lineage";
+import type { FrontDoorLaunch } from "./state";
 import { CLIENT_SESSION_HEADER, identifyRequest, withCanonicalProviderTarget, type FrontDoorRoute, type ModelChoice, type RoutedRequest, type RoutedResponse, type SessionIdentity } from "./route";
 
 /** What one routed response looked like as it started back to the client: the typed event response middleware observes. */
@@ -100,6 +101,8 @@ type Admission =
       readonly headers: IncomingHttpHeaders;
       /** The identity id the admitting launch runs as, when the admission knows it: it stands for a request that carries no identity header of its own. */
       readonly identity?: string;
+      /** The live launch holding the capability the request presented, when the admission knows it. */
+      readonly launch?: FrontDoorLaunch;
     }
   | { readonly ok: false; readonly message: string };
 
@@ -299,7 +302,11 @@ export async function serveRouted(incoming: PipelineRequest, deps: PipelineDeps)
     headers: admission.headers,
     body: request.body,
     signal: request.signal,
-    session: identified.session.identity === undefined && admission.identity !== undefined ? { ...identified.session, identity: admission.identity } : identified.session,
+    session: {
+      ...identified.session,
+      ...(identified.session.identity === undefined && admission.identity !== undefined ? { identity: admission.identity } : {}),
+      ...(admission.launch === undefined ? {} : { launch: admission.launch }),
+    },
   };
   const resolution = await deps.resolveRoute(routed);
   if (!resolution.ok) {
