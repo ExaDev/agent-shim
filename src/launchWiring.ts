@@ -17,6 +17,7 @@ import type { LogPort, ProcPort, RunPort } from "./launcher/ports";
 import { resolveWithAsyncRuns, type AsyncRun } from "./replayRun";
 import { resolveClaudeHome, resolveLayoutPaths, type LayoutPaths } from "./paths";
 import { identitySignIn, storedLoginUsable } from "./usage/signIn";
+import { realBaseUrlProbe } from "./providerReachability";
 import type { ClaudeBinaryResolver } from "./versionDiscovery";
 import {
   realContentSourcePath,
@@ -117,6 +118,7 @@ export function realPrepareLaunchParams(paths: LayoutPaths, options: RealLaunchO
     headroom: realHeadroomPort(paths, { spawnDaemon: options.spawnDaemon, cwd: farm.runtime.cwd }),
     frontdoor: realFrontDoorPort(paths, options.spawnDaemon),
     credentials: { ...realCredentialPort, cache: realCredentialCacheEnv(paths) },
+    probeBaseUrl: realBaseUrlProbe,
     hold: realHoldPort,
     hasStoredLogin: (identity) => identitySignIn(realFarmFs, { platform: process.platform, run: options.run ?? realRunPort }, { farmRoot: path.join(paths.identitiesDir, identity), hasCredentialBlock: false, provider: undefined }).state !== "signed-out",
     hasUsableLogin: (identity, claudeBin) => storedLoginUsable(options.run ?? realRunPort, claudeBin, path.join(paths.identitiesDir, identity), options.proc.env),
