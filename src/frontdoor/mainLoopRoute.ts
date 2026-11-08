@@ -1,7 +1,6 @@
 import type { IncomingHttpHeaders } from "node:http";
 import { Readable } from "node:stream";
 
-import { HTTP_STATUS } from "../codex/http";
 import type { RouteResolution } from "./pipeline";
 import { PROVIDER_PATH_PREFIX, parseProviderPath, type FrontDoorRoute, type RoutedRequest } from "./route";
 import { scanRequestHead } from "./requestScan";
@@ -102,7 +101,7 @@ function serving(route: FrontDoorRoute, rewritten: RoutedRequest): FrontDoorRout
 /**
  * Makes a provider-less session's helper requests follow its main loop. A session launched on a provider carries the provider header on every request, helpers included, so it routes exactly as `resolve` does. A session launched without one picks a provider by model name (`/model <provider>/<model>`), which only its main-loop requests carry: its helpers ask for a Claude model name, which no provider claims, and would otherwise reach the Anthropic account the session was launched under.
  *
- * So, for a bare Messages API request from a session that names no provider: a main-loop request (class `main`, or no class at all) is resolved as before and where it was served is recorded; any other class (`subagent`, `workflow`, `compaction`, `auxiliary`, `side_reply`, or one a later client adds) is sent where the session's latest main-loop request went. To a provider, it is scoped under that provider's path with its model name mapped through the provider's tier mapping; to the Anthropic route, it is resolved as before. With nothing recorded (no main-loop request yet, or a door restarted since) it is refused with the reason, never sent to the Anthropic account on a guess.
+ * So, for a bare Messages API request from a session that names no provider: a main-loop request (class `main`, or no class at all) is resolved as before and where it was served is recorded; any other class (`subagent`, `workflow`, `compaction`, `auxiliary`, `side_reply`, or one a later client adds) is sent where the session's latest main-loop request went. To a provider, it is scoped under that provider's path with its model name mapped through the provider's tier mapping; to the Anthropic route, it is resolved as before. With nothing recorded the session has never left the route it was launched on, so its helpers go there, which for a launch with no provider is the Anthropic route: Claude Code sends helpers (the startup quota check, a model validation) before its first main-loop request, and they belong to the launch's own account, not to a provider the session never chose.
  */
 export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<RouteResolution>, deps: MainLoopRoutingDeps): (request: RoutedRequest) => Promise<RouteResolution> {
   return async (request) => {
@@ -121,14 +120,7 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
       return resolution;
     }
     const route = deps.record.routeOf(sessionId);
-    if (route === undefined) {
-      return {
-        ok: false,
-        status: HTTP_STATUS.badRequest,
-        message: `agent-shim front door: this ${requestClass} request follows its session's main loop, and the door has seen no main-loop request from this session since it started; it is not sent to the account the session was launched under. Send the session's next prompt, and its helpers follow wherever that goes.`,
-      };
-    }
-    if (route.kind === "anthropic") {
+    if (route === undefined || route.kind === "anthropic") {
       return await resolve(request);
     }
     const scan = await scanRequestHead(request, true);
