@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { ConfigFileNotJsonError, ConfigValidationError } from "../config/load";
 import type { Identity } from "../config/schema";
 import type { CascadeInput } from "../resolve/walk";
 import { FAKE_HOME, fakeFs, paths } from "../test-helpers";
 import { identityReader } from "./identity";
+import type { UnreadableProvider } from "../usage/poolPick";
 import { memberProviderResolver, type MemberProviderParams } from "./memberProvider";
 
 const identityFile = (id: string): string => `${paths.identitiesDir}/${id}/identity.json`;
@@ -16,6 +18,14 @@ const identity = (name: string, rest: Partial<Identity> = {}): Record<string, un
 /** A cascade whose layers select `provider` through `launch.provider`, or select nothing. */
 function cascadeSelecting(provider: string | undefined): CascadeInput {
   return { home: FAKE_HOME, loadProfile: () => undefined, levels: [], ...(provider === undefined ? {} : { cliOverride: { launch: { provider } } }) };
+}
+
+/** The unreadable-provider report a resolver gave, failing the test when it gave a name or nothing. */
+function unreadable(resolved: string | UnreadableProvider | undefined): UnreadableProvider {
+  if (typeof resolved !== "object") {
+    throw new Error(`expected an unreadable provider, got ${String(resolved)}`);
+  }
+  return resolved;
 }
 
 function resolver(files: Record<string, unknown>, overrides: Partial<MemberProviderParams> = {}) {
@@ -86,6 +96,88 @@ describe("memberProviderResolver", () => {
     const files = { ...members, [identityFile("work")]: { name: "work", allowAmbientCredential: "no" } };
     expect(resolver(files, { cliProvider: "flag" })("work")).toBe("flag");
     expect(resolver(files)("work")).toBeUndefined();
+  });
+
+  describe("a member whose provider configuration cannot be read", () => {
+    const withBroken = (provider: string, file: unknown): Record<string, unknown> => ({
+      ...members,
+      [identityFile("work")]: identity("work", { provider }),
+      [providerFile(provider)]: file,
+    });
+
+    it("reports a provider file that fails validation, naming the provider as the member declares it", () => {
+      const providerOf = resolver(withBroken("bad", { displayName: 5 }));
+      const broken = unreadable(providerOf("work"));
+      expect(broken.named).toBe("bad");
+      expect(broken.reason).toContain(providerFile("bad"));
+      expect(providerOf("personal")).toBe("own");
+    });
+
+    it("reports a provider file in the format before the credential block", () => {
+      const providerOf = resolver(withBroken("old", { displayName: "Old", baseUrl: "https://api.example.com/anthropic", tokenEnv: "OLD_TOKEN" }));
+      const broken = unreadable(providerOf("work"));
+      expect(broken.named).toBe("old");
+      expect(broken.reason).toContain("tokenEnv");
+      expect(providerOf("personal")).toBe("own");
+    });
+
+    it("reports a provider file that is not JSON", () => {
+      const base = fakeFs(members);
+      const fs = {
+        ...base,
+        readConfigFile: (file: string) => {
+          if (file === providerFile("own")) {
+            throw new ConfigFileNotJsonError(file);
+          }
+          return base.readConfigFile(file);
+        },
+      };
+      const providerOf = memberProviderResolver({ paths, fs, env: {}, cliProvider: undefined, loadCascade: () => cascadeSelecting(undefined) });
+      const broken = unreadable(providerOf("personal"));
+      expect(broken.named).toBe("own");
+      expect(broken.reason).toContain(providerFile("own"));
+      expect(providerOf("work")).toBeUndefined();
+    });
+
+    it("reports the provider the launch flag names when its file is broken, for every member", () => {
+      const providerOf = resolver(withBroken("bad", { displayName: 5 }), { cliProvider: "bad" });
+      expect(unreadable(providerOf("personal")).named).toBe("bad");
+      expect(unreadable(providerOf("work")).named).toBe("bad");
+    });
+
+    it("reports a configuration profile that fails validation, naming the provider the member and flag leave", () => {
+      const loadCascade = (base: string | undefined): CascadeInput => {
+        if (base === "broken") {
+          throw new ConfigValidationError("/profiles/broken.json", []);
+        }
+        return cascadeSelecting(undefined);
+      };
+      const files = { ...members, [identityFile("work")]: identity("work", { defaultConfigProfile: "broken", provider: "own" }) };
+      const providerOf = resolver(files, { loadCascade });
+      const broken = unreadable(providerOf("work"));
+      expect(broken.named).toBe("own");
+      expect(broken.reason).toContain("/profiles/broken.json");
+      expect(providerOf("personal")).toBe("own");
+      expect(unreadable(resolver(files, { loadCascade, cliProvider: "flag" })("work")).named).toBe("flag");
+    });
+
+    it("names no provider when a broken profile leaves nothing that names one", () => {
+      const loadCascade = (): CascadeInput => {
+        throw new ConfigValidationError("/profiles/broken.json", []);
+      };
+      const broken = unreadable(resolver(members, { loadCascade })("work"));
+      expect(broken.named).toBeUndefined();
+      expect(broken.reason).toContain("/profiles/broken.json");
+    });
+
+    it("lets an error that is not a configuration fault through", () => {
+      const providerOf = resolver(members, {
+        loadCascade: () => {
+          throw new Error("disk on fire");
+        },
+      });
+      expect(() => providerOf("work")).toThrow("disk on fire");
+    });
   });
 
   it("names no provider for a member with no identity", () => {

@@ -48,13 +48,19 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** The provider a launch of a member routes through, by the member's name: undefined when the launch spends the member's own Claude account. */
-export type ProviderOf = (identity: string) => string | undefined;
+/** A member whose launch cannot be resolved to a provider because a configuration file it reads is unreadable: the provider it names, when something still named one, and why the file could not be read. The member is ranked on what is known and reported with the reason, and the launch that picks it refuses with the file's own error. */
+export interface UnreadableProvider {
+  readonly named?: string;
+  readonly reason: string;
+}
+
+/** The provider a launch of a member routes through, by the member's name: undefined when the launch spends the member's own Claude account, and an `UnreadableProvider` when the files that decide it cannot be read. */
+export type ProviderOf = (identity: string) => string | UnreadableProvider | undefined;
 
 /**
  * Reads each member's snapshot, login metadata and the part of the log that reaches into the current five-hour window. Members are named by identity name, and their state is filed under the id `idOf` gives (the directory the identity is stored in, which a rename keeps): the snapshot, the login and the log records the front door wrote from the session's identity header. A name `idOf` knows no id for has no state. A member whose state cannot be read is carried with the reason instead of failing the pick.
  *
- * `providerOf` names the provider a member's launch spends, when it does not spend the member's Claude account: the member then carries that provider and its records are the ones the front door logged for it. Without `providerOf` every member is the Claude account's.
+ * `providerOf` names the provider a member's launch spends, when it does not spend the member's Claude account: the member then carries that provider and its records are the ones the front door logged for it. A member whose provider cannot be resolved carries the reason too, so it is ranked as unknown and reported rather than failing the pick for the others. Without `providerOf` every member is the Claude account's.
  */
 export function loadPoolMembers(fs: PoolPickFs, paths: PoolPickPaths, identities: readonly string[], nowMs: number, idOf: (name: string) => string | undefined, providerOf?: ProviderOf): readonly PoolMember[] {
   const windowStartMs = nowMs - FIVE_HOUR_WINDOW_MS;
@@ -64,8 +70,12 @@ export function loadPoolMembers(fs: PoolPickFs, paths: PoolPickPaths, identities
     if (id === undefined) {
       return { identity, records: [] };
     }
-    const provider = providerOf?.(identity);
-    const providerField = provider === undefined ? {} : { provider };
+    const resolved = providerOf?.(identity);
+    const provider = typeof resolved === "object" ? resolved.named : resolved;
+    const providerField = {
+      ...(provider === undefined ? {} : { provider }),
+      ...(typeof resolved === "object" ? { providerError: resolved.reason } : {}),
+    };
     const records = log.records.filter((record) => record.identity === id && record.provider === (provider ?? ANTHROPIC_PROVIDER) && Date.parse(record.at) >= windowStartMs);
     try {
       const snapshot = readUsageSnapshot(fs, paths.usageSnapshotsDir, id);

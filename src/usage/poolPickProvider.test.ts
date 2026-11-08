@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Pool } from "../config/schema";
 import { FAKE_NOW_MS, createFakeFarmFs, paths } from "../test-helpers";
-import { loadPoolMembers, rankPoolGraph } from "./poolPick";
+import { loadPoolMembers, rankPoolGraph, type ProviderOf } from "./poolPick";
 import type { AccountMetadata } from "./schema";
 
 const MINUTE_MS = 60_000;
@@ -62,7 +62,7 @@ describe("loadPoolMembers for a provider launch", () => {
 });
 
 describe("rankPoolGraph for a provider launch", () => {
-  function graph(pools: Readonly<Record<string, Pool>>, poolName: string, snapshots: Readonly<Record<string, string>>, providerOf?: (identity: string) => string | undefined) {
+  function graph(pools: Readonly<Record<string, Pool>>, poolName: string, snapshots: Readonly<Record<string, string>>, providerOf?: ProviderOf) {
     return rankPoolGraph({
       fs: createFakeFarmFs(Object.fromEntries(Object.entries(snapshots).map(([identity, text]) => [snapshotPath(identity), text]))),
       paths,
@@ -95,6 +95,22 @@ describe("rankPoolGraph for a provider launch", () => {
     expect(ranking.candidates.find((candidate) => candidate.identity === "a")).toMatchObject({ class: "scored", provider: "p" });
     expect(ranking.candidates.find((candidate) => candidate.identity === "b")).toMatchObject({ class: "scored" });
     expect(ranking.candidates.find((candidate) => candidate.identity === "b")?.provider).toBeUndefined();
+  });
+
+  it("ranks a member whose provider could not be read as unknown with the reason, and still picks a healthy member", () => {
+    const providerOf: ProviderOf = (name) => (name === "a" ? { named: "p", reason: "provider file p.json is invalid" } : "p");
+    const { ranking } = graph(pools, "subs", spentClaude, providerOf);
+    const broken = ranking.candidates.find((candidate) => candidate.identity === "a");
+    expect(broken).toMatchObject({ class: "unknown", provider: "p" });
+    expect(broken?.reasons.join("\n")).toContain("provider file p.json is invalid");
+    expect(ranking.pick).toMatchObject({ identity: "b", class: "scored" });
+  });
+
+  it("reports a member whose provider could not be read even when nothing names a provider", () => {
+    const { ranking } = graph(pools, "subs", spentClaude, (name) => (name === "a" ? { reason: "profile broken.json is invalid" } : undefined));
+    const broken = ranking.candidates.find((candidate) => candidate.identity === "a");
+    expect(broken?.class).toBe("unknown");
+    expect(broken?.reasons.join("\n")).toContain("profile broken.json is invalid");
   });
 
   it("resolves the provider of a nested pool's members too, at the outer ranking as at the inner", () => {
