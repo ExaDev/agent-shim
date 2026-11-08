@@ -1,4 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { enterProcessRole } from "../processRole";
@@ -171,5 +175,85 @@ describe("the door's check and doctor reports", () => {
     controller.abort();
     await settled;
     expect(await gone(pid)).toBe(true);
+  });
+
+  it("ends the child of an aborted request and of an expired bound with the same signal", async () => {
+    const endedBy = async (abort: boolean): Promise<NodeJS.Signals | null> => {
+      const recorded = recordingSpawn();
+      const reports = createDoorReports({ selfInvocation: hungChild, env: {}, providers: () => [], timeoutMs: abort ? LONG_BOUND_MS : SHORT_BOUND_MS, spawn: recorded.spawn });
+      const controller = new AbortController();
+      const answered = reports.doctorReport(controller.signal).catch(() => undefined);
+      if (abort) {
+        controller.abort();
+      }
+      await answered;
+      const child = recorded.children[0];
+      if (child?.pid === undefined) {
+        throw new Error("the child did not start");
+      }
+      await gone(child.pid);
+      return child.signalCode;
+    };
+    expect(await endedBy(true)).toBe("SIGKILL");
+    expect(await endedBy(false)).toBe("SIGKILL");
+  });
+
+  it("ends the child's own children with it, so a program the report ran does not outlive the request", async () => {
+    const pidFile = path.join(os.tmpdir(), `agent-shim-grandchild-${String(process.pid)}-${randomUUID()}`);
+    const spawnsGrandchild = nodeRunning(
+      `const child = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => undefined, ${String(HOLD_MS)})"], { stdio: "ignore" }); require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); setInterval(() => undefined, ${String(HOLD_MS)});`,
+    );
+    const reports = createDoorReports({ selfInvocation: spawnsGrandchild, env: {}, providers: () => [], timeoutMs: LONG_BOUND_MS });
+    const controller = new AbortController();
+    const answered = reports.doctorReport(controller.signal).catch(() => undefined);
+    let grandchild: number | undefined;
+    for (let attempt = 0; attempt < POLL_ATTEMPTS && grandchild === undefined; attempt += 1) {
+      const written = fs.existsSync(pidFile) ? fs.readFileSync(pidFile, "utf8") : "";
+      grandchild = written === "" ? undefined : Number(written);
+      if (grandchild === undefined) {
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, POLL_MS);
+        });
+      }
+    }
+    fs.rmSync(pidFile, { force: true });
+    if (grandchild === undefined) {
+      throw new Error("the grandchild did not start");
+    }
+    controller.abort();
+    await answered;
+    const ended = await gone(grandchild);
+    if (!ended) {
+      process.kill(grandchild, "SIGKILL");
+    }
+    expect(ended).toBe(true);
+  });
+
+  it("stops reading a child that prints more than the limit and fails naming it", async () => {
+    const recorded = recordingSpawn();
+    const limit = 1_024;
+    const endless = nodeRunning(`const line = "x".repeat(${String(limit)}); setInterval(() => process.stdout.write(line), 1);`);
+    const reports = createDoorReports({ selfInvocation: endless, env: {}, providers: () => [], timeoutMs: LONG_BOUND_MS, stdoutLimitBytes: limit, spawn: recorded.spawn });
+    await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`printed more than ${String(limit)} bytes`);
+    const pid = recorded.children[0]?.pid;
+    if (pid === undefined) {
+      throw new Error("the child did not start");
+    }
+    expect(await gone(pid)).toBe(true);
+  });
+
+  it("names what the child wrote to stderr when its stdout is not JSON", async () => {
+    const reports = createDoorReports({ selfInvocation: nodeRunning("process.stderr.write('warning: the keychain is locked\\n'); process.stdout.write('not json at all');"), env: {}, providers: () => [] });
+    const failure = await reports.doctorReport(new AbortController().signal).catch((caught: unknown) => caught);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain("agent-shim doctor --json printed output that is not JSON");
+    expect((failure as Error).message).toContain("warning: the keychain is locked");
+  });
+
+  it("keeps only the end of a long stderr in what it reports", async () => {
+    const reports = createDoorReports({ selfInvocation: nodeRunning("process.stderr.write('FIRST' + 'x'.repeat(100000) + 'LAST'); process.exitCode = 3;"), env: {}, providers: () => [] });
+    const failure = await reports.doctorReport(new AbortController().signal).catch((caught: unknown) => caught);
+    expect((failure as Error).message).toContain("LAST");
+    expect((failure as Error).message).not.toContain("FIRST");
   });
 });
