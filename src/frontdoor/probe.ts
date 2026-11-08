@@ -16,10 +16,17 @@ export const PROBE_WAIT_MARGIN_MS = 1_000;
 /** Bytes reserved for the failure reason the worker hands back; a TLS or socket error message is one short line. */
 const REASON_BYTES = 1_024;
 
-/** Slots in the shared header: the verdict, then the reason's byte length. */
-const HEADER_SLOTS = 2;
+/** Slots in the shared header: the verdict, the reason's byte length, then whether the worker has started. */
+const HEADER_SLOTS = 3;
+/** The header slot a worker sets once its code is running, so the waiting thread starts a probe's clock when the probe starts and not when the thread was asked for. */
+const STARTED_SLOT = 2;
+/** The longest the waiting thread gives a worker to begin running: starting a thread is local work that only load can stretch, so this is generous, and it exists so that a worker that never starts ends the wait instead of blocking the launcher for good. */
+const PROBE_WORKER_START_LIMIT_MS = 10_000;
+/** What each worker source runs first: it marks the worker started. The sources are templates over `workerData`, which carries `startedSlot`. */
+export const STARTED_SIGNAL_SOURCE = "Atomics.store(new Int32Array(workerData.shared, 0, workerData.headerSlots), workerData.startedSlot, 1); Atomics.notify(new Int32Array(workerData.shared, 0, workerData.headerSlots), workerData.startedSlot);";
 const INT32_BYTES = 4;
 const VERDICT_PENDING = 0;
+const WORKER_NOT_STARTED = 0;
 const VERDICT_OK = 1;
 const VERDICT_FAILED = 2;
 
@@ -28,6 +35,7 @@ const VERDICT_FAILED = 2;
  */
 const PROBE_SOURCE = `
 const { workerData } = require("node:worker_threads");
+${STARTED_SIGNAL_SOURCE}
 const https = require("node:https");
 const { port, ca, timeoutMs, shared, ok, failed, headerSlots } = workerData;
 const header = new Int32Array(shared, 0, headerSlots);
@@ -59,6 +67,7 @@ request.on("error", (error) => finish(failed, (error.code ? error.code + ": " : 
 
 const CATALOGUE_REQUEST_SOURCE = `
 const { workerData } = require("node:worker_threads");
+${STARTED_SIGNAL_SOURCE}
 const https = require("node:https");
 const { port, ca, token, timeoutMs, shared, ok, failed, headerSlots } = workerData;
 const header = new Int32Array(shared, 0, headerSlots);
@@ -106,6 +115,7 @@ export function probeFrontDoorSync(port: number, caPem: string, timeoutMs: numbe
  */
 const ACCEPT_PROBE_SOURCE = `
 const { workerData } = require("node:worker_threads");
+${STARTED_SIGNAL_SOURCE}
 const net = require("node:net");
 const dns = require("node:dns");
 const { host, port, portStart, portEnd, timeoutMs, shared, ok, failed, headerSlots } = workerData;
@@ -159,21 +169,26 @@ function runProbeWorker(source: string, data: Readonly<Record<string, unknown>>,
   return startProbeWorker(source, data, timeoutMs).verdict();
 }
 
-/** Starts one probe source on a worker thread; `verdict` blocks this thread until the worker answers, for at most `timeoutMs` plus the margin from when the worker was started. */
-function startProbeWorker(source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number): { readonly verdict: () => ListenerVerdict } {
-  const deadline = performance.now() + timeoutMs + PROBE_WAIT_MARGIN_MS;
+/** Starts one probe source on a worker thread; `verdict` blocks this thread until the worker answers. The probe's clock runs from the moment the worker signals that it started, for `timeoutMs` plus the margin the worker's own timeout verdict is allowed, so a slow start-up is never counted against the probe's bound; a worker that has not started within `PROBE_WORKER_START_LIMIT_MS` fails the probe. */
+export function startProbeWorker(source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number): { readonly verdict: () => ListenerVerdict } {
+  const startLimit = performance.now() + PROBE_WORKER_START_LIMIT_MS;
   const shared = new SharedArrayBuffer(HEADER_SLOTS * INT32_BYTES + REASON_BYTES);
   const header = new Int32Array(shared, 0, HEADER_SLOTS);
   const worker = new Worker(source, {
     eval: true,
-    workerData: { ...data, timeoutMs, shared, ok: VERDICT_OK, failed: VERDICT_FAILED, headerSlots: HEADER_SLOTS },
+    workerData: { ...data, timeoutMs, shared, ok: VERDICT_OK, failed: VERDICT_FAILED, headerSlots: HEADER_SLOTS, startedSlot: STARTED_SLOT },
   });
   // The worker must never keep the launcher alive: the verdict is all this thread needs from it.
   worker.unref();
   return {
     verdict: () => {
       try {
-        const waited = Atomics.wait(header, 0, VERDICT_PENDING, Math.max(0, deadline - performance.now()));
+        Atomics.wait(header, STARTED_SLOT, WORKER_NOT_STARTED, Math.max(0, startLimit - performance.now()));
+        // A worker that answered already has started, whether or not its signal was seen first.
+        if (Atomics.load(header, STARTED_SLOT) === WORKER_NOT_STARTED && Atomics.load(header, 0) === VERDICT_PENDING) {
+          return { ok: false, reason: `the probe worker did not start within ${String(PROBE_WORKER_START_LIMIT_MS)}ms` };
+        }
+        const waited = Atomics.wait(header, 0, VERDICT_PENDING, timeoutMs + PROBE_WAIT_MARGIN_MS);
         const verdict = Atomics.load(header, 0);
         if (waited === "timed-out" || verdict === VERDICT_PENDING) {
           return { ok: false, reason: `the probe did not finish within ${String(timeoutMs + PROBE_WAIT_MARGIN_MS)}ms` };

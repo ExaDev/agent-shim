@@ -3,7 +3,7 @@ import { Worker } from "node:worker_threads";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial, type LeafCert } from "./connect";
-import { PROBE_WAIT_MARGIN_MS, probeFrontDoorSync, probeListenerAcceptSync } from "./probe";
+import { PROBE_WAIT_MARGIN_MS, STARTED_SIGNAL_SOURCE, probeFrontDoorSync, probeListenerAcceptSync, startProbeWorker } from "./probe";
 import * as probe from "./probe";
 
 /** Enough time for the pure-JS 2048-bit keypairs this file generates. */
@@ -177,3 +177,23 @@ describe("probeListenerAcceptSync", () => {
   });
 });
 
+/** A probe bound for the start-up test: the probe itself needs none of it, so it is as short as a bound can be. */
+const STARTUP_PROBE_BOUND_MS = 50;
+/** How much longer than the whole waiting budget a slow start-up takes, so that the budget is certainly overrun by start-up alone. */
+const START_UP_OVERRUN_MS = 200;
+
+describe("a probe worker's clock", () => {
+  it("starts when the worker starts, so a slow start-up is not counted against the probe's bound", () => {
+    const startUpMs = STARTUP_PROBE_BOUND_MS + PROBE_WAIT_MARGIN_MS + START_UP_OVERRUN_MS;
+    // A worker that is slow to begin, then answers at once: the verdict is ok however long it took to start.
+    const source = `
+const { workerData } = require("node:worker_threads");
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${String(startUpMs)});
+${STARTED_SIGNAL_SOURCE}
+const header = new Int32Array(workerData.shared, 0, workerData.headerSlots);
+Atomics.store(header, 0, workerData.ok);
+Atomics.notify(header, 0);
+`;
+    expect(startProbeWorker(source, {}, STARTUP_PROBE_BOUND_MS).verdict()).toEqual({ ok: true });
+  });
+});
