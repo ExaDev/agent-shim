@@ -8,8 +8,9 @@ import { Worker } from "node:worker_threads";
 import * as esbuild from "esbuild";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
+import { cliBundleOptions } from "../../scripts/bundle-options.mts";
 import { LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial, type LeafCert } from "./connect";
-import { PROBE_WAIT_MARGIN_MS, PROBE_WORKER_FAILURE_PREFIX, STARTED_SIGNAL_SOURCE, probeFrontDoorSync, probeListenerAcceptSync, startProbeWorker } from "./probe";
+import { PROBE_WAIT_MARGIN_MS, PROBE_WORKER_FAILURE_PREFIX, PROBE_WORKER_START_LIMIT_MS, STARTED_SIGNAL_SOURCE, probeFrontDoorSync, probeListenerAcceptSync, startProbeWorker } from "./probe";
 import * as probe from "./probe";
 
 /** Enough time for the pure-JS 2048-bit keypairs this file generates. */
@@ -199,9 +200,7 @@ const { workerData } = require("node:worker_threads");
 Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${String(startUpMs)});
 ${STARTED_SIGNAL_SOURCE}
 Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${String(STARTUP_PROBE_BOUND_MS)});
-const header = new Int32Array(workerData.shared, 0, workerData.headerSlots);
-Atomics.store(header, 0, workerData.ok);
-Atomics.notify(header, 0);
+finishProbe(workerData.ok, "");
 `;
     expect(startProbeWorker(source, {}, STARTUP_PROBE_BOUND_MS).verdict()).toEqual({ ok: true });
   });
@@ -222,6 +221,15 @@ describe("a probe worker that fails", () => {
 
   /** What every probe source declares before it uses `STARTED_SIGNAL_SOURCE`. */
   const WORKER_DATA_SOURCE = `const { workerData } = require("node:worker_threads");`;
+
+  /** How many times shorter than the start limit a prompt wake must be: a wake that did not happen waits out the whole limit, and a loaded machine's start-up and scheduling stay well inside half of it. */
+  const PROMPT_WAKE_DIVISOR = 2;
+
+  function failureReason(source: string): string {
+    const verdict = startProbeWorker(source, {}, STARTUP_PROBE_BOUND_MS).verdict();
+    expect(verdict.ok).toBe(false);
+    return verdict.ok ? "" : verdict.reason;
+  }
 
   function expectFailureVerdict(source: string, reasonPart: string = FAILURE_MESSAGE): void {
     const verdict = startProbeWorker(source, {}, STARTUP_PROBE_BOUND_MS).verdict();
@@ -245,29 +253,79 @@ describe("a probe worker that fails", () => {
     expectFailureVerdict(`${WORKER_DATA_SOURCE}\n${STARTED_SIGNAL_SOURCE}\nPromise.reject(new Error(${JSON.stringify(FAILURE_MESSAGE)}));`);
   });
 
-  it("answers with the verdict a worker wrote before it failed", () => {
-    const source = `const { workerData } = require("node:worker_threads");
+  /** The worker waits for the probe's bound after it signals that it started (longer than the waiting thread needs to settle), so the waiting thread is blocked in its wait for a verdict before the worker writes one without waking it. */
+  const SETTLE_SOURCE = `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${String(STARTUP_PROBE_BOUND_MS)});`;
+  /** Takes the claim and stores a verdict without waking anyone: what a writer that died between its store and its wake leaves behind. */
+  const claimAndStoreSilently = (verdict: string): string => `{ const slots = new Int32Array(workerData.shared, 0, workerData.headerSlots); Atomics.compareExchange(slots, workerData.claimSlot, 0, 1); Atomics.store(slots, 0, ${verdict}); }`;
+
+  it("keeps the verdict a worker published before it failed, since only the first verdict counts", () => {
+    // The only wake is the failure handler's, which comes after the claimed `ok` was stored: a handler that overwrote the verdict would be read.
+    const source = `${WORKER_DATA_SOURCE}\n${STARTED_SIGNAL_SOURCE}\n${SETTLE_SOURCE}\n${claimAndStoreSilently("workerData.ok")}\nthrow new Error(${JSON.stringify(FAILURE_MESSAGE)});`;
+    expect(startProbeWorker(source, {}, STARTUP_PROBE_BOUND_MS).verdict()).toEqual({ ok: true });
+  });
+
+  it("keeps a failure when an ok is written after it", () => {
+    const source = `${WORKER_DATA_SOURCE}\n${STARTED_SIGNAL_SOURCE}\n${SETTLE_SOURCE}\n${claimAndStoreSilently("workerData.failed")}\nfinishProbe(workerData.ok, "");`;
+    expect(startProbeWorker(source, {}, STARTUP_PROBE_BOUND_MS).verdict().ok).toBe(false);
+  });
+
+  it("holds the whole reason by the time the verdict is published", () => {
+    const note = new SharedArrayBuffer(FAILURE_MESSAGE.length);
+    const noteBytes = new Uint8Array(note);
+    // Every store of the failed verdict records what the reason area held at that moment.
+    const source = `${WORKER_DATA_SOURCE}
+const reasonArea = new Uint8Array(workerData.shared, workerData.headerSlots * 4);
+const reasonLength = new Int32Array(workerData.shared, 0, workerData.headerSlots);
+const realStore = Atomics.store;
+Atomics.store = (target, index, value) => {
+  if (index === 0 && value === workerData.failed) {
+    new Uint8Array(workerData.note).set(Buffer.from(reasonArea.subarray(0, Atomics.load(reasonLength, 1))));
+  }
+  return realStore(target, index, value);
+};
 ${STARTED_SIGNAL_SOURCE}
-const header = new Int32Array(workerData.shared, 0, workerData.headerSlots);
-Atomics.store(header, 0, workerData.ok);
-Atomics.notify(header, 0);
-throw new Error(${JSON.stringify(FAILURE_MESSAGE)});`;
-    expect(startProbeWorker(source, {}, READ_VERDICT_TIMEOUT_MS).verdict()).toEqual({ ok: true });
+finishProbe(workerData.failed, ${JSON.stringify(FAILURE_MESSAGE)});`;
+    startProbeWorker(source, { note }, STARTUP_PROBE_BOUND_MS).verdict();
+    expect(Buffer.from(noteBytes.subarray(0, FAILURE_MESSAGE.length)).toString("utf8")).toBe(FAILURE_MESSAGE);
+  });
+
+  it("still ends in a failed verdict when the failure handler itself cannot read the error", () => {
+    // Stringifying an object with no prototype throws inside the handler.
+    expect(failureReason(`${WORKER_DATA_SOURCE}\n${STARTED_SIGNAL_SOURCE}\nPromise.reject(Object.create(null));`)).toBe(`${PROBE_WORKER_FAILURE_PREFIX}an error that cannot be described`);
+  });
+
+  it("names the error's message alone, never its stack", () => {
+    const stackText = "STACK-TEXT at /some/private/path";
+    expect(failureReason(`${WORKER_DATA_SOURCE}\n${STARTED_SIGNAL_SOURCE}\nconst error = new Error(${JSON.stringify(FAILURE_MESSAGE)}); error.stack = ${JSON.stringify(stackText)}; throw error;`)).toBe(`${PROBE_WORKER_FAILURE_PREFIX}${FAILURE_MESSAGE}`);
+  });
+
+  it("does not wait out the start limit when the worker failed before the waiter began to wait", () => {
+    const probeWorker = startProbeWorker(`${WORKER_DATA_SOURCE}\nthrow new Error(${JSON.stringify(FAILURE_MESSAGE)});`, {}, STARTUP_PROBE_BOUND_MS);
+    // Block this thread for the wait margin, far longer than a worker needs to fail, so the failure and its wake are over before the first wait: only the stored started flag, not the wake, can end the wait then.
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)), 0, 0, PROBE_WAIT_MARGIN_MS);
+    const startedAt = performance.now();
+    const verdict = probeWorker.verdict();
+    expect(performance.now() - startedAt).toBeLessThan(PROBE_WORKER_START_LIMIT_MS / PROMPT_WAKE_DIVISOR);
+    expect(verdict.ok).toBe(false);
+  });
+
+  it("wakes the waiter promptly when it fails before it signals that it started, instead of sitting out the start limit", () => {
+    const startedAt = performance.now();
+    expectFailureVerdict(`${WORKER_DATA_SOURCE}\nthrow new Error(${JSON.stringify(FAILURE_MESSAGE)});`);
+    expect(performance.now() - startedAt).toBeLessThan(PROBE_WORKER_START_LIMIT_MS / PROMPT_WAKE_DIVISOR);
   });
 
   it("does not let an error event on the worker reach the process, and reads as a failed probe", () => {
     const fake = new FakeProbeWorker();
     const probeWorker = startProbeWorker("", {}, STARTUP_PROBE_BOUND_MS, () => fake);
     // An EventEmitter with no listener for "error" throws it, as a real Worker does into the process.
-    expect(() => fake.emit("error", new Error(FAILURE_MESSAGE))).not.toThrow();
+    const error = new Error(FAILURE_MESSAGE);
+    error.stack = "STACK-TEXT at /some/private/path";
+    expect(() => fake.emit("error", error)).not.toThrow();
     const verdict = probeWorker.verdict();
-    expect(verdict.ok).toBe(false);
-    expect(verdict.ok ? "" : verdict.reason).toContain(FAILURE_MESSAGE);
+    expect(verdict.ok ? "" : verdict.reason).toBe(`${PROBE_WORKER_FAILURE_PREFIX}${FAILURE_MESSAGE}`);
   });
 });
-
-/** The language target `scripts/build.mts` bundles for. */
-const BUNDLE_TARGET = "node22";
 
 type BundledProbe = Pick<typeof probe, "probeListenerAcceptSync">;
 
@@ -283,42 +341,45 @@ afterEach(() => {
   }
 });
 
-/** `probe.ts` bundled as the release bundles it (`scripts/build.mts`: no `keepNames`, no minifying) into a throwaway file, and loaded. `keepNames` is a parameter only so a test can show what it does to the embedded sources. */
-async function bundledProbe(keepNames: boolean): Promise<{ readonly source: string; readonly module: BundledProbe }> {
+/** `probe.ts` bundled with exactly the options the release builds the command line with (`scripts/bundle-options.mts`), into a throwaway file, and loaded; `extra` adds options on top, so a test can show what one does to the embedded sources. */
+async function bundledProbe(extra: esbuild.BuildOptions): Promise<BundledProbe> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-probe-bundle-"));
   bundleDirs.push(dir);
   const outfile = path.join(dir, "probe.cjs");
-  await esbuild.build({
-    entryPoints: [path.resolve(__dirname, "probe.ts")],
-    bundle: true,
-    outfile,
-    platform: "node",
-    format: "cjs",
-    target: BUNDLE_TARGET,
-    keepNames,
-    logLevel: "silent",
-  });
+  await esbuild.build({ ...cliBundleOptions(path.resolve(__dirname, "..", "..")), entryPoints: [path.resolve(__dirname, "probe.ts")], outfile, logLevel: "silent", ...extra });
   const load: (id: string) => unknown = createRequire(import.meta.url);
   const loaded = load(outfile);
   if (!isBundledProbe(loaded)) {
-    throw new Error("the bundled probe does not export probeListenerAcceptSync");
+    throw new Error("the bundled probe does not export what the test reads");
   }
-  return { source: fs.readFileSync(outfile, "utf8"), module: loaded };
+  return loaded;
+}
+
+/** The source the bundled accept probe hands to its worker, taken through the injected workers so that nothing is exported for the test alone. */
+function acceptProbeSourceOf(bundled: Readonly<BundledProbe>): string {
+  let handed = "";
+  bundled.probeListenerAcceptSync(0, STARTUP_PROBE_BOUND_MS, {
+    start: (source) => {
+      handed = source;
+      return { verdict: () => ({ ok: true }) };
+    },
+  });
+  return handed;
 }
 
 describe("the probe sources in the release bundle", () => {
   it("run in a worker, which holds none of the bundle's helpers", async () => {
-    const { source, module } = await bundledProbe(false);
-    expect(source).not.toContain("__name(");
-    const refused = module.probeListenerAcceptSync(await closedPort(), READ_VERDICT_TIMEOUT_MS);
+    const bundled = await bundledProbe({});
+    expect(acceptProbeSourceOf(bundled)).not.toContain("__name(");
+    const refused = bundled.probeListenerAcceptSync(await closedPort(), READ_VERDICT_TIMEOUT_MS);
     expect(refused.ok ? "" : refused.reason).toMatch(/ECONNREFUSED/);
-    expect(module.probeListenerAcceptSync(await listenerThread(undefined), READ_VERDICT_TIMEOUT_MS)).toEqual({ ok: true });
+    expect(bundled.probeListenerAcceptSync(await listenerThread(undefined), READ_VERDICT_TIMEOUT_MS)).toEqual({ ok: true });
   });
 
   it("fail when the bundle names its functions, which is why the build sets no keepNames", async () => {
-    const { source, module } = await bundledProbe(true);
-    expect(source).toContain("__name(");
-    const verdict = module.probeListenerAcceptSync(await closedPort(), READ_VERDICT_TIMEOUT_MS);
+    const bundled = await bundledProbe({ keepNames: true });
+    expect(acceptProbeSourceOf(bundled)).toContain("__name(");
+    const verdict = bundled.probeListenerAcceptSync(await closedPort(), READ_VERDICT_TIMEOUT_MS);
     expect(verdict.ok ? "" : verdict.reason).toContain("__name is not defined");
   });
 });

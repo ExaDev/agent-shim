@@ -16,12 +16,14 @@ export const PROBE_WAIT_MARGIN_MS = 1_000;
 /** Bytes reserved for the failure reason the worker hands back; a TLS or socket error message is one short line. */
 const REASON_BYTES = 1_024;
 
-/** Slots in the shared header: the verdict, the reason's byte length, then whether the worker has started. */
-const HEADER_SLOTS = 3;
+/** Slots in the shared header: the verdict, the reason's byte length, whether the worker has started, then the claim on the verdict. */
+const HEADER_SLOTS = 4;
 /** The header slot a worker sets once its code is running, so the waiting thread starts a probe's clock when the probe starts and not when the thread was asked for. */
 const STARTED_SLOT = 2;
+/** The header slot whoever writes a verdict first takes (0 to 1) before writing the reason and then the verdict, so exactly one writer's reason and verdict are ever published and the reason is complete whenever the verdict slot is not pending. */
+const CLAIM_SLOT = 3;
 /** The longest the waiting thread gives a worker to begin running: starting a thread is local work that only load can stretch, so this is generous, and it exists so that a worker that never starts ends the wait instead of blocking the launcher for good. */
-const PROBE_WORKER_START_LIMIT_MS = 10_000;
+export const PROBE_WORKER_START_LIMIT_MS = 10_000;
 /** What each worker source runs first: it marks the worker started. The sources are templates over `workerData`, which carries `startedSlot`. */
 export const STARTED_SIGNAL_SOURCE = "Atomics.store(new Int32Array(workerData.shared, 0, workerData.headerSlots), workerData.startedSlot, 1); Atomics.notify(new Int32Array(workerData.shared, 0, workerData.headerSlots), workerData.startedSlot);";
 /** What a failed probe's reason starts with when the worker itself broke (an uncaught error, a rejected promise, source that does not parse), ahead of the error's message and nothing else of it. */
@@ -33,21 +35,38 @@ const VERDICT_OK = 1;
 const VERDICT_FAILED = 2;
 
 /**
- * What every worker runs first, in front of the probe source: it turns an uncaught error or a rejected promise anywhere in the worker into a failed verdict that also marks the worker started, and wakes both waits, since the waiting thread is blocked and cannot hear an `error` event. Only the first verdict counts (a worker that answered before it failed keeps its answer). The message is the error's message alone.
+ * What every worker runs first, in front of the probe source. It defines `finishProbe(verdict, message)`, the one way a worker publishes a verdict: it takes the claim slot (a later call is ignored), writes the reason and its length, stores the verdict and wakes the waiting thread, which is blocked and cannot hear an event. It always wakes the waiter, even when it lost the claim, so a wake never depends on who won. It also turns an uncaught error or a rejected promise anywhere in the worker into a failed verdict, which marks the worker started so the waiter does not sit out the start limit. The reason is the error's message alone, and a message that cannot be read still ends in a published verdict.
  */
-const FATAL_HANDLER_SOURCE = `
+const WORKER_PRELUDE_SOURCE = `
 (() => {
   const { workerData } = require("node:worker_threads");
   const header = new Int32Array(workerData.shared, 0, workerData.headerSlots);
   const reason = new Uint8Array(workerData.shared, workerData.headerSlots * 4);
+  globalThis.finishProbe = (verdict, message) => {
+    try {
+      if (Atomics.compareExchange(header, workerData.claimSlot, 0, 1) === 0) {
+        const bytes = Buffer.from(String(message), "utf8").subarray(0, reason.length);
+        reason.set(bytes);
+        Atomics.store(header, 1, bytes.length);
+        Atomics.store(header, 0, verdict);
+      }
+    } finally {
+      Atomics.notify(header, 0);
+    }
+  };
   const fail = (error) => {
-    if (Atomics.compareExchange(header, 0, 0, workerData.failed) !== 0) return;
-    const bytes = Buffer.from(workerData.failurePrefix + (error instanceof Error ? error.message : String(error)), "utf8").subarray(0, reason.length);
-    reason.set(bytes);
-    Atomics.store(header, 1, bytes.length);
-    Atomics.store(header, workerData.startedSlot, 1);
-    Atomics.notify(header, 0);
-    Atomics.notify(header, workerData.startedSlot);
+    let message;
+    try {
+      message = workerData.failurePrefix + (error instanceof Error ? error.message : String(error));
+    } catch {
+      message = workerData.failurePrefix + "an error that cannot be described";
+    }
+    try {
+      globalThis.finishProbe(workerData.failed, message);
+    } finally {
+      Atomics.store(header, workerData.startedSlot, 1);
+      Atomics.notify(header, workerData.startedSlot);
+    }
   };
   process.on("uncaughtException", fail);
   process.on("unhandledRejection", fail);
@@ -61,19 +80,8 @@ const PROBE_SOURCE = `
 const { workerData } = require("node:worker_threads");
 ${STARTED_SIGNAL_SOURCE}
 const https = require("node:https");
-const { port, ca, timeoutMs, shared, ok, failed, headerSlots } = workerData;
-const header = new Int32Array(shared, 0, headerSlots);
-const reason = new Uint8Array(shared, headerSlots * 4);
-let done = false;
-const finish = (verdict, message) => {
-  if (done) return;
-  done = true;
-  const bytes = Buffer.from(String(message), "utf8").subarray(0, reason.length);
-  reason.set(bytes);
-  Atomics.store(header, 1, bytes.length);
-  Atomics.store(header, 0, verdict);
-  Atomics.notify(header, 0);
-};
+const { port, ca, timeoutMs, ok, failed } = workerData;
+const finish = finishProbe;
 const request = https.get({ host: "127.0.0.1", port, path: "/healthz", ca: [ca], agent: false }, (response) => {
   let body = "";
   response.setEncoding("utf8");
@@ -93,19 +101,8 @@ const CATALOGUE_REQUEST_SOURCE = `
 const { workerData } = require("node:worker_threads");
 ${STARTED_SIGNAL_SOURCE}
 const https = require("node:https");
-const { port, ca, token, timeoutMs, shared, ok, failed, headerSlots } = workerData;
-const header = new Int32Array(shared, 0, headerSlots);
-const reason = new Uint8Array(shared, headerSlots * 4);
-let done = false;
-const finish = (verdict, message) => {
-  if (done) return;
-  done = true;
-  const bytes = Buffer.from(String(message), "utf8").subarray(0, reason.length);
-  reason.set(bytes);
-  Atomics.store(header, 1, bytes.length);
-  Atomics.store(header, 0, verdict);
-  Atomics.notify(header, 0);
-};
+const { port, ca, token, timeoutMs, ok, failed } = workerData;
+const finish = finishProbe;
 const request = https.request({ host: "127.0.0.1", port, path: "/__agent-shim/orpc/rest/frontdoor/catalogues/refresh", method: "POST", headers: { authorization: "Bearer " + token }, ca: [ca], agent: false }, (response) => {
   response.resume();
   response.on("end", () => response.statusCode === 200 ? finish(ok, "") : finish(failed, "catalogue refresh request returned HTTP " + String(response.statusCode)));
@@ -136,22 +133,15 @@ export function probeFrontDoorSync(port: number, caPem: string, timeoutMs: numbe
 
 /**
  * The accept probe, run on a worker thread for the same reason: the door's own dial (`doorDial`, over the door's lookup and from its reserved source ports for a name), so what passes is what the door itself can connect to, closed the moment it connects so nothing is sent to the listener. The worker cannot load this bundle, so it is handed the source text of the dial's functions and of `SourcePortRange`, each of which references nothing but its own parameters.
+ * Read by `probe.test.ts` from the bundled module, to check the embedded text, which no import of this module names.
  */
 const ACCEPT_PROBE_SOURCE = `
 const { workerData } = require("node:worker_threads");
 ${STARTED_SIGNAL_SOURCE}
 const net = require("node:net");
 const dns = require("node:dns");
-const { host, port, portStart, portEnd, timeoutMs, shared, ok, failed, headerSlots } = workerData;
-const header = new Int32Array(shared, 0, headerSlots);
-const reason = new Uint8Array(shared, headerSlots * 4);
-const finish = (verdict, message) => {
-  const bytes = Buffer.from(String(message), "utf8").subarray(0, reason.length);
-  reason.set(bytes);
-  Atomics.store(header, 1, bytes.length);
-  Atomics.store(header, 0, verdict);
-  Atomics.notify(header, 0);
-};
+const { host, port, portStart, portEnd, timeoutMs, ok, failed } = workerData;
+const finish = finishProbe;
 const SourcePortRange = ${SourcePortRange.toString()};
 const createDoorLookup = ${createDoorLookup.toString()};
 const doorDial = ${doorDial.toString()};
@@ -209,25 +199,26 @@ const spawnRealWorker: ProbeWorkerSpawn = (source, options) => new Worker(source
 /**
  * Starts one probe source on a worker thread; `verdict` blocks this thread until the worker answers. The probe's clock runs from the moment the worker signals that it started, for `timeoutMs` plus the margin the worker's own timeout verdict is allowed, so a slow start-up is never counted against the probe's bound; a worker that has not started within `PROBE_WORKER_START_LIMIT_MS` fails the probe.
  *
- * A worker that breaks is a failed probe, never a crash of this process: `FATAL_HANDLER_SOURCE` turns an uncaught error or rejection inside the worker into a failed verdict that wakes the waiting thread, and the `error` listener here records the same for an error only this side hears (the worker running out of memory, say) so that it never reaches the process as an unhandled event. The probe source runs through `new Function`, so a source that does not parse also arrives as an error inside the worker.
+ * A worker that breaks is a failed probe, never a crash of this process: `WORKER_PRELUDE_SOURCE` turns an uncaught error or rejection inside the worker into a failed verdict that wakes the waiting thread. The `error` listener here exists only so that an error event never reaches the process as an unhandled one; it writes the same claimed verdict, but the waiting thread blocks this thread's event loop and every caller reads `verdict()` straight after starting, so the listener cannot wake a wait that is already under way. A worker that dies with no one to write a verdict (running out of memory, say) therefore ends as the bounded "did not finish" verdict. The probe source runs through `new Function`, so a source that does not parse also arrives as an error inside the worker.
  *
- * The probe sources embed the source text of functions from this bundle (`Function.prototype.toString`), and the text must run on its own in the worker: it can reference nothing but its own parameters. A bundler option that rewrites function bodies (esbuild's `keepNames` injects calls to a `__name` helper that exists only in the bundle) would make the worker throw a ReferenceError, so `scripts/build.mts` sets none and `probe.test.ts` bundles this module and fails if the embedded text refers to a helper.
+ * The probe sources embed the source text of functions from this bundle (`Function.prototype.toString`), and the text must run on its own in the worker: it can reference nothing but its own parameters. A bundler option that rewrites function bodies (esbuild's `keepNames` injects calls to a `__name` helper that exists only in the bundle) makes the worker throw a ReferenceError. The check is deliberately narrow, on what is embedded and not on the whole bundle, since a bundled dependency compiled with `keepNames` is harmless: `probe.test.ts` builds this module with the release's own options (`scripts/bundle-options.mts`) and fails if the source handed to a worker contains a `__name` call or does not run in a worker.
  */
 export function startProbeWorker(source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number, spawn: ProbeWorkerSpawn = spawnRealWorker): { readonly verdict: () => ListenerVerdict } {
   const startLimit = performance.now() + PROBE_WORKER_START_LIMIT_MS;
   const shared = new SharedArrayBuffer(HEADER_SLOTS * INT32_BYTES + REASON_BYTES);
   const header = new Int32Array(shared, 0, HEADER_SLOTS);
-  const worker = spawn(`${FATAL_HANDLER_SOURCE}\nnew Function("require", ${JSON.stringify(source)})(require);`, {
+  const worker = spawn(`${WORKER_PRELUDE_SOURCE}\nnew Function("require", ${JSON.stringify(source)})(require);`, {
     eval: true,
-    workerData: { ...data, timeoutMs, shared, ok: VERDICT_OK, failed: VERDICT_FAILED, headerSlots: HEADER_SLOTS, startedSlot: STARTED_SLOT, failurePrefix: PROBE_WORKER_FAILURE_PREFIX },
+    workerData: { ...data, timeoutMs, shared, ok: VERDICT_OK, failed: VERDICT_FAILED, headerSlots: HEADER_SLOTS, startedSlot: STARTED_SLOT, failurePrefix: PROBE_WORKER_FAILURE_PREFIX, claimSlot: CLAIM_SLOT },
   });
   worker.on("error", (error: Error) => {
-    if (Atomics.compareExchange(header, 0, VERDICT_PENDING, VERDICT_FAILED) !== VERDICT_PENDING) {
+    if (Atomics.compareExchange(header, CLAIM_SLOT, 0, 1) !== 0) {
       return;
     }
     const bytes = Buffer.from(PROBE_WORKER_FAILURE_PREFIX + error.message, "utf8").subarray(0, REASON_BYTES);
     new Uint8Array(shared, HEADER_SLOTS * INT32_BYTES).set(bytes);
     Atomics.store(header, 1, bytes.length);
+    Atomics.store(header, 0, VERDICT_FAILED);
     Atomics.store(header, STARTED_SLOT, 1);
   });
   // The worker must never keep the launcher alive: the verdict is all this thread needs from it.
@@ -240,9 +231,9 @@ export function startProbeWorker(source: string, data: Readonly<Record<string, u
         if (Atomics.load(header, STARTED_SLOT) === WORKER_NOT_STARTED && Atomics.load(header, 0) === VERDICT_PENDING) {
           return { ok: false, reason: `the probe worker did not start within ${String(PROBE_WORKER_START_LIMIT_MS)}ms` };
         }
-        const waited = Atomics.wait(header, 0, VERDICT_PENDING, timeoutMs + PROBE_WAIT_MARGIN_MS);
+        Atomics.wait(header, 0, VERDICT_PENDING, timeoutMs + PROBE_WAIT_MARGIN_MS);
         const verdict = Atomics.load(header, 0);
-        if (waited === "timed-out" || verdict === VERDICT_PENDING) {
+        if (verdict === VERDICT_PENDING) {
           return { ok: false, reason: `the probe did not finish within ${String(timeoutMs + PROBE_WAIT_MARGIN_MS)}ms` };
         }
         if (verdict === VERDICT_OK) {
