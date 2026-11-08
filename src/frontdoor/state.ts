@@ -59,7 +59,7 @@ export type FrontDoorSession = z.infer<typeof FrontDoorSessionSchema>;
 export type FrontDoorLaunch = Pick<FrontDoorSession, "pid" | "startedAt">;
 
 /** Where a launch's main loop last went: the Anthropic route (Claude Code's own API) or a provider by name. */
-export const MainLoopRouteSchema = z.union([z.strictObject({ kind: z.literal("anthropic") }), z.strictObject({ kind: z.literal("provider"), provider: z.string().min(1) })]);
+const MainLoopRouteSchema = z.union([z.strictObject({ kind: z.literal("anthropic") }), z.strictObject({ kind: z.literal("provider"), provider: z.string().min(1) })]);
 export type MainLoopRoute = z.infer<typeof MainLoopRouteSchema>;
 
 /** The key one launch is known by in a map. */
