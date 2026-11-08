@@ -1,8 +1,8 @@
-import { ConfigValidationError } from "../config/load";
+import { ConfigFileNotJsonError, ConfigValidationError } from "../config/load";
 import type { LayoutPaths } from "../paths";
-import { selectedProviderName } from "../providersStore";
+import { cascadeProviderName, LegacyProviderFileError, selectedProviderName } from "../providersStore";
 import type { CascadeInput } from "../resolve/walk";
-import type { ProviderOf } from "../usage/poolPick";
+import type { ProviderOf, UnreadableProvider } from "../usage/poolPick";
 import { decideConfigProfile, identityReader, type IdentityReader } from "./identity";
 import type { FsPort } from "./ports";
 
@@ -23,10 +23,24 @@ export interface MemberProviderParams {
   readonly loadCascade: (baseConfigProfile: string | undefined) => CascadeInput;
 }
 
+/** Why a configuration file could not be read, in one line naming the file, or undefined for an error that is not a fault of a configuration file. */
+function unreadableFileReason(error: unknown): string | undefined {
+  if (error instanceof ConfigValidationError) {
+    return `${error.filepath} is invalid`;
+  }
+  if (error instanceof ConfigFileNotJsonError) {
+    return error.message.replace(/\.$/, "");
+  }
+  if (error instanceof LegacyProviderFileError) {
+    return `${error.filePath} uses ${error.conversion.fields.join(", ")}, which a credential block replaced`;
+  }
+  return undefined;
+}
+
 /**
  * The provider each pool member's launch would route through, resolved the way the launch resolves it for the member it runs as: the `--provider` flag, then a provider a cascade layer selects (over the configuration profile that member would launch with), then the member's own `provider`, with a renamed provider named by what it became. A launch that opted out with `--no-provider` routes no member through one.
  *
- * Reads no credential and resolves no provider definition, so ranking a pool never touches a secret store. A name no provider file defines is returned as named, since refusing it is the launch's job once a member is picked. Each identity file is read once and each distinct cascade assembled once, however many members ask. A member whose identity file fails validation is resolved from the launch's own selections alone: picking it fails with that file's own error, exactly as it did before providers entered the ranking, and ranking the others does not need it.
+ * Reads no credential and resolves no provider definition, so ranking a pool never touches a secret store. A name no provider file defines is returned as named, since refusing it is the launch's job once a member is picked. Each identity file is read once and each distinct cascade assembled once, however many members ask. A member whose identity file fails validation is resolved from the launch's own selections alone, and a member whose provider file or configuration profile fails validation, is in a former format or is not JSON is returned as unreadable with the provider it was named as, when something named one: picking it fails with that file's own error, exactly as it did before providers entered the ranking, and ranking the others does not need it.
  */
 export function memberProviderResolver(params: MemberProviderParams): ProviderOf {
   if (params.cliProvider === false) {
@@ -60,12 +74,25 @@ export function memberProviderResolver(params: MemberProviderParams): ProviderOf
       ...(declared?.defaultConfigProfile === undefined ? {} : { identityDefaultConfigProfile: declared.defaultConfigProfile }),
       ...(params.globalDefaultConfigProfile === undefined ? {} : { globalDefaultConfigProfile: params.globalDefaultConfigProfile }),
     });
-    return selectedProviderName({
-      paths: params.paths,
-      port: params.fs,
-      ...(cliProvider === undefined ? {} : { cliProvider }),
-      cascade: cascadeOver(profile.name),
-      ...(declared?.provider === undefined ? {} : { identityProvider: declared.provider }),
-    });
+    // The name as given, tracked as it becomes known so a later file fault can still report it.
+    const flagged = cliProvider !== undefined && cliProvider !== "" ? cliProvider : undefined;
+    let named = flagged ?? declared?.provider;
+    try {
+      const cascade = cascadeOver(profile.name);
+      named = flagged ?? cascadeProviderName(cascade, declared?.provider);
+      return selectedProviderName({
+        paths: params.paths,
+        port: params.fs,
+        ...(cliProvider === undefined ? {} : { cliProvider }),
+        cascade,
+        ...(declared?.provider === undefined ? {} : { identityProvider: declared.provider }),
+      });
+    } catch (error) {
+      const reason = unreadableFileReason(error);
+      if (reason === undefined) {
+        throw error;
+      }
+      return { ...(named === undefined ? {} : { named }), reason } satisfies UnreadableProvider;
+    }
   };
 }

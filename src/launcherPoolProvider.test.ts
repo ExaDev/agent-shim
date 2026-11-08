@@ -4,6 +4,7 @@ import type { Pool } from "./config/schema";
 import { prepareLaunch, type FarmRuntime, type LaunchDecision } from "./launcher";
 import { collectPoolPick } from "./poolPickReport";
 import { memberProviderResolver } from "./launcher/memberProvider";
+import type { ProviderOf } from "./usage/poolPick";
 import {
   FAKE_HOME, FAKE_NOW_MS, createFakeFarmFs, discovered, fakeCredentials, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, reportedRow, runAndCaptureExit, spawnedEnv,
 } from "./test-helpers";
@@ -188,7 +189,7 @@ describe("a pool launch that resolves a provider", () => {
 });
 
 describe("pool pick for a provider", () => {
-  function pick(providerOf?: (identity: string) => string | undefined) {
+  function pick(providerOf?: ProviderOf) {
     return collectPoolPick({ paths, fs: fakeFs({}), usageFs: createFakeFarmFs(CLAUDE_SPENT), poolName: "main", pools: POOLS, directory: `${FAKE_HOME}/work`, nowMs: FAKE_NOW_MS, ...(providerOf === undefined ? {} : { providerOf }) });
   }
 

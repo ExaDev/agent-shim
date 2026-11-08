@@ -46,6 +46,8 @@ export interface PoolMember {
   readonly sameLoginAs?: string;
   /** The provider this member's launch routes through, when it does not spend the member's own Claude account: the member is then assessed against that provider's slice of its snapshot and the records the front door logged for it, and sized by the provider's own quota level. Absent for a launch on the Claude account, which is read from the `anthropic` slice exactly as ever. */
   readonly provider?: string;
+  /** Why the provider this member's launch spends could not be resolved (a provider or configuration profile file that fails validation, is in a former format or is not JSON), when that is the case: the member is then ranked as unknown with this reason, and picking it refuses the launch with the file's own error. */
+  readonly providerError?: string;
   /** The member entry's policy condition, from the object form of a pool member: definite false skips the member as ineligible by policy, indeterminate demotes it to last within its class, naming the missing fact either way. */
   readonly policy?: WhenCondition;
 }
@@ -303,6 +305,9 @@ function assessIdentity(member: PoolMember, nowMs: number): Assessment {
 
   if (member.readError !== undefined) {
     return { candidate: { ...base, class: "unknown", reasons: [`usage state unreadable: ${member.readError}`, ...planReasons] } };
+  }
+  if (member.providerError !== undefined) {
+    return { candidate: { ...base, class: "unknown", reasons: [`provider configuration unreadable: ${member.providerError}`, ...planReasons] } };
   }
   const windows = rankingWindowsOf(member.provider, state);
   if (member.snapshot === undefined || state === undefined || windows === undefined) {
