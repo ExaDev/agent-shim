@@ -201,6 +201,7 @@ describe("the self-hosted Remote Control mode end to end", () => {
       isLiveToken: (token) => token === TEST_CAPABILITY,
       // The fake CLI sends no identity header (a Remote Control call carries none), so the identity can only come from the launch the tunnel's capability belongs to.
       identityOfToken: (token) => (token === TEST_CAPABILITY ? RIG_IDENTITY_ID : undefined),
+      launchOfToken: () => undefined,
       headroomDecision: followsLaunchFlag, responseObservers: [],
       now: () => Date.now(),
       headroomSocket: () => undefined,

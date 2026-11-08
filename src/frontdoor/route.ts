@@ -1,6 +1,8 @@
 import type { Readable } from "node:stream";
 import type { IncomingHttpHeaders } from "node:http";
 
+import type { FrontDoorLaunch } from "./state";
+
 /**
  * Headroom's own session header, which the door never sends and strips from every inbound request. Headroom reads it as an opt-in to mid-turn queueing: while one stream is active for a session, another streaming request carrying it is answered `202 {"event":"headroom_queued"}` without reaching the upstream, which a client expecting an event stream reports as "Streaming response ended before any complete data was received". Nothing a client sends may choose it.
  */
@@ -77,6 +79,8 @@ export interface SessionIdentity {
   readonly headroom: boolean;
   /** The project identity headroom scopes memory to, re-set on the headroom hop and sent nowhere else. */
   readonly projectId: string | undefined;
+  /** The live launch whose capability the request presented, when the listener's admission identifies one. Two launches can carry one session id (`claude --resume` or `--continue` twice in one directory), so per-launch state is keyed on this, never on the session id. */
+  readonly launch?: FrontDoorLaunch;
 }
 
 /** The outcome of the pipeline's first step: what the session is, and the headers that may actually leave the machine. */

@@ -30,8 +30,8 @@ export interface LiveSessionRegistry {
    * The models block the launch carrying `sessionId` resolved for itself, or undefined when no live launch carries that id or the launch added nothing to the global block. A session id the view does not hold is looked up as `admits` looks up a token (one listing, a stat per record, a read of only what is new or changed), so a launch is found on its first request and an unknown id costs no record read.
    */
   readonly modelsOf: (sessionId: string) => ModelsConfig | undefined;
-  /** The live launch carrying `sessionId`, or undefined when none does; looked up as `modelsOf` looks one up. A launch is named by its pid and start time (`FrontDoorLaunch`), not by the session id, because a relaunch carries the same session id. */
-  readonly launchOfSession: (sessionId: string) => FrontDoorLaunch | undefined;
+  /** The live launch holding `token`, or undefined when none does; looked up as `identityOf` looks one up. A launch is named by its pid and start time (`FrontDoorLaunch`), and found by its capability, never by session id: a `--resume` or `--continue` carries the session id of a launch that may still be live, and the two hold different tokens. */
+  readonly launchOfToken: (token: string) => FrontDoorLaunch | undefined;
   /** Whether `launch` is still registered, looked up as `modelsOf` looks one up: what bounds per-launch state the door keeps, which must live exactly as long as the launch it describes. */
   readonly holdsLaunch: (launch: Readonly<FrontDoorLaunch>) => boolean;
   /** Drops the launches `pids` from the view, for the records the caller has just removed (the tick's prune), so their capabilities are refused at once rather than at the next `rescan`. */
@@ -120,8 +120,8 @@ export function createLiveSessionRegistry(ports: LiveSessionRegistryPorts): Live
       const held = bySessionId.get(sessionId) ?? (reconcile() ? bySessionId.get(sessionId) : undefined);
       return held?.models;
     },
-    launchOfSession: (sessionId) => {
-      const held = bySessionId.get(sessionId) ?? (reconcile() ? bySessionId.get(sessionId) : undefined);
+    launchOfToken: (token) => {
+      const held = byToken.get(token) ?? (reconcile() ? byToken.get(token) : undefined);
       return held === undefined ? undefined : { pid: held.pid, startedAt: held.startedAt };
     },
     holdsLaunch: (launch) => launches.has(launchKeyOf(launch)) || (reconcile() && launches.has(launchKeyOf(launch))),

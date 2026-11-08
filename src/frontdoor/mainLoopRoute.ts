@@ -35,19 +35,17 @@ export function requestClassOf(headers: Readonly<IncomingHttpHeaders>): RequestC
 }
 
 /**
- * What the door remembers about each launch's main loop: where its most recent main-loop request was served, so the launch's helper requests (hook judges, titles, compaction summaries, subagents, side replies) follow it there. Keyed on the launch carrying the session id (its pid and start time), not on the session id alone: a `--resume` or an account-move relaunch carries the same session id, and must start with nothing recorded. Persisted beside the launch's registry record, so a restarted or replacing door keeps a session's helpers on the provider its main loop is on.
+ * What the door remembers about each launch's main loop: where its most recent main-loop request was served, so the launch's helper requests (hook judges, titles, compaction summaries, subagents, side replies) follow it there. Keyed on the launch (its pid and start time) that the request's capability identifies, never on the session id: a `--resume` or an account-move relaunch carries the same session id, and two launches can be live under one id (`--resume` or `--continue` twice in one directory), each with its own main loop. Persisted beside the launch's registry record, so a restarted or replacing door keeps a session's helpers on the provider its main loop is on.
  */
 export interface MainLoopRouteRecord {
-  /** Records where `sessionId`'s launch's latest main-loop request was served; nothing is recorded for a session id no live launch carries. */
-  readonly record: (sessionId: string, route: MainLoopRoute) => void;
-  /** Where `sessionId`'s launch's latest main-loop request was served, or undefined when none has been recorded, or no live launch carries the id. */
-  readonly routeOf: (sessionId: string) => MainLoopRoute | undefined;
+  /** Records where `launch`'s latest main-loop request was served. */
+  readonly record: (launch: Readonly<FrontDoorLaunch>, route: MainLoopRoute) => void;
+  /** Where `launch`'s latest main-loop request was served, or undefined when none has been recorded. */
+  readonly routeOf: (launch: Readonly<FrontDoorLaunch>) => MainLoopRoute | undefined;
 }
 
 /** What `createMainLoopRouteRecord` reads the registry through. */
 export interface MainLoopRoutePorts {
-  /** The live launch carrying a session id, or undefined when the registry holds none. */
-  readonly launchOfSession: (sessionId: string) => FrontDoorLaunch | undefined;
   /** Whether a launch is still registered. */
   readonly holdsLaunch: (launch: Readonly<FrontDoorLaunch>) => boolean;
   /** The durable copy, which lives and dies with the launch's registry entry: where a launch's main loop last went, as an earlier door process wrote it. */
@@ -63,16 +61,12 @@ function sameRoute(a: MainLoopRoute, b: MainLoopRoute): boolean {
 }
 
 /**
- * Builds the record, bounded by the door's session registry: an entry lives exactly as long as the registry holds its launch. Every write drops the entries of launches that have ended, and a read finds an entry only through a launch the registry still carries, so the record never holds more launches than the registry did since the last write.
+ * Builds the record, bounded by the door's session registry: an entry lives exactly as long as the registry holds its launch. Every write drops the entries of launches that have ended, so the record never holds more launches than the registry did since the last write, and a launch is only ever named by a request that presented its live capability.
  */
 export function createMainLoopRouteRecord(ports: MainLoopRoutePorts): MainLoopRouteRecord {
   const routes = new Map<string, { readonly launch: FrontDoorLaunch; readonly route: MainLoopRoute }>();
   return {
-    record: (sessionId, route) => {
-      const launch = ports.launchOfSession(sessionId);
-      if (launch === undefined) {
-        return;
-      }
+    record: (launch, route) => {
       const key = launchKeyOf(launch);
       for (const [held, entry] of routes) {
         if (held !== key && !ports.holdsLaunch(entry.launch)) {
@@ -86,12 +80,11 @@ export function createMainLoopRouteRecord(ports: MainLoopRoutePorts): MainLoopRo
         ports.stored.write(launch, route);
       }
     },
-    routeOf: (sessionId) => {
-      const launch = ports.launchOfSession(sessionId);
-      const key = launch === undefined ? undefined : launchKeyOf(launch);
-      const entry = key === undefined ? undefined : routes.get(key);
-      if (entry !== undefined || launch === undefined || key === undefined) {
-        return entry?.route;
+    routeOf: (launch) => {
+      const key = launchKeyOf(launch);
+      const entry = routes.get(key);
+      if (entry !== undefined) {
+        return entry.route;
       }
       // Nothing in memory: this door has not served the launch's main loop, or is not the process that did.
       const stored = ports.stored.read(launch);
@@ -140,9 +133,9 @@ function serving(route: FrontDoorRoute, rewritten: RoutedRequest): FrontDoorRout
  */
 export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<RouteResolution>, deps: MainLoopRoutingDeps): (request: RoutedRequest) => Promise<RouteResolution> {
   return async (request) => {
-    const { sessionId, provider } = request.session;
+    const { launch, provider } = request.session;
     const path = new URL(request.url, "http://127.0.0.1").pathname;
-    if (sessionId === undefined || provider !== undefined || !isInferencePath(path)) {
+    if (launch === undefined || provider !== undefined || !isInferencePath(path)) {
       return await resolve(request);
     }
     const requestClass = requestClassOf(request.headers);
@@ -150,11 +143,11 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
       const resolution = await resolve(request);
       if (resolution.ok) {
         const served = servedProviderOf(resolution.request?.url ?? request.url);
-        deps.record.record(sessionId, served === undefined ? { kind: "anthropic" } : { kind: "provider", provider: served });
+        deps.record.record(launch, served === undefined ? { kind: "anthropic" } : { kind: "provider", provider: served });
       }
       return resolution;
     }
-    const route = deps.record.routeOf(sessionId);
+    const route = deps.record.routeOf(launch);
     if (route === undefined || route.kind === "anthropic") {
       return await resolve(request);
     }

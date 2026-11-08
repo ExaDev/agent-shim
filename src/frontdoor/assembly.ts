@@ -1,6 +1,7 @@
 import type { HeadroomSocketTarget } from "../headroom/socket";
 import type { HeadroomDecision } from "./headroomDecision";
 import { restoreCredentials, type CredentialCustody } from "./custody";
+import type { FrontDoorLaunch } from "./state";
 import type { PipelineDeps, ResponseObserver, RouteResolution } from "./pipeline";
 import { AUTH_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, PROVIDER_HEADER, internalHeaderValue, parseProviderPath, type RoutedRequest } from "./route";
 
@@ -11,6 +12,8 @@ export interface DoorPipelineDeps {
   readonly isLiveToken: (token: string) => boolean;
   /** The id of the identity the live launch holding a token runs as, when it recorded one. */
   readonly identityOfToken: (token: string) => string | undefined;
+  /** The live launch holding a token, which the request's session carries so per-launch state is keyed on the launch that sent it. */
+  readonly launchOfToken: (token: string) => FrontDoorLaunch | undefined;
   /** The headroom daemon's socket as it stands right now, authenticated: undefined while the daemon is down, a refusal when the recorded socket fails the owner-only check. */
   readonly headroomSocket: () => HeadroomSocketTarget | undefined;
   /** This generation's hop secret: held only in this process's memory, set on what the hop sends headroom and demanded back on the direct listener. */
@@ -33,14 +36,15 @@ function singleValue(value: string | readonly string[] | undefined): string | un
 }
 
 /** The client-facing listeners' admission: the request must present a live launch's capability, and is routed with its headers unchanged; it also states the identity the launch recorded, which stands for a request carrying no identity header of its own. */
-function admitLaunch(isLiveToken: (token: string) => boolean, identityOfToken: (token: string) => string | undefined): PipelineDeps["admit"] {
+function admitLaunch(isLiveToken: (token: string) => boolean, identityOfToken: (token: string) => string | undefined, launchOfToken: (token: string) => FrontDoorLaunch | undefined): PipelineDeps["admit"] {
   return (request) => {
     const token = singleValue(request.headers[AUTH_HEADER]);
     if (token === undefined || !isLiveToken(token)) {
       return { ok: false, message: "agent-shim front door: this request carries no capability from a live agent-shim launch" };
     }
     const identity = identityOfToken(token);
-    return identity === undefined ? { ok: true, headers: { ...request.forwardable } } : { ok: true, headers: { ...request.forwardable }, identity };
+    const launch = launchOfToken(token);
+    return { ok: true, headers: { ...request.forwardable }, ...(identity === undefined ? {} : { identity }), ...(launch === undefined ? {} : { launch }) };
   };
 }
 
@@ -71,7 +75,7 @@ export function createDoorPipelines(deps: DoorPipelineDeps): { readonly clientFa
       resolveRoute: deps.resolveRoute,
       // The response middleware hook point, where usage tracking registers. The direct listener registers none, because its responses are consumed by headroom, not by the client: the entry the client sees is where observation belongs, and observing both would record every hopped request twice.
       responseObservers: deps.responseObservers,
-      admit: admitLaunch(deps.isLiveToken, deps.identityOfToken),
+      admit: admitLaunch(deps.isLiveToken, deps.identityOfToken, deps.launchOfToken),
       headroom: { headroomSocket: deps.headroomSocket, hopSecret: deps.hopSecret, custody: deps.custody, log: deps.log },
       headroomDecision: deps.headroomDecision,
       canonicalProvider: deps.canonicalProvider,
