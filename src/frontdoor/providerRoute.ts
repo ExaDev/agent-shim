@@ -590,7 +590,8 @@ export function createProviderRouteResolver(deps: {
     }
     if (isHttpProvider(definition)) {
       const model = definition.env?.[TIER_ENV_VARIABLES[tier]];
-      return model === undefined || model === "" ? undefined : model;
+      // The variable may carry the `[1m]` context marker Claude Code reads, which is no part of the model's name.
+      return model === undefined || model === "" ? undefined : withoutContextMarker(model);
     }
     return isRouterProvider(definition) ? deps.models?.(session)?.tiers?.[tier] : undefined;
   };

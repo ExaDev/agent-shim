@@ -1,7 +1,7 @@
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
 
 import { HTTP_STATUS } from "../codex/http";
-import { CLIENT_SESSION_ID_PATTERN } from "../usage/schema";
+import { CLIENT_SESSION_ID_PATTERN, type RequestClass } from "../usage/schema";
 import type { HeadroomDecision } from "./headroomDecision";
 import { applyHeadroomHop, headroomReady, type HeadroomHopDeps } from "./headroomHop";
 import { requestClassOf } from "./mainLoopRoute";
@@ -32,7 +32,7 @@ export interface RoutedResponseEvent {
   /** Claude Code's own id for the conversation, from the request's `x-claude-code-session-id` header; undefined when the client sent none. Unlike the launch's session id it changes when the conversation is cleared, so it is what ties a request to the client's per-conversation cost. */
   readonly clientSessionId: string | undefined;
   /** The request's class as Claude Code stated it in `x-claude-code-request-class` (`main`, `subagent`, `workflow`, `compaction`, `auxiliary`, `side_reply`); undefined when the client sent none. */
-  readonly requestClass: string | undefined;
+  readonly requestClass: RequestClass | undefined;
   readonly status: number;
   readonly headers: Readonly<Record<string, string>>;
 }
@@ -154,7 +154,7 @@ interface ObservedRequest {
   /** The client's own conversation id, as the request carried it. */
   readonly clientSessionId: string | undefined;
   /** The request's class, as the request carried it. */
-  readonly requestClass: string | undefined;
+  readonly requestClass: RequestClass | undefined;
 }
 
 /** The conversation id Claude Code stamps on its requests, or undefined when the request carries none (an older client) or carries something that is not a single id: Node joins a header sent twice into one comma-separated string, which the id pattern refuses. */

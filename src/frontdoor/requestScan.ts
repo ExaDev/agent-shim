@@ -23,6 +23,8 @@ export interface RequestScan {
   /** The whole body's text, present only in whole-body mode, so a route that rewrites the model field does it from the one copy already read rather than a second. */
   readonly text?: string;
   readonly model?: string;
+  /** How many bytes of the body the scan read before it settled: the length of the head `text` decodes and the replay emits first, so a rewrite confined to the head (the model field is always in it) can leave every later byte untouched. */
+  readonly headBytes: number;
   readonly hasImage?: boolean;
   /** True when the request carries a non-empty `tools` array. */
   readonly toolsPresent?: boolean;
@@ -68,6 +70,7 @@ export async function scanRequestHead(request: RoutedRequest, wholeBody = false)
       const maxTokens = /"max_tokens"\s*:\s*([0-9]+)/.exec(text)?.[1];
       resolve({
         ...(model === undefined ? {} : { model }),
+        headBytes: seen,
         hasImage,
         toolsPresent: /"tools"\s*:\s*\[\s*\{/.test(text),
         thinking: /"thinking"\s*:\s*\{\s*"type"\s*:\s*"enabled"/.test(text),

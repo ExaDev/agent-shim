@@ -46,6 +46,11 @@ export const LimitClassificationSchema = z.strictObject({
 });
 export type LimitClassification = z.infer<typeof LimitClassificationSchema>;
 
+/** The classes Claude Code states for a request in `x-claude-code-request-class`, and `unknown` for a value it does not state. */
+export const REQUEST_CLASSES = ["main", "subagent", "workflow", "compaction", "auxiliary", "side_reply", "unknown"] as const;
+export const RequestClassSchema = z.enum(REQUEST_CLASSES);
+export type RequestClass = z.infer<typeof RequestClassSchema>;
+
 /** One routed request, appended to the usage log when its response has finished. */
 export const UsageRecordSchema = z.strictObject({
   schemaVersion: VersionSchema,
@@ -70,10 +75,10 @@ export const UsageRecordSchema = z.strictObject({
   endpoint: z.string(),
   /** The model the response named. */
   model: z.string().optional(),
-  /** The model name the request asked for, as its body carried it before any routing layer rewrote it: compared with `model`, it tells a choice or tier mapping apart from a name served unchanged. Present whenever the door read the request's body, on an error response too; a record written before the door recorded it on every request carries it only when the served model differed or was unknown. */
+  /** The model name the request asked for, as its body carried it before any routing layer rewrote it: compared with `model`, it tells a choice or tier mapping apart from a name served unchanged. Present when the response served a different model than the name asked for, and when the response names no model (an error response included) and the door had read the request's body; absent when the response confirms the name. */
   requestedModel: z.string().optional(),
-  /** The request's class, as Claude Code stated it in its `x-claude-code-request-class` header: `main` for the conversation's own loop, otherwise `subagent`, `workflow`, `compaction`, `auxiliary` (a hook judge, a title) or `side_reply`. Absent when the client sent none. Claude Code derives it from the request's query source, which it does not send, so the query source itself is never recorded. */
-  requestClass: z.string().min(1).optional(),
+  /** The request's class, as Claude Code stated it in its `x-claude-code-request-class` header: `main` for the conversation's own loop, otherwise `subagent`, `workflow`, `compaction`, `auxiliary` (a hook judge, a title) or `side_reply`; `unknown` when the header carried anything else, so a client-chosen string never reaches the log. Absent when the client sent none. Claude Code derives it from the request's query source, which it does not send, so the query source itself is never recorded. */
+  requestClass: RequestClassSchema.optional(),
   /** The distinct providers the choice could have landed on, present only when there was more than one, so a reader can tell a choice that crossed providers from one that stayed inside a single provider's lineup. */
   candidateProviders: z.array(z.string()).optional(),
   status: z.number().int(),

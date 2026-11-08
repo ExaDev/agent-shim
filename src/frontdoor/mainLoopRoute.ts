@@ -2,22 +2,29 @@ import type { IncomingHttpHeaders } from "node:http";
 import { Readable } from "node:stream";
 
 import type { RouteResolution } from "./pipeline";
-import { PROVIDER_PATH_PREFIX, parseProviderPath, type FrontDoorRoute, type RoutedRequest } from "./route";
+import { RequestClassSchema, type RequestClass } from "../usage/schema";
+import { PROVIDER_PATH_PREFIX, internalHeaderValue, parseProviderPath, type FrontDoorRoute, type RoutedRequest } from "./route";
 import { scanRequestHead } from "./requestScan";
 import { launchKeyOf, type FrontDoorLaunch, type MainLoopRoute } from "./state";
 
 /**
- * The header Claude Code names each request's class in. Read from the strings of Claude Code 2.1.319, which sets it on every API request whose query source it knows, with one of `REQUEST_CLASSES`; the query source itself is never sent, only this class derived from it (and, for an agent's requests, the agent type in `x-claude-code-agent-type`).
+ * The header Claude Code names each request's class in. Read from the strings of Claude Code 2.1.319, which sets it on every API request whose query source it knows, with one of the classes in `REQUEST_CLASSES`; the query source itself is never sent, only this class derived from it (and, for an agent's requests, the agent type in `x-claude-code-agent-type`).
  */
 const REQUEST_CLASS_HEADER = "x-claude-code-request-class";
 
 /** The class of a request on the conversation's own loop: the turns the person drives, which are what `/model` changes. */
 const MAIN_REQUEST_CLASS = "main";
 
-/** The request's class as the client stated it, or undefined when it sent none (an older client, or a request whose query source it does not know) or sent more than one. */
-export function requestClassOf(headers: Readonly<IncomingHttpHeaders>): string | undefined {
-  const value = headers[REQUEST_CLASS_HEADER];
-  return typeof value === "string" && value !== "" ? value : undefined;
+/**
+ * The request's class as the client stated it: one of the classes Claude Code sends, `unknown` for any other value (a repeated header, which Node joins into one string, included, so a client-chosen string is neither logged nor echoed), and undefined when it sent none (a launch whose child was not asked for the header, or a request whose query source Claude Code does not know). The header is found whatever its case, like every internal header.
+ */
+export function requestClassOf(headers: Readonly<IncomingHttpHeaders>): RequestClass | undefined {
+  const value = internalHeaderValue(headers, REQUEST_CLASS_HEADER);
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = RequestClassSchema.safeParse(value);
+  return parsed.success ? parsed.data : "unknown";
 }
 
 /**
@@ -109,9 +116,7 @@ function servedProviderOf(url: string): string | undefined {
 /** `route` serving `rewritten` in place of whatever request the pipeline hands it: the request the helper routing chose, scoped under its provider. */
 function serving(route: FrontDoorRoute, rewritten: RoutedRequest): FrontDoorRoute {
   return {
-    name: route.name,
-    headroomEligible: route.headroomEligible,
-    headroomUpstream: route.headroomUpstream,
+    ...route,
     serve: async (request, response) => {
       await route.serve({ ...request, url: rewritten.url, headers: rewritten.headers, body: rewritten.body }, response);
     },
@@ -143,11 +148,12 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
     if (route === undefined || route.kind === "anthropic") {
       return await resolve(request);
     }
-    const scan = await scanRequestHead(request, true);
+    // The head is all the mapping needs: the model field sits in it, and the rest of the body, a whole conversation for a compaction or a subagent, streams through unread.
+    const scan = await scanRequestHead(request);
     const requested = scan.model;
     const mapped = requested === undefined ? undefined : deps.helperModel(route.provider, request.session, requested);
     const replayed = scan.replayed ?? request;
-    const body = mapped === undefined || requested === undefined || scan.text === undefined ? replayed : withModel(replayed, scan.text, requested, mapped);
+    const body = mapped === undefined || requested === undefined ? replayed : withModelInHead(replayed, scan.headBytes, requested, mapped);
     const helper: RoutedRequest = { ...body, url: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(route.provider)}${request.url}` };
     const resolution = await resolve(helper);
     if (!resolution.ok) {
@@ -157,6 +163,44 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
     const served = resolution.request ?? helper;
     return { ...resolution, route: resolution.request === undefined ? serving(resolution.route, helper) : resolution.route, request: served, ...(requested === undefined ? {} : { requestedModel: requested }) };
   };
+}
+
+/** The text of `value` as the bytes of its UTF-8 encoding, one character per byte, so a pattern over it matches bytes and a rewrite can be turned back into exactly the bytes it came from. */
+function asBytes(value: string): string {
+  return Buffer.from(value, "utf8").toString("latin1");
+}
+
+/**
+ * `request` with the model field in the first `headBytes` bytes of its body changed from `from` to `to`, and every other byte, the head's and the rest's, passed through exactly as it came: the rest streams on under the replay's backpressure and is never held. Unlike `withModel` it needs no copy of the body, which is what lets a helper that carries a whole conversation be rewritten without reading it. The framing header goes, because the new name is a different length.
+ */
+export function withModelInHead(request: RoutedRequest, headBytes: number, from: string, to: string): RoutedRequest {
+  const pattern = new RegExp('"model":\\s*"' + asBytes(from).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + '"');
+  const rewriteHead = (head: Buffer): Buffer => Buffer.from(head.toString("latin1").replace(pattern, () => `"model":${asBytes(JSON.stringify(to))}`), "latin1");
+  async function* rewritten(): AsyncGenerator<Buffer> {
+    let held = Buffer.alloc(0);
+    let headDone = false;
+    const chunks: AsyncIterable<unknown> = request.body;
+    for await (const piece of chunks) {
+      if (!Buffer.isBuffer(piece)) {
+        throw new TypeError("a request body chunk is not a Buffer");
+      }
+      if (headDone) {
+        yield piece;
+        continue;
+      }
+      held = Buffer.concat([held, piece]);
+      if (held.length >= headBytes) {
+        headDone = true;
+        yield rewriteHead(held.subarray(0, headBytes));
+        yield held.subarray(headBytes);
+      }
+    }
+    if (!headDone) {
+      yield rewriteHead(held);
+    }
+  }
+  const headers = Object.fromEntries(Object.entries(request.headers).filter(([name]) => name.toLowerCase() !== "content-length"));
+  return { ...request, headers, body: Readable.from(rewritten()) };
 }
 
 /**

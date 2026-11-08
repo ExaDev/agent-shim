@@ -48,7 +48,15 @@
     },
     "requestClass": {
       "type": "string",
-      "minLength": 1
+      "enum": [
+        "main",
+        "subagent",
+        "workflow",
+        "compaction",
+        "auxiliary",
+        "side_reply",
+        "unknown"
+      ]
     },
     "candidateProviders": {
       "type": "array",
