@@ -137,6 +137,22 @@ describe("runLauncher provider selection", () => {
     expect(code).toBe(0);
   });
 
+  it("names the base URL in the warning without its userinfo or query, keeping the reason", () => {
+    const log = fakeLog();
+
+    launch({
+      paths,
+      fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/z.json`]: { ...providerZ, baseUrl: "https://user:hunter2@api.z.ai/api/anthropic?key=abc123" } }),
+      spawn: fakeSpawn(),
+      proc: fakeProc({ Z_API_TOKEN: "tok-z" }, ["--provider", "z", "--print"]),
+      log,
+      resolveClaudeBinary: () => discovered,
+      probeBaseUrl: () => ({ ok: false, reason: "no connection accepted within 1500ms" }),
+    });
+
+    expect(reportedRow(log, "warning")).toEqual({ label: "warning", value: "provider z could not connect to https://api.z.ai/api/anthropic: no connection accepted within 1500ms", notice: true });
+  });
+
   it("launches on a provider whose base URL accepts a connection, with no warning", () => {
     const spawn = fakeSpawn();
     const log = fakeLog();
