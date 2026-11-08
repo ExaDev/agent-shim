@@ -1,3 +1,32 @@
+## [12.1.0](https://github.com/ExaDev/agent-shim/compare/v12.0.1...v12.1.0) (2026-11-08)
+
+### Features
+
+* **launcher:** resolve the provider of each pool member's launch without a credential ([4a89e2e](https://github.com/ExaDev/agent-shim/commit/4a89e2e9cdec1cc4118b397089a326e33ac1e2f9))
+* **library:** export the provider resolver that pool reports rank on ([d2af29d](https://github.com/ExaDev/agent-shim/commit/d2af29d123298cf60d6509eaa5fa0d4ab2c56a38))
+* **pool:** rank `pool pick`, `check` and the door's pool report on the launch provider ([14ce2a7](https://github.com/ExaDev/agent-shim/commit/14ce2a71bc8aa396eb13ef1789d9e9274b816131))
+* **usage:** load and rank pool members for the provider each launch spends ([7060f38](https://github.com/ExaDev/agent-shim/commit/7060f3867f942695358a9ffbec6684439f17f0dc))
+* **usage:** rank a pool member on the quota of the provider its launch spends ([e79d30d](https://github.com/ExaDev/agent-shim/commit/e79d30d80d16f0bde21e531331187d1094e3f856))
+
+### Bug Fixes
+
+* **launcher:** leave members ranked on a provider out of the pre-launch Claude usage refresh ([6f353a8](https://github.com/ExaDev/agent-shim/commit/6f353a8a9dde6230d3c8fea9c325b6bd995ec74a))
+* **launcher:** pick a pool member before judging it on a Claude account the launch will not use ([a18586b](https://github.com/ExaDev/agent-shim/commit/a18586b6da4c62fbb7c4fa03deafa34e2be15984))
+* **launcher:** rank a pool member with an unreadable provider file as unknown ([3161743](https://github.com/ExaDev/agent-shim/commit/3161743625c734d5e9cd0b09da665a7940695380))
+* **launcher:** rank the identity picker's entries on the provider the launch spends ([778719d](https://github.com/ExaDev/agent-shim/commit/778719d921672019e711764350f1528c4cab4f60))
+* **usage:** rank a provider that bills by use and reports no windows as billed by use ([77b9df7](https://github.com/ExaDev/agent-shim/commit/77b9df721a288d6ce55bd03260b60ff4c1295979))
+* **usage:** rank a spent provider window with no reset time as ineligible ([058160f](https://github.com/ExaDev/agent-shim/commit/058160f71615b75da209fec604b961430c530aa7))
+
+### Documentation
+
+* **pool:** describe ranking a pool on the provider a launch spends ([002f474](https://github.com/ExaDev/agent-shim/commit/002f474fe0ed1a3850c3673b0468dcd434602282))
+* **supervise:** say why a supervised move ranks on the Claude account ([3f9f7c0](https://github.com/ExaDev/agent-shim/commit/3f9f7c0138fd3dd1d54fecdd99ed18f99c035e3f))
+* **usage:** say why members sharing a provider credential are not grouped ([3f416bd](https://github.com/ExaDev/agent-shim/commit/3f416bd95be735c1f35a1355eb3e06e0e28ac956))
+
+### Tests
+
+* **library:** list the provider resolver among the documented entry points ([d99b248](https://github.com/ExaDev/agent-shim/commit/d99b248a4276f5fae0e064fed5de5c6810c9edbe))
+
 ## [12.0.1](https://github.com/ExaDev/agent-shim/compare/v12.0.0...v12.0.1) (2026-11-07)
 
 ### Bug Fixes
