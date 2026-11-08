@@ -83,6 +83,19 @@ describe("scanRequestHead when the client aborts the body", () => {
   });
 });
 
+describe("scanRequestHead over a body that was already read to its end", () => {
+  it("fails at once instead of waiting for an end that already fired", async () => {
+    const body = new PassThrough();
+    const request = requestOver(body);
+    body.end(JSON.stringify({ model: "m", messages: [] }));
+    const scanned = await scanRequestHead(request);
+    scanned.replayed?.body.resume();
+    await drainTicks();
+    expect(body.readableEnded).toBe(true);
+    await expect(scanRequestHead(request)).rejects.toThrow("already read to its end");
+  });
+});
+
 describe("scanRequestHead over a body whose characters span chunks", () => {
   it("decodes a multi-byte character split across a chunk boundary whole, so a rewrite from the text keeps the body", async () => {
     const body = JSON.stringify({ model: "claude-haiku-5-5", messages: [{ role: "user", content: "naïve 漢字 🙂" }] });
