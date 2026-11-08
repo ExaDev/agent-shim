@@ -99,6 +99,7 @@ function snapshotAgeKey(member: PoolMember): number {
  * Marks all but one of the direct members that hold the same login (same account uuid and organisation uuid, `loginKeyOf`) as twins of the one whose usage snapshot is freshest, which stands for the login. Members of one login draw on one quota window, so ranking each would count it twice, and a twin looks usable while its sibling is limited. The earliest listed member wins a tie. A nested `pool:<name>` entry is not grouped, so its pool keeps its own evaluation, a member with no account uuid is never grouped, and neither is a member whose launch spends a provider, since the Claude login it shares is not the quota it draws on. Returns `members` in the same order.
  */
 function collapseSharedLogins(members: readonly PoolMember[]): readonly PoolMember[] {
+  // Members that spend the same provider credential are deliberately not grouped either: the pick is equivalent whichever of them it names, so only their reasons can differ, and each reports its own slice.
   const groups = groupSharedLogins(members, (member) => (member.nested === undefined && member.provider === undefined && member.account !== undefined ? loginKeyOf(member.account) : undefined));
   const representativeOf = new Map<PoolMember, string>();
   for (const group of groups) {
