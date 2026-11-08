@@ -10,7 +10,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { cliBundleOptions } from "../../scripts/bundle-options.mts";
 import { LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial, type LeafCert } from "./connect";
-import { PROBE_WAIT_MARGIN_MS, PROBE_WORKER_FAILURE_PREFIX, PROBE_WORKER_START_LIMIT_MS, STARTED_SIGNAL_SOURCE, probeFrontDoorSync, probeListenerAcceptSync, startProbeWorker } from "./probe";
+import { PROBE_WAIT_MARGIN_MS, PROBE_WORKER_FAILURE_PREFIX, PROBE_WORKER_START_LIMIT_MS, STARTED_SIGNAL_SOURCE, probeFrontDoorSync, probeListenerAcceptSync, probeWorkerSource, requestCatalogueRefreshSync, startProbeWorker, type ProbeWorkers } from "./probe";
 import * as probe from "./probe";
 
 /** Enough time for the pure-JS 2048-bit keypairs this file generates. */
@@ -389,5 +389,63 @@ describe("the probe sources in the release bundle", () => {
     expect(acceptProbeSourceOf(bundled)).toContain("__name(");
     const verdict = bundled.probeListenerAcceptSync(await closedPort(), READ_VERDICT_TIMEOUT_MS);
     expect(verdict.ok ? "" : verdict.reason).toContain("__name is not defined");
+  });
+});
+
+describe("the start signal of the probe sources", () => {
+  /** The source a probe hands its workers, read through an injected worker set, with the data it would run with. */
+  function sourceOf(ask: (probeWorkers: ProbeWorkers) => unknown): { readonly source: string; readonly data: Readonly<Record<string, unknown>> } {
+    let handed: { readonly source: string; readonly data: Readonly<Record<string, unknown>> } | undefined;
+    ask({
+      start: (source, data) => {
+        handed = { source, data };
+        return { verdict: () => ({ ok: true }) };
+      },
+    });
+    if (handed === undefined) {
+      throw new Error("the probe started no worker");
+    }
+    return handed;
+  }
+
+  const SILENT_PROBE_BOUND_MS = 1_500;
+  const SHORT_START_LIMIT_MS = 300;
+  let authority: CaMaterial;
+
+  beforeAll(() => {
+    authority = generateCa(new Date());
+  }, KEYGEN_TIMEOUT_MS);
+
+  it("starts every probe source with the signal, whatever the source after it", () => {
+    expect(probeWorkerSource("body();")).toContain(STARTED_SIGNAL_SOURCE);
+    expect(probeWorkerSource("body();").indexOf(STARTED_SIGNAL_SOURCE)).toBeLessThan(probeWorkerSource("body();").indexOf("body();"));
+    const sources = [
+      sourceOf((probeWorkers) => probeFrontDoorSync(1, "ca", 1, probeWorkers)).source,
+      sourceOf((probeWorkers) => requestCatalogueRefreshSync(1, "ca", "token", 1, probeWorkers)).source,
+      sourceOf((probeWorkers) => probeListenerAcceptSync(1, 1, probeWorkers)).source,
+    ];
+    for (const source of sources) {
+      expect(source).toContain(STARTED_SIGNAL_SOURCE);
+    }
+  });
+
+  it.each([
+    ["the health probe", (probeWorkers: ProbeWorkers, port: number, caPem: string) => probeFrontDoorSync(port, caPem, SILENT_PROBE_BOUND_MS, probeWorkers)],
+    ["the catalogue refresh request", (probeWorkers: ProbeWorkers, port: number, caPem: string) => requestCatalogueRefreshSync(port, caPem, "token", SILENT_PROBE_BOUND_MS, probeWorkers)],
+  ])("lets %s reach its own bound when that is longer than the worker's start limit", async (_name, run) => {
+    const silent = net.createServer(() => undefined);
+    await new Promise<void>((resolve) => {
+      silent.listen(0, "127.0.0.1", resolve);
+    });
+    const address = silent.address();
+    const port = typeof address === "object" && address !== null ? address.port : 0;
+    try {
+      const verdict = run({ start: (source, data, timeoutMs) => startProbeWorker(source, data, timeoutMs, undefined, SHORT_START_LIMIT_MS) }, port, authority.certPem);
+      const reason = verdict.ok ? "" : verdict.reason;
+      expect(reason).not.toContain("did not start");
+      expect(reason).toMatch(/no answer within|did not finish within/);
+    } finally {
+      silent.close();
+    }
   });
 });

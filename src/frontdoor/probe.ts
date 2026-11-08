@@ -27,6 +27,11 @@ const CLAIM_SLOT = 3;
 export const PROBE_WORKER_START_LIMIT_MS = 10_000;
 /** What each worker source runs first: it marks the worker started. The sources are templates over `workerData`, which carries `startedSlot`. */
 export const STARTED_SIGNAL_SOURCE = "Atomics.store(new Int32Array(workerData.shared, 0, workerData.headerSlots), workerData.startedSlot, 1); Atomics.notify(new Int32Array(workerData.shared, 0, workerData.headerSlots), workerData.startedSlot);";
+/** The text every probe source starts with: the worker's data and the signal that it started. Every source is built through it, so a source cannot omit the signal, which would leave a probe whose own bound is longer than the start limit ending at the start limit. */
+export function probeWorkerSource(body: string): string {
+  return `const { workerData } = require("node:worker_threads");\n${STARTED_SIGNAL_SOURCE}\n${body}`;
+}
+
 /** What a failed probe's reason starts with when the worker itself broke (an uncaught error, a rejected promise, source that does not parse), ahead of the error's message and nothing else of it. */
 export const PROBE_WORKER_FAILURE_PREFIX = "the probe worker failed: ";
 const INT32_BYTES = 4;
@@ -77,9 +82,7 @@ const WORKER_PRELUDE_SOURCE = `
 /**
  * The probe itself, run on a worker thread so the synchronous launcher can wait on it with `Atomics.wait`: one HTTPS GET of `/healthz` on 127.0.0.1 that trusts only the agent-shim CA (`ca` replaces the default trust store) and checks the leaf names 127.0.0.1. No capability or credential is sent. Kept as plain CommonJS source because the worker evaluates it standalone, outside the bundle.
  */
-const PROBE_SOURCE = `
-const { workerData } = require("node:worker_threads");
-${STARTED_SIGNAL_SOURCE}
+const PROBE_SOURCE = probeWorkerSource(`
 const https = require("node:https");
 const { port, ca, timeoutMs, ok, failed } = workerData;
 const finish = finishProbe;
@@ -96,11 +99,9 @@ const request = https.get({ host: "127.0.0.1", port, path: "/healthz", ca: [ca],
 // A hard deadline over the whole exchange, handshake included: a listener that accepts the connection and then says nothing must still fail the probe.
 setTimeout(() => { request.destroy(new Error("no answer within " + String(timeoutMs) + "ms")); }, timeoutMs);
 request.on("error", (error) => finish(failed, (error.code ? error.code + ": " : "") + error.message));
-`;
+`);
 
-const CATALOGUE_REQUEST_SOURCE = `
-const { workerData } = require("node:worker_threads");
-${STARTED_SIGNAL_SOURCE}
+const CATALOGUE_REQUEST_SOURCE = probeWorkerSource(`
 const https = require("node:https");
 const { port, ca, token, timeoutMs, ok, failed } = workerData;
 const finish = finishProbe;
@@ -112,12 +113,19 @@ const request = https.request({ host: "127.0.0.1", port, path: "/__agent-shim/or
 setTimeout(() => { request.destroy(new Error("no answer within " + String(timeoutMs) + "ms")); }, timeoutMs);
 request.on("error", (error) => finish(failed, (error.code ? error.code + ": " : "") + error.message));
 request.end();
-`;
+`);
+
+/** Where probe workers come from: `start` begins one and returns what blocks the calling thread on its verdict. Injected so a test can observe that every worker has started before any is waited on. */
+export interface ProbeWorkers {
+  readonly start: (source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number) => { readonly verdict: () => ListenerVerdict };
+}
+
+const realProbeWorkers: ProbeWorkers = { start: (source, data, timeoutMs) => startProbeWorker(source, data, timeoutMs) };
 
 /** Requests a catalogue keeper tick through the authenticated front-door control API. */
-export function requestCatalogueRefreshSync(port: number, caPem: string, token: string, timeoutMs: number = PROBE_TIMEOUT_MS): ListenerVerdict {
+export function requestCatalogueRefreshSync(port: number, caPem: string, token: string, timeoutMs: number = PROBE_TIMEOUT_MS, workers: ProbeWorkers = realProbeWorkers): ListenerVerdict {
   refuseToBlockInRole("a synchronous catalogue refresh request");
-  return runProbeWorker(CATALOGUE_REQUEST_SOURCE, { port, ca: caPem, token }, timeoutMs);
+  return workers.start(CATALOGUE_REQUEST_SOURCE, { port, ca: caPem, token }, timeoutMs).verdict();
 }
 
 /**
@@ -127,18 +135,16 @@ export function requestCatalogueRefreshSync(port: number, caPem: string, token: 
  *
  * The worker gives up after `timeoutMs` (`PROBE_TIMEOUT_MS` in production); a test that reads the verdict of a probe gives it a bound a loaded machine does not reach.
  */
-export function probeFrontDoorSync(port: number, caPem: string, timeoutMs: number = PROBE_TIMEOUT_MS): ListenerVerdict {
+export function probeFrontDoorSync(port: number, caPem: string, timeoutMs: number = PROBE_TIMEOUT_MS, workers: ProbeWorkers = realProbeWorkers): ListenerVerdict {
   refuseToBlockInRole("a synchronous probe of the front door");
-  return runProbeWorker(PROBE_SOURCE, { port, ca: caPem }, timeoutMs);
+  return workers.start(PROBE_SOURCE, { port, ca: caPem }, timeoutMs).verdict();
 }
 
 /**
  * The accept probe, run on a worker thread for the same reason: the door's own dial (`doorDial`, over the door's lookup and from its reserved source ports for a name), so what passes is what the door itself can connect to, closed the moment it connects so nothing is sent to the listener. The worker cannot load this bundle, so it is handed the source text of the dial's functions and of `SourcePortRange`, each of which references nothing but its own parameters.
  * Read by `probe.test.ts` from the bundled module, to check the embedded text, which no import of this module names.
  */
-const ACCEPT_PROBE_SOURCE = `
-const { workerData } = require("node:worker_threads");
-${STARTED_SIGNAL_SOURCE}
+const ACCEPT_PROBE_SOURCE = probeWorkerSource(`
 const net = require("node:net");
 const dns = require("node:dns");
 const { host, port, portStart, portEnd, timeoutMs, ok, failed } = workerData;
@@ -152,14 +158,7 @@ const startTimer = (callback, ms) => { const timer = setTimeout(callback, ms); r
 runAcceptProbe({ net, dns, createDoorLookup, doorDial, probeAccept, SourcePortRange }, { host, port, portStart, portEnd, timeoutMs }, startTimer).then((verdict) => {
   finish(verdict.ok ? ok : failed, verdict.ok ? "" : verdict.reason);
 });
-`;
-
-/** Where probe workers come from: `start` begins one and returns what blocks the calling thread on its verdict. Injected so a test can observe that every worker has started before any is waited on. */
-export interface ProbeWorkers {
-  readonly start: (source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number) => { readonly verdict: () => ListenerVerdict };
-}
-
-const realProbeWorkers: ProbeWorkers = { start: (source, data, timeoutMs) => startProbeWorker(source, data, timeoutMs) };
+`);
 
 /**
  * Whether a listener on 127.0.0.1 accepts a TCP connection within the probe's bound (`timeoutMs`), which is all the CONNECT surface can be asked without presenting a launch's capability. Used by `doctor` and `frontdoor status` to tell a listener that accepts from one whose process is alive but whose event loop is not serving, which a supervisor pid check cannot. The bound is `timeoutMs` (`PROBE_TIMEOUT_MS` in production).
@@ -176,11 +175,6 @@ export function probeAddressesAcceptSync(targets: readonly { readonly host: stri
   refuseToBlockInRole("a synchronous probe of a provider's address");
   const started = targets.map((target) => workers.start(ACCEPT_PROBE_SOURCE, { host: target.host, port: target.port, portStart: DOOR_SOURCE_PORT_START, portEnd: DOOR_SOURCE_PORT_END }, target.timeoutMs));
   return started.map((probe) => probe.verdict());
-}
-
-/** Runs one probe source on a worker thread and blocks this thread on its verdict, whatever the probe asks, for at most `timeoutMs` plus the margin the waiting thread allows the worker's own timeout verdict. */
-function runProbeWorker(source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number): ListenerVerdict {
-  return startProbeWorker(source, data, timeoutMs).verdict();
 }
 
 /** The part of a worker thread this module uses, so a test can stand in a worker that reports an error. */
@@ -202,8 +196,8 @@ const spawnRealWorker: ProbeWorkerSpawn = (source, options) => new Worker(source
  *
  * The probe sources embed the source text of functions from this bundle (`Function.prototype.toString`), and the text must run on its own in the worker: it can reference nothing but its own parameters. A bundler option that rewrites function bodies (esbuild's `keepNames` injects calls to a `__name` helper that exists only in the bundle) makes the worker throw a ReferenceError. The check is deliberately narrow, on what is embedded and not on the whole bundle, since a bundled dependency compiled with `keepNames` is harmless: `probe.test.ts` builds this module with the release's own options (`scripts/bundle-options.mts`) and fails if the source handed to a worker contains a `__name` call or does not run in a worker.
  */
-export function startProbeWorker(source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number, spawn: ProbeWorkerSpawn = spawnRealWorker): { readonly verdict: () => ListenerVerdict } {
-  const startLimit = performance.now() + PROBE_WORKER_START_LIMIT_MS;
+export function startProbeWorker(source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number, spawn: ProbeWorkerSpawn = spawnRealWorker, startLimitMs: number = PROBE_WORKER_START_LIMIT_MS): { readonly verdict: () => ListenerVerdict } {
+  const startLimit = performance.now() + startLimitMs;
   const shared = new SharedArrayBuffer(HEADER_SLOTS * INT32_BYTES + REASON_BYTES);
   const header = new Int32Array(shared, 0, HEADER_SLOTS);
   const worker = spawn(`${WORKER_PRELUDE_SOURCE}\nnew Function("require", ${JSON.stringify(source)})(require);`, {
@@ -223,12 +217,12 @@ export function startProbeWorker(source: string, data: Readonly<Record<string, u
   // The worker must never keep the launcher alive: the verdict is all this thread needs from it.
   worker.unref();
   return {
-    verdict: () => withBlockingStep(PROBE_WORKER_START_LIMIT_MS + timeoutMs + PROBE_WAIT_MARGIN_MS, () => {
+    verdict: () => withBlockingStep(startLimitMs + timeoutMs + PROBE_WAIT_MARGIN_MS, () => {
       try {
         Atomics.wait(header, STARTED_SLOT, WORKER_NOT_STARTED, Math.max(0, startLimit - performance.now()));
         // A worker that answered already has started, whether or not its signal was seen first.
         if (Atomics.load(header, STARTED_SLOT) === WORKER_NOT_STARTED && Atomics.load(header, 0) === VERDICT_PENDING) {
-          return { ok: false, reason: `the probe worker did not start within ${String(PROBE_WORKER_START_LIMIT_MS)}ms` };
+          return { ok: false, reason: `the probe worker did not start within ${String(startLimitMs)}ms` };
         }
         Atomics.wait(header, 0, VERDICT_PENDING, timeoutMs + PROBE_WAIT_MARGIN_MS);
         const verdict = Atomics.load(header, 0);
