@@ -10,6 +10,7 @@ import {
   dialTargetOf,
   probeProviderReachability,
   providerConnectTimeoutMs,
+  realBaseUrlBatchProbe,
   realBaseUrlProbe,
 } from "./providerReachability";
 import { displayBaseUrl } from "./baseUrlDisplay";
@@ -123,6 +124,24 @@ describe("realBaseUrlProbe", () => {
 
   it("fails a base URL whose scheme nothing dials", () => {
     expect(realBaseUrlProbe("ftp://example.com", SHORT_CONNECT_BOUND_MS)).toEqual({ ok: false, reason: "the base URL is neither http nor https" });
+  });
+
+  it("answers a batch in the order it was given, whichever targets are dialled and whichever are not", async () => {
+    const open = `http://127.0.0.1:${String(await listeningPort())}`;
+    const closed = `http://127.0.0.1:${String(await closedPort())}`;
+    const verdicts = realBaseUrlBatchProbe([
+      { baseUrl: closed, timeoutMs: DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS },
+      { baseUrl: "ftp://example.com", timeoutMs: SHORT_CONNECT_BOUND_MS },
+      { baseUrl: open, timeoutMs: DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS },
+    ]);
+    const [refused, undialled, accepted, ...rest] = verdicts;
+    if (refused === undefined || refused.ok) {
+      throw new Error("expected the refused port to fail the probe");
+    }
+    expect(refused.reason).toContain("ECONNREFUSED");
+    expect(undialled).toEqual({ ok: false, reason: "the base URL is neither http nor https" });
+    expect(accepted).toEqual({ ok: true });
+    expect(rest).toEqual([]);
   });
 });
 
