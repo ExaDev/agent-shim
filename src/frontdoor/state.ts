@@ -346,8 +346,13 @@ function launchRouteName(pid: number): string {
 
 const LaunchRouteFileSchema = z.strictObject({ startedAt: z.number(), route: MainLoopRouteSchema });
 
-/** Records where `launch`'s main loop last went, in the registry directory beside the launch's own record, so a restarted or replacing door finds it and the launch's helper requests keep following it. */
+/**
+ * Records where `launch`'s main loop last went, in the registry directory beside the launch's own record, so a restarted or replacing door finds it and the launch's helper requests keep following it. Written only while the launch's record is still on disk: the door admits a request from its cached view of the registry, which can outlive the launch's release by a tick, and a route written after the release would be an orphan nothing but the prune removes. The check reads the record at the write, so the window left is the two synchronous calls between the read and the write.
+ */
 export function writeLaunchRoute(fs: HeadroomFs, sessionsDir: string, launch: Readonly<FrontDoorLaunch>, route: MainLoopRoute): void {
+  if (readFrontDoorSessionRecord(fs, sessionsDir, sessionRecordName(launch.pid))?.startedAt !== launch.startedAt) {
+    return;
+  }
   fs.mkdirPrivate(sessionsDir);
   fs.writeFilePrivate(path.join(sessionsDir, launchRouteName(launch.pid)), `${JSON.stringify({ startedAt: launch.startedAt, route })}\n`);
 }
