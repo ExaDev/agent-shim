@@ -1,15 +1,16 @@
 import http from "node:http";
+import { Readable } from "node:stream";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
 import type { CodexRoutePorts } from "../codex/route";
 import { fakeAuth, fakeResponse, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
-import { ANTIGRAVITY_DEFAULT_TIER_MODELS, CODEX_DEFAULT_TIER_MODELS } from "../config/schema";
+import { ANTIGRAVITY_DEFAULT_TIER_MODELS, CODEX_DEFAULT_TIER_MODELS, type ModelsConfig } from "../config/schema";
 import { FAKE_HOME, admitLaunchToken, fakeAsyncCredentials, fakeFs, followsLaunchFlag, inMemoryRouteStore, mainLoopRoutesOfLiveSessions } from "../test-helpers";
 import { createUsageMiddleware } from "../usage/middleware";
 import type { UsageRecord } from "../usage/schema";
-import { createMainLoopRouteRecord, type MainLoopRoutePorts, type MainLoopRouteRecord } from "./mainLoopRoute";
+import { createMainLoopRouteRecord, followingMainLoop, requestClassOf, withModelInHead, type MainLoopRoutePorts, type MainLoopRouteRecord } from "./mainLoopRoute";
 import { serveRouted, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
 import { AUTH_HEADER, PROVIDER_HEADER, SESSION_HEADER, type RoutedRequest } from "./route";
@@ -19,6 +20,10 @@ import type { FrontDoorLaunch } from "./state";
 const PROVIDERS_DIR = `${FAKE_HOME}/.agent-shim/providers`;
 const LAUNCH_TOKEN = "launch-token-for-tests";
 const OWN_PORT = 4100;
+/** How many times the multi-byte sample repeats in a body, enough to run on past the head, and where the test splits the body into chunks, chosen to fall inside characters. */
+const REPEATS = 50;
+const FIRST_SPLIT = 7;
+const SECOND_SPLIT = 5;
 /** The output budget of an ordinary request, as against a quota check's single token. */
 const ORDINARY_MAX_TOKENS = 16;
 const HAIKU_NAME = "claude-haiku-5-5";
@@ -134,7 +139,7 @@ interface World {
 }
 
 /** A door serving an `http` provider `z` (whose tier environment maps haiku) and a `codex` provider `cx`, with the usage middleware recording into `records`. */
-async function startWorld(record: MainLoopRouteRecord = mainLoopRoutesOfLiveSessions(), upstreamStatus: number = HTTP_STATUS.ok): Promise<World> {
+async function startWorld(record: MainLoopRouteRecord = mainLoopRoutesOfLiveSessions(), upstreamStatus: number = HTTP_STATUS.ok, models?: ModelsConfig): Promise<World> {
   const upstream = await fakeUpstream(upstreamStatus);
   const codexFetch = recordingFetch(() => fakeResponse({ events: TEXT_TURN }));
   const codexPorts = codexPortsOver(codexFetch.fetch);
@@ -143,12 +148,15 @@ async function startWorld(record: MainLoopRouteRecord = mainLoopRoutesOfLiveSess
     fs: fakeFs({
       [`${PROVIDERS_DIR}/z.json`]: { displayName: "Z", baseUrl: `http://127.0.0.1:${String(upstream.port)}`, credential: { sources: [{ literal: "z-token" }] }, env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: Z_HAIKU_MODEL } },
       [`${PROVIDERS_DIR}/cx.json`]: { kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "placeholder" }] } },
+
+      [`${PROVIDERS_DIR}/r.json`]: { kind: "router", displayName: "Router" },
     }),
     providersDir: PROVIDERS_DIR,
     codexPorts,
     directPort: () => OWN_PORT,
     env: {},
     credentials: fakeAsyncCredentials(),
+    ...(models === undefined ? {} : { models: () => models }),
   });
   const records: UsageRecord[] = [];
   const toAnthropic: string[] = [];
@@ -217,6 +225,27 @@ describe("a provider-less session's helper requests follow its main loop", () =>
     } finally {
       await world.close();
     }
+  });
+
+  it("maps a helper of a session whose main loop is on a router provider through the models block's tier pointer", async () => {
+    // A qualified name that matches no target stays on the router provider itself (the resolver answers it with the router's passthrough), so a router is a route the record can hold. It is written to the record directly, so no test sends the main request to the passthrough.
+    const stored = inMemoryRouteStore();
+    stored.write({ pid: 1, startedAt: 1 }, { kind: "provider", provider: "r" });
+    const world = await startWorld(createMainLoopRouteRecord({ launchOfSession: () => ({ pid: 1, startedAt: 1 }), holdsLaunch: () => true, stored }), HTTP_STATUS.ok, { tiers: { haiku: "z/glm-5.3" } });
+    try {
+      expect((await send(world, { model: HAIKU_NAME, requestClass: "auxiliary" })).status).toBe(HTTP_STATUS.ok);
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-5.3"]);
+    } finally {
+      await world.close();
+    }
+  });
+
+  it("records a router provider as the route of a main request whose qualified name matches no target, resolving it without serving it", async () => {
+    const record = mainLoopRoutesOfLiveSessions();
+    const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0, mainLoopRoutes: record, fs: fakeFs({ [`${PROVIDERS_DIR}/r.json`]: { kind: "router", displayName: "Router" } }), providersDir: PROVIDERS_DIR, codexPorts: unusedCodexPorts(), directPort: () => OWN_PORT, env: {}, credentials: fakeAsyncCredentials() });
+    const resolution = await resolve({ method: "POST", url: "/v1/messages", headers: { "x-claude-code-request-class": "main" }, body: Readable.from([Buffer.from(JSON.stringify({ model: "r/anything", messages: [] }))]), signal: new AbortController().signal, session: { identity: undefined, sessionId: "s-1", provider: undefined, headroom: false, projectId: undefined } });
+    expect(resolution.ok && resolution.route.name).toBe("router:r");
+    expect(record.routeOf("s-1")).toEqual({ kind: "provider", provider: "r" });
   });
 
   it("sends the helpers back to the Anthropic route once the main loop returns there", async () => {
@@ -491,5 +520,100 @@ describe("a native session on antigravity/auto", () => {
     } finally {
       await handle.close();
     }
+  });
+});
+
+describe("the request class header", () => {
+  it("is read whatever the header's case, and only the classes Claude Code sends are kept", () => {
+    expect(requestClassOf({})).toBeUndefined();
+    expect(requestClassOf({ "x-claude-code-request-class": "auxiliary" })).toBe("auxiliary");
+    expect(requestClassOf({ "X-Claude-Code-Request-Class": "side_reply" })).toBe("side_reply");
+    expect(requestClassOf({ "x-claude-code-request-class": "something-new" })).toBe("unknown");
+    expect(requestClassOf({ "x-claude-code-request-class": "" })).toBe("unknown");
+  });
+
+  it("is unknown for a header sent twice, which Node joins into one string, and never carries the client's own text", () => {
+    expect(requestClassOf({ "x-claude-code-request-class": "main, main" })).toBe("unknown");
+    expect(requestClassOf({ "x-claude-code-request-class": ["main", "main"] })).toBe("unknown");
+  });
+});
+
+describe("followingMainLoop over a resolver that records what it is asked", () => {
+  /** A resolver that answers `ok` for any request, serving it from the route its path scopes (a bare path being Anthropic), and records the urls it was asked about. */
+  function fixture(refuseMain = false): { readonly follow: (url: string, requestClass: string | undefined, session?: string) => Promise<RouteResolution>; readonly asked: string[]; readonly record: MainLoopRouteRecord } {
+    const asked: string[] = [];
+    const record = mainLoopRoutesOfLiveSessions();
+    const resolve = async (request: RoutedRequest): Promise<RouteResolution> => {
+      asked.push(request.url);
+      if (refuseMain && request.headers["x-claude-code-request-class"] === "main") {
+        return Promise.resolve({ ok: false, status: HTTP_STATUS.notFound, message: "refused" });
+      }
+      return Promise.resolve({ ok: true, route: { name: "stand-in", headroomEligible: false, headroomUpstream: undefined, serve: async () => Promise.resolve() } });
+    };
+    const follow = async (url: string, requestClass: string | undefined, session = "s-1"): Promise<RouteResolution> =>
+      await followingMainLoop(resolve, { record, helperModel: () => undefined })({
+        method: "POST",
+        url,
+        headers: requestClass === undefined ? {} : { "x-claude-code-request-class": requestClass },
+        body: Readable.from([Buffer.from(JSON.stringify({ model: HAIKU_NAME, messages: [] }))]),
+        signal: new AbortController().signal,
+        session: { identity: undefined, sessionId: session, provider: undefined, headroom: false, projectId: undefined },
+      });
+    return { follow, asked, record };
+  }
+
+  it("leaves a main request refused by the resolver out of the record", async () => {
+    const { follow, record } = fixture(true);
+    record.record("s-1", { kind: "provider", provider: "z" });
+    expect((await follow("/v1/messages", "main")).ok).toBe(false);
+    expect(record.routeOf("s-1")).toEqual({ kind: "provider", provider: "z" });
+  });
+
+  it("records a request with no class header as a main request, so a launch that was not asked for the header behaves as every request main", async () => {
+    const { follow, record } = fixture();
+    record.record("s-1", { kind: "provider", provider: "z" });
+    await follow("/v1/messages", undefined);
+    expect(record.routeOf("s-1")).toEqual({ kind: "anthropic" });
+  });
+
+  it("sends a helper whose class is not one Claude Code sends where the main loop is, as it does any other helper", async () => {
+    const { follow, asked, record } = fixture();
+    record.record("s-1", { kind: "provider", provider: "z" });
+    await follow("/v1/messages", "main, main");
+    expect(asked).toEqual(["/providers/z/v1/messages"]);
+  });
+
+  it("scopes a count_tokens helper under the provider too, and leaves a path that is no inference call alone", async () => {
+    const { follow, asked, record } = fixture();
+    record.record("s-1", { kind: "provider", provider: "z" });
+    await follow("/v1/messages/count_tokens?beta=true", "auxiliary");
+    await follow("/v1/models", "auxiliary");
+    expect(asked).toEqual(["/providers/z/v1/messages/count_tokens?beta=true", "/v1/models"]);
+  });
+});
+
+describe("rewriting the model field in a body's head", () => {
+  /** The bytes the rewrite of `chunks` produces, read whole. */
+  async function rewrittenBytes(chunks: readonly Buffer[], headBytes: number, from: string, to: string): Promise<Buffer> {
+    const request: RoutedRequest = { method: "POST", url: "/v1/messages", headers: { "content-length": "1" }, body: Readable.from(chunks), signal: new AbortController().signal, session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, projectId: undefined } };
+    const rewritten = withModelInHead(request, headBytes, from, to);
+    expect(rewritten.headers).not.toHaveProperty("content-length");
+    const out: Buffer[] = [];
+    for await (const chunk of rewritten.body) {
+      if (!Buffer.isBuffer(chunk)) {
+        throw new TypeError("the rewritten body emitted something other than a Buffer");
+      }
+      out.push(chunk);
+    }
+    return Buffer.concat(out);
+  }
+
+  it("changes only the model field and leaves a multi-byte character split across the head's end, and everything after, byte for byte", async () => {
+    const body = Buffer.from(JSON.stringify({ model: HAIKU_NAME, messages: [{ role: "user", content: "日本語の会話🙂".repeat(REPEATS) }] }), "utf8");
+    // The head ends inside a three-byte character, and the chunks split the body at other odd places too.
+    const headBytes = body.indexOf(Buffer.from("日")) + 1;
+    const chunks = [body.subarray(0, FIRST_SPLIT), body.subarray(FIRST_SPLIT, headBytes), body.subarray(headBytes, headBytes + SECOND_SPLIT), body.subarray(headBytes + SECOND_SPLIT)];
+    const out = await rewrittenBytes(chunks, headBytes, HAIKU_NAME, "glm-4.5-air");
+    expect(out.toString("utf8")).toBe(body.toString("utf8").replace(`"model":"${HAIKU_NAME}"`, '"model":"glm-4.5-air"'));
   });
 });

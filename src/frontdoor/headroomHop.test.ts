@@ -723,6 +723,28 @@ describe("the headroom hop", () => {
   });
 
   it(
+    "sends a native session's helper through the hop to the provider its main loop is on, under the provider's tier mapping",
+    async () => {
+      const upstream = await fakeProviderUpstream();
+      const headroom = await fakeHeadroom();
+      const door = await startDoor({ files: { [`${PROVIDERS_DIR}/z.json`]: { ...httpProvider(upstream.port), env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-4.5-air" } } } });
+      try {
+        // A launch with no provider: the capability, the session id and the headroom flag, and no provider header.
+        const send = async (model: string, requestClass: string): Promise<number> =>
+          (await fetch(`${door.url}/v1/messages`, { dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN, [SESSION_HEADER]: "session-native", "x-claude-code-request-class": requestClass }, body: JSON.stringify({ model, max_tokens: 8, messages: [{ role: "user", content: "hi" }] }) })).status;
+        expect(await send("z/glm-5.3", "main")).toBe(HTTP_STATUS.ok);
+        expect(await send("claude-haiku-5-5", "auxiliary")).toBe(HTTP_STATUS.ok);
+        expect(headroom.seen()).toHaveLength(2);
+        expect(upstream.seen().map((seen) => seen.body).map((body): unknown => (JSON.parse(body) as { readonly model?: unknown }).model)).toEqual(["glm-5.3", "glm-4.5-air"]);
+      } finally {
+        await door.close();
+        await headroom.close();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
     "keeps the door-attached provider credential away from headroom: headroom sees only placeholders of what the client presented and a hop id, and the provider's upstream receives the provider file's own credential, never the client's",
     async () => {
       const upstream = await fakeProviderUpstream();
