@@ -91,6 +91,12 @@ const CheckCredentialProviderSchema = z.union([
   z.strictObject({ name: z.string(), problem: z.string() }),
 ]);
 
+/** Whether the selected http provider's base URL accepted a connection: the URL either way, and the line naming why when it did not. */
+const CheckProviderReachabilitySchema = z.union([
+  z.strictObject({ name: z.string(), baseUrl: z.string(), ok: z.literal(true) }),
+  z.strictObject({ name: z.string(), baseUrl: z.string(), ok: z.literal(false), message: z.string() }),
+]);
+
 /** The credential report: which credential a launch would use, and each candidate block's summary. */
 const CheckCredentialSchema = z.strictObject({
   applies: z.enum(CHECK_CREDENTIAL_APPLIES),
@@ -123,5 +129,6 @@ export const CheckReportJsonSchema = z.strictObject({
   settingsExposure: z.readonly(z.array(CheckSettingsExposureSchema)),
   credential: CheckCredentialSchema,
   claudeVersion: CheckClaudeVersionSchema.optional(),
+  providerReachability: CheckProviderReachabilitySchema.optional(),
 });
 export type CheckReportJson = z.output<typeof CheckReportJsonSchema>;
