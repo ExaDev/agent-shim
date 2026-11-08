@@ -1,6 +1,11 @@
 import { EventEmitter } from "node:events";
+import { createRequire } from "node:module";
 import * as net from "node:net";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { Worker } from "node:worker_threads";
+import * as esbuild from "esbuild";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial, type LeafCert } from "./connect";
@@ -258,5 +263,62 @@ throw new Error(${JSON.stringify(FAILURE_MESSAGE)});`;
     const verdict = probeWorker.verdict();
     expect(verdict.ok).toBe(false);
     expect(verdict.ok ? "" : verdict.reason).toContain(FAILURE_MESSAGE);
+  });
+});
+
+/** The language target `scripts/build.mts` bundles for. */
+const BUNDLE_TARGET = "node22";
+
+type BundledProbe = Pick<typeof probe, "probeListenerAcceptSync">;
+
+function isBundledProbe(value: unknown): value is BundledProbe {
+  return typeof value === "object" && value !== null && "probeListenerAcceptSync" in value && typeof value.probeListenerAcceptSync === "function";
+}
+
+const bundleDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of bundleDirs.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/** `probe.ts` bundled as the release bundles it (`scripts/build.mts`: no `keepNames`, no minifying) into a throwaway file, and loaded. `keepNames` is a parameter only so a test can show what it does to the embedded sources. */
+async function bundledProbe(keepNames: boolean): Promise<{ readonly source: string; readonly module: BundledProbe }> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-probe-bundle-"));
+  bundleDirs.push(dir);
+  const outfile = path.join(dir, "probe.cjs");
+  await esbuild.build({
+    entryPoints: [path.resolve(__dirname, "probe.ts")],
+    bundle: true,
+    outfile,
+    platform: "node",
+    format: "cjs",
+    target: BUNDLE_TARGET,
+    keepNames,
+    logLevel: "silent",
+  });
+  const load: (id: string) => unknown = createRequire(import.meta.url);
+  const loaded = load(outfile);
+  if (!isBundledProbe(loaded)) {
+    throw new Error("the bundled probe does not export probeListenerAcceptSync");
+  }
+  return { source: fs.readFileSync(outfile, "utf8"), module: loaded };
+}
+
+describe("the probe sources in the release bundle", () => {
+  it("run in a worker, which holds none of the bundle's helpers", async () => {
+    const { source, module } = await bundledProbe(false);
+    expect(source).not.toContain("__name(");
+    const refused = module.probeListenerAcceptSync(await closedPort(), READ_VERDICT_TIMEOUT_MS);
+    expect(refused.ok ? "" : refused.reason).toMatch(/ECONNREFUSED/);
+    expect(module.probeListenerAcceptSync(await listenerThread(undefined), READ_VERDICT_TIMEOUT_MS)).toEqual({ ok: true });
+  });
+
+  it("fail when the bundle names its functions, which is why the build sets no keepNames", async () => {
+    const { source, module } = await bundledProbe(true);
+    expect(source).toContain("__name(");
+    const verdict = module.probeListenerAcceptSync(await closedPort(), READ_VERDICT_TIMEOUT_MS);
+    expect(verdict.ok ? "" : verdict.reason).toContain("__name is not defined");
   });
 });
