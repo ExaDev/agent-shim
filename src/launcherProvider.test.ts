@@ -110,7 +110,7 @@ describe("runLauncher provider selection", () => {
     expect(log.errors).toEqual(["agent-shim: provider z has no usable credential: env Z_API_TOKEN is unset or empty"]);
   });
 
-  it("warns on the launch report, naming the provider and its base URL, when the base URL accepts no connection, probed within the provider's own bound, and launches anyway", () => {
+  it("warns on standard error, naming the provider and its base URL, when the base URL accepts no connection, probed within the provider's own bound, and launches anyway", () => {
     const spawn = fakeSpawn();
     const log = fakeLog();
     const asked: [string, number][] = [];
@@ -131,7 +131,9 @@ describe("runLauncher provider selection", () => {
     });
 
     expect(asked).toEqual([[providerZ.baseUrl, ownConnectTimeoutMs]]);
-    expect(reportedRow(log, "warning")).toEqual({ label: "warning", value: `provider z could not connect to ${providerZ.baseUrl}: no connection accepted within 1500ms`, notice: true });
+    expect(log.warns).toEqual([`provider z could not connect to ${providerZ.baseUrl}: no connection accepted within 1500ms`]);
+    // A warning goes to standard error with the launcher's other warnings, never into the report on standard output, which a caller piping `--print` output reads.
+    expect(log.reports.flat().map((row) => row.value).join("\n")).not.toContain("could not connect");
     expect(log.errors).toEqual([]);
     expect(spawn.spawnSync).toHaveBeenCalledTimes(1);
     expect(code).toBe(0);
@@ -150,7 +152,7 @@ describe("runLauncher provider selection", () => {
       probeBaseUrl: () => ({ ok: false, reason: "no connection accepted within 1500ms" }),
     });
 
-    expect(reportedRow(log, "warning")).toEqual({ label: "warning", value: "provider z could not connect to https://api.z.ai/api/anthropic: no connection accepted within 1500ms", notice: true });
+    expect(log.warns).toEqual(["provider z could not connect to https://api.z.ai/api/anthropic: no connection accepted within 1500ms"]);
   });
 
   it("launches on a provider whose base URL accepts a connection, with no warning", () => {
@@ -166,7 +168,7 @@ describe("runLauncher provider selection", () => {
       probeBaseUrl: () => ({ ok: true }),
     });
     expect(spawn.spawnSync).toHaveBeenCalledTimes(1);
-    expect(reportedRow(log, "warning")).toBeUndefined();
+    expect(log.warns).toEqual([]);
   });
 
   it("probes nothing for a launch with no provider, or one opted out with --no-provider", () => {

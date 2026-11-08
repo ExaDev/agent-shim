@@ -23,7 +23,7 @@ import { isClaudeSubcommand } from "./launcher/claudeSubcommand";
 import { diagnosticLines, printDiagnosticLines, reportDiagnostics, type DiagnosticLine } from "./launcher/diagnostics";
 import { holdBeforeLaunch, LAUNCH_CANCELLED_EXIT, type HoldOutcome, type HoldPort } from "./launcher/hold";
 import type { Candidate } from "./usage/pick";
-import { decisionRows, farmRow, noteRow, pinnedVersionRow, routingRows, warningRow, type BillingFacts, type LastRanAs } from "./launcher/launchReport";
+import { decisionRows, farmRow, noteRow, pinnedVersionRow, routingRows, type BillingFacts, type LastRanAs } from "./launcher/launchReport";
 import { modelPickerSettingsFromRows, routedModelRows } from "./launcher/modelPicker";
 import { readFrontDoorCodexRecord, readFrontDoorState } from "./frontdoor/state";
 import { catalogueBindingPath, catalogueCachePath, parseCatalogueCache, type CatalogueModel } from "./providerCatalogue";
@@ -809,10 +809,10 @@ function prepareRegisteredLaunch(params: PrepareLaunchParams, onRecorded: (remov
     }
   }
 
-  // A provider whose base URL accepts no connection now cannot answer the session's first request, so the launch report says so, naming the URL. The launch still goes ahead, because the probe can be wrong about later: a tunnel that comes up a moment after, a base URL reachable only once the door is up, a provider reached through a proxy the probe does not use. When it is still down the door's answer and `doctor` say the same. Only the launch's own provider is probed: a provider the models block routes some requests to is reported by the door when a request reaches it.
+  // A provider whose base URL accepts no connection now cannot answer the session's first request, so the launch warns, naming the URL, through `log.warn` like the launcher's other warnings: on standard error, so output a caller pipes from the session stays clean, and in the warnings a library host is handed. The launch still goes ahead, because the probe can be wrong about later: a tunnel that comes up a moment after, a base URL reachable only once the door is up, a provider reached through a proxy the probe does not use. When it is still down the door's answer and `doctor` say the same. Only the launch's own provider is probed: a provider the models block routes some requests to is reported by the door when a request reaches it.
   const unreachable = resolvedProvider === undefined ? undefined : unreachableProviderLine(resolvedProvider.name, resolvedProvider.definition, params.probeBaseUrl);
   if (unreachable !== undefined) {
-    rows.push(warningRow(unreachable));
+    log.warn(unreachable);
   }
 
   // The front door comes up first, before headroom: every routed session (a provider's, or headroom's) enters through it, and headroom's allowlist must hold the door's direct origin, which is what every provider session routed through headroom (a codex session's included) is forwarded back to, and the headroom supervisor lists the origin of a door that has served. `ensure` authenticates the door's listener over TLS before returning anything, so the address the child is handed below (and sends its credential to) belongs to a listener holding a leaf from agent-shim's CA.
