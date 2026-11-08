@@ -47,6 +47,10 @@ export interface RequestScan {
  */
 export async function scanRequestHead(request: RoutedRequest, wholeBody = false): Promise<RequestScan> {
   const body = request.body;
+  // The listeners below wait for events: on a body that has already ended the `end` has fired and will not again, so the scan would wait for ever. A body read to its end is a request a caller already consumed, which is that caller's defect, so it fails here instead of stalling the request.
+  if (body.readableEnded) {
+    throw new Error("the request body was already read to its end, so its head cannot be scanned again");
+  }
   const head: Buffer[] = [];
   let seen = 0;
   let text = "";
