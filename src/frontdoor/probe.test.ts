@@ -181,15 +181,18 @@ describe("probeListenerAcceptSync", () => {
 const STARTUP_PROBE_BOUND_MS = 50;
 /** How much longer than the whole waiting budget a slow start-up takes, so that the budget is certainly overrun by start-up alone. */
 const START_UP_OVERRUN_MS = 200;
+/** How long the worker takes to answer after it has signalled that it started: more than the waiting thread needs to wake from its start wait, so the verdict is still unset when it begins waiting for one, and well inside the probe's bound plus margin, so a clock running from the start still sees it. Without this pause a worker that answers at once lets a clock measured from the spawn pass too, since a wait with no time left returns at once when the verdict is already set. */
+
 
 describe("a probe worker's clock", () => {
   it("starts when the worker starts, so a slow start-up is not counted against the probe's bound", () => {
     const startUpMs = STARTUP_PROBE_BOUND_MS + PROBE_WAIT_MARGIN_MS + START_UP_OVERRUN_MS;
-    // A worker that is slow to begin, then answers at once: the verdict is ok however long it took to start.
+    // A worker that is slow to begin, then answers a moment after it started: the verdict is ok however long it took to start.
     const source = `
 const { workerData } = require("node:worker_threads");
 Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${String(startUpMs)});
 ${STARTED_SIGNAL_SOURCE}
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${String(STARTUP_PROBE_BOUND_MS)});
 const header = new Int32Array(workerData.shared, 0, workerData.headerSlots);
 Atomics.store(header, 0, workerData.ok);
 Atomics.notify(header, 0);
