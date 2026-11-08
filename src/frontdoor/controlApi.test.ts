@@ -312,9 +312,9 @@ describe("the door's control-plane API", () => {
       const spy = await mountClient(
         {
           ...DEPS,
-          checkReport: async (target, identity) => {
+          checkReport: async (target, identity, signal) => {
             seen = identity;
-            return await DEPS.checkReport(target);
+            return await DEPS.checkReport(target, identity, signal);
           },
         },
         CONTROL_TOKEN,

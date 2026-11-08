@@ -65,9 +65,9 @@ export interface ControlApiDeps {
   /** The door's read-only status, as `collectFrontDoorStatus` collects it. */
   readonly frontDoorStatus: () => FrontDoorStatus;
   /** The check report for one directory, in the JSON form `check --json` prints, collected off the door's event loop (see `createDoorReports`). */
-  readonly checkReport: (path: string, identity?: string) => Promise<CheckReportJson>;
+  readonly checkReport: (path: string, identity: string | undefined, signal: AbortSignal | undefined) => Promise<CheckReportJson>;
   /** The doctor report, collected off the door's event loop (see `createDoorReports`). */
-  readonly doctorReport: () => Promise<DoctorReport>;
+  readonly doctorReport: (signal: AbortSignal | undefined) => Promise<DoctorReport>;
   /** The ranked pick for one pool as a launch from one absolute directory would make it right now, exactly `pool pick`'s own product; undefined when the pool table names no such pool. */
   readonly poolPick: (pool: string, directory: string) => PoolPickReport | undefined;
   /** The pool table's live names, so an unknown pool is refused naming the real ones rather than answered as an empty ranking. */
@@ -149,13 +149,13 @@ export function createControlApiRouter(deps: ControlApiDeps) {
         .meta(openapi({ method: "GET", path: "/rest/check", summary: "Run the check report for one directory", tags: [CHECK_API_TAG] }))
         .input(CheckRunInputSchema)
         .output(CheckReportJsonSchema)
-        .handler(async ({ input }) => await deps.checkReport(input.path, input.identity)),
+        .handler(async ({ input, signal }) => await deps.checkReport(input.path, input.identity, signal)),
     },
     doctor: {
       run: authed
         .meta(openapi({ method: "GET", path: "/rest/doctor", summary: "Run the doctor report", tags: [DOCTOR_API_TAG] }))
         .output(DoctorRunOutputSchema)
-        .handler(async () => await deps.doctorReport()),
+        .handler(async ({ signal }) => await deps.doctorReport(signal)),
     },
     pool: {
       pick: authed
