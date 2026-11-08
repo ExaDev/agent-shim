@@ -579,7 +579,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         },
         now: () => Date.now(),
         frontDoorStatus: () => collectFrontDoorStatus(realFarmFs, realHeadroomSocketTrust, paths, realIsProcessRunning),
-        ...createDoorReports({ selfInvocation, env: { ...process.env, AGENT_SHIM_HOME: paths.root } }),
+        // The providers are read as each report starts, so a connect timeout raised after the door started lengthens the next report's bound.
+        ...createDoorReports({ selfInvocation, env: { ...process.env, AGENT_SHIM_HOME: paths.root }, providers: () => listProviders(paths, (name, message) => { log(`report bound skipped provider ${name}: ${message}`); }).map((entry) => entry.provider) }),
         // The pool table is read per call, not captured here, so a pool created or removed after the door started is ranked or refused by its live name the same moment the CLI would see it. The door's own environment is never a substitute for a caller's, so each member's provider is resolved from the directory's configuration and the member's own declaration alone.
         poolPick: (pool: string, directory: string) => {
           const pools = readPools(paths);
