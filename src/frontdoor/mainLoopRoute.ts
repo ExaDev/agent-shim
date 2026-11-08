@@ -1,6 +1,7 @@
 import type { IncomingHttpHeaders } from "node:http";
 import { Readable } from "node:stream";
 
+import { HTTP_STATUS } from "../codex/http";
 import type { RouteResolution } from "./pipeline";
 import { RequestClassSchema, type RequestClass } from "../usage/schema";
 import { PROVIDER_PATH_PREFIX, internalHeaderValue, parseProviderPath, type FrontDoorRoute, type RoutedRequest } from "./route";
@@ -107,11 +108,14 @@ function isInferencePath(path: string): boolean {
   return path === "/v1/messages" || path.startsWith("/v1/messages/");
 }
 
+/** What a provider does with a helper's Claude model name: serves it as it is, serves it under another name, or has no model for it and the helper is refused with the reason. */
+export type HelperModel = { readonly kind: "as-is" } | { readonly kind: "mapped"; readonly model: string } | { readonly kind: "refused"; readonly message: string };
+
 /** What `followingMainLoop` reads besides the record. */
 export interface MainLoopRoutingDeps {
   readonly record: MainLoopRouteRecord;
-  /** The model name a helper's requested `model` is sent to `provider` under, through that provider's own tier mapping; undefined when the provider serves the name as it is (a translator that maps a Claude name by tier itself) or the name selects no tier the provider maps. */
-  readonly helperModel: (provider: string, session: RoutedRequest["session"], requested: string) => string | undefined;
+  /** What `provider` does with a helper's requested `model`, through that provider's own tier mapping: `as-is` for a provider that serves the name as it is (a translator that maps a Claude name by tier itself) or a name that selects no tier the provider maps, `refused` for a provider that maps the name's tier but has no model for it. */
+  readonly helperModel: (provider: string, session: RoutedRequest["session"], requested: string) => HelperModel;
 }
 
 /** The provider a served request target names, or undefined for a bare target (the Anthropic route, or a path the session's launch provider scoped). */
@@ -157,9 +161,12 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
     // The head is all the mapping needs: the model field sits in it, and the rest of the body, a whole conversation for a compaction or a subagent, streams through unread.
     const scan = await scanRequestHead(request);
     const requested = scan.model;
-    const mapped = requested === undefined ? undefined : deps.helperModel(route.provider, request.session, requested);
+    const choice: HelperModel = requested === undefined ? { kind: "as-is" } : deps.helperModel(route.provider, request.session, requested);
+    if (choice.kind === "refused") {
+      return { ok: false, status: HTTP_STATUS.badRequest, message: choice.message };
+    }
     const replayed = scan.replayed ?? request;
-    const body = mapped === undefined || requested === undefined ? replayed : withModelInHead(replayed, scan.headBytes, requested, mapped);
+    const body = choice.kind === "as-is" || requested === undefined ? replayed : withModelInHead(replayed, scan.headBytes, requested, choice.model);
     const helper: RoutedRequest = { ...body, url: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(route.provider)}${request.url}` };
     const resolution = await resolve(helper);
     if (!resolution.ok) {
