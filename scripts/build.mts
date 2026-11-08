@@ -8,6 +8,8 @@ import * as esbuild from "esbuild";
 import { rollup } from "rollup";
 import { dts } from "rollup-plugin-dts";
 
+import { ESBUILD_TARGET, cliBundleOptions } from "./bundle-options.mts";
+
 /**
  * Bundles `src/cli.ts` with esbuild into a single CJS file, then — unless `--bundle-only` is given — invokes the now-stable `node --build-sea=<config>` single command (Node v25.5.0 or later) to produce a self-contained single-executable-application binary.
  *
@@ -18,12 +20,6 @@ import { dts } from "rollup-plugin-dts";
  * `--bundle-only` produces just `dist/cli.cjs` (with a `#!/usr/bin/env node` shebang) and skips every SEA-specific step — this is what `npm publish`'s own `prepublishOnly` script runs, since the npm-distributed package needs the plain bundle to execute under the installer's own Node, not a platform-specific native binary with an embedded runtime.
  */
 const bundleOnly = process.argv.includes("--bundle-only");
-
-/** The lowest Node version this bundle is ever asked to run under — set by `commander@15`'s own `engines.node`, the strictest floor among this project's runtime dependencies, and mirrored in package.json's own `engines` field. Fixed rather than tied to whichever Node version happens to run this build script: the SEA binary embeds its own runtime regardless, and the npm-published bundle runs under whatever Node the installer has, which is only guaranteed to be at least this floor. */
-const ESBUILD_TARGET = "node22";
-
-/** The CommonJS bundle's stand-in for `import.meta.url`, declared by its banner and substituted for every bundled ES module's use of it. */
-const IMPORT_META_URL_VARIABLE = "__agentShimImportMetaUrl";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
@@ -52,20 +48,9 @@ function requireBuildSeaSupport(): void {
 }
 
 async function bundle(): Promise<void> {
-  await esbuild.build({
-    entryPoints: [path.join(rootDir, "src", "cli.ts")],
-    bundle: true,
-    platform: "node",
-    format: "cjs",
-    target: ESBUILD_TARGET,
-    outfile: path.join(distDir, bundleFileName),
-    // A shebang is inert for the SEA build (Node's CommonJS loader strips a leading `#!` line from any entry point regardless) and required for the npm-published bin script to be directly executable. The second line gives bundled ES modules an `import.meta.url`, which a CommonJS bundle otherwise leaves undefined: the Agent SDK passes it to `createRequire`. It names the running script, or the executable itself under SEA.
-    banner: { js: `#!/usr/bin/env node\nconst ${IMPORT_META_URL_VARIABLE} = require("node:url").pathToFileURL(process.argv[1] ?? process.execPath).href;` },
-    define: { "import.meta.url": IMPORT_META_URL_VARIABLE },
-    minify: false,
-    logLevel: "info",
-  });
-  fs.chmodSync(path.join(distDir, bundleFileName), EXECUTABLE_FILE_MODE);
+  const outfile = path.join(distDir, bundleFileName);
+  await esbuild.build({ ...cliBundleOptions(rootDir), outfile, logLevel: "info" });
+  fs.chmodSync(outfile, EXECUTABLE_FILE_MODE);
 }
 
 /**
