@@ -1,6 +1,4 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { spawn, type ChildProcess } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { enterProcessRole } from "../processRole";
@@ -71,20 +69,20 @@ describe("the door's check and doctor reports", () => {
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow();
   });
 
-  /** A child that records its pid in `pidFile` and then never reports, standing in for a report step stuck on something that does not answer. */
-  function hungChild(pidFile: string): (args: readonly string[]) => { readonly command: string; readonly args: readonly string[] } {
-    return nodeRunning(`require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => undefined, ${String(HOLD_MS)});`);
-  }
+  /** A child that never reports, standing in for a report step stuck on something that does not answer. */
+  const hungChild = nodeRunning(`setInterval(() => undefined, ${String(HOLD_MS)});`);
 
-  async function pidOf(pidFile: string): Promise<number> {
-    for (;;) {
-      if (fs.existsSync(pidFile) && fs.readFileSync(pidFile, "utf8") !== "") {
-        return Number(fs.readFileSync(pidFile, "utf8"));
-      }
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, POLL_MS);
-      });
-    }
+  /** `spawn` that keeps every child it starts, so a test reads a child's pid from the process itself, which exists the moment `spawn` returns, however soon the bound kills it. */
+  function recordingSpawn(): { readonly spawn: typeof spawn; readonly children: ChildProcess[] } {
+    const children: ChildProcess[] = [];
+    return {
+      children,
+      spawn: ((...args: Parameters<typeof spawn>) => {
+        const child = spawn(...args);
+        children.push(child);
+        return child;
+      }) as typeof spawn,
+    };
   }
 
   async function gone(pid: number): Promise<boolean> {
@@ -102,32 +100,29 @@ describe("the door's check and doctor reports", () => {
   }
 
   it("kills a child that has not reported within its bound, and fails naming the bound", async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "door-reports-"));
-    try {
-      const pidFile = path.join(dir, "pid");
-      const reports = createDoorReports({ selfInvocation: hungChild(pidFile), env: {}, timeoutMs: SHORT_BOUND_MS });
-      await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`did not report within ${String(SHORT_BOUND_MS)}ms`);
-      expect(await gone(await pidOf(pidFile))).toBe(true);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+    const recorded = recordingSpawn();
+    const reports = createDoorReports({ selfInvocation: hungChild, env: {}, timeoutMs: SHORT_BOUND_MS, spawn: recorded.spawn });
+    await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`did not report within ${String(SHORT_BOUND_MS)}ms`);
+    const pid = recorded.children[0]?.pid;
+    if (pid === undefined) {
+      throw new Error("the child did not start");
     }
+    expect(await gone(pid)).toBe(true);
   });
 
   it("kills the child of a request whose client went away", async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "door-reports-"));
-    try {
-      const pidFile = path.join(dir, "pid");
-      const reports = createDoorReports({ selfInvocation: hungChild(pidFile), env: {}, timeoutMs: LONG_BOUND_MS });
-      const controller = new AbortController();
-      const answered = reports.checkReport("/work", undefined, controller.signal);
-      // The abort, not the bound, must be what ends the call.
-      const settled = expect(answered).rejects.toMatchObject({ name: "AbortError" });
-      const pid = await pidOf(pidFile);
-      controller.abort();
-      await settled;
-      expect(await gone(pid)).toBe(true);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+    const recorded = recordingSpawn();
+    const reports = createDoorReports({ selfInvocation: hungChild, env: {}, timeoutMs: LONG_BOUND_MS, spawn: recorded.spawn });
+    const controller = new AbortController();
+    const answered = reports.checkReport("/work", undefined, controller.signal);
+    // The abort, not the bound, must be what ends the call.
+    const settled = expect(answered).rejects.toMatchObject({ name: "AbortError" });
+    const pid = recorded.children[0]?.pid;
+    if (pid === undefined) {
+      throw new Error("the child did not start");
     }
+    controller.abort();
+    await settled;
+    expect(await gone(pid)).toBe(true);
   });
 });

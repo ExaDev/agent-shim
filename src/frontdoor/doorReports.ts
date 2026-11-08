@@ -24,10 +24,10 @@ const REPORT_STEP_ALLOWANCES = 4;
 const REPORT_CHILD_TIMEOUT_MS = DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS * REPORT_STEP_ALLOWANCES;
 
 /** Runs the door's own executable with `args` and reads the JSON it prints, failing with what it wrote to stderr when it printed none. The child is killed, and the call fails, once `limit.timeoutMs` has passed or `limit.signal` aborts (the request's client went away). */
-async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEnv, args: readonly string[], limit: { readonly timeoutMs: number; readonly signal: AbortSignal | undefined }): Promise<unknown> {
+async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEnv, args: readonly string[], limit: { readonly timeoutMs: number; readonly signal: AbortSignal | undefined; readonly spawn: typeof spawn }): Promise<unknown> {
   const invocation = selfInvocation(args);
   const { status, stdout, stderr } = await new Promise<{ readonly status: number | null; readonly stdout: string; readonly stderr: string }>((resolve, reject) => {
-    const child = spawn(invocation.command, [...invocation.args], { stdio: ["ignore", "pipe", "pipe"], env, signal: limit.signal });
+    const child = limit.spawn(invocation.command, [...invocation.args], { stdio: ["ignore", "pipe", "pipe"], env, signal: limit.signal });
     const deadline = setTimeout(() => {
       child.kill("SIGKILL");
       reject(new Error(`agent-shim ${args.join(" ")} did not report within ${String(limit.timeoutMs)}ms`));
@@ -61,10 +61,11 @@ async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEn
 /**
  * The door's `check` and `doctor` reports, each collected by a child of the door's own executable (`agent-shim check --json`, `agent-shim doctor --json`) rather than in the door's process: collecting them runs commands, reads the keychain and probes listeners and provider base URLs, every one of which blocks the calling thread, and the door's thread is the event loop that answers every session (see `refuseToBlockInRole`). The child prints exactly the JSON `check --json` and `doctor --json` print, which is the control API's contract, validated here against the same schemas the API's output is.
  */
-export function createDoorReports(deps: Readonly<{ selfInvocation: SelfInvocation; env: NodeJS.ProcessEnv; timeoutMs?: number }>): DoorReports {
+export function createDoorReports(deps: Readonly<{ selfInvocation: SelfInvocation; env: NodeJS.ProcessEnv; timeoutMs?: number; spawn?: typeof spawn }>): DoorReports {
   const timeoutMs = deps.timeoutMs ?? REPORT_CHILD_TIMEOUT_MS;
+  const spawnChild = deps.spawn ?? spawn;
   return {
-    checkReport: async (path, identity, signal) => CheckReportJsonSchema.parse(await runSelfJson(deps.selfInvocation, deps.env, ["check", path, ...(identity === undefined ? [] : ["--identity", identity]), "--json"], { timeoutMs, signal })),
-    doctorReport: async (signal) => DoctorRunOutputSchema.parse(await runSelfJson(deps.selfInvocation, deps.env, ["doctor", "--json"], { timeoutMs, signal })),
+    checkReport: async (path, identity, signal) => CheckReportJsonSchema.parse(await runSelfJson(deps.selfInvocation, deps.env, ["check", path, ...(identity === undefined ? [] : ["--identity", identity]), "--json"], { timeoutMs, signal, spawn: spawnChild })),
+    doctorReport: async (signal) => DoctorRunOutputSchema.parse(await runSelfJson(deps.selfInvocation, deps.env, ["doctor", "--json"], { timeoutMs, signal, spawn: spawnChild })),
   };
 }
