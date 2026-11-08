@@ -577,6 +577,29 @@ describe("the main-loop route record", () => {
     expect(record.routeOf("s-b")).toEqual({ kind: "provider", provider: "z" });
   });
 
+  it("drops an ended launch's entry on a write by another launch, so the same launch registered again finds nothing in memory", () => {
+    // The durable copy answers nothing, so only the in-memory entry can say what was recorded; the launch is identical (pid and start time) when it is registered again, so the one thing that can make the second read empty is the eviction.
+    const launch: FrontDoorLaunch = { pid: 1, startedAt: 1 };
+    const other: FrontDoorLaunch = { pid: 2, startedAt: 1 };
+    const live = new Set<FrontDoorLaunch>([launch, other]);
+    const bySession = new Map<string, FrontDoorLaunch>([
+      ["s-a", launch],
+      ["s-b", other],
+    ]);
+    const record = createMainLoopRouteRecord({
+      launchOfSession: (sessionId) => bySession.get(sessionId),
+      holdsLaunch: (held) => live.has(held),
+      stored: { read: () => undefined, write: () => undefined },
+    });
+    record.record("s-a", { kind: "provider", provider: "z" });
+    expect(record.routeOf("s-a")).toEqual({ kind: "provider", provider: "z" });
+    live.delete(launch);
+    record.record("s-b", { kind: "anthropic" });
+    live.add(launch);
+    expect(record.routeOf("s-a")).toBeUndefined();
+    expect(record.routeOf("s-b")).toEqual({ kind: "anthropic" });
+  });
+
   it("gives a launch that reuses an ended launch's session id nothing recorded, though nothing read or wrote between the two", () => {
     const registry = registryOf();
     const record = createMainLoopRouteRecord(registry);
