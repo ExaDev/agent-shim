@@ -131,13 +131,13 @@ const DEPS: ControlApiDeps = {
   usageSnapshotOf: (identity) => SNAPSHOTS.find((snapshot) => snapshot.identity === identity),
   now: () => NOW_MS,
   frontDoorStatus: () => STATUS,
-  checkReport: (target) => {
+  checkReport: async (target) => {
     if (target !== `${FAKE_HOME}/work`) {
       throw new Error(`the fixed check dep answers one directory only, not ${target}`);
     }
-    return CHECK;
+    return await Promise.resolve(checkReportToJson(CHECK));
   },
-  doctorReport: () => DOCTOR,
+  doctorReport: async () => await Promise.resolve(DOCTOR),
   poolPick: (pool, directory) => POOL_PICKS[pool] === undefined || directory !== `${FAKE_HOME}/work` ? undefined : POOL_PICKS[pool],
   poolNames: () => Object.keys(POOL_PICKS),
 };
@@ -312,9 +312,9 @@ describe("the door's control-plane API", () => {
       const spy = await mountClient(
         {
           ...DEPS,
-          checkReport: (target, identity) => {
+          checkReport: async (target, identity) => {
             seen = identity;
-            return DEPS.checkReport(target);
+            return await DEPS.checkReport(target);
           },
         },
         CONTROL_TOKEN,

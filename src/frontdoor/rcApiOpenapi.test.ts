@@ -6,8 +6,6 @@ import * as nodePath from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
-import type { CheckReport } from "../checkReport";
-import type { DoctorReport } from "../doctorReport";
 import { LIFECYCLE_AND_CODEX_TEST_DEPS } from "./lifecycleCodexTestDeps";
 import { createDoorApiNodeHandler } from "./controlApi";
 import { createDoorEventHub, rcFanoutOnDoorHub } from "./eventHub";
@@ -201,12 +199,8 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
       latestRateLimit: () => undefined,
       now: () => 0,
       frontDoorStatus: () => FRONTDOOR_STATUS,
-      checkReport: (): CheckReport => {
-        throw new Error("no REST test drives check.run");
-      },
-      doctorReport: (): DoctorReport => {
-        throw new Error("no REST test drives doctor.run");
-      },
+      checkReport: async (): Promise<never> => await Promise.reject(new Error("no REST test drives check.run")),
+      doctorReport: async (): Promise<never> => await Promise.reject(new Error("no REST test drives doctor.run")),
       poolPick: (): never => {
         throw new Error("no REST test drives pool.pick");
       },
