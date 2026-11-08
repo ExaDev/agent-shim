@@ -16,7 +16,8 @@ import { z } from "zod";
 import { parseEnvBool } from "./cli/envBool";
 import type { CHECK_CREDENTIAL_APPLIES, CheckReportJson } from "./checkReportSchema";
 import { ConfigFileNotJsonError, ConfigValidationError } from "./config/load";
-import { SHIPPED_CATEGORY_DEFAULTS, isRouterProvider, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type Identity, type Provider } from "./config/schema";
+import { SHIPPED_CATEGORY_DEFAULTS, isHttpProvider, isRouterProvider, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type Identity, type Provider } from "./config/schema";
+import { probeProviderReachability, realBaseUrlProbe, type BaseUrlProbe } from "./providerReachability";
 import { identityIdOf } from "./identityStore";
 import { formatCredentialSummary, identityCacheKey, summariseCredential, type CredentialCacheEnv, type CredentialSummary } from "./credential";
 import { resolveClaudeVersion, type PinnedClaudeVersion } from "./launcher/claudeVersion";
@@ -304,7 +305,12 @@ export interface RunCheckParams {
   readonly installedClaudeVersions?: readonly string[];
   /** Where cached credentials live. Omit to skip reporting a credential cache's age; with it, a block that caches reports whether it holds an entry, how old it is and whether it has expired, never the token. */
   readonly credentialCache?: CredentialCacheEnv;
+  /** Opens one connection to the selected http provider's base URL, bounded by its connect timeout. Omit to leave reachability out of the report. */
+  readonly probeBaseUrl?: BaseUrlProbe;
 }
+
+/** Whether the selected http provider's base URL accepted a connection, as `check` reports it. */
+type ProviderReachabilityReport = { readonly name: string; readonly baseUrl: string; readonly ok: true } | { readonly name: string; readonly baseUrl: string; readonly ok: false; readonly message: string };
 
 /** Everything `agent-shim check` reports about one directory/identity, without touching the farm or spawning anything. */
 export interface CheckReport {
@@ -322,6 +328,8 @@ export interface CheckReport {
   readonly credential: CredentialReport;
   /** The Claude Code version a launch here would run, when the installed versions were given. */
   readonly claudeVersion?: ClaudeVersionReport;
+  /** Whether the selected provider's base URL accepts a connection, when an http provider is selected and a probe was given. */
+  readonly providerReachability?: ProviderReachabilityReport;
 }
 
 /** Which Claude Code version a launch would run: the pin and where it comes from, with whether it is installed, or the highest installed version when nothing pins one. */
@@ -392,6 +400,7 @@ export function runCheck(params: RunCheckParams): CheckReport {
 
   const claudeVersion = isCodex ? undefined : buildClaudeVersionReport(params, resolved.flattened.launch.claudeVersion);
 
+  const providerReachability = buildProviderReachability(params.provider, params.probeBaseUrl);
   return {
     ...(params.identityName === undefined ? {} : { identityName: params.identityName }),
     identitySource: params.identitySource,
@@ -406,7 +415,18 @@ export function runCheck(params: RunCheckParams): CheckReport {
     settingsExposure,
     credential: buildCredentialReport(params.provider, params.identity, params.identityId, params.credentialCache),
     ...(claudeVersion === undefined ? {} : { claudeVersion }),
+    ...(providerReachability === undefined ? {} : { providerReachability }),
   };
+}
+
+/** Probes the selected provider's base URL, when it is an http provider and a probe was given. */
+function buildProviderReachability(provider: CheckProviderInput | undefined, probe: BaseUrlProbe | undefined): ProviderReachabilityReport | undefined {
+  if (provider?.definition === undefined || probe === undefined || !isHttpProvider(provider.definition)) {
+    return undefined;
+  }
+  const { baseUrl } = provider.definition;
+  const reachability = probeProviderReachability(provider.name, provider.definition, probe);
+  return reachability.ok ? { name: provider.name, baseUrl, ok: true } : { name: provider.name, baseUrl, ok: false, message: reachability.message };
 }
 
 /** Renders a full `CheckReport` as plain text lines, in the order `agent-shim check` prints them. */
@@ -460,6 +480,12 @@ export function formatCheckReport(report: CheckReport): string[] {
   }
   if (credential.applies === "stored-login") {
     lines.push("  The identity's stored login (no credential block applies).");
+  }
+
+  if (report.providerReachability !== undefined) {
+    lines.push("", "Provider reachability:");
+    const reachability = report.providerReachability;
+    lines.push(reachability.ok ? `  Provider ${reachability.name}: ${reachability.baseUrl} accepts connections` : `  [FAIL] ${reachability.message}`);
   }
 
   if (report.claudeVersion !== undefined) {
@@ -534,11 +560,12 @@ export function checkReportToJson(report: CheckReport): CheckReportJson {
     settingsExposure: report.settingsExposure,
     credential: report.credential,
     ...(report.claudeVersion === undefined ? {} : { claudeVersion: report.claudeVersion }),
+    ...(report.providerReachability === undefined ? {} : { providerReachability: report.providerReachability }),
   };
 }
 
 /**
- * Whether a report carries anything `check --strict` fails on: a resolver diagnostic of warning or error severity, an ambiguous `history/projects/` encoding, an ambient credential a launch would refuse, or a selected provider a launch could not use. Informational diagnostics and the settings-exposure advisory (names and counts only, for a person to review) never fail it.
+ * Whether a report carries anything `check --strict` fails on: a resolver diagnostic of warning or error severity, an ambiguous `history/projects/` encoding, an ambient credential a launch would refuse, a selected provider a launch could not use, or one whose base URL accepts no connection. Informational diagnostics and the settings-exposure advisory (names and counts only, for a person to review) never fail it.
  */
 export function checkReportHasWarnings(report: CheckReport): boolean {
   return (
@@ -546,6 +573,7 @@ export function checkReportHasWarnings(report: CheckReport): boolean {
     report.projectEncodingAmbiguities.length > 0 ||
     !report.ambientCredential.ok ||
     report.credential.provider?.problem !== undefined ||
+    report.providerReachability?.ok === false ||
     report.claudeVersion?.pinned?.installed === false
   );
 }
@@ -638,6 +666,7 @@ export function collectCheckReport(params: CollectCheckReportParams): CheckRepor
     ...(farmRoot === undefined ? {} : { farmRoot }),
     platform: process.platform,
     ...(provider === undefined ? {} : { provider }),
+    probeBaseUrl: realBaseUrlProbe,
   });
   return report;
 }

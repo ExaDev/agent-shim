@@ -2,7 +2,6 @@ import { codexIdentityFindings } from "./codex/doctor";
 import { ClaudeShimStateSchema, commandFilename, findPathShadow, resolveOwnBinaryCheck, type ClaudeShimState, type PathShadowStatus } from "./claudeShim";
 import type { LayoutPaths } from "./paths";
 import { readableOr } from "./readableConfig";
-import { FILE_NAME_RULE, isFileName, isStoredName } from "./config/names";
 import { readJson } from "./config/store";
 import { identityIdExists, identityRecords, listIdentityDirectories, type UnreachableIdentityEntry } from "./identityStore";
 import { identityNameIn, type IdentityRecord } from "./identityRecords";
@@ -18,6 +17,8 @@ import { credentialsFilePath, decideSignIn, keychainHasItem } from "./usage/sign
 import { describeAccountHolder, groupSharedLogins, joinNames, loginKeyOf, readIdentityAccount, summariseIdentityAccount } from "./identityAccounts";
 import { readUsageSnapshot, UsageSnapshotError } from "./usage/read";
 import type { AccountMetadata, UsageSnapshot } from "./usage/schema";
+import { realBaseUrlProbe, unreachableProviderLine, type BaseUrlProbe } from "./providerReachability";
+import { pushNameFinding } from "./doctorNameFinding";
 import { parseSiwcFile } from "./codex/siwcStore";
 import { SIWC_PLAN_SCOPE } from "./codex/siwc";
 import { ConfigValidationError } from "./config/load";
@@ -178,6 +179,8 @@ export interface RunDoctorParams {
   readonly providers: readonly DoctorProviderInput[];
   /** The recorded former names of renamed providers. Omit to leave them out of the findings. */
   readonly providerAliases?: ProviderAliases;
+  /** Opens one connection to an http provider's base URL, bounded by the provider's connect timeout. Omit to leave reachability out of the findings; with it, a valid http provider whose base URL accepts no connection fails, naming the URL. */
+  readonly probeBaseUrl?: BaseUrlProbe;
   /** The journals of identity renames that were left unfinished, and the files in their directory that are not journals. Omit to leave renames out of the findings. */
   readonly renameJournals?: RenameJournalListing;
   /** The entries of the identities directory that cannot be reached (a symlink the filesystem would not follow, or a directory nobody can enter), which are not counted as identities. Omit to leave them out of the findings. */
@@ -346,25 +349,7 @@ function signInProblem(signIn: NonNullable<RunDoctorParams["chatgptSignIn"]>): s
 /**
  * Reports one provider file: an old-format file (before the credential block) fails with the old fields named and the whole file rewritten in the current format, since that is the one change converting it needs; any other invalid file fails with its validation errors; a valid one passes with its credential described by source kind and target.
  */
-/** Reports a stored file whose name the shape new names are given refuses. The file keeps working from the person's own configuration, which may name any name that stays inside its directory, but a project file cannot name it and a new one could not be given the name; a name that cannot even stay inside its directory (a file called only `.json`) cannot be used at all. Returns whether the name is usable, so the caller can skip checking a file it has just said it cannot use. */
-function pushNameFinding(push: (section: DoctorSection, severity: DoctorSeverity, message: string, subject?: string) => void, section: DoctorSection, kind: string, entry: { readonly name: string; readonly path: string }): boolean {
-  if (isFileName(entry.name)) {
-    return true;
-  }
-  if (!isStoredName(entry.name)) {
-    push(section, "fail", `${entry.path} cannot be used as a ${kind}: its name is ${JSON.stringify(entry.name)}, and a name ${FILE_NAME_RULE}. Rename or remove the file.`, entry.name);
-    return false;
-  }
-  push(
-    section,
-    "warn",
-    `The ${kind} ${JSON.stringify(entry.name)} is stored under a name that does not fit the shape names are given now (a name ${FILE_NAME_RULE}). It still works from your own configuration, but a project file cannot name it. Rename ${entry.path} to a name that fits, and change what names it.`,
-    entry.name,
-  );
-  return true;
-}
-
-function pushProvider(push: (section: DoctorSection, severity: DoctorSeverity, message: string, subject?: string) => void, entry: DoctorProviderInput, cacheEnv: CredentialCacheEnv | undefined, signIn: RunDoctorParams["chatgptSignIn"]): void {
+function pushProvider(push: (section: DoctorSection, severity: DoctorSeverity, message: string, subject?: string) => void, entry: DoctorProviderInput, cacheEnv: CredentialCacheEnv | undefined, signIn: RunDoctorParams["chatgptSignIn"], probeBaseUrl: BaseUrlProbe | undefined): void {
   if (entry.raw === undefined) {
     push("provider", "fail", `${entry.path} is missing.`, entry.name);
     return;
@@ -396,6 +381,10 @@ function pushProvider(push: (section: DoctorSection, severity: DoctorSeverity, m
   // A provider session keeps the OAuth launch's shape (its base URL stays Claude Code's own API), so Claude Code defers MCP tool loading and the tool_reference payloads ride the door to the provider untouched. Naming the env-block lever here keeps the default visible; whether to pull it stays the reader's call, because turning it off only helps when the upstream backend cannot understand tool_reference itself.
   if (!router && validated.data.env?.ENABLE_TOOL_SEARCH === undefined) {
     push("provider", "warn", `${entry.name} does not set ENABLE_TOOL_SEARCH: a session on this provider keeps Claude Code's own API as its base URL, so it defers MCP tool loading and sends tool_reference payloads the upstream backend must understand. Set ENABLE_TOOL_SEARCH=false in the provider's env block to load tools upfront instead, when the backend does not support them.`, entry.name);
+  }
+  const unreachable = unreachableProviderLine(entry.name, validated.data, probeBaseUrl);
+  if (unreachable !== undefined) {
+    push("provider", "fail", unreachable, entry.name);
   }
   if (signIn !== undefined && isCodexProvider(validated.data) && validated.data.codex?.login === "chatgpt-sign-in") {
     const problem = signInProblem(signIn);
@@ -672,7 +661,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     if (!pushNameFinding(push, "provider", "provider", entry)) {
       continue;
     }
-    pushProvider(push, entry, params.credentialCache, params.chatgptSignIn);
+    pushProvider(push, entry, params.credentialCache, params.chatgptSignIn, params.probeBaseUrl);
   }
   const providerNames = new Set(params.providers.map((entry) => entry.name));
   for (const finding of aliasFindings(params.providerAliases ?? {}, providerNames)) {
@@ -1037,6 +1026,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
     configProfiles,
     providers,
     providerAliases: readProviderAliases(paths),
+    probeBaseUrl: realBaseUrlProbe,
     renameJournals: listRenameJournals(realFarmFs, paths.identityRenamesDir),
     unreachableIdentities,
     identityRecords: { all: records, displaced: displacedIdentities.map((record) => ({ ...record, directoryPresent: fs.existsSync(path.join(paths.identitiesDir, record.id)) })), nameRenames: unfinishedNameRenames(paths).map((record) => ({ from: record.from, description: describeInterruptedNameRename(paths, record) })), strayNameRenameFiles: strayNameRenameRecordFiles(paths) },
