@@ -22,6 +22,9 @@ export interface RequestScan {
   readonly whole?: boolean;
   /** The whole body's text, present only in whole-body mode, so a route that rewrites the model field does it from the one copy already read rather than a second. */
   readonly text?: string;
+  /**
+   * The model as it appears in the JSON source, escapes included (`a\"b`, not `a"b`). `withModelInHead`, `withModel` and name routing depend on this raw form to locate and rewrite the value in the body, and the usage log's `requestedModel` receives it too.
+   */
   readonly model?: string;
   /** How many bytes of the body the scan read before it settled: the length of the head `text` decodes and the replay emits first, so a rewrite confined to the head (the model field is always in it) can leave every later byte untouched. */
   readonly headBytes: number;
