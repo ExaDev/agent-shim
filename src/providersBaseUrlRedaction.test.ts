@@ -4,6 +4,7 @@ import path from "node:path";
 import { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { catalogueCachePath } from "./providerCatalogue";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { registerProviderCommand } from "./providers";
 import { describeProviderEndpoint, readProvider } from "./providersStore";
@@ -64,5 +65,61 @@ describe("a provider's base URL in what the provider commands print", () => {
       throw new Error("the provider was not written");
     }
     expectNamedWithoutCredentials(describeProviderEndpoint(provider));
+  });
+});
+
+describe("a provider's base URL in the JSON views and the catalogue report", () => {
+  let root: string;
+  let paths: LayoutPaths;
+  let printed: string[];
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-base-url-views-"));
+    paths = buildLayoutPaths(root);
+    vi.spyOn(console, "log").mockImplementation((line: unknown) => {
+      printed.push(String(line));
+    });
+    printed = [];
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  async function run(...argv: readonly string[]): Promise<string> {
+    printed = [];
+    const program = new Command().exitOverride();
+    registerProviderCommand(program, fakeCommandDeps(paths));
+    await program.parseAsync(["provider", ...argv], { from: "user" });
+    return printed.join("\n");
+  }
+
+  async function addWithCatalogue(): Promise<void> {
+    await run("add", "local", "--display-name", "Local", "--base-url", SECRET_BASE_URL, "--credential", "literal:dummy", "--catalogue-tier", "sonnet");
+    fs.mkdirSync(paths.catalogueDir, { recursive: true });
+    fs.writeFileSync(catalogueCachePath(paths, "local"), JSON.stringify({ fetchedAt: 1, url: SECRET_BASE_URL, models: [{ id: "m" }] }));
+  }
+
+  it("redacts it in provider list --json, which many consumers read", async () => {
+    await run("add", "local", "--display-name", "Local", "--base-url", SECRET_BASE_URL, "--credential", "literal:dummy");
+    const output = await run("list", "--json");
+    expect(output).toContain(NAMED_BASE_URL);
+    expect(output).not.toContain("hunter2");
+    expect(output).not.toContain("abc123");
+  });
+
+  it("gives it whole in provider show --json, which prints the file's own fields so the value round-trips", async () => {
+    await run("add", "local", "--display-name", "Local", "--base-url", SECRET_BASE_URL, "--credential", "literal:dummy");
+    expect(JSON.parse(await run("show", "local", "--json"))).toMatchObject({ baseUrl: SECRET_BASE_URL });
+  });
+
+  it("redacts the catalogue's URL in provider models, in text and in JSON", async () => {
+    await addWithCatalogue();
+    for (const output of [await run("models", "local"), await run("models", "local", "--json")]) {
+      expect(output).toContain(NAMED_BASE_URL);
+      expect(output).not.toContain("hunter2");
+      expect(output).not.toContain("abc123");
+    }
   });
 });

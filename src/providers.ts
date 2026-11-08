@@ -50,8 +50,10 @@ import { ProviderNotFoundError, providerExists, readProvider, listProviders, typ
 /** What `--connect-timeout`'s help says the default is. */
 const CONNECT_TIMEOUT_DEFAULT_HINT = `a duration such as 3s or 500ms; default ${String(DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS)}ms, the first SYN and two retransmissions`;
 
-/** One provider as `provider show --json` and `provider list --json` print it: its name, the file's own fields (less its editor-only `$schema` pointer), and its credential block summarised, so no `literal` source's value is printed. */
-function toProviderView(name: string, provider: Provider, formerNames: readonly string[]): Record<string, unknown> {
+/**
+ * One provider as `provider show --json` and `provider list --json` print it: its name, the file's own fields (less its editor-only `$schema` pointer), and its credential block summarised, so no `literal` source's value is printed. `baseUrlOf` chooses how the base URL appears: `provider show --json` passes the identity, since it reads one file back so its value round-trips into `provider set`, and `provider list --json` passes `displayBaseUrl`, since a listing is read by dashboards and logs that never need a credential in a URL.
+ */
+function toProviderView(name: string, provider: Provider, formerNames: readonly string[], baseUrlOf: (baseUrl: string) => string): Record<string, unknown> {
   return {
     name,
     ...(formerNames.length === 0 ? {} : { formerNames }),
@@ -63,7 +65,7 @@ function toProviderView(name: string, provider: Provider, formerNames: readonly 
       ? (provider.antigravity === undefined ? {} : { antigravity: provider.antigravity })
       : isRouterProvider(provider)
       ? {}
-      : { baseUrl: provider.baseUrl, ...(provider.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: provider.connectTimeoutMs }) }),
+      : { baseUrl: baseUrlOf(provider.baseUrl), ...(provider.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: provider.connectTimeoutMs }) }),
     ...(isRouterProvider(provider) ? {} : { credential: summariseCredential(provider.credential) }),
     ...(!isRouterProvider(provider) && provider.env !== undefined ? { env: provider.env } : {}),
     ...(!isRouterProvider(provider) && provider.pickerModels !== undefined ? { pickerModels: provider.pickerModels } : {}),
@@ -417,7 +419,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         const entries = listProviders(paths);
         const aliases = readProviderAliases(paths);
         if (options.json === true) {
-          printJson(entries.map((entry) => toProviderView(entry.name, entry.provider, aliasesOf(aliases, entry.name))));
+          printJson(entries.map((entry) => toProviderView(entry.name, entry.provider, aliasesOf(aliases, entry.name), displayBaseUrl)));
           return;
         }
         if (entries.length === 0) {
@@ -444,7 +446,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         }
         const formerNames = aliasesOf(readProviderAliases(paths), name);
         if (options.json === true) {
-          printJson(toProviderView(name, found, formerNames));
+          printJson(toProviderView(name, found, formerNames, (baseUrl) => baseUrl));
           return;
         }
         console.log(`Provider: ${name}`);
@@ -522,9 +524,9 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           if (options.refresh !== true && (fingerprint === undefined || cache.credentialFingerprint !== fingerprint)) throw new UsageError(`The catalogue for "${name}" belongs to a different Codex account; refresh it before reading.`);
           const listed = providerModelRows(found, cache.models).map((row) => row.model);
           if (options.json === true) {
-            printJson({ name, url: cache.url, fetchedAt: new Date(cache.fetchedAt).toISOString(), models: cache.models, listed });
+            printJson({ name, url: displayBaseUrl(cache.url), fetchedAt: new Date(cache.fetchedAt).toISOString(), models: cache.models, listed });
           } else {
-            console.log(`Catalogue of ${name}: ${String(cache.models.length)} models from ${cache.url}, fetched ${new Date(cache.fetchedAt).toISOString()}; /model lists ${String(listed.length)}.`);
+            console.log(`Catalogue of ${name}: ${String(cache.models.length)} models from ${displayBaseUrl(cache.url)}, fetched ${new Date(cache.fetchedAt).toISOString()}; /model lists ${String(listed.length)}.`);
             for (const model of cache.models) console.log(`${listed.includes(model.id) ? "*" : " "} ${model.id}${model.name === undefined ? "" : `  (${model.name})`}`);
           }
           return;
@@ -539,10 +541,10 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         }
         const listed = filterCatalogue(cache.models, catalogueSetting);
         if (options.json === true) {
-          printJson({ name, tier: catalogueSetting.tier, url: cache.url, fetchedAt: new Date(cache.fetchedAt).toISOString(), models: cache.models, listed: listed.map((model) => model.id) });
+          printJson({ name, tier: catalogueSetting.tier, url: displayBaseUrl(cache.url), fetchedAt: new Date(cache.fetchedAt).toISOString(), models: cache.models, listed: listed.map((model) => model.id) });
           return;
         }
-        console.log(`Catalogue of ${name}: ${String(cache.models.length)} models from ${cache.url}, fetched ${new Date(cache.fetchedAt).toISOString()}; /model lists ${String(listed.length)} as tier ${catalogueSetting.tier}.`);
+        console.log(`Catalogue of ${name}: ${String(cache.models.length)} models from ${displayBaseUrl(cache.url)}, fetched ${new Date(cache.fetchedAt).toISOString()}; /model lists ${String(listed.length)} as tier ${catalogueSetting.tier}.`);
         const listedIds = new Set(listed.map((model) => model.id));
         for (const model of cache.models) {
           console.log(`${listedIds.has(model.id) ? "*" : " "} ${model.id}${model.name === undefined ? "" : `  (${model.name})`}`);
