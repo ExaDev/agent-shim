@@ -19,6 +19,8 @@ import type { FrontDoorLaunch } from "./state";
 const PROVIDERS_DIR = `${FAKE_HOME}/.agent-shim/providers`;
 const LAUNCH_TOKEN = "launch-token-for-tests";
 const OWN_PORT = 4100;
+/** The output budget of an ordinary request, as against a quota check's single token. */
+const ORDINARY_MAX_TOKENS = 16;
 const HAIKU_NAME = "claude-haiku-5-5";
 /** The model the `http` provider's own tier environment names for the haiku tier. */
 const Z_HAIKU_MODEL = "glm-4.5-air";
@@ -173,7 +175,7 @@ async function startWorld(record: MainLoopRouteRecord = mainLoopRoutesOfLiveSess
 }
 
 /** Sends one Messages request as a launch's child would: its capability, its session id, and, when given, the class Claude Code states and a launch provider. */
-async function send(world: World, options: { readonly model: string; readonly session?: string; readonly requestClass?: string; readonly provider?: string }): Promise<{ readonly status: number; readonly text: string }> {
+async function send(world: World, options: { readonly model: string; readonly session?: string; readonly requestClass?: string; readonly provider?: string; readonly maxTokens?: number }): Promise<{ readonly status: number; readonly text: string }> {
   const response = await fetch(`${world.url}/v1/messages`, {
     method: "POST",
     headers: {
@@ -183,7 +185,7 @@ async function send(world: World, options: { readonly model: string; readonly se
       ...(options.requestClass === undefined ? {} : { "x-claude-code-request-class": options.requestClass }),
       ...(options.provider === undefined ? {} : { [PROVIDER_HEADER]: options.provider }),
     },
-    body: JSON.stringify({ model: options.model, stream: false, max_tokens: 16, messages: [{ role: "user", content: "hi" }] }),
+    body: JSON.stringify({ model: options.model, stream: false, max_tokens: options.maxTokens ?? ORDINARY_MAX_TOKENS, messages: [{ role: "user", content: "hi" }] }),
   });
   return { status: response.status, text: await response.text() };
 }
@@ -232,17 +234,20 @@ describe("a provider-less session's helper requests follow its main loop", () =>
     }
   });
 
-  it("refuses a helper request from a session with no main-loop request yet, naming why, and forwards nothing", async () => {
+  it("sends a helper request from a session with no main-loop request yet down the route the session was launched on", async () => {
     const world = await startWorld();
     try {
-      const helper = await send(world, { model: HAIKU_NAME, requestClass: "auxiliary" });
-      expect(helper.status).toBe(HTTP_STATUS.badRequest);
-      const body: unknown = JSON.parse(helper.text);
-      expect(body).toMatchObject({ type: "error", error: { type: "invalid_request_error" } });
-      expect(helper.text).toContain("no main-loop request from this session");
+      // The shape of Claude Code's startup quota check: class auxiliary, a Claude haiku name, one output token, ahead of the first main-loop request.
+      const quota = await send(world, { model: HAIKU_NAME, requestClass: "auxiliary", maxTokens: 1 });
+      expect(quota.status).toBe(HTTP_STATUS.badGateway);
+      expect(world.toAnthropic).toEqual(["auxiliary"]);
       expect(world.upstream.seen).toEqual([]);
       expect(world.codexCalls).toEqual([]);
-      expect(world.toAnthropic).toEqual([]);
+      // The helper recorded nothing: the main loop still decides where the next helper goes.
+      await send(world, { model: "z/glm-5.3", requestClass: "main" });
+      expect((await send(world, { model: HAIKU_NAME, requestClass: "auxiliary" })).status).toBe(HTTP_STATUS.ok);
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-5.3", Z_HAIKU_MODEL]);
+      expect(world.toAnthropic).toEqual(["auxiliary"]);
     } finally {
       await world.close();
     }
@@ -269,7 +274,8 @@ describe("a provider-less session's helper requests follow its main loop", () =>
       await send(world, { model: "cx/gpt-5.6", requestClass: "main", session: "s-b" });
       expect((await send(world, { model: HAIKU_NAME, requestClass: "auxiliary", session: "s-a" })).status).toBe(HTTP_STATUS.ok);
       expect((await send(world, { model: HAIKU_NAME, requestClass: "auxiliary", session: "s-b" })).status).toBe(HTTP_STATUS.ok);
-      expect((await send(world, { model: HAIKU_NAME, requestClass: "auxiliary", session: "s-c" })).status).toBe(HTTP_STATUS.badRequest);
+      // A session that has recorded nothing is still on its launch's route.
+      expect((await send(world, { model: HAIKU_NAME, requestClass: "auxiliary", session: "s-c" })).status).toBe(HTTP_STATUS.badGateway);
       expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-5.3", Z_HAIKU_MODEL]);
       expect(codexModel(world, 1)).toBe(CODEX_DEFAULT_TIER_MODELS.haiku);
     } finally {
@@ -402,7 +408,7 @@ describe("a native session on antigravity/auto", () => {
       const response = await fetch(`${url}/v1/messages`, {
         method: "POST",
         headers: { "content-type": "application/json", [AUTH_HEADER]: LAUNCH_TOKEN, [SESSION_HEADER]: "s-native", "x-claude-code-request-class": requestClass },
-        body: JSON.stringify({ model, stream: true, max_tokens: 16, messages: [{ role: "user", content: "hi" }] }),
+        body: JSON.stringify({ model, stream: true, max_tokens: ORDINARY_MAX_TOKENS, messages: [{ role: "user", content: "hi" }] }),
       });
       await response.text();
       return response.status;
