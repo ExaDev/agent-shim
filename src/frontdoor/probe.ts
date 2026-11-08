@@ -195,7 +195,7 @@ function runProbeWorker(source: string, data: Readonly<Record<string, unknown>>,
 }
 
 /** The part of a worker thread this module uses, so a test can stand in a worker that reports an error. */
-export interface ProbeWorkerHandle {
+interface ProbeWorkerHandle {
   readonly on: (event: "error", listener: (error: Error) => void) => unknown;
   readonly unref: () => unknown;
   readonly terminate: () => Promise<number>;
