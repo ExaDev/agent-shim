@@ -225,7 +225,6 @@ describe("symlink twins at the size of a large farm", () => {
   const MEDIUM_TWINS = 100;
   const LARGE_TWINS = 200;
   const SIZES = [SMALL_TWINS, MEDIUM_TWINS, LARGE_TWINS] as const;
-  const TOLERANCE = 1.5;
   const INDEX_DIGITS = 5;
 
   /** The `lstatSync` calls reading an identities directory holding `count` symlinks to one real directory, which sorts last in the directory or lies outside it. */
@@ -255,7 +254,7 @@ describe("symlink twins at the size of a large farm", () => {
 
   it.each(["real-sorts-last", "real-outside"] as const)("makes a number of symlink checks that grows linearly with the twins when the real directory is %s", (layout) => {
     const counts = SIZES.map((size) => lstatsReading(size, layout));
-    expect(growsLinearly(SIZES, [counts[0] ?? 0, counts[1] ?? 0, counts[2] ?? 0], TOLERANCE), `lstat counts ${counts.join(", ")}`).toBe(true);
+    expect(growsLinearly(SIZES, [counts[0] ?? 0, counts[1] ?? 0, counts[2] ?? 0]), `lstat counts ${counts.join(", ")}`).toBe(true);
   });
 });
 
@@ -264,12 +263,11 @@ describe("duplicateIdentityNames and identityIdLookup at the size of a large far
   const SECOND_SIZE = 200;
   const THIRD_SIZE = 400;
   const SIZES = [FIRST_SIZE, SECOND_SIZE, THIRD_SIZE] as const;
-  const TOLERANCE = 1.5;
   const sameNamed = (count: number): IdentityRecord[] => Array.from({ length: count }, (_, index) => ({ id: `id${String(index)}`, name: "same" }));
 
   it("finds the names several records claim in steps that grow linearly with the records", () => {
     const counts = SIZES.map((size) => countSteps(() => { expect(duplicateIdentityNames(sameNamed(size))).toHaveLength(1); }));
-    expect(growsLinearly(SIZES, [counts[0] ?? 0, counts[1] ?? 0, counts[2] ?? 0], TOLERANCE), `steps ${counts.join(", ")}`).toBe(true);
+    expect(growsLinearly(SIZES, [counts[0] ?? 0, counts[1] ?? 0, counts[2] ?? 0]), `steps ${counts.join(", ")}`).toBe(true);
   });
 
   it("answers a lookup for each of many names in steps that grow linearly with the identities", () => {
@@ -281,7 +279,7 @@ describe("duplicateIdentityNames and identityIdLookup at the size of a large far
         expect(lookup(record.name ?? "")).toBe(record.id);
       }
     }));
-    expect(growsLinearly(SIZES, [counts[0] ?? 0, counts[1] ?? 0, counts[2] ?? 0], TOLERANCE), `steps ${counts.join(", ")}`).toBe(true);
+    expect(growsLinearly(SIZES, [counts[0] ?? 0, counts[1] ?? 0, counts[2] ?? 0]), `steps ${counts.join(", ")}`).toBe(true);
   });
 
   it("applies the same rules as identityIdIn: a duplicated name throws, a nameless record is reached by its id", () => {

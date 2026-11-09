@@ -11,14 +11,15 @@ import { buildLayoutPaths } from "./paths";
 import { growsLinearly, startStepMeter } from "./test-helpers";
 
 /**
- * Each report is run against a farm in which every collection the user sizes is large and degenerate at once: identities with a readable name, with none (a file that is not JSON), all claiming one name, and symlinks to one directory, a pool of many members and many configuration profiles. The array steps a report makes (`countSteps`) must grow linearly with the farm, and so must the most steps it makes between two file system notes, which is what the door's silence window sees as a stall.
+ * Each report is run against a farm in which every collection the user sizes is large and degenerate at once: identities with a readable name, with none (a file that is not JSON), all claiming one name, and symlinks to one directory, a pool of many members and many configuration profiles. The array steps a report makes (`countSteps`) must grow exactly linearly with the farm (`growsLinearly`: counts are deterministic, so the slope may not grow), and so must the most steps it makes between two file system notes, which is what the door's silence window sees as a stall.
+ *
+ * What this can catch: a pass over a collection nested inside a pass over it that runs through the counted array operations, over the whole farm. What it cannot see: a quadratic cost that does not run through them (a `Set` or `Map` iteration, an indexed `for` loop, a sort comparator, a copy by `slice`, `concat` or `JSON.stringify`, string building), one in native code, one over a collection this farm does not hold (registered sessions, many providers), and a cost that grows with something other than the farm's size.
  */
 /** The smallest farm a report is measured at, and the factors of it the next two are: doubling twice, so a pass over a collection inside a pass over it makes the last step cost four times the first. */
 const FIRST_FARM = 200;
 const DOUBLE = 2;
 const QUADRUPLE = 4;
 const REPORT_SIZES = [FIRST_FARM, FIRST_FARM * DOUBLE, FIRST_FARM * QUADRUPLE] as const;
-const TOLERANCE = 1.5;
 const GROUPS = 4;
 
 let home: string;
@@ -127,7 +128,7 @@ describe("the reports on a farm where every collection is large and degenerate",
     });
     const steps = results.map((result) => result.steps);
     const gaps = results.map((result) => result.longestGap);
-    expect(growsLinearly(sizes, [steps[0] ?? 0, steps[1] ?? 0, steps[2] ?? 0], TOLERANCE), `steps ${steps.join(", ")}`).toBe(true);
-    expect(growsLinearly(sizes, [gaps[0] ?? 0, gaps[1] ?? 0, gaps[2] ?? 0], TOLERANCE), `longest steps between notes ${gaps.join(", ")}`).toBe(true);
+    expect(growsLinearly(sizes, [steps[0] ?? 0, steps[1] ?? 0, steps[2] ?? 0]), `steps ${steps.join(", ")}`).toBe(true);
+    expect(growsLinearly(sizes, [gaps[0] ?? 0, gaps[1] ?? 0, gaps[2] ?? 0]), `longest steps between notes ${gaps.join(", ")}`).toBe(true);
   }, REPORT_TIMEOUT_MS);
 });

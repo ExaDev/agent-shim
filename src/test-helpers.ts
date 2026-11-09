@@ -808,10 +808,8 @@ export function startStepMeter(): StepMeter {
 }
 
 /**
- * Whether a count that was measured at three sizes grows at most linearly: the cost of each added element at the larger size is no more than `tolerance` times its cost at the smaller (the slope between the two larger sizes against the slope between the two smaller), which holds for a linear count whatever its fixed overhead and fails for a quadratic one, whose slope grows with the size.
+ * Whether counts measured at three sizes grow at most linearly: the cost of each element added between the two larger sizes is no more than the cost of each added between the two smaller (the second slope at most the first). Step and call counts are deterministic and a linear pass has one constant slope whatever its fixed overhead, so no tolerance is needed; a quadratic pass has a growing slope and fails. Compared by cross-multiplication, so the check is exact in integers.
  */
-export function growsLinearly(sizes: readonly [number, number, number], counts: readonly [number, number, number], tolerance: number): boolean {
-  const first = (counts[1] - counts[0]) / (sizes[1] - sizes[0]);
-  const second = (counts[2] - counts[1]) / (sizes[2] - sizes[1]);
-  return second <= first * tolerance;
+export function growsLinearly(sizes: readonly [number, number, number], counts: readonly [number, number, number]): boolean {
+  return (counts[2] - counts[1]) * (sizes[1] - sizes[0]) <= (counts[1] - counts[0]) * (sizes[2] - sizes[1]);
 }

@@ -230,7 +230,6 @@ describe("identityIdResolver at the size of a large farm", () => {
   const SECOND_SIZE = 200;
   const THIRD_SIZE = 400;
   const SIZES = [FIRST_SIZE, SECOND_SIZE, THIRD_SIZE] as const;
-  const TOLERANCE = 1.5;
 
   it("answers each of as many lookups as there are identities in steps that grow linearly with the identities", () => {
     const counts = SIZES.map((size) => {
@@ -243,6 +242,6 @@ describe("identityIdResolver at the size of a large farm", () => {
         }
       });
     });
-    expect(growsLinearly(SIZES, [counts[0] ?? 0, counts[1] ?? 0, counts[2] ?? 0], TOLERANCE), `steps ${counts.join(", ")}`).toBe(true);
+    expect(growsLinearly(SIZES, [counts[0] ?? 0, counts[1] ?? 0, counts[2] ?? 0]), `steps ${counts.join(", ")}`).toBe(true);
   });
 });
