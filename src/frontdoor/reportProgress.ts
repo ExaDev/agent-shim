@@ -2,34 +2,63 @@ import fs from "node:fs";
 
 import packageJson from "../../package.json";
 import { CliError } from "../cliError";
+import { fileKey } from "../fileIdentity";
 import { noteFileSystemWork, observeBlockingSteps } from "../blockingSteps";
 import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS } from "../providerReachability";
 
 /** The environment variable that tells a report child which file descriptor to announce its progress on and which process started it (`reportProgressTarget`): each blocking step with its bound, the end of one, and local work done. Set by the door that starts the child, read by `installReportProgress`. */
 export const REPORT_PROGRESS_FD_ENV = "AGENT_SHIM_REPORT_PROGRESS_FD";
 
-/** Raised in a report child started by a front door of another release: the report it would print is in the form of its own release, which the door cannot read. */
+/** Raised in a report child started by a front door of another release or build: the report it would print is in the form of its own, which the door cannot be relied on to read. */
 export class ReportReleaseSkewError extends CliError {
-  constructor(doorRelease: string, ownRelease: string) {
-    super(`the front door that asked for this report runs agent-shim ${doorRelease}, and this is agent-shim ${ownRelease}, whose reports it cannot read. Run \`agent-shim frontdoor restart\` to replace the door with one from this release.`);
+  constructor(door: Readonly<ReleaseIdentity>, own: Readonly<ReleaseIdentity>) {
+    const differ = door.release === own.release ? `runs a different build of agent-shim ${own.release} than this one` : `runs agent-shim ${door.release}, and this is agent-shim ${own.release}`;
+    super(`the front door that asked for this report ${differ}, whose reports it cannot be relied on to read. Run \`agent-shim frontdoor restart\` to replace the door with one from this build.`);
     this.name = "ReportReleaseSkewError";
   }
 }
 
-/** The value of `REPORT_PROGRESS_FD_ENV` for a child of process `parentPid`, a front door of release `release`, that is to announce on `fd`: the descriptor, the process that opened it and the release of the door. A process that inherited the variable from further up, or from a shell, is not that process's child, and `installReportProgress` ignores it. */
-export function reportProgressTarget(fd: number, parentPid: number, release: string): string {
-  return `${String(fd)}:${String(parentPid)}:${release}`;
+/** Which agent-shim a process is: the release (the package version) and the build, a fingerprint of the executable file it runs (`executableFingerprint`), or empty where none could be taken, when only the release is compared. */
+export interface ReleaseIdentity {
+  readonly release: string;
+  readonly build: string;
 }
 
-/** The descriptor named by `value` for a process whose parent is `parentPid`, or undefined when `value` is not one `reportProgressTarget` gives, or names another process as the one that opened the descriptor. Throws `ReportReleaseSkewError` when the door that did is of a release other than `ownRelease`. */
-function progressDescriptorFor(value: string, parentPid: number, ownRelease: string): number | undefined {
-  const match = /^([0-9]+):([0-9]+):(.+)$/.exec(value);
+/** A string that changes when the file at `file` is replaced or rebuilt: its device and inode, size and modification time, read as bigints. Empty when the file cannot be read. Two builds of one version (a development build over the last, an upgrade that renames the new file into place) differ in it where their package version does not. */
+export function executableFingerprint(file: string): string {
+  try {
+    const stat = fs.statSync(file, { bigint: true });
+    return `${fileKey(stat)}.${String(stat.size)}.${String(stat.mtimeNs)}`;
+  } catch {
+    // A file that cannot be read has no fingerprint; the comparison then rests on the release alone.
+    return "";
+  }
+}
+
+/** The fingerprint of the executable this process runs: the script it was started with, or the executable itself under a single executable application, as the bundle's `import.meta.url` stand-in names it. */
+function ownExecutableFingerprint(): string {
+  return executableFingerprint(process.argv[1] ?? process.execPath);
+}
+
+/** Which agent-shim this process is: the release of its package and the fingerprint of the executable it runs. The door puts it in the variable it gives a report child, and the child compares it with its own. */
+export function ownReleaseIdentity(): ReleaseIdentity {
+  return { release: packageJson.version, build: ownExecutableFingerprint() };
+}
+
+/** The value of `REPORT_PROGRESS_FD_ENV` for a child of process `parentPid`, a front door of identity `door`, that is to announce on `fd`: the descriptor, the process that opened it, the release of the door and its build. A process that inherited the variable from further up, or from a shell, is not that process's child, and `installReportProgress` ignores it. */
+export function reportProgressTarget(fd: number, parentPid: number, door: Readonly<ReleaseIdentity>): string {
+  return `${String(fd)}:${String(parentPid)}:${door.release}:${door.build}`;
+}
+
+/** The descriptor named by `value` for a process whose parent is `parentPid`, or undefined when `value` is not one `reportProgressTarget` gives, or names another process as the one that opened the descriptor. Throws `ReportReleaseSkewError` when the door that did is of a release, or a build of this release, other than `own`. */
+function progressDescriptorFor(value: string, parentPid: number, own: Readonly<ReleaseIdentity>): number | undefined {
+  const match = /^([0-9]+):([0-9]+):([^:]+):(.*)$/.exec(value);
   if (match === null || Number(match[2]) !== parentPid) {
     return undefined;
   }
-  const doorRelease = match[3] ?? "";
-  if (doorRelease !== ownRelease) {
-    throw new ReportReleaseSkewError(doorRelease, ownRelease);
+  const door = { release: match[3] ?? "", build: match[4] ?? "" };
+  if (door.release !== own.release || (door.build !== "" && own.build !== "" && door.build !== own.build)) {
+    throw new ReportReleaseSkewError(door, own);
   }
   return Number(match[1]);
 }
@@ -161,16 +190,16 @@ export function createReportProgressReader(onEvent: (event: ReportProgress) => v
 }
 
 /**
- * Makes this process announce each of its blocking steps on the descriptor `env` names (`REPORT_PROGRESS_FD_ENV`), gives a step that names no bound `REPORT_UNBOUNDED_STEP_LIMIT_MS`, counts every synchronous call of `fsModule` (`node:fs`) as local work (`noteFileSystemWork`), and prints the size of a report before it with `writeOutput` (`encodeReportSize`); nothing happens when `env` names no descriptor, or a value that does not name this process's parent as the process that opened the descriptor (`reportProgressTarget`), which is what a process that inherited the variable from further up sees. The variable is removed from `env` whenever it was set (`env` is the process's own environment, mutable in spite of its type), so no process this one starts inherits it. `ownParentPid` is `process.ppid` and `ownRelease` the version of this release in production; a door of another release makes this throw `ReportReleaseSkewError`, so the report is refused with a message and not printed in a form the door cannot read. `write` is `fs.writeSync` and `now` the monotonic clock in production; `work` is announced at most once per `LOCAL_WORK_ANNOUNCE_INTERVAL_MS`, counted from the last announcement of any kind. Returns what stops the announcing, or undefined when it was never started.
+ * Makes this process announce each of its blocking steps on the descriptor `env` names (`REPORT_PROGRESS_FD_ENV`), gives a step that names no bound `REPORT_UNBOUNDED_STEP_LIMIT_MS`, counts every synchronous call of `fsModule` (`node:fs`) as local work (`noteFileSystemWork`), and prints the size of a report before it with `writeOutput` (`encodeReportSize`); nothing happens when `env` names no descriptor, or a value that does not name this process's parent as the process that opened the descriptor (`reportProgressTarget`), which is what a process that inherited the variable from further up sees. The variable is removed from `env` whenever it was set (`env` is the process's own environment, mutable in spite of its type), so no process this one starts inherits it. `own` is this process's parent and its release and build in production; a door of another release, or of another build of this release (compared when both sides have a fingerprint), makes this throw `ReportReleaseSkewError`, so the report is refused with a message and not printed in a form the door cannot read. `write` is `fs.writeSync` and `now` the monotonic clock in production; `work` is announced at most once per `LOCAL_WORK_ANNOUNCE_INTERVAL_MS`, counted from the last announcement of any kind. Returns what stops the announcing, or undefined when it was never started.
  */
-export function installReportProgress(env: Readonly<Record<string, string | undefined>>, write: (fd: number, text: string) => void = (fd, text) => { fs.writeSync(fd, text); }, now: () => number = () => performance.now(), fsModule: object = fs, writeOutput: (text: string) => void = (text) => { process.stdout.write(text); }, ownParentPid: number = process.ppid, ownRelease: string = packageJson.version): (() => void) | undefined {
+export function installReportProgress(env: Readonly<Record<string, string | undefined>>, write: (fd: number, text: string) => void = (fd, text) => { fs.writeSync(fd, text); }, now: () => number = () => performance.now(), fsModule: object = fs, writeOutput: (text: string) => void = (text) => { process.stdout.write(text); }, own: Readonly<{ parentPid: number; identity: ReleaseIdentity }> = { parentPid: process.ppid, identity: ownReleaseIdentity() }): (() => void) | undefined {
   const fd = env[REPORT_PROGRESS_FD_ENV];
   if (fd === undefined) {
     return undefined;
   }
   // The variable is for this process alone: left in `env` it would reach every process this one starts, and one of those that is an agent-shim would write its announcements to whatever its descriptor is.
   Reflect.deleteProperty(env, REPORT_PROGRESS_FD_ENV);
-  const descriptor = progressDescriptorFor(fd, ownParentPid, ownRelease);
+  const descriptor = progressDescriptorFor(fd, own.parentPid, own.identity);
   if (descriptor === undefined) {
     return undefined;
   }

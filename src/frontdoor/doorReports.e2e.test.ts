@@ -13,7 +13,7 @@ import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS } from "../providerReachability";
 import { PROBE_WAIT_MARGIN_MS, PROBE_WORKER_START_LIMIT_MS } from "./probe";
 import packageJson from "../../package.json";
 import { createDoorReports } from "./doorReports";
-import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, reportProgressTarget, createReportProgressReader, encodeReportSize, type ReportProgress } from "./reportProgress";
+import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, reportProgressTarget, executableFingerprint, createReportProgressReader, encodeReportSize, type ReportProgress } from "./reportProgress";
 import { readFrontDoorState } from "./state";
 
 const BUNDLE_TARGET = "node22";
@@ -118,7 +118,7 @@ describe.skipIf(process.platform === "win32")("the front door's check and doctor
       fs.closeSync(open);
     });
     const runWith = (descriptorStdio: "ignore" | number): string => {
-      const result = spawnSync(process.execPath, [cli, "identity", "list", "--json"], { env: { ...process.env, AGENT_SHIM_HOME: home, [REPORT_PROGRESS_FD_ENV]: reportProgressTarget(REPORT_PROGRESS_FD, process.pid + 1, packageJson.version) }, stdio: ["ignore", "pipe", "pipe", descriptorStdio], encoding: "utf8" });
+      const result = spawnSync(process.execPath, [cli, "identity", "list", "--json"], { env: { ...process.env, AGENT_SHIM_HOME: home, [REPORT_PROGRESS_FD_ENV]: reportProgressTarget(REPORT_PROGRESS_FD, process.pid + 1, { release: packageJson.version, build: "" }) }, stdio: ["ignore", "pipe", "pipe", descriptorStdio], encoding: "utf8" });
       expect(result.status, result.stderr).toBe(0);
       return result.stdout;
     };
@@ -136,9 +136,12 @@ describe.skipIf(process.platform === "win32")("the front door's check and doctor
     const cli = await bundleCli(home);
     const selfInvocation = (args: readonly string[]): { readonly command: string; readonly args: readonly string[] } => ({ command: process.execPath, args: [cli, ...args] });
     const env = { ...process.env, AGENT_SHIM_HOME: home };
-    const older = createDoorReports({ selfInvocation, env, release: "0.0.1" });
+    const older = createDoorReports({ selfInvocation, env, door: { release: "0.0.1", build: "" } });
     await expect(older.doctorReport(undefined)).rejects.toThrow(new RegExp(`runs agent-shim 0\\.0\\.1, and this is agent-shim ${packageJson.version.replaceAll(".", "\\.")}.*agent-shim frontdoor restart`));
-    const same = createDoorReports({ selfInvocation, env, release: packageJson.version });
+    // The same version from another build of the executable is refused too, and the build of the executable it runs is accepted.
+    const rebuilt = createDoorReports({ selfInvocation, env, door: { release: packageJson.version, build: "an-earlier-build" } });
+    await expect(rebuilt.doctorReport(undefined)).rejects.toThrow(/runs a different build of agent-shim.*agent-shim frontdoor restart/);
+    const same = createDoorReports({ selfInvocation, env, door: { release: packageJson.version, build: executableFingerprint(cli) } });
     expect((await same.doctorReport(undefined)).findings.length).toBeGreaterThan(0);
   }, SUITE_TIMEOUT_MS);
 
@@ -151,7 +154,7 @@ describe.skipIf(process.platform === "win32")("the front door's check and doctor
     fs.mkdirSync(layout.providersDir, { recursive: true });
     fs.writeFileSync(path.join(layout.providersDir, "refused.json"), JSON.stringify({ displayName: "Refused", baseUrl: REFUSED_BASE_URL, credential: { sources: [{ literal: "placeholder" }] } }));
     const cli = await bundleCli(home);
-    const child = spawn(process.execPath, [cli, "doctor", "--json"], { env: { ...process.env, AGENT_SHIM_HOME: home, [REPORT_PROGRESS_FD_ENV]: reportProgressTarget(REPORT_PROGRESS_FD, process.pid, packageJson.version) }, stdio: ["ignore", "pipe", "ignore", "pipe"] });
+    const child = spawn(process.execPath, [cli, "doctor", "--json"], { env: { ...process.env, AGENT_SHIM_HOME: home, [REPORT_PROGRESS_FD_ENV]: reportProgressTarget(REPORT_PROGRESS_FD, process.pid, { release: packageJson.version, build: "" }) }, stdio: ["ignore", "pipe", "ignore", "pipe"] });
     let printed = "";
     const standardOutput = child.stdout;
     if (!(standardOutput instanceof Readable)) {

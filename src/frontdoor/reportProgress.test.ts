@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import packageJson from "../../package.json";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { announceReportOutput, noteLocalWork, withBlockingStep } from "../blockingSteps";
@@ -13,6 +17,9 @@ import {
   encodeReportProgress,
   installReportProgress,
   ReportReleaseSkewError,
+  executableFingerprint,
+  ownReleaseIdentity,
+  type ReleaseIdentity,
   reportProgressTarget,
   LOCAL_WORK_ANNOUNCE_INTERVAL_MS,
   type ReportProgress,
@@ -60,14 +67,18 @@ describe("the progress stream", () => {
 });
 
 const PARENT = 4_242;
+const MTIME_STEP_MS = 5_000;
 const RELEASE = "12.0.0";
+const BUILD = "build-a";
+const DOOR = { release: RELEASE, build: BUILD };
+const OWN = { parentPid: PARENT, identity: DOOR };
 
 /** The value a door that is process `PARENT` gives a child announcing on `DESCRIPTOR`. */
-const TARGET = reportProgressTarget(DESCRIPTOR, PARENT, RELEASE);
+const TARGET = reportProgressTarget(DESCRIPTOR, PARENT, DOOR);
 
 /** `installReportProgress` as the child of process `PARENT`. */
 function installAsChild(env: Readonly<Record<string, string | undefined>>, write: (fd: number, text: string) => void, now: () => number = () => 0, fsModule: object = {}, writeOutput: (text: string) => void = () => undefined): (() => void) | undefined {
-  return installReportProgress(env, write, now, fsModule, writeOutput, PARENT, RELEASE);
+  return installReportProgress(env, write, now, fsModule, writeOutput, OWN);
 }
 
 describe("installReportProgress", () => {
@@ -78,10 +89,10 @@ describe("installReportProgress", () => {
   });
 
   it("removes the variable and announces nothing when it does not name this process's parent, or is not a descriptor and a parent", () => {
-    for (const named of [reportProgressTarget(DESCRIPTOR, PARENT + 1, RELEASE), reportProgressTarget(DESCRIPTOR, PARENT + 1, "13.0.0"), String(DESCRIPTOR), `${String(DESCRIPTOR)}:${String(PARENT)}`, "not-a-number", "3:x", "3.5:4242", "-1:4242", "", ":4242", "3:"]) {
+    for (const named of [reportProgressTarget(DESCRIPTOR, PARENT + 1, DOOR), reportProgressTarget(DESCRIPTOR, PARENT + 1, { release: "13.0.0", build: BUILD }), String(DESCRIPTOR), `${String(DESCRIPTOR)}:${String(PARENT)}`, "not-a-number", "3:x", "3.5:4242", "-1:4242", "", ":4242", "3:"]) {
       const written: string[] = [];
       const env: Record<string, string | undefined> = { [REPORT_PROGRESS_FD_ENV]: named };
-      expect(installReportProgress(env, (_fd, text) => { written.push(text); }, () => 0, {}, () => undefined, PARENT, RELEASE), named).toBeUndefined();
+      expect(installReportProgress(env, (_fd, text) => { written.push(text); }, () => 0, {}, () => undefined, OWN), named).toBeUndefined();
       withBlockingStep(undefined, () => undefined);
       expect(env).toEqual({});
       expect(written).toEqual([]);
@@ -89,10 +100,25 @@ describe("installReportProgress", () => {
   });
 
   it("refuses, naming both releases and how to replace the door, when the door that started it is of another release, and still removes the variable", () => {
-    const env: Record<string, string | undefined> = { [REPORT_PROGRESS_FD_ENV]: reportProgressTarget(DESCRIPTOR, PARENT, "12.1.0") };
-    expect(() => installReportProgress(env, () => undefined, () => 0, {}, () => undefined, PARENT, RELEASE)).toThrow(ReportReleaseSkewError);
-    expect(() => installReportProgress({ [REPORT_PROGRESS_FD_ENV]: reportProgressTarget(DESCRIPTOR, PARENT, "12.1.0") }, () => undefined, () => 0, {}, () => undefined, PARENT, RELEASE)).toThrow(/runs agent-shim 12\.1\.0, and this is agent-shim 12\.0\.0.*agent-shim frontdoor restart/);
+    const env: Record<string, string | undefined> = { [REPORT_PROGRESS_FD_ENV]: reportProgressTarget(DESCRIPTOR, PARENT, { release: "12.1.0", build: BUILD }) };
+    expect(() => installReportProgress(env, () => undefined, () => 0, {}, () => undefined, OWN)).toThrow(ReportReleaseSkewError);
+    expect(() => installReportProgress({ [REPORT_PROGRESS_FD_ENV]: reportProgressTarget(DESCRIPTOR, PARENT, { release: "12.1.0", build: BUILD }) }, () => undefined, () => 0, {}, () => undefined, OWN)).toThrow(/runs agent-shim 12\.1\.0, and this is agent-shim 12\.0\.0.*agent-shim frontdoor restart/);
     expect(env).toEqual({});
+  });
+
+  it("refuses a door of the same release and another build, naming the build as what differs", () => {
+    const env = { [REPORT_PROGRESS_FD_ENV]: reportProgressTarget(DESCRIPTOR, PARENT, { release: RELEASE, build: "build-b" }) };
+    expect(() => installReportProgress(env, () => undefined, () => 0, {}, () => undefined, OWN)).toThrow(/runs a different build of agent-shim 12\.0\.0 than this one.*agent-shim frontdoor restart/);
+  });
+
+  it("compares the release alone when either side has no build fingerprint, and accepts the same build", () => {
+    const run = (door: ReleaseIdentity, own: ReleaseIdentity): (() => void) | undefined => installReportProgress({ [REPORT_PROGRESS_FD_ENV]: reportProgressTarget(DESCRIPTOR, PARENT, door) }, () => undefined, () => 0, {}, () => undefined, { parentPid: PARENT, identity: own });
+    uninstall = run({ release: RELEASE, build: "" }, DOOR);
+    uninstall?.();
+    uninstall = run(DOOR, { release: RELEASE, build: "" });
+    uninstall?.();
+    uninstall = run(DOOR, DOOR);
+    expect(uninstall).toBeDefined();
   });
 
   it("does nothing when the environment names no descriptor", () => {
@@ -113,6 +139,39 @@ describe("installReportProgress", () => {
       { fd: DESCRIPTOR, text: `begin ${String(REPORT_UNBOUNDED_STEP_LIMIT_MS)}\n` },
       { fd: DESCRIPTOR, text: "end\n" },
     ]);
+  });
+});
+
+describe("executableFingerprint", () => {
+  it("changes when the file is replaced or rewritten, and is empty for a file that is not there", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "fingerprint-"));
+    try {
+      const file = path.join(directory, "cli.cjs");
+      fs.writeFileSync(file, "one");
+      const first = executableFingerprint(file);
+      expect(first).not.toBe("");
+      expect(executableFingerprint(file)).toBe(first);
+      // The same size, rewritten later: a development build over the last of one version.
+      fs.writeFileSync(file, "two");
+      fs.utimesSync(file, new Date(), new Date(Date.now() + MTIME_STEP_MS));
+      const rewritten = executableFingerprint(file);
+      expect(rewritten).not.toBe(first);
+      // Replaced by renaming another file onto it, as an update does.
+      const incoming = path.join(directory, "incoming");
+      fs.writeFileSync(incoming, "two");
+      fs.renameSync(incoming, file);
+      expect(executableFingerprint(file)).not.toBe(rewritten);
+      expect(executableFingerprint(path.join(directory, "missing"))).toBe("");
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("ownReleaseIdentity", () => {
+  it("is this package's version and the fingerprint of the file this process was started from", () => {
+    expect(ownReleaseIdentity()).toEqual({ release: packageJson.version, build: executableFingerprint(process.argv[1] ?? process.execPath) });
+    expect(ownReleaseIdentity().build).not.toBe("");
   });
 });
 

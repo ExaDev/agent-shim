@@ -5,7 +5,7 @@ import { CheckReportJsonSchema, type CheckReportJson } from "../checkReportSchem
 import { MAX_TIMER_DELAY_MS } from "../config/schema";
 import { PROBE_WAIT_MARGIN_MS } from "./probe";
 import { MAX_REPORT_CHILDREN } from "./reportLimits";
-import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, reportProgressTarget, REPORT_QUIET_MS, createReportOutputReader, createReportProgressReader, reportSilenceWindowMs } from "./reportProgress";
+import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, reportProgressTarget, REPORT_QUIET_MS, createReportOutputReader, createReportProgressReader, reportSilenceWindowMs, type ReleaseIdentity } from "./reportProgress";
 import { DoctorRunOutputSchema } from "./controlSchemas";
 import type { DoctorReport } from "../doctorReport";
 
@@ -69,12 +69,12 @@ interface RunLimits {
 /**
  * Runs the door's own executable with `args` and reads the JSON report it prints, failing with what it wrote to stderr when it printed none, or when what it printed is not JSON. The child leads its own process group and is ended, with everything it started, and the call fails, once any of these holds: it has gone `limit.silenceMs` (`reportSilenceWindowMs` of the quiet bound) without announcing anything outside a step, or stayed longer than a blocking step's announced bound and `PROBE_WAIT_MARGIN_MS` inside that step (the margin a probe's caller waits past its bound, which also covers a killed command being reaped), the child announcing each on `REPORT_PROGRESS_FD` (see `reportProgress.ts`); `limit.signal` aborts (the request's client went away); or it prints a report longer than the size it announced before it, which is the only bound on what the door keeps, since a report grows with the user's data.
  */
-async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEnv, release: string, args: readonly string[], limit: RunLimits): Promise<unknown> {
+async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEnv, door: ReleaseIdentity, args: readonly string[], limit: RunLimits): Promise<unknown> {
   const invocation = selfInvocation(args);
   const command = `agent-shim ${args.join(" ")}`;
   limit.signal?.throwIfAborted();
   const { status, signal, stdout, stderr, shortRead } = await new Promise<{ readonly status: number | null; readonly signal: NodeJS.Signals | null; readonly stdout: string; readonly stderr: string; readonly shortRead: { readonly received: number; readonly announced: number } | undefined }>((resolve, reject) => {
-    const child = limit.spawn(invocation.command, [...invocation.args], { stdio: ["ignore", "pipe", "pipe", "pipe"], env: { ...env, [REPORT_PROGRESS_FD_ENV]: reportProgressTarget(REPORT_PROGRESS_FD, process.pid, release) }, detached: true });
+    const child = limit.spawn(invocation.command, [...invocation.args], { stdio: ["ignore", "pipe", "pipe", "pipe"], env: { ...env, [REPORT_PROGRESS_FD_ENV]: reportProgressTarget(REPORT_PROGRESS_FD, process.pid, door) }, detached: true });
     const cleanups: (() => void)[] = [];
     const finish = (settle: () => void): void => {
       for (const cleanup of cleanups) {
@@ -210,13 +210,13 @@ function createCoalescer(): (key: string, collect: (signal: AbortSignal) => Prom
 /**
  * The door's `check` and `doctor` reports, each collected by a child of the door's own executable (`agent-shim check --json`, `agent-shim doctor --json`) rather than in the door's process: collecting them runs commands, reads the keychain and probes listeners and provider base URLs, every one of which blocks the calling thread, and the door's thread serves every session. Requests for the same report made while one runs share its child, and at most `MAX_REPORT_CHILDREN` children run at once, of any kind. See `runSelfJson` for how a child is watched and ended.
  */
-export function createDoorReports(deps: Readonly<{ selfInvocation: SelfInvocation; env: NodeJS.ProcessEnv; release: string; silenceMs?: number; spawn?: typeof spawn }>): DoorReports {
+export function createDoorReports(deps: Readonly<{ selfInvocation: SelfInvocation; env: NodeJS.ProcessEnv; door: ReleaseIdentity; silenceMs?: number; spawn?: typeof spawn }>): DoorReports {
   const spawnChild = deps.spawn ?? spawn;
   // `silenceMs` fixes the silence window for a test.
   const silenceMs = deps.silenceMs ?? reportSilenceWindowMs(REPORT_QUIET_MS);
   const gate = createGate(MAX_REPORT_CHILDREN);
   const coalesce = createCoalescer();
-  const collect = async (args: readonly string[], signal: AbortSignal): Promise<unknown> => await gate(async () => await runSelfJson(deps.selfInvocation, deps.env, deps.release, args, { silenceMs, signal, spawn: spawnChild }));
+  const collect = async (args: readonly string[], signal: AbortSignal): Promise<unknown> => await gate(async () => await runSelfJson(deps.selfInvocation, deps.env, deps.door, args, { silenceMs, signal, spawn: spawnChild }));
   return {
     checkReport: async (path, identity, signal) => CheckReportJsonSchema.parse(await coalesce(JSON.stringify(["check", path, identity ?? null]), async (ended) => await collect(["check", path, ...(identity === undefined ? [] : ["--identity", identity]), "--json"], ended), signal)),
     doctorReport: async (signal) => DoctorRunOutputSchema.parse(await coalesce("doctor", async (ended) => await collect(["doctor", "--json"], ended), signal)),

@@ -17,6 +17,7 @@ import { MAX_REPORT_CHILDREN } from "./reportLimits";
 
 /** The release the doors in these tests say they are. */
 const RELEASE = "12.0.0";
+const DOOR = { release: RELEASE, build: "door-build" };
 
 const DOCTOR = { ok: false, findings: [{ section: "provider", severity: "fail", message: "provider spark could not connect to http://192.0.2.1:8000: no connection accepted within 1500ms", subject: "spark" }] };
 
@@ -120,7 +121,7 @@ describe("reports requested together", () => {
   it("share one child for any number of requests for the same report, and each gets the report", async () => {
     for (const size of SIZES) {
       const children = controllableChildren();
-      const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, release: RELEASE, spawn: children.spawn });
+      const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, door: DOOR, spawn: children.spawn });
       const asked = Array.from({ length: size }, async () => reports.doctorReport(undefined));
       await settle();
       expect(children.started(), `size ${String(size)}`).toBe(1);
@@ -138,7 +139,7 @@ describe("reports requested together", () => {
   it("run no more children at once than the bound, however many different reports are asked for", async () => {
     for (const size of SIZES) {
       const children = controllableChildren();
-      const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, release: RELEASE, spawn: children.spawn });
+      const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, door: DOOR, spawn: children.spawn });
       const asked = Array.from({ length: size }, async (_, index) => reports.checkReport(`/work/${String(index)}`, undefined, undefined).catch(() => undefined));
       await settle();
       for (let finished = 0; finished < size; finished += 1) {
@@ -154,7 +155,7 @@ describe("reports requested together", () => {
 
   it("do not join a collection every request for it has abandoned, even while it still waits for a child slot", async () => {
     const children = controllableChildren();
-    const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, release: RELEASE, spawn: children.spawn });
+    const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, door: DOOR, spawn: children.spawn });
     // Both slots are busy, so a third report waits its turn.
     const busy = Array.from({ length: MAX_REPORT_CHILDREN }, async (_, index) => reports.checkReport(`/busy/${String(index)}`, undefined, undefined).catch(() => undefined));
     await settle();
@@ -186,7 +187,7 @@ describe("reports requested together", () => {
 
   it("end the child only when every request waiting on it has aborted", async () => {
     const children = controllableChildren();
-    const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, release: RELEASE, spawn: children.spawn });
+    const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, door: DOOR, spawn: children.spawn });
     const first = new AbortController();
     const second = new AbortController();
     const a = reports.doctorReport(first.signal).catch((error: unknown) => error);
@@ -219,7 +220,7 @@ describe("the bound on a report child", () => {
   function startReport() {
     vi.useFakeTimers();
     const fake = fakeReportChild();
-    const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, release: RELEASE, silenceMs: SILENCE_MS, spawn: fake.spawn });
+    const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, door: DOOR, silenceMs: SILENCE_MS, spawn: fake.spawn });
     const controller = new AbortController();
     const outcome = reports.doctorReport(controller.signal).then(() => "reported", (error: unknown) => (error instanceof Error ? error.message : String(error)));
     return {
@@ -283,7 +284,7 @@ describe("the bound on a report child", () => {
   it("waits, by default, a unit's whole allowance after the latest moment a unit whose note was dropped can start", async () => {
     vi.useFakeTimers();
     const fake = fakeReportChild();
-    const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, release: RELEASE, spawn: fake.spawn });
+    const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, door: DOOR, spawn: fake.spawn });
     const outcome = reports.doctorReport(new AbortController().signal).then(() => "reported", (error: unknown) => (error instanceof Error ? error.message : String(error)));
     fake.progress.write("work\n");
     await vi.advanceTimersByTimeAsync(0);
@@ -315,7 +316,7 @@ describe("the bound on a report child", () => {
       return real(handler, delay);
     }) as typeof setTimeout);
     const fake = fakeReportChild();
-    const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, release: RELEASE, silenceMs: SILENCE_MS, spawn: fake.spawn });
+    const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, door: DOOR, silenceMs: SILENCE_MS, spawn: fake.spawn });
     const controller = new AbortController();
     const outcome = reports.doctorReport(controller.signal).catch(() => undefined);
     fake.progress.write(`begin ${String(MAX_TIMER_DELAY_MS * 2)}\n`);
@@ -328,19 +329,19 @@ describe("the bound on a report child", () => {
   });
 
   it("starts its child with the descriptor its progress is announced on", async () => {
-    const reports = createDoorReports({ selfInvocation: nodeRunning(printing("{}")), env: {}, release: RELEASE });
+    const reports = createDoorReports({ selfInvocation: nodeRunning(printing("{}")), env: {}, door: DOOR });
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow();
-    const seen = createDoorReports({ selfInvocation: nodeRunning(`process.stderr.write(process.env.${REPORT_PROGRESS_FD_ENV} ?? "none"); process.exitCode = 1;`), env: {}, release: RELEASE });
+    const seen = createDoorReports({ selfInvocation: nodeRunning(`process.stderr.write(process.env.${REPORT_PROGRESS_FD_ENV} ?? "none"); process.exitCode = 1;`), env: {}, door: DOOR });
     await expect(seen.doctorReport(new AbortController().signal)).rejects.toThrow(String(REPORT_PROGRESS_FD));
   });
 
   it("names its own process, descriptor and release in the variable it gives the child", async () => {
-    const seen = createDoorReports({ selfInvocation: nodeRunning(`process.stderr.write(process.env.${REPORT_PROGRESS_FD_ENV} ?? "none"); process.exitCode = 1;`), env: {}, release: RELEASE });
-    await expect(seen.doctorReport(new AbortController().signal)).rejects.toThrow(reportProgressTarget(REPORT_PROGRESS_FD, process.pid, RELEASE));
+    const seen = createDoorReports({ selfInvocation: nodeRunning(`process.stderr.write(process.env.${REPORT_PROGRESS_FD_ENV} ?? "none"); process.exitCode = 1;`), env: {}, door: DOOR });
+    await expect(seen.doctorReport(new AbortController().signal)).rejects.toThrow(reportProgressTarget(REPORT_PROGRESS_FD, process.pid, DOOR));
   });
 
   it("says the door should be restarted when the executable it runs is gone", async () => {
-    const reports = createDoorReports({ selfInvocation: () => ({ command: path.join(os.tmpdir(), `no-such-agent-shim-${randomUUID()}`), args: [] }), env: {}, release: RELEASE });
+    const reports = createDoorReports({ selfInvocation: () => ({ command: path.join(os.tmpdir(), `no-such-agent-shim-${randomUUID()}`), args: [] }), env: {}, door: DOOR });
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(/is gone.*agent-shim frontdoor restart/);
   });
 });
@@ -355,7 +356,7 @@ describe("the door's check and doctor reports", () => {
         asked.push(args);
         return nodeRunning(`${printing(JSON.stringify(DOCTOR))} process.exitCode = 1;`)(args);
       },
-      env: {}, release: RELEASE,
+      env: {}, door: DOOR,
     });
     expect(await reports.doctorReport(new AbortController().signal)).toEqual(DOCTOR);
     expect(asked).toEqual([["doctor", "--json"]]);
@@ -368,19 +369,19 @@ describe("the door's check and doctor reports", () => {
         asked.push(args);
         return nodeRunning(printing("{}"))(args);
       },
-      env: {}, release: RELEASE,
+      env: {}, door: DOOR,
     });
     await expect(reports.checkReport("/work", "personal", new AbortController().signal)).rejects.toThrow();
     expect(asked).toEqual([["check", "/work", "--identity", "personal", "--json"]]);
   });
 
   it("fails with what the child said when it printed no report", async () => {
-    const reports = createDoorReports({ selfInvocation: nodeRunning("process.stderr.write('agent-shim: no identity named ghost\\n'); process.exitCode = 1;"), env: {}, release: RELEASE });
+    const reports = createDoorReports({ selfInvocation: nodeRunning("process.stderr.write('agent-shim: no identity named ghost\\n'); process.exitCode = 1;"), env: {}, door: DOOR });
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow("agent-shim: no identity named ghost");
   });
 
   it("refuses a report that does not match its schema", async () => {
-    const reports = createDoorReports({ selfInvocation: nodeRunning(printing(JSON.stringify({ ok: "yes" }))), env: {}, release: RELEASE });
+    const reports = createDoorReports({ selfInvocation: nodeRunning(printing(JSON.stringify({ ok: "yes" }))), env: {}, door: DOOR });
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow();
   });
 
@@ -416,7 +417,7 @@ describe("the door's check and doctor reports", () => {
 
   it("kills a child that has not reported within its bound, and fails naming the bound", async () => {
     const recorded = recordingSpawn();
-    const reports = createDoorReports({ selfInvocation: hungChild, env: {}, release: RELEASE, silenceMs: SHORT_BOUND_MS, spawn: recorded.spawn });
+    const reports = createDoorReports({ selfInvocation: hungChild, env: {}, door: DOOR, silenceMs: SHORT_BOUND_MS, spawn: recorded.spawn });
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`made no progress within ${String(SHORT_BOUND_MS)}ms`);
     const pid = recorded.children[0]?.pid;
     if (pid === undefined) {
@@ -427,7 +428,7 @@ describe("the door's check and doctor reports", () => {
 
   it("kills the child of a request whose client went away", async () => {
     const recorded = recordingSpawn();
-    const reports = createDoorReports({ selfInvocation: hungChild, env: {}, release: RELEASE, silenceMs: LONG_BOUND_MS, spawn: recorded.spawn });
+    const reports = createDoorReports({ selfInvocation: hungChild, env: {}, door: DOOR, silenceMs: LONG_BOUND_MS, spawn: recorded.spawn });
     const controller = new AbortController();
     const answered = reports.checkReport("/work", undefined, controller.signal);
     // The abort, not the bound, must be what ends the call.
@@ -444,7 +445,7 @@ describe("the door's check and doctor reports", () => {
   it("ends the child of an aborted request and of an expired bound with the same signal", async () => {
     const endedBy = async (abort: boolean): Promise<NodeJS.Signals | null> => {
       const recorded = recordingSpawn();
-      const reports = createDoorReports({ selfInvocation: hungChild, env: {}, release: RELEASE, silenceMs: abort ? LONG_BOUND_MS : SHORT_BOUND_MS, spawn: recorded.spawn });
+      const reports = createDoorReports({ selfInvocation: hungChild, env: {}, door: DOOR, silenceMs: abort ? LONG_BOUND_MS : SHORT_BOUND_MS, spawn: recorded.spawn });
       const controller = new AbortController();
       const answered = reports.doctorReport(controller.signal).catch(() => undefined);
       if (abort) {
@@ -467,7 +468,7 @@ describe("the door's check and doctor reports", () => {
     const spawnsGrandchild = nodeRunning(
       `const child = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => undefined, ${String(HOLD_MS)})"], { stdio: "ignore" }); require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); setInterval(() => undefined, ${String(HOLD_MS)});`,
     );
-    const reports = createDoorReports({ selfInvocation: spawnsGrandchild, env: {}, release: RELEASE, silenceMs: LONG_BOUND_MS });
+    const reports = createDoorReports({ selfInvocation: spawnsGrandchild, env: {}, door: DOOR, silenceMs: LONG_BOUND_MS });
     const controller = new AbortController();
     const answered = reports.doctorReport(controller.signal).catch(() => undefined);
     let grandchild: number | undefined;
@@ -497,7 +498,7 @@ describe("the door's check and doctor reports", () => {
     const recorded = recordingSpawn();
     const announced = 1_024;
     const endless = nodeRunning(`process.stdout.write(${JSON.stringify(encodeReportSize(announced))}); const line = "x".repeat(${String(announced)}); setInterval(() => process.stdout.write(line), 1);`);
-    const reports = createDoorReports({ selfInvocation: endless, env: {}, release: RELEASE, silenceMs: LONG_BOUND_MS, spawn: recorded.spawn });
+    const reports = createDoorReports({ selfInvocation: endless, env: {}, door: DOOR, silenceMs: LONG_BOUND_MS, spawn: recorded.spawn });
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`printed more than the ${String(announced)} bytes it announced`);
     const pid = recorded.children[0]?.pid;
     if (pid === undefined) {
@@ -512,7 +513,7 @@ describe("the door's check and doctor reports", () => {
     const BIG_MIB = 40;
     const BIG_BYTES = BIG_MIB * BYTES_PER_MIB;
     const script = `const body = '{"padding":"' + "x".repeat(${String(BIG_BYTES)}) + '"}'; process.stdout.write(${JSON.stringify(REPORT_SIZE_PREFIX)} + Buffer.byteLength(body) + "\\n"); process.stdout.write(body); process.exitCode = 1;`;
-    const reports = createDoorReports({ selfInvocation: nodeRunning(script), env: {}, release: RELEASE });
+    const reports = createDoorReports({ selfInvocation: nodeRunning(script), env: {}, door: DOOR });
     // The report is read whole, past what a fixed cap would allow, and then refused by its schema.
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(/expected|invalid|required/i);
   });
@@ -520,7 +521,7 @@ describe("the door's check and doctor reports", () => {
   it("names the short read when a child exits having printed fewer bytes than it announced", async () => {
     const announced = 100;
     const partial = '{"a":1}';
-    const reports = createDoorReports({ selfInvocation: nodeRunning(`process.stdout.write(${JSON.stringify(encodeReportSize(announced))}); process.stdout.write(${JSON.stringify(partial)});`), env: {}, release: RELEASE });
+    const reports = createDoorReports({ selfInvocation: nodeRunning(`process.stdout.write(${JSON.stringify(encodeReportSize(announced))}); process.stdout.write(${JSON.stringify(partial)});`), env: {}, door: DOOR });
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`exited 0 having printed ${String(partial.length)} of the ${String(announced)} bytes it announced`);
   });
 
@@ -528,45 +529,45 @@ describe("the door's check and doctor reports", () => {
     const announced = 100;
     const partial = '{"a":1}';
     const script = `process.stdout.write(${JSON.stringify(encodeReportSize(announced))}); process.stdout.write(${JSON.stringify(partial)}); process.stderr.write("out of memory"); setTimeout(() => process.kill(process.pid, "SIGKILL"), 20);`;
-    const reports = createDoorReports({ selfInvocation: nodeRunning(script), env: {}, release: RELEASE });
+    const reports = createDoorReports({ selfInvocation: nodeRunning(script), env: {}, door: DOOR });
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`was ended by SIGKILL having printed ${String(partial.length)} of the ${String(announced)} bytes it announced: out of memory`);
   });
 
   it("names the short read, and what the child said, when a child announces a size and prints nothing before it dies", async () => {
     const announced = 100;
     const script = `process.stdout.write(${JSON.stringify(encodeReportSize(announced))}); process.stderr.write("could not read the keychain"); process.exitCode = 1;`;
-    const reports = createDoorReports({ selfInvocation: nodeRunning(script), env: {}, release: RELEASE });
+    const reports = createDoorReports({ selfInvocation: nodeRunning(script), env: {}, door: DOOR });
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`exited 1 having printed 0 of the ${String(announced)} bytes it announced: could not read the keychain`);
   });
 
   it("names a short read, not an over-long one, when a child is cut off inside a multibyte character", async () => {
     const announced = 10;
     const script = `process.stdout.write(Buffer.concat([Buffer.from(${JSON.stringify(encodeReportSize(announced))}), Buffer.from("aaaaaaaa"), Buffer.from([0xc3])]));`;
-    const reports = createDoorReports({ selfInvocation: nodeRunning(script), env: {}, release: RELEASE });
+    const reports = createDoorReports({ selfInvocation: nodeRunning(script), env: {}, door: DOOR });
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`exited 0 having printed 9 of the ${String(announced)} bytes it announced`);
   });
 
   it("accepts a healthy multibyte report the child printed in pieces", async () => {
     const report = JSON.stringify({ findings: [], ok: true, note: "é€😀" });
     const script = `const body = Buffer.from(${JSON.stringify(report)}); process.stdout.write(${JSON.stringify(encodeReportSize(Buffer.byteLength(report)))}); process.stdout.write(body.subarray(0, 25)); setTimeout(() => process.stdout.write(body.subarray(25)), 30);`;
-    const reports = createDoorReports({ selfInvocation: nodeRunning(script), env: {}, release: RELEASE });
+    const reports = createDoorReports({ selfInvocation: nodeRunning(script), env: {}, door: DOOR });
     const failure = await reports.doctorReport(new AbortController().signal).then(() => "", (error: unknown) => (error instanceof Error ? error.message : String(error)));
     expect(failure).not.toContain("bytes it announced");
     expect(failure).not.toContain("not JSON");
   });
 
   it("still says it exited without a report when a child announced nothing and printed nothing", async () => {
-    const reports = createDoorReports({ selfInvocation: nodeRunning("process.exitCode = 3;"), env: {}, release: RELEASE });
+    const reports = createDoorReports({ selfInvocation: nodeRunning("process.exitCode = 3;"), env: {}, door: DOOR });
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow("exited 3 without a report");
   });
 
   it("ends a child that prints without announcing a size", async () => {
-    const reports = createDoorReports({ selfInvocation: nodeRunning(`process.stdout.write("{}".repeat(100));`), env: {}, release: RELEASE, silenceMs: LONG_BOUND_MS });
+    const reports = createDoorReports({ selfInvocation: nodeRunning(`process.stdout.write("{}".repeat(100));`), env: {}, door: DOOR, silenceMs: LONG_BOUND_MS });
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow("printed output without announcing its size");
   });
 
   it("names what the child wrote to stderr when its stdout is not JSON", async () => {
-    const reports = createDoorReports({ selfInvocation: nodeRunning(`process.stderr.write('warning: the keychain is locked\\n'); ${printing("not json at all")}`), env: {}, release: RELEASE });
+    const reports = createDoorReports({ selfInvocation: nodeRunning(`process.stderr.write('warning: the keychain is locked\\n'); ${printing("not json at all")}`), env: {}, door: DOOR });
     const failure = await reports.doctorReport(new AbortController().signal).catch((caught: unknown) => caught);
     expect(failure).toBeInstanceOf(Error);
     expect((failure as Error).message).toContain("agent-shim doctor --json printed output that is not JSON");
@@ -574,7 +575,7 @@ describe("the door's check and doctor reports", () => {
   });
 
   it("keeps only the end of a long stderr in what it reports", async () => {
-    const reports = createDoorReports({ selfInvocation: nodeRunning("process.stderr.write('FIRST' + 'x'.repeat(100000) + 'LAST'); process.exitCode = 3;"), env: {}, release: RELEASE });
+    const reports = createDoorReports({ selfInvocation: nodeRunning("process.stderr.write('FIRST' + 'x'.repeat(100000) + 'LAST'); process.exitCode = 3;"), env: {}, door: DOOR });
     const failure = await reports.doctorReport(new AbortController().signal).catch((caught: unknown) => caught);
     expect((failure as Error).message).toContain("LAST");
     expect((failure as Error).message).not.toContain("FIRST");
