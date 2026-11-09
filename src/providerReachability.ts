@@ -1,6 +1,6 @@
 import { isHttpProvider, type HttpProvider, type Provider } from "./config/schema";
 import { displayBaseUrl } from "./baseUrlDisplay";
-import { startAddressProbes, type ListenerVerdict, type ProbeWorkers } from "./frontdoor/probe";
+import { startAddressProbes, type ListenerVerdict, type ProbeWorkers, type StartedProbe } from "./frontdoor/probe";
 
 /**
  * The retransmission timeout a TCP sender uses before it has measured any round trip, which is the case for every connection's SYN: RFC 6298 section 2.1 sets it to one second, and both macOS and Linux start their SYN retransmissions from it.
@@ -98,14 +98,8 @@ export const startBaseUrlBatchProbe = (targets: readonly BaseUrlTarget[], worker
 /** The real batch probe: each connect on a worker thread, up to `MAX_CONCURRENT_PROBES` of them started before the calling thread blocks on the first verdict. */
 export const realBaseUrlBatchProbe = (targets: readonly BaseUrlTarget[], workers?: ProbeWorkers): readonly ListenerVerdict[] => startBaseUrlBatchProbe(targets, workers).verdicts();
 
-/** A probe of one base URL that has been started: `verdict` blocks until it answers; `cancel` ends its worker. */
-export interface StartedBaseUrlProbe {
-  readonly verdict: () => ListenerVerdict;
-  readonly cancel: () => void;
-}
-
-/** Starts a probe of one base URL within `timeoutMs` without waiting for it. */
-export type StartBaseUrlProbe = (baseUrl: string, timeoutMs: number) => StartedBaseUrlProbe;
+/** Starts a probe of one base URL within `timeoutMs` without waiting for it: `verdict` blocks until it answers, `cancel` ends its worker. */
+export type StartBaseUrlProbe = (baseUrl: string, timeoutMs: number) => StartedProbe;
 
 /** The real start of a one-URL probe: a batch of one. */
 export const realStartBaseUrlProbe: StartBaseUrlProbe = (baseUrl, timeoutMs) => {
