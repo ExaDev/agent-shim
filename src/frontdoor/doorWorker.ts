@@ -19,7 +19,7 @@ import { doorWorkerInputSchemas, isDoorWorkerMessage, type DoorProcessFacts, typ
 /**
  * The code text a door worker evaluates, read once by the door when it starts: the embedded asset of a single-executable build, otherwise the command line bundle at `bundlePath`. The text is held in memory, so removing or replacing the file afterwards changes nothing.
  */
-function readDoorWorkerCode(bundlePath: string): string {
+export function readDoorWorkerCode(bundlePath: string): string {
   return isSea() ? getAsset(DOOR_WORKER_CODE_ASSET, "utf8") : fs.readFileSync(bundlePath, "utf8");
 }
 

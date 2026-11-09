@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Worker } from "node:worker_threads";
 
 import * as esbuild from "esbuild";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -14,6 +15,34 @@ import { enterProcessRole } from "../processRole";
 
 /** The longest a test waits for the real worker to evaluate the bundle and answer: a bound a loaded machine does not reach, since the wait is on the worker's answer and not on a clock. */
 const REAL_WORKER_TEST_BUDGET_MS = 120_000;
+
+/** How often the tick counter's timer fires, in milliseconds: far shorter than a worker takes to start and evaluate the bundle. */
+const TICK_MS = 5;
+/** How long the blocked control holds its thread, in milliseconds. */
+const CONTROL_BLOCK_MS = 100;
+
+/** Runs `work` while a timer on this thread counts its ticks, and answers what it returned and how many fell before it settled. */
+async function ticksDuring<T>(work: () => Promise<T>): Promise<readonly [T, number]> {
+  let ticks = 0;
+  const timer = setInterval(() => {
+    ticks += 1;
+  }, TICK_MS);
+  try {
+    return [await work(), ticks];
+  } finally {
+    clearInterval(timer);
+  }
+}
+
+describe("the tick counter that shows the door's thread free", () => {
+  it("counts no tick while the thread is blocked, which is what a report collected on it would give", async () => {
+    const [, ticks] = await ticksDuring(async () => {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)), 0, 0, CONTROL_BLOCK_MS);
+      return await Promise.resolve("blocked");
+    });
+    expect(ticks).toBe(0);
+  });
+});
 
 describe("a door worker running the real bundle", () => {
   let dir: string;
@@ -39,29 +68,19 @@ describe("a door worker running the real bundle", () => {
     async () => {
       const leave = enterProcessRole("frontdoor-supervisor");
       const host = createDoorWorkerHost({ code, facts: { ownExecutablePath: bundlePath, contentSourcePath: bundlePath }, deadlineMs: { check: REAL_WORKER_TEST_BUDGET_MS, doctor: REAL_WORKER_TEST_BUDGET_MS, "refresh-catalogue": REAL_WORKER_TEST_BUDGET_MS } });
-      let ticks = 0;
-      let running = true;
-      const spin = (): void => {
-        if (running) {
-          ticks += 1;
-          setImmediate(spin);
-        }
-      };
-      spin();
       try {
         const root = path.join(dir, "home");
         fs.mkdirSync(path.join(root, "providers"), { recursive: true });
         // A provider whose base URL nothing listens on: collecting its report runs the launcher's synchronous probe, which the door's own role refuses.
         fs.writeFileSync(path.join(root, "providers", "closed.json"), JSON.stringify({ displayName: "Closed", baseUrl: "http://127.0.0.1:1", credential: { sources: [{ literal: "placeholder" }] } }));
-        const doctor = await host.run("doctor", { root }, (value) => DoctorRunOutputSchema.parse(value));
+        const [doctor, ticks] = await ticksDuring(async () => await host.run("doctor", { root }, (value) => DoctorRunOutputSchema.parse(value)));
+        // The door's own thread kept running while the report was collected: timer ticks fell between the request and its answer, which a report collected on this thread cannot allow.
+        expect(ticks).toBeGreaterThan(0);
         expect(doctor.findings.some((finding) => finding.section === "provider" && finding.message.includes("could not connect"))).toBe(true);
         const check = await host.run("check", { root, path: dir }, (value) => CheckReportJsonSchema.parse(value));
         // Whatever the machine's own Claude home holds (nothing, on a clean runner), the report came back whole and passed its schema.
         expect(Array.isArray(check.entries)).toBe(true);
-        // The door's own thread kept running while the reports were collected.
-        expect(ticks).toBeGreaterThan(1);
       } finally {
-        running = false;
         host.stop();
         leave();
       }
@@ -135,6 +154,29 @@ describe("a door worker running the real bundle", () => {
           }
         }
       }
+    },
+    REAL_WORKER_TEST_BUDGET_MS,
+  );
+
+  it(
+    "runs the command line in the main thread and nothing in a worker that was not given a door task",
+    async () => {
+      const installed = path.join(dir, "main-thread-cli.cjs");
+      fs.writeFileSync(installed, code);
+      const main = spawnSync(process.execPath, [installed, "--version"], { encoding: "utf8" });
+      expect(main.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/u);
+      // The same text evaluated in a worker with no door data (any other worker) prints nothing and ends, instead of running the command line.
+      const worker = new Worker(code, { eval: true, argv: ["--version"], stdout: true });
+      const printed: Buffer[] = [];
+      worker.stdout.on("data", (chunk: Buffer) => {
+        printed.push(chunk);
+      });
+      const exitCode = await new Promise<number>((resolve, reject) => {
+        worker.once("error", reject);
+        worker.once("exit", resolve);
+      });
+      expect(exitCode).toBe(0);
+      expect(Buffer.concat(printed).toString("utf8")).toBe("");
     },
     REAL_WORKER_TEST_BUDGET_MS,
   );
