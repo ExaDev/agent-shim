@@ -3,6 +3,7 @@ import fs from "node:fs";
 import packageJson from "../../package.json";
 import { CliError } from "../cliError";
 import { fileKey } from "../fileIdentity";
+import { realContentSourcePath } from "../realPorts";
 import { noteFileSystemWork, observeBlockingSteps } from "../blockingSteps";
 import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS } from "../providerReachability";
 
@@ -35,15 +36,27 @@ export function executableFingerprint(file: string): string {
   }
 }
 
-/** The fingerprint of the executable this process runs: the script it was started with, or the executable itself under a single executable application, as the bundle's `import.meta.url` stand-in names it. */
-function ownExecutableFingerprint(): string {
-  return executableFingerprint(process.argv[1] ?? process.execPath);
+/** What a process fingerprints once, the first time it is asked, and gives back ever after: the build it started as, however the file is replaced while it runs. */
+export interface BuildCapture {
+  /** The fingerprint taken now if none was taken yet, else the one taken first. */
+  readonly capture: () => string;
+  /** The fingerprint taken, or undefined when none was: a process that never asked (a library host) has no build of its own to compare. */
+  readonly captured: () => string | undefined;
 }
 
-/** Which agent-shim this process is: the release of its package and the fingerprint of the executable it runs. The door puts it in the variable it gives a report child, and the child compares it with its own. */
-export function ownReleaseIdentity(): ReleaseIdentity {
-  return { release: packageJson.version, build: ownExecutableFingerprint() };
+/** A `BuildCapture` over `fingerprint`, taken at most once. */
+export function createBuildCapture(fingerprint: () => string): BuildCapture {
+  let taken: string | undefined;
+  return {
+    capture: () => (taken ??= fingerprint()),
+    captured: () => taken,
+  };
 }
+
+/**
+ * The build of the agent-shim command line this process is, captured when it starts (`installReportProgress` takes it first thing in `cli.ts`): the fingerprint of the file whose content is this process, the one `selfInvocation` re-runs (`realContentSourcePath`: the executable under a single executable application, the script path otherwise), not of whatever file `argv[1]` names for another kind of host. A door that outlives an in-place upgrade therefore keeps the build it started as, and a respawn of its supervisor does not read the new file.
+ */
+export const processBuild: BuildCapture = createBuildCapture(() => executableFingerprint(realContentSourcePath()));
 
 /** The value of `REPORT_PROGRESS_FD_ENV` for a child of process `parentPid`, a front door of identity `door`, that is to announce on `fd`: the descriptor, the process that opened it, the release of the door and its build. A process that inherited the variable from further up, or from a shell, is not that process's child, and `installReportProgress` ignores it. */
 export function reportProgressTarget(fd: number, parentPid: number, door: Readonly<ReleaseIdentity>): string {
@@ -192,7 +205,7 @@ export function createReportProgressReader(onEvent: (event: ReportProgress) => v
 /**
  * Makes this process announce each of its blocking steps on the descriptor `env` names (`REPORT_PROGRESS_FD_ENV`), gives a step that names no bound `REPORT_UNBOUNDED_STEP_LIMIT_MS`, counts every synchronous call of `fsModule` (`node:fs`) as local work (`noteFileSystemWork`), and prints the size of a report before it with `writeOutput` (`encodeReportSize`); nothing happens when `env` names no descriptor, or a value that does not name this process's parent as the process that opened the descriptor (`reportProgressTarget`), which is what a process that inherited the variable from further up sees. The variable is removed from `env` whenever it was set (`env` is the process's own environment, mutable in spite of its type), so no process this one starts inherits it. `own` is this process's parent and its release and build in production; a door of another release, or of another build of this release (compared when both sides have a fingerprint), makes this throw `ReportReleaseSkewError`, so the report is refused with a message and not printed in a form the door cannot read. `write` is `fs.writeSync` and `now` the monotonic clock in production; `work` is announced at most once per `LOCAL_WORK_ANNOUNCE_INTERVAL_MS`, counted from the last announcement of any kind. Returns what stops the announcing, or undefined when it was never started.
  */
-export function installReportProgress(env: Readonly<Record<string, string | undefined>>, write: (fd: number, text: string) => void = (fd, text) => { fs.writeSync(fd, text); }, now: () => number = () => performance.now(), fsModule: object = fs, writeOutput: (text: string) => void = (text) => { process.stdout.write(text); }, own: Readonly<{ parentPid: number; identity: ReleaseIdentity }> = { parentPid: process.ppid, identity: ownReleaseIdentity() }): (() => void) | undefined {
+export function installReportProgress(env: Readonly<Record<string, string | undefined>>, write: (fd: number, text: string) => void = (fd, text) => { fs.writeSync(fd, text); }, now: () => number = () => performance.now(), fsModule: object = fs, writeOutput: (text: string) => void = (text) => { process.stdout.write(text); }, own: Readonly<{ parentPid: number; identity: ReleaseIdentity }> = { parentPid: process.ppid, identity: { release: packageJson.version, build: processBuild.capture() } }): (() => void) | undefined {
   const fd = env[REPORT_PROGRESS_FD_ENV];
   if (fd === undefined) {
     return undefined;

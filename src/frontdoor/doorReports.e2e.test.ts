@@ -143,6 +143,12 @@ describe.skipIf(process.platform === "win32")("the front door's check and doctor
     await expect(rebuilt.doctorReport(undefined)).rejects.toThrow(/runs a different build of agent-shim.*agent-shim frontdoor restart/);
     const same = createDoorReports({ selfInvocation, env, door: { release: packageJson.version, build: executableFingerprint(cli) } });
     expect((await same.doctorReport(undefined)).findings.length).toBeGreaterThan(0);
+    // A library host: its process is not the command line (here, the test runner), so it has no build of its own to compare, and the report is read on the release alone.
+    const libraryHost = createDoorReports({ selfInvocation, env });
+    expect((await libraryHost.doctorReport(undefined)).findings.length).toBeGreaterThan(0);
+    // A library host that names the command line by an executable path, as the documentation shows, is no different.
+    const byPath = createDoorReports({ selfInvocation: (args) => ({ command: process.execPath, args: [path.resolve(cli), ...args] }), env });
+    expect((await byPath.doctorReport(undefined)).findings.length).toBeGreaterThan(0);
   }, SUITE_TIMEOUT_MS);
 
   it("has the bundled doctor announce the provider probe's step and its end on the descriptor it is given, and its report's size before the report", async () => {

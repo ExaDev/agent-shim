@@ -3,9 +3,10 @@ import { Readable } from "node:stream";
 
 import { CheckReportJsonSchema, type CheckReportJson } from "../checkReportSchema";
 import { MAX_TIMER_DELAY_MS } from "../config/schema";
+import packageJson from "../../package.json";
 import { PROBE_WAIT_MARGIN_MS } from "./probe";
 import { MAX_REPORT_CHILDREN } from "./reportLimits";
-import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, reportProgressTarget, REPORT_QUIET_MS, createReportOutputReader, createReportProgressReader, reportSilenceWindowMs, ownReleaseIdentity, type ReleaseIdentity } from "./reportProgress";
+import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, reportProgressTarget, REPORT_QUIET_MS, createReportOutputReader, createReportProgressReader, reportSilenceWindowMs, processBuild, type ReleaseIdentity } from "./reportProgress";
 import { DoctorRunOutputSchema } from "./controlSchemas";
 import type { DoctorReport } from "../doctorReport";
 
@@ -220,7 +221,7 @@ function createCoalescer(): (key: string, collect: (signal: AbortSignal) => Prom
 }
 
 /**
- * The door's `check` and `doctor` reports, each collected by a child of the door's own executable (`agent-shim check --json`, `agent-shim doctor --json`) rather than in the door's process: collecting them runs commands, reads the keychain and probes listeners and provider base URLs, every one of which blocks the calling thread, and the door's thread serves every session. `door` is the identity of the agent-shim that serves the reports, `ownReleaseIdentity()` of the running process unless a host says otherwise. Requests for the same report made while one runs share its child, and at most `MAX_REPORT_CHILDREN` children run at once, of any kind. See `runSelfJson` for how a child is watched and ended.
+ * The door's `check` and `doctor` reports, each collected by a child of the door's own executable (`agent-shim check --json`, `agent-shim doctor --json`) rather than in the door's process: collecting them runs commands, reads the keychain and probes listeners and provider base URLs, every one of which blocks the calling thread, and the door's thread serves every session. `door` is the identity of the agent-shim that serves the reports: the release of this package and, in the command line's own door, the build it started as (`processBuild`); a library host, whose process is not the command line, has no build of its own and compares the release alone, unless it passes an identity. Requests for the same report made while one runs share its child, and at most `MAX_REPORT_CHILDREN` children run at once, of any kind. See `runSelfJson` for how a child is watched and ended.
  */
 export function createDoorReports(deps: Readonly<{ selfInvocation: SelfInvocation; env: NodeJS.ProcessEnv; door?: ReleaseIdentity; silenceMs?: number; spawn?: typeof spawn }>): DoorReports {
   const spawnChild = deps.spawn ?? spawn;
@@ -228,7 +229,7 @@ export function createDoorReports(deps: Readonly<{ selfInvocation: SelfInvocatio
   const silenceMs = deps.silenceMs ?? reportSilenceWindowMs(REPORT_QUIET_MS);
   const gate = createGate(MAX_REPORT_CHILDREN);
   const coalesce = createCoalescer();
-  const collect = async (args: readonly string[], signal: AbortSignal): Promise<unknown> => await gate(async () => await runSelfJson(deps.selfInvocation, deps.env, deps.door ?? ownReleaseIdentity(), args, { silenceMs, signal, spawn: spawnChild }));
+  const collect = async (args: readonly string[], signal: AbortSignal): Promise<unknown> => await gate(async () => await runSelfJson(deps.selfInvocation, deps.env, deps.door ?? { release: packageJson.version, build: processBuild.captured() ?? "" }, args, { silenceMs, signal, spawn: spawnChild }));
   return {
     checkReport: async (path, identity, signal) => CheckReportJsonSchema.parse(await coalesce(JSON.stringify(["check", path, identity ?? null]), async (ended) => await collect(["check", path, ...(identity === undefined ? [] : ["--identity", identity]), "--json"], ended), signal)),
     doctorReport: async (signal) => DoctorRunOutputSchema.parse(await coalesce("doctor", async (ended) => await collect(["doctor", "--json"], ended), signal)),

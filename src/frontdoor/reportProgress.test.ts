@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import packageJson from "../../package.json";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { announceReportOutput, noteLocalWork, withBlockingStep } from "../blockingSteps";
@@ -18,7 +17,8 @@ import {
   installReportProgress,
   ReportReleaseSkewError,
   executableFingerprint,
-  ownReleaseIdentity,
+  createBuildCapture,
+  processBuild,
   type ReleaseIdentity,
   reportProgressTarget,
   LOCAL_WORK_ANNOUNCE_INTERVAL_MS,
@@ -168,10 +168,36 @@ describe("executableFingerprint", () => {
   });
 });
 
-describe("ownReleaseIdentity", () => {
-  it("is this package's version and the fingerprint of the file this process was started from", () => {
-    expect(ownReleaseIdentity()).toEqual({ release: packageJson.version, build: executableFingerprint(process.argv[1] ?? process.execPath) });
-    expect(ownReleaseIdentity().build).not.toBe("");
+describe("the build a process captures at its start", () => {
+  it("is the fingerprint taken the first time it is asked, however the file is replaced afterwards", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "capture-"));
+    try {
+      const file = path.join(directory, "cli.cjs");
+      fs.writeFileSync(file, "old");
+      const capture = createBuildCapture(() => executableFingerprint(file));
+      expect(capture.captured()).toBeUndefined();
+      const atStart = capture.capture();
+      expect(atStart).not.toBe("");
+      // An in-place upgrade replaces the file while the process runs; a respawn of its supervisor asks again.
+      const incoming = path.join(directory, "incoming");
+      fs.writeFileSync(incoming, "new, and longer");
+      fs.renameSync(incoming, file);
+      expect(executableFingerprint(file)).not.toBe(atStart);
+      expect(capture.capture()).toBe(atStart);
+      expect(capture.captured()).toBe(atStart);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("is taken from the file the process re-runs, by installing the report progress", () => {
+    const before = processBuild.captured();
+    uninstall = installReportProgress({}, () => undefined, () => 0, {}, () => undefined);
+    expect(processBuild.captured()).not.toBe("");
+    expect(processBuild.captured()).toBeDefined();
+    if (before !== undefined) {
+      expect(processBuild.captured()).toBe(before);
+    }
   });
 });
 

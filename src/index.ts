@@ -190,6 +190,7 @@ export {
   type DoorApiRouter,
 } from "./frontdoor/controlApi";
 export { createDoorReports, type DoorReports, type SelfInvocation } from "./frontdoor/doorReports";
+export { executableFingerprint, type ReleaseIdentity } from "./frontdoor/reportProgress";
 export { createConfigApiRouter, type ConfigApiDeps, type ConfigApiRouter } from "./frontdoor/configApi";
 export {
   ConfigIdentityAddInputSchema,
