@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -11,7 +11,7 @@ import { realFarmFs } from "../realPorts";
 import { frontDoorApiClient } from "./controlApi";
 import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS } from "../providerReachability";
 import { PROBE_WAIT_MARGIN_MS, PROBE_WORKER_START_LIMIT_MS } from "./probe";
-import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, createReportProgressReader, encodeReportSize, type ReportProgress } from "./reportProgress";
+import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, reportProgressTarget, createReportProgressReader, encodeReportSize, type ReportProgress } from "./reportProgress";
 import { readFrontDoorState } from "./state";
 
 const BUNDLE_TARGET = "node22";
@@ -103,6 +103,29 @@ describe.skipIf(process.platform === "win32")("the front door's check and doctor
     expect(check.providerReachability).toMatchObject({ ok: false });
   }, SUITE_TIMEOUT_MS);
 
+  it("ignores the progress variable when it was not set by this process's parent, so an inherited variable neither corrupts the JSON on standard output nor writes into a file", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "door-reports-stray-e2e-"));
+    cleanups.push(() => {
+      fs.rmSync(home, { recursive: true, force: true });
+    });
+    const cli = await bundleCli(home);
+    const file = path.join(home, "descriptor-target");
+    fs.writeFileSync(file, "");
+    const open = fs.openSync(file, "r+");
+    cleanups.push(() => {
+      fs.closeSync(open);
+    });
+    const runWith = (descriptorStdio: "ignore" | number): string => {
+      const result = spawnSync(process.execPath, [cli, "identity", "list", "--json"], { env: { ...process.env, AGENT_SHIM_HOME: home, [REPORT_PROGRESS_FD_ENV]: reportProgressTarget(REPORT_PROGRESS_FD, process.pid + 1) }, stdio: ["ignore", "pipe", "pipe", descriptorStdio], encoding: "utf8" });
+      expect(result.status, result.stderr).toBe(0);
+      return result.stdout;
+    };
+    // A variable naming a descriptor that is not open, and one that is an ordinary file, as a shell that exported it would give: standard output is the list alone, and the file is untouched.
+    expect(JSON.parse(runWith("ignore"))).toEqual([]);
+    expect(JSON.parse(runWith(open))).toEqual([]);
+    expect(fs.readFileSync(file, "utf8")).toBe("");
+  }, SUITE_TIMEOUT_MS);
+
   it("has the bundled doctor announce the provider probe's step and its end on the descriptor it is given, and its report's size before the report", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "door-reports-progress-e2e-"));
     cleanups.push(() => {
@@ -112,7 +135,7 @@ describe.skipIf(process.platform === "win32")("the front door's check and doctor
     fs.mkdirSync(layout.providersDir, { recursive: true });
     fs.writeFileSync(path.join(layout.providersDir, "refused.json"), JSON.stringify({ displayName: "Refused", baseUrl: REFUSED_BASE_URL, credential: { sources: [{ literal: "placeholder" }] } }));
     const cli = await bundleCli(home);
-    const child = spawn(process.execPath, [cli, "doctor", "--json"], { env: { ...process.env, AGENT_SHIM_HOME: home, [REPORT_PROGRESS_FD_ENV]: String(REPORT_PROGRESS_FD) }, stdio: ["ignore", "pipe", "ignore", "pipe"] });
+    const child = spawn(process.execPath, [cli, "doctor", "--json"], { env: { ...process.env, AGENT_SHIM_HOME: home, [REPORT_PROGRESS_FD_ENV]: reportProgressTarget(REPORT_PROGRESS_FD, process.pid) }, stdio: ["ignore", "pipe", "ignore", "pipe"] });
     let printed = "";
     const standardOutput = child.stdout;
     if (!(standardOutput instanceof Readable)) {

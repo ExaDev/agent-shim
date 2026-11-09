@@ -12,6 +12,7 @@ import {
   reportSilenceWindowMs,
   encodeReportProgress,
   installReportProgress,
+  reportProgressTarget,
   LOCAL_WORK_ANNOUNCE_INTERVAL_MS,
   type ReportProgress,
 } from "./reportProgress";
@@ -57,7 +58,34 @@ describe("the progress stream", () => {
   });
 });
 
+const PARENT = 4_242;
+
+/** The value a door that is process `PARENT` gives a child announcing on `DESCRIPTOR`. */
+const TARGET = reportProgressTarget(DESCRIPTOR, PARENT);
+
+/** `installReportProgress` as the child of process `PARENT`. */
+function installAsChild(env: Readonly<Record<string, string | undefined>>, write: (fd: number, text: string) => void, now: () => number = () => 0, fsModule: object = {}, writeOutput: (text: string) => void = () => undefined): (() => void) | undefined {
+  return installReportProgress(env, write, now, fsModule, writeOutput, PARENT);
+}
+
 describe("installReportProgress", () => {
+  it("removes the variable from the environment it was read from, so no process started later inherits it", () => {
+    const env: Record<string, string | undefined> = { [REPORT_PROGRESS_FD_ENV]: String(DESCRIPTOR), OTHER: "kept" };
+    uninstall = installAsChild(env, () => undefined);
+    expect(env).toEqual({ OTHER: "kept" });
+  });
+
+  it("removes the variable and announces nothing when it does not name this process's parent, or is not a descriptor and a parent", () => {
+    for (const named of [reportProgressTarget(DESCRIPTOR, PARENT + 1), String(DESCRIPTOR), "not-a-number", "3:x", "3.5:4242", "-1:4242", "", ":4242", "3:"]) {
+      const written: string[] = [];
+      const env: Record<string, string | undefined> = { [REPORT_PROGRESS_FD_ENV]: named };
+      expect(installReportProgress(env, (_fd, text) => { written.push(text); }, () => 0, {}, () => undefined, PARENT), named).toBeUndefined();
+      withBlockingStep(undefined, () => undefined);
+      expect(env).toEqual({});
+      expect(written).toEqual([]);
+    }
+  });
+
   it("does nothing when the environment names no descriptor", () => {
     const written: string[] = [];
     expect(installReportProgress({}, (_fd, text) => { written.push(text); })).toBeUndefined();
@@ -67,7 +95,7 @@ describe("installReportProgress", () => {
 
   it("writes each step's bound and end to the named descriptor, and gives an unbounded step the report limit", () => {
     const written: { readonly fd: number; readonly text: string }[] = [];
-    uninstall = installReportProgress({ [REPORT_PROGRESS_FD_ENV]: String(DESCRIPTOR) }, (fd, text) => { written.push({ fd, text }); });
+    uninstall = installAsChild({ [REPORT_PROGRESS_FD_ENV]: TARGET }, (fd, text) => { written.push({ fd, text }); });
     expect(withBlockingStep(STEP_BOUND_MS, (bound) => bound)).toBe(STEP_BOUND_MS);
     expect(withBlockingStep(undefined, (bound) => bound)).toBe(REPORT_UNBOUNDED_STEP_LIMIT_MS);
     expect(written).toEqual([
@@ -83,7 +111,7 @@ describe("local work announcements", () => {
   it("are written at most once per interval, counted from the last announcement of any kind", () => {
     const written: string[] = [];
     let clock = 0;
-    uninstall = installReportProgress({ [REPORT_PROGRESS_FD_ENV]: String(DESCRIPTOR) }, (_fd, text) => { written.push(text); }, () => clock);
+    uninstall = installAsChild({ [REPORT_PROGRESS_FD_ENV]: TARGET }, (_fd, text) => { written.push(text); }, () => clock);
     noteLocalWork();
     expect(written).toEqual([]);
     clock = LOCAL_WORK_ANNOUNCE_INTERVAL_MS - 1;
@@ -109,7 +137,7 @@ describe("local work announcements", () => {
     let clock = 0;
     const module = { statSync: () => "stat" };
     const original = module.statSync;
-    const stop = installReportProgress({ [REPORT_PROGRESS_FD_ENV]: String(DESCRIPTOR) }, (_fd, text) => { written.push(text); }, () => clock, module);
+    const stop = installAsChild({ [REPORT_PROGRESS_FD_ENV]: TARGET }, (_fd, text) => { written.push(text); }, () => clock, module);
     uninstall = stop;
     expect(module.statSync()).toBe("stat");
     expect(written).toEqual([]);
@@ -214,7 +242,7 @@ describe("the report output reader", () => {
 
   it("is told of a report's size by the installed observer, before the report", () => {
     const printed: string[] = [];
-    const stop = installReportProgress({ [REPORT_PROGRESS_FD_ENV]: String(DESCRIPTOR) }, () => undefined, () => 0, {}, (text) => { printed.push(text); });
+    const stop = installAsChild({ [REPORT_PROGRESS_FD_ENV]: TARGET }, () => undefined, () => 0, {}, (text) => { printed.push(text); });
     uninstall = stop;
     announceReportOutput(STEP_BOUND_MS);
     expect(printed).toEqual([encodeReportSize(STEP_BOUND_MS)]);

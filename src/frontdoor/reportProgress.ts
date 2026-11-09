@@ -3,8 +3,19 @@ import fs from "node:fs";
 import { noteFileSystemWork, observeBlockingSteps } from "../blockingSteps";
 import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS } from "../providerReachability";
 
-/** The environment variable that tells a report child which file descriptor to announce its progress on: each blocking step with its bound, the end of one, and local work done. Set by the door that starts the child, read by `installReportProgress`. */
+/** The environment variable that tells a report child which file descriptor to announce its progress on and which process started it (`reportProgressTarget`): each blocking step with its bound, the end of one, and local work done. Set by the door that starts the child, read by `installReportProgress`. */
 export const REPORT_PROGRESS_FD_ENV = "AGENT_SHIM_REPORT_PROGRESS_FD";
+
+/** The value of `REPORT_PROGRESS_FD_ENV` for a child of process `parentPid` that is to announce on `fd`: the descriptor, then the process that opened it. A process that inherited the variable from further up, or from a shell, is not that process's child, and `installReportProgress` ignores it. */
+export function reportProgressTarget(fd: number, parentPid: number): string {
+  return `${String(fd)}:${String(parentPid)}`;
+}
+
+/** The descriptor named by `value` for a process whose parent is `parentPid`, or undefined when `value` is not one `reportProgressTarget` gives, or names another process as the one that opened the descriptor. */
+function progressDescriptorFor(value: string, parentPid: number): number | undefined {
+  const match = /^([0-9]+):([0-9]+)$/.exec(value);
+  return match !== null && Number(match[2]) === parentPid ? Number(match[1]) : undefined;
+}
 
 /** The descriptor the door gives a report child for its progress: the first after standard input, output and error. */
 export const REPORT_PROGRESS_FD = 3;
@@ -133,14 +144,19 @@ export function createReportProgressReader(onEvent: (event: ReportProgress) => v
 }
 
 /**
- * Makes this process announce each of its blocking steps on the descriptor `env` names (`REPORT_PROGRESS_FD_ENV`), gives a step that names no bound `REPORT_UNBOUNDED_STEP_LIMIT_MS`, counts every synchronous call of `fsModule` (`node:fs`) as local work (`noteFileSystemWork`), and prints the size of a report before it with `writeOutput` (`encodeReportSize`); nothing happens when `env` names no descriptor. `write` is `fs.writeSync` and `now` the monotonic clock in production; `work` is announced at most once per `LOCAL_WORK_ANNOUNCE_INTERVAL_MS`, counted from the last announcement of any kind. Returns what stops the announcing, or undefined when it was never started.
+ * Makes this process announce each of its blocking steps on the descriptor `env` names (`REPORT_PROGRESS_FD_ENV`), gives a step that names no bound `REPORT_UNBOUNDED_STEP_LIMIT_MS`, counts every synchronous call of `fsModule` (`node:fs`) as local work (`noteFileSystemWork`), and prints the size of a report before it with `writeOutput` (`encodeReportSize`); nothing happens when `env` names no descriptor, or a value that does not name this process's parent as the process that opened the descriptor (`reportProgressTarget`), which is what a process that inherited the variable from further up sees. The variable is removed from `env` whenever it was set (`env` is the process's own environment, mutable in spite of its type), so no process this one starts inherits it. `ownParentPid` is `process.ppid` in production. `write` is `fs.writeSync` and `now` the monotonic clock in production; `work` is announced at most once per `LOCAL_WORK_ANNOUNCE_INTERVAL_MS`, counted from the last announcement of any kind. Returns what stops the announcing, or undefined when it was never started.
  */
-export function installReportProgress(env: Readonly<Record<string, string | undefined>>, write: (fd: number, text: string) => void = (fd, text) => { fs.writeSync(fd, text); }, now: () => number = () => performance.now(), fsModule: object = fs, writeOutput: (text: string) => void = (text) => { process.stdout.write(text); }): (() => void) | undefined {
+export function installReportProgress(env: Readonly<Record<string, string | undefined>>, write: (fd: number, text: string) => void = (fd, text) => { fs.writeSync(fd, text); }, now: () => number = () => performance.now(), fsModule: object = fs, writeOutput: (text: string) => void = (text) => { process.stdout.write(text); }, ownParentPid: number = process.ppid): (() => void) | undefined {
   const fd = env[REPORT_PROGRESS_FD_ENV];
   if (fd === undefined) {
     return undefined;
   }
-  const descriptor = Number(fd);
+  // The variable is for this process alone: left in `env` it would reach every process this one starts, and one of those that is an agent-shim would write its announcements to whatever its descriptor is.
+  Reflect.deleteProperty(env, REPORT_PROGRESS_FD_ENV);
+  const descriptor = progressDescriptorFor(fd, ownParentPid);
+  if (descriptor === undefined) {
+    return undefined;
+  }
   let lastAnnouncedMs = now();
   const announce = (event: ReportProgress): void => {
     lastAnnouncedMs = now();

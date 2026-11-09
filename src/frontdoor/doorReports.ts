@@ -4,7 +4,7 @@ import { Readable } from "node:stream";
 import { CheckReportJsonSchema, type CheckReportJson } from "../checkReportSchema";
 import { MAX_TIMER_DELAY_MS } from "../config/schema";
 import { PROBE_WAIT_MARGIN_MS } from "./probe";
-import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, REPORT_QUIET_MS, createReportOutputReader, createReportProgressReader, reportSilenceWindowMs } from "./reportProgress";
+import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, reportProgressTarget, REPORT_QUIET_MS, createReportOutputReader, createReportProgressReader, reportSilenceWindowMs } from "./reportProgress";
 import { DoctorRunOutputSchema } from "./controlSchemas";
 import type { DoctorReport } from "../doctorReport";
 
@@ -68,7 +68,7 @@ async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEn
   const command = `agent-shim ${args.join(" ")}`;
   limit.signal?.throwIfAborted();
   const { status, signal, stdout, stderr, shortRead } = await new Promise<{ readonly status: number | null; readonly signal: NodeJS.Signals | null; readonly stdout: string; readonly stderr: string; readonly shortRead: { readonly received: number; readonly announced: number } | undefined }>((resolve, reject) => {
-    const child = limit.spawn(invocation.command, [...invocation.args], { stdio: ["ignore", "pipe", "pipe", "pipe"], env: { ...env, [REPORT_PROGRESS_FD_ENV]: String(REPORT_PROGRESS_FD) }, detached: true });
+    const child = limit.spawn(invocation.command, [...invocation.args], { stdio: ["ignore", "pipe", "pipe", "pipe"], env: { ...env, [REPORT_PROGRESS_FD_ENV]: reportProgressTarget(REPORT_PROGRESS_FD, process.pid) }, detached: true });
     const releases: (() => void)[] = [];
     const finish = (settle: () => void): void => {
       for (const release of releases) {
