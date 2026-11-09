@@ -1,15 +1,13 @@
 import type { Command } from "commander";
-import { z } from "zod";
 
 import type { CommandDeps } from "./cli/commandDeps";
 import { requireJob } from "./jobStore";
-import { refreshCatalogueForReal } from "./realCatalogueRefresh";
 import { realFarmFs, spawnDetachedSupervisor } from "./realPorts";
 import { createRealJobRunner } from "./usage/realJobRunner";
 import { createRealWindowOpener } from "./usage/realWindowOpener";
 
 /**
- * Registers the hidden `__open-window`, `__run-job` and `__refresh-catalogue` internal subcommands: the front door starts each as a short-lived child (see `usage/childRun.ts`) so the launch they make runs in a process of its own. They exit 0 when the work succeeded and print why to standard error and exit 1 when it did not.
+ * Registers the hidden `__open-window` and `__run-job` internal subcommands: the front door starts each as a short-lived child (see `usage/childRun.ts`) so the launch they make runs in a process of its own. They exit 0 when the work succeeded and print why to standard error and exit 1 when it did not.
  */
 export function registerHeadlessCommands(program: Command, deps: CommandDeps): void {
   const { paths } = deps;
@@ -24,13 +22,5 @@ export function registerHeadlessCommands(program: Command, deps: CommandDeps): v
     .description("Internal: run a job as an identity. Started by the front door's job keeper.")
     .action(async (name: string, identity: string) => {
       await createRealJobRunner({ paths, spawnDaemon: spawnDetachedSupervisor, fs: realFarmFs, now: () => new Date() })(name, identity, requireJob(paths, name));
-    });
-  program
-    .command("__refresh-catalogue <name> <supervisorPid> <generation>", { hidden: true })
-    .description("Internal: fetch and store a provider's model catalogue. Started by the front door's catalogue keeper.")
-    .action(async (name: string, supervisorPid: string, generation: string) => {
-      const pid = Number(supervisorPid);
-      if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("Invalid catalogue supervisor pid");
-      await refreshCatalogueForReal(paths, name, process.env, pid, z.uuid().parse(generation));
     });
 }

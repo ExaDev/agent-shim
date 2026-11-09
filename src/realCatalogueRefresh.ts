@@ -25,7 +25,7 @@ export const realCatalogueFetch: CatalogueFetch = async (url, headers, timeoutMs
   }
 };
 
-/** Fetches and stores `name`'s catalogue for real: its provider file, its own credential (through the real credential port and its cache), the network and an atomic write. Shared by the door's refresh child and `agent-shim provider models --refresh`. */
+/** Fetches and stores `name`'s catalogue for real: its provider file, its own credential (through the real credential port and its cache), the network and an atomic write. Shared by the door's refresh worker and `agent-shim provider models --refresh`. */
 export async function refreshCatalogueForReal(paths: LayoutPaths, name: string, env: Readonly<Record<string, string | undefined>>, ...owner: readonly [] | readonly [supervisorPid: number, generation: string]): Promise<CatalogueCache> {
   const [supervisorPid, generation] = owner;
   const provider = readProvider(paths, name);
