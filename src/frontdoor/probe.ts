@@ -2,6 +2,7 @@ import { withBlockingStep } from "../blockingSteps";
 import { refuseToBlockInRole } from "../processRole";
 import { Worker, type WorkerOptions } from "node:worker_threads";
 
+import { MAX_REPORT_CHILDREN } from "./reportLimits";
 import { DOOR_SOURCE_PORT_COUNT, DOOR_SOURCE_PORT_END, DOOR_SOURCE_PORT_START, SourcePortRange } from "./connectEffects";
 import { createDoorLookup, doorDial, probeAccept, runAcceptProbe } from "./doorDial";
 
@@ -169,26 +170,30 @@ export function probeListenerAcceptSync(port: number, timeoutMs: number = PROBE_
 }
 
 /**
- * How many of the door's reserved source ports probes may hold at once, as a share of the range: a probe of a named host takes one, and the door's live dials draw on the same range, so the probes of a batch take at most this share of it between them and leave the rest to the door.
+ * The share of the door's reserved source ports (as the reciprocal of a fraction) that the probes of every report child running at once may hold between them: a probe of a named host takes one while it connects, and the door's live dials draw on the same range.
  */
 const PROBE_PORT_SHARE_DENOMINATOR = 100;
 
-/** How many probe workers a batch runs at once: the probes' share of the reserved range, a worker holding one source port while it connects. Each worker is a thread with an isolate of its own, so the bound also keeps a batch's memory to a fixed number of them however many providers are configured. */
-export const MAX_CONCURRENT_PROBES = Math.max(1, Math.floor(DOOR_SOURCE_PORT_COUNT / PROBE_PORT_SHARE_DENOMINATOR));
+/** How many probe workers one batch runs at once: the probes' share of the reserved range, divided among the report children the door runs at once (`MAX_REPORT_CHILDREN`), a worker holding one source port while it connects. Each worker is a thread with an isolate of its own, so the bound also keeps a batch's memory to a fixed number of them however many providers are configured. */
+export const MAX_CONCURRENT_PROBES = Math.max(1, Math.floor(DOOR_SOURCE_PORT_COUNT / (PROBE_PORT_SHARE_DENOMINATOR * MAX_REPORT_CHILDREN)));
+
+/** What a process's id is multiplied by to place its batch's first port in the range: a number that does not divide the range's width, so processes with successive ids start far apart and the batches of report children running together do not all begin at the first port. */
+const PORT_BASE_SPREAD = 389;
+
+/** Where a batch of this process starts in the reserved range, as an offset from its first port. */
+const processPortBase = (): number => (process.pid * PORT_BASE_SPREAD) % DOOR_SOURCE_PORT_COUNT;
 
 /** A probe target's identity: two providers on one host and port with one bound need one connection between them. */
 const targetKey = (target: { readonly host: string; readonly port: number; readonly timeoutMs: number }): string => `${target.host}\u0000${String(target.port)}\u0000${String(target.timeoutMs)}`;
 
 /**
- * Whether the door's own dial reaches each address within its bound: one connect each, closed again the moment it is accepted, so no request reaches a listener. Targets that name the same host, port and bound are probed once and share the verdict. At most `MAX_CONCURRENT_PROBES` workers run at once, each started before the verdict of the one `MAX_CONCURRENT_PROBES` places ahead is waited on, so the probes run together up to that bound and the rest start as earlier ones answer. Each worker's source-port rotation starts at its own place in the reserved range, spread evenly over the probes of the batch, so the dials of a batch do not all bind the first port and walk up the range together. Verdicts are returned in the order of `targets`.
+ * Whether the door's own dial reaches each address within its bound: one connect each, closed again the moment it is accepted, so no request reaches a listener. Targets that name the same host, port and bound are probed once and share the verdict. At most `MAX_CONCURRENT_PROBES` workers run at once, each started before the verdict of the one `MAX_CONCURRENT_PROBES` places ahead is waited on, so the probes run together up to that bound and the rest start as earlier ones answer. Each worker's source-port rotation starts at its own place in the reserved range: the batch's offset (`portBase`, from the process id by default, so batches of different processes start apart) plus the worker's index times a stride that spreads the batch's workers over the range, or by one port where there are more targets than ports. A worker therefore finds its port at the first attempt however many targets there are, since the workers running at once are fewer than the ports between their starts; the ports it used stay in TIME_WAIT for a while after it closes, which a later batch of the same process, starting at the same offset, would walk past, so a process runs one batch (a report child does). Verdicts are returned in the order of `targets`.
  */
-export function probeAddressesAcceptSync(targets: readonly { readonly host: string; readonly port: number; readonly timeoutMs: number }[], workers: ProbeWorkers = realProbeWorkers): readonly ListenerVerdict[] {
+export function probeAddressesAcceptSync(targets: readonly { readonly host: string; readonly port: number; readonly timeoutMs: number }[], workers: ProbeWorkers = realProbeWorkers, portBase: number = processPortBase()): readonly ListenerVerdict[] {
   refuseToBlockInRole("a synchronous probe of a provider's address");
   const distinct = new Map<string, { readonly host: string; readonly port: number; readonly timeoutMs: number }>();
   for (const target of targets) {
-    if (!distinct.has(targetKey(target))) {
-      distinct.set(targetKey(target), target);
-    }
+    distinct.set(targetKey(target), target);
   }
   const unique = Array.from(distinct.values());
   const stride = Math.max(1, Math.floor(DOOR_SOURCE_PORT_COUNT / unique.length));
@@ -204,7 +209,7 @@ export function probeAddressesAcceptSync(targets: readonly { readonly host: stri
     if (running.length >= MAX_CONCURRENT_PROBES) {
       settleOldest();
     }
-    const portFirst = DOOR_SOURCE_PORT_START + ((index * stride) % DOOR_SOURCE_PORT_COUNT);
+    const portFirst = DOOR_SOURCE_PORT_START + ((portBase + index * stride) % DOOR_SOURCE_PORT_COUNT);
     running.push({ key: targetKey(target), verdict: workers.start(ACCEPT_PROBE_SOURCE, { host: target.host, port: target.port, portStart: DOOR_SOURCE_PORT_START, portEnd: DOOR_SOURCE_PORT_END, portFirst }, target.timeoutMs).verdict });
   });
   while (running.length > 0) {

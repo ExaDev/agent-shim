@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { DOOR_SOURCE_PORT_END, DOOR_SOURCE_PORT_START, SourcePortRange } from "./connectEffects";
+import { DOOR_SOURCE_PORT_COUNT, DOOR_SOURCE_PORT_END, DOOR_SOURCE_PORT_START, SourcePortRange } from "./connectEffects";
 import { createDoorLookup, doorDial, probeAccept, runAcceptProbe, type AcceptProbeDeps, type DialSocket } from "./doorDial";
+import { MAX_REPORT_CHILDREN } from "./reportLimits";
 import { MAX_CONCURRENT_PROBES, probeAddressesAcceptSync, probeListenerAcceptSync, type ProbeWorkers } from "./probe";
 import { growsLinearly } from "../test-helpers";
 
@@ -85,6 +86,12 @@ describe("the provider probe's setup", () => {
     expect(connects[0]?.port).toBe(PORT);
   });
 
+  it("dials a name from the port its rotation is told to start at, wrapping at the end of the range", async () => {
+    const { deps, connects } = fakeModules();
+    await runAcceptProbe(deps, { host: "provider.example", port: PORT, portStart: RANGE_START, portEnd: RANGE_END, portFirst: RANGE_START + 2, timeoutMs: PROBE_BOUND_MS }, noTimer);
+    expect(connects[0]?.localPort).toBe(RANGE_START + 2);
+  });
+
   it("dials an address literal as it is, with no lookup", async () => {
     const { deps, connects, resolved } = fakeModules();
     await runAcceptProbe(deps, { host: RESOLVED_ADDRESS, port: PORT, portStart: RANGE_START, portEnd: RANGE_END, timeoutMs: PROBE_BOUND_MS }, noTimer);
@@ -159,13 +166,16 @@ describe("a batch of provider probes", () => {
 });
 
 describe("a batch of provider probes at the size of a large configuration", () => {
+  const OTHER_BASE = 40;
+  /** The share of the reserved range, as its reciprocal, that probes may hold between them. */
+  const PROBE_SHARE_DENOMINATOR = 100;
   const FIRST = 100;
   const SECOND = 200;
   const THIRD = 400;
   const sizes = [FIRST, SECOND, THIRD] as const;
 
   /** Workers that hold the source port their rotation hands them, as a dial holds it while it connects, until their verdict is read; a rotation that meets a held port takes the next, as the door's dial does. Records how many workers were alive at once, how many bind attempts were made and what was started. */
-  function holdingWorkers(): { readonly workers: ProbeWorkers; readonly peak: () => number; readonly attempts: () => number; readonly started: () => number } {
+  function holdingWorkers(attemptLimit: number): { readonly workers: ProbeWorkers; readonly peak: () => number; readonly attempts: () => number; readonly started: () => number } {
     const held = new Set<number>();
     let alive = 0;
     let peakAlive = 0;
@@ -182,6 +192,10 @@ describe("a batch of provider probes at the size of a large configuration", () =
           let port = ports.take();
           bindAttempts += 1;
           while (held.has(port)) {
+            // A walk past held ports is what the batch must not make: it fails as soon as the attempts exceed the one-for-each-worker the spread guarantees, not after the whole batch has run.
+            if (bindAttempts >= attemptLimit) {
+              throw new Error(`a worker walked past a held port after ${String(bindAttempts)} bind attempts, more than the ${String(attemptLimit)} the batch is allowed`);
+            }
             port = ports.take();
             bindAttempts += 1;
           }
@@ -204,7 +218,7 @@ describe("a batch of provider probes at the size of a large configuration", () =
 
   it("runs no more workers at once than the bound, however many providers there are", () => {
     for (const size of sizes) {
-      const run = holdingWorkers();
+      const run = holdingWorkers(size);
       probeAddressesAcceptSync(distinctTargets(size), run.workers);
       expect(run.peak(), `size ${String(size)}`).toBeLessThanOrEqual(MAX_CONCURRENT_PROBES);
       expect(run.started()).toBe(size);
@@ -213,7 +227,7 @@ describe("a batch of provider probes at the size of a large configuration", () =
 
   it("makes bind attempts that grow linearly with the providers, as each worker's rotation starts apart", () => {
     const counts = sizes.map((size) => {
-      const run = holdingWorkers();
+      const run = holdingWorkers(size);
       probeAddressesAcceptSync(distinctTargets(size), run.workers);
       return run.attempts();
     });
@@ -222,8 +236,27 @@ describe("a batch of provider probes at the size of a large configuration", () =
     expect(counts).toEqual([...sizes]);
   });
 
+  it("starts every worker at its own port with more targets than half the range (a stride of one), wrapping the range", () => {
+    const LARGE = DOOR_SOURCE_PORT_COUNT + DOOR_SOURCE_PORT_COUNT / 2;
+    const run = holdingWorkers(LARGE);
+    probeAddressesAcceptSync(distinctTargets(LARGE), run.workers);
+    expect(run.attempts()).toBe(LARGE);
+  });
+
+  it("starts the batches of different base offsets apart, so batches running together do not begin at one port", () => {
+    const firsts: number[] = [];
+    const workers: ProbeWorkers = { start: (_source, data) => { firsts.push(Number(data.portFirst)); return { verdict: () => ({ ok: true }) }; } };
+    probeAddressesAcceptSync(distinctTargets(1), workers, 0);
+    probeAddressesAcceptSync(distinctTargets(1), workers, OTHER_BASE);
+    expect(firsts).toEqual([DOOR_SOURCE_PORT_START, DOOR_SOURCE_PORT_START + OTHER_BASE]);
+  });
+
+  it("holds the probes of every report child that runs at once to the share of the range it names", () => {
+    expect(MAX_CONCURRENT_PROBES * MAX_REPORT_CHILDREN).toBeLessThanOrEqual(DOOR_SOURCE_PORT_COUNT / PROBE_SHARE_DENOMINATOR);
+  });
+
   it("probes a host, port and bound once however many providers name them, and gives each provider the verdict", () => {
-    const run = holdingWorkers();
+    const run = holdingWorkers(2);
     const same = Array.from({ length: THIRD }, () => ({ host: "shared.example", port: PORT, timeoutMs: PROBE_BOUND_MS }));
     const other = { host: "shared.example", port: PORT, timeoutMs: PROBE_BOUND_MS * 2 };
     const verdicts = probeAddressesAcceptSync([...same, other], run.workers);

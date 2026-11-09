@@ -12,7 +12,8 @@ import { MAX_TIMER_DELAY_MS } from "../config/schema";
 import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS } from "../providerReachability";
 import { PROBE_WAIT_MARGIN_MS } from "./probe";
 import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, reportProgressTarget, LOCAL_WORK_ANNOUNCE_INTERVAL_MS, REPORT_QUIET_MS, REPORT_SIZE_PREFIX, encodeReportSize } from "./reportProgress";
-import { MAX_REPORT_CHILDREN, createDoorReports } from "./doorReports";
+import { createDoorReports } from "./doorReports";
+import { MAX_REPORT_CHILDREN } from "./reportLimits";
 
 /** The release the doors in these tests say they are. */
 const RELEASE = "12.0.0";

@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 import { CheckReportJsonSchema, type CheckReportJson } from "../checkReportSchema";
 import { MAX_TIMER_DELAY_MS } from "../config/schema";
 import { PROBE_WAIT_MARGIN_MS } from "./probe";
+import { MAX_REPORT_CHILDREN } from "./reportLimits";
 import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, reportProgressTarget, REPORT_QUIET_MS, createReportOutputReader, createReportProgressReader, reportSilenceWindowMs } from "./reportProgress";
 import { DoctorRunOutputSchema } from "./controlSchemas";
 import type { DoctorReport } from "../doctorReport";
@@ -132,11 +133,6 @@ async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEn
   }
 }
 
-/**
- * How many report children the door runs at once: the two kinds of report its control API serves, `doctor` and `check`, one child each. A child is a whole process and may itself run up to `MAX_CONCURRENT_PROBES` probe workers, so the bound keeps what a burst of requests costs to a fixed number of them; requests beyond it wait for a child to end, in the order they came.
- */
-export const MAX_REPORT_CHILDREN = 2;
-
 /** Runs tasks at most `max` at a time, the rest waiting their turn in order. */
 function createGate(max: number): <T>(task: () => Promise<T>) => Promise<T> {
   let active = 0;
@@ -212,7 +208,7 @@ function createCoalescer(): (key: string, collect: (signal: AbortSignal) => Prom
 }
 
 /**
- * The door's `check` and `doctor` reports, each collected by a child of the door's own executable (`agent-shim check --json`, `agent-shim doctor --json`) rather than in the door's process: collecting them runs commands, reads the keychain and probes listeners and provider base URLs, every one of which blocks the calling thread, and the door's thread serves every session. Requests for the same report made while one runs share its child, and at most `MAX_REPORT_CHILDREN` children run at once. See `runSelfJson` for how a child is watched and ended.
+ * The door's `check` and `doctor` reports, each collected by a child of the door's own executable (`agent-shim check --json`, `agent-shim doctor --json`) rather than in the door's process: collecting them runs commands, reads the keychain and probes listeners and provider base URLs, every one of which blocks the calling thread, and the door's thread serves every session. Requests for the same report made while one runs share its child, and at most `MAX_REPORT_CHILDREN` children run at once, of any kind. See `runSelfJson` for how a child is watched and ended.
  */
 export function createDoorReports(deps: Readonly<{ selfInvocation: SelfInvocation; env: NodeJS.ProcessEnv; release: string; silenceMs?: number; spawn?: typeof spawn }>): DoorReports {
   const spawnChild = deps.spawn ?? spawn;
