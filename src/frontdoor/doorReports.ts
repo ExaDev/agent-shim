@@ -67,7 +67,7 @@ async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEn
   const invocation = selfInvocation(args);
   const command = `agent-shim ${args.join(" ")}`;
   limit.signal?.throwIfAborted();
-  const { status, stdout, stderr, shortRead } = await new Promise<{ readonly status: number | null; readonly stdout: string; readonly stderr: string; readonly shortRead: { readonly received: number; readonly announced: number } | undefined }>((resolve, reject) => {
+  const { status, signal, stdout, stderr, shortRead } = await new Promise<{ readonly status: number | null; readonly signal: NodeJS.Signals | null; readonly stdout: string; readonly stderr: string; readonly shortRead: { readonly received: number; readonly announced: number } | undefined }>((resolve, reject) => {
     const child = limit.spawn(invocation.command, [...invocation.args], { stdio: ["ignore", "pipe", "pipe", "pipe"], env: { ...env, [REPORT_PROGRESS_FD_ENV]: String(REPORT_PROGRESS_FD) }, detached: true });
     const releases: (() => void)[] = [];
     const finish = (settle: () => void): void => {
@@ -80,7 +80,7 @@ async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEn
       endChild(child);
       finish(() => { reject(error instanceof Error ? error : new Error(String(error))); });
     };
-    // The watchdog is re-armed by each announcement: inside a step for its bound and margin, between steps for the quiet bound.
+    // The watchdog is re-armed by each announcement: inside a step for its bound and margin, between steps for the silence window (`reportSilenceWindowMs` of the quiet bound: a unit's allowance plus the interval its note may be dropped for).
     let watchdog: NodeJS.Timeout;
     const arm = (allowedMs: number): void => {
       clearTimeout(watchdog);
@@ -107,14 +107,17 @@ async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEn
       err = (err + chunk).slice(-STDERR_TAIL_CHARS);
     });
     child.once("error", (error) => { finish(() => { reject(error); }); });
-    child.once("close", (code) => { finish(() => { resolve({ status: code, stdout: output.report(), stderr: err, shortRead: output.shortRead() }); }); });
+    child.once("close", (code, endedBy) => { finish(() => { resolve({ status: code, signal: endedBy, stdout: output.report(), stderr: err, shortRead: output.shortRead() }); }); });
   });
   const diagnostics = stderr.trim();
-  if (!REPORTED_STATUSES.has(status) || stdout.trim() === "") {
-    throw new Error(diagnostics === "" ? `${command} exited ${String(status)} without a report` : diagnostics);
-  }
+  const ended = signal === null ? `exited ${String(status)}` : `was ended by ${signal}`;
+  const withDiagnostics = (message: string): string => (diagnostics === "" ? message : `${message}: ${diagnostics}`);
+  // A short read is checked first, whatever the exit: a child killed partway through a large report, or one that announced a size and printed nothing, is a cut-off report, not a missing one.
   if (shortRead !== undefined) {
-    throw new Error(`${command} printed ${String(shortRead.received)} of the ${String(shortRead.announced)} bytes it announced${diagnostics === "" ? "" : `: ${diagnostics}`}`);
+    throw new Error(withDiagnostics(`${command} ${ended} having printed ${String(shortRead.received)} of the ${String(shortRead.announced)} bytes it announced`));
+  }
+  if (!REPORTED_STATUSES.has(status) || stdout.trim() === "") {
+    throw new Error(diagnostics === "" ? `${command} ${ended} without a report` : diagnostics);
   }
   try {
     const parsed: unknown = JSON.parse(stdout);

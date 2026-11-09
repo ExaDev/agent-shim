@@ -372,7 +372,27 @@ describe("the door's check and doctor reports", () => {
     const announced = 100;
     const partial = '{"a":1}';
     const reports = createDoorReports({ selfInvocation: nodeRunning(`process.stdout.write(${JSON.stringify(encodeReportSize(announced))}); process.stdout.write(${JSON.stringify(partial)});`), env: {} });
-    await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`printed ${String(partial.length)} of the ${String(announced)} bytes it announced`);
+    await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`exited 0 having printed ${String(partial.length)} of the ${String(announced)} bytes it announced`);
+  });
+
+  it("names the short read, the signal and what the child said, when a child is killed partway through its report", async () => {
+    const announced = 100;
+    const partial = '{"a":1}';
+    const script = `process.stdout.write(${JSON.stringify(encodeReportSize(announced))}); process.stdout.write(${JSON.stringify(partial)}); process.stderr.write("out of memory"); setTimeout(() => process.kill(process.pid, "SIGKILL"), 20);`;
+    const reports = createDoorReports({ selfInvocation: nodeRunning(script), env: {} });
+    await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`was ended by SIGKILL having printed ${String(partial.length)} of the ${String(announced)} bytes it announced: out of memory`);
+  });
+
+  it("names the short read, and what the child said, when a child announces a size and prints nothing before it dies", async () => {
+    const announced = 100;
+    const script = `process.stdout.write(${JSON.stringify(encodeReportSize(announced))}); process.stderr.write("could not read the keychain"); process.exitCode = 1;`;
+    const reports = createDoorReports({ selfInvocation: nodeRunning(script), env: {} });
+    await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`exited 1 having printed 0 of the ${String(announced)} bytes it announced: could not read the keychain`);
+  });
+
+  it("still says it exited without a report when a child announced nothing and printed nothing", async () => {
+    const reports = createDoorReports({ selfInvocation: nodeRunning("process.exitCode = 3;"), env: {} });
+    await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow("exited 3 without a report");
   });
 
   it("ends a child that prints without announcing a size", async () => {
