@@ -11,7 +11,7 @@ import { enterProcessRole } from "../processRole";
 import { MAX_TIMER_DELAY_MS } from "../config/schema";
 import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS } from "../providerReachability";
 import { PROBE_WAIT_MARGIN_MS } from "./probe";
-import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, REPORT_QUIET_MS, REPORT_SIZE_PREFIX, encodeReportSize } from "./reportProgress";
+import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, LOCAL_WORK_ANNOUNCE_INTERVAL_MS, REPORT_QUIET_MS, REPORT_SIZE_PREFIX, encodeReportSize } from "./reportProgress";
 import { createDoorReports } from "./doorReports";
 
 const DOCTOR = { ok: false, findings: [{ section: "provider", severity: "fail", message: "provider spark could not connect to http://192.0.2.1:8000: no connection accepted within 1500ms", subject: "spark" }] };
@@ -66,6 +66,8 @@ function fakeReportChild(): { readonly spawn: typeof spawn; readonly progress: P
 
 describe("the bound on a report child", () => {
   const QUIET_MS = 1_000;
+  /** What the door waits between announcements outside a step: one unit's allowance and the interval a unit's note may be dropped for. */
+  const SILENCE_MS = QUIET_MS + LOCAL_WORK_ANNOUNCE_INTERVAL_MS;
   const STEP_MS = 5_000;
   /** Well past every bound of these tests, in fake time. */
   const LONG_WAIT_MS = 100_000;
@@ -78,7 +80,7 @@ describe("the bound on a report child", () => {
   function startReport() {
     vi.useFakeTimers();
     const fake = fakeReportChild();
-    const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, quietMs: QUIET_MS, spawn: fake.spawn });
+    const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, silenceMs: SILENCE_MS, spawn: fake.spawn });
     const controller = new AbortController();
     const outcome = reports.doctorReport(controller.signal).then(() => "reported", (error: unknown) => (error instanceof Error ? error.message : String(error)));
     return {
@@ -99,10 +101,10 @@ describe("the bound on a report child", () => {
 
   it("holds a child that announces nothing to the quiet bound from its start", async () => {
     const run = startReport();
-    await run.wait(QUIET_MS - 1);
+    await run.wait(SILENCE_MS - 1);
     expect(run.fake.killed()).toBe(false);
     await run.wait(1);
-    expect(await run.outcome).toBe(`agent-shim doctor --json made no progress within ${String(QUIET_MS)}ms`);
+    expect(await run.outcome).toBe(`agent-shim doctor --json made no progress within ${String(SILENCE_MS)}ms`);
     expect(run.fake.killed()).toBe(true);
   });
 
@@ -118,31 +120,47 @@ describe("the bound on a report child", () => {
   it("holds a child to the quiet bound again once it announces the end of a step", async () => {
     const run = startReport();
     await run.announce(`begin ${String(LONG_WAIT_MS)}\n`);
-    await run.wait(QUIET_MS * 2);
+    await run.wait(SILENCE_MS * 2);
     expect(run.fake.killed()).toBe(false);
     await run.announce("end\n");
-    await run.wait(QUIET_MS - 1);
+    await run.wait(SILENCE_MS - 1);
     expect(run.fake.killed()).toBe(false);
     await run.wait(1);
-    expect(await run.outcome).toBe(`agent-shim doctor --json made no progress within ${String(QUIET_MS)}ms`);
+    expect(await run.outcome).toBe(`agent-shim doctor --json made no progress within ${String(SILENCE_MS)}ms`);
   });
 
   it("keeps a child that announces local work alive past the quiet bound, for as long as it announces", async () => {
     const WORK_ROUNDS = 8;
     const run = startReport();
     for (let round = 0; round < WORK_ROUNDS; round += 1) {
-      await run.wait(QUIET_MS - 1);
+      await run.wait(SILENCE_MS - 1);
       await run.announce("work\n");
     }
     expect(run.fake.killed()).toBe(false);
-    await run.wait(QUIET_MS);
-    expect(await run.outcome).toBe(`agent-shim doctor --json made no progress within ${String(QUIET_MS)}ms`);
+    await run.wait(SILENCE_MS);
+    expect(await run.outcome).toBe(`agent-shim doctor --json made no progress within ${String(SILENCE_MS)}ms`);
+  });
+
+  it("waits, by default, a unit's whole allowance after the latest moment a unit whose note was dropped can start", async () => {
+    vi.useFakeTimers();
+    const fake = fakeReportChild();
+    const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, spawn: fake.spawn });
+    const outcome = reports.doctorReport(new AbortController().signal).then(() => "reported", (error: unknown) => (error instanceof Error ? error.message : String(error)));
+    fake.progress.write("work\n");
+    await vi.advanceTimersByTimeAsync(0);
+    // The unit starts as late as the interval allows after that announcement, and its own note is dropped.
+    await vi.advanceTimersByTimeAsync(LOCAL_WORK_ANNOUNCE_INTERVAL_MS - 1);
+    // It then stalls for its whole allowance: the door must still be waiting.
+    await vi.advanceTimersByTimeAsync(REPORT_QUIET_MS);
+    expect(fake.killed()).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await outcome).toBe(`agent-shim doctor --json made no progress within ${String(REPORT_QUIET_MS + LOCAL_WORK_ANNOUNCE_INTERVAL_MS)}ms`);
   });
 
   it("ends the call with the abort of a child inside a long step", async () => {
     const run = startReport();
     await run.announce(`begin ${String(LONG_WAIT_MS)}\n`);
-    await run.wait(QUIET_MS * 2);
+    await run.wait(SILENCE_MS * 2);
     run.controller.abort();
     await run.wait(0);
     expect(run.fake.killed()).toBe(true);
@@ -158,7 +176,7 @@ describe("the bound on a report child", () => {
       return real(handler, delay);
     }) as typeof setTimeout);
     const fake = fakeReportChild();
-    const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, quietMs: QUIET_MS, spawn: fake.spawn });
+    const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, silenceMs: SILENCE_MS, spawn: fake.spawn });
     const controller = new AbortController();
     const outcome = reports.doctorReport(controller.signal).catch(() => undefined);
     fake.progress.write(`begin ${String(MAX_TIMER_DELAY_MS * 2)}\n`);
@@ -249,7 +267,7 @@ describe("the door's check and doctor reports", () => {
 
   it("kills a child that has not reported within its bound, and fails naming the bound", async () => {
     const recorded = recordingSpawn();
-    const reports = createDoorReports({ selfInvocation: hungChild, env: {}, quietMs: SHORT_BOUND_MS, spawn: recorded.spawn });
+    const reports = createDoorReports({ selfInvocation: hungChild, env: {}, silenceMs: SHORT_BOUND_MS, spawn: recorded.spawn });
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`made no progress within ${String(SHORT_BOUND_MS)}ms`);
     const pid = recorded.children[0]?.pid;
     if (pid === undefined) {
@@ -260,7 +278,7 @@ describe("the door's check and doctor reports", () => {
 
   it("kills the child of a request whose client went away", async () => {
     const recorded = recordingSpawn();
-    const reports = createDoorReports({ selfInvocation: hungChild, env: {}, quietMs: LONG_BOUND_MS, spawn: recorded.spawn });
+    const reports = createDoorReports({ selfInvocation: hungChild, env: {}, silenceMs: LONG_BOUND_MS, spawn: recorded.spawn });
     const controller = new AbortController();
     const answered = reports.checkReport("/work", undefined, controller.signal);
     // The abort, not the bound, must be what ends the call.
@@ -277,7 +295,7 @@ describe("the door's check and doctor reports", () => {
   it("ends the child of an aborted request and of an expired bound with the same signal", async () => {
     const endedBy = async (abort: boolean): Promise<NodeJS.Signals | null> => {
       const recorded = recordingSpawn();
-      const reports = createDoorReports({ selfInvocation: hungChild, env: {}, quietMs: abort ? LONG_BOUND_MS : SHORT_BOUND_MS, spawn: recorded.spawn });
+      const reports = createDoorReports({ selfInvocation: hungChild, env: {}, silenceMs: abort ? LONG_BOUND_MS : SHORT_BOUND_MS, spawn: recorded.spawn });
       const controller = new AbortController();
       const answered = reports.doctorReport(controller.signal).catch(() => undefined);
       if (abort) {
@@ -300,7 +318,7 @@ describe("the door's check and doctor reports", () => {
     const spawnsGrandchild = nodeRunning(
       `const child = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => undefined, ${String(HOLD_MS)})"], { stdio: "ignore" }); require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); setInterval(() => undefined, ${String(HOLD_MS)});`,
     );
-    const reports = createDoorReports({ selfInvocation: spawnsGrandchild, env: {}, quietMs: LONG_BOUND_MS });
+    const reports = createDoorReports({ selfInvocation: spawnsGrandchild, env: {}, silenceMs: LONG_BOUND_MS });
     const controller = new AbortController();
     const answered = reports.doctorReport(controller.signal).catch(() => undefined);
     let grandchild: number | undefined;
@@ -330,7 +348,7 @@ describe("the door's check and doctor reports", () => {
     const recorded = recordingSpawn();
     const announced = 1_024;
     const endless = nodeRunning(`process.stdout.write(${JSON.stringify(encodeReportSize(announced))}); const line = "x".repeat(${String(announced)}); setInterval(() => process.stdout.write(line), 1);`);
-    const reports = createDoorReports({ selfInvocation: endless, env: {}, quietMs: LONG_BOUND_MS, spawn: recorded.spawn });
+    const reports = createDoorReports({ selfInvocation: endless, env: {}, silenceMs: LONG_BOUND_MS, spawn: recorded.spawn });
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`printed more than the ${String(announced)} bytes it announced`);
     const pid = recorded.children[0]?.pid;
     if (pid === undefined) {
@@ -351,7 +369,7 @@ describe("the door's check and doctor reports", () => {
   });
 
   it("ends a child that prints without announcing a size", async () => {
-    const reports = createDoorReports({ selfInvocation: nodeRunning(`process.stdout.write("{}".repeat(100));`), env: {}, quietMs: LONG_BOUND_MS });
+    const reports = createDoorReports({ selfInvocation: nodeRunning(`process.stdout.write("{}".repeat(100));`), env: {}, silenceMs: LONG_BOUND_MS });
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow("printed output without announcing its size");
   });
 

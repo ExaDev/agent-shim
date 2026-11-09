@@ -18,7 +18,7 @@ export const REPORT_UNBOUNDED_STEP_LIMIT_MS = 10_000;
 const REPORT_QUIET_BOUNDS = 2;
 
 /**
- * The longest a report child may go without announcing anything (see `REPORT_PROGRESS_FD_ENV`). It announces each blocking step with that step's own bound (an external command its timeout, a probe wait its start limit, bound and margin) and each unit of a loop over local data (`noteLocalWork`, at most once per `LOCAL_WORK_ANNOUNCE_INTERVAL_MS`), so the child's bound follows what it actually does, with no count of identities, sessions, providers or files to keep exact. The quiet bound covers only the child's start-up and a stretch that does neither.
+ * The longest one unit of a report child's work (a call that reads the user's files, say) may take without the door acting: the allowance each unit has. A report child announces each blocking step with that step's own bound (an external command its timeout, a probe wait its start limit, bound and margin) and notes each synchronous file system call as local work (`noteLocalWork`), announcing it at most once per `LOCAL_WORK_ANNOUNCE_INTERVAL_MS`, so the child's bound follows what it actually does, with no count of identities, sessions, providers or files to keep exact. See `reportSilenceWindowMs` for how long the door waits between announcements so that a unit whose note was not announced still has this whole allowance.
  */
 export const REPORT_QUIET_MS = DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS * REPORT_QUIET_BOUNDS;
 
@@ -153,4 +153,11 @@ export function installReportProgress(env: Readonly<Record<string, string | unde
     restoreFileSystem();
     stopObserving();
   };
+}
+
+/**
+ * How long the door waits for the next announcement of a report child that is not inside a blocking step, given the allowance `quietMs` of one unit. A unit's note is dropped when the last announcement is less than `LOCAL_WORK_ANNOUNCE_INTERVAL_MS` old, so a unit can start that long after the last announcement the door saw; waiting the allowance plus that interval leaves such a unit its whole allowance, where waiting the allowance alone would leave it the allowance less up to one interval. The same window covers the child's start-up, whose first notes are dropped for the same reason.
+ */
+export function reportSilenceWindowMs(quietMs: number): number {
+  return quietMs + LOCAL_WORK_ANNOUNCE_INTERVAL_MS;
 }

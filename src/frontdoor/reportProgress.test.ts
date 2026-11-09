@@ -7,7 +7,9 @@ import {
   createReportOutputReader,
   createReportProgressReader,
   encodeReportSize,
+  REPORT_QUIET_MS,
   REPORT_SIZE_PREFIX,
+  reportSilenceWindowMs,
   encodeReportProgress,
   installReportProgress,
   LOCAL_WORK_ANNOUNCE_INTERVAL_MS,
@@ -160,5 +162,13 @@ describe("the report output reader", () => {
     uninstall = stop;
     announceReportOutput(STEP_BOUND_MS);
     expect(printed).toEqual([encodeReportSize(STEP_BOUND_MS)]);
+  });
+});
+
+describe("reportSilenceWindowMs", () => {
+  it("is a unit's allowance plus the interval a unit's note may be dropped for", () => {
+    const ALLOWANCE_MS = 123;
+    expect(reportSilenceWindowMs(ALLOWANCE_MS)).toBe(ALLOWANCE_MS + LOCAL_WORK_ANNOUNCE_INTERVAL_MS);
+    expect(reportSilenceWindowMs(REPORT_QUIET_MS) - LOCAL_WORK_ANNOUNCE_INTERVAL_MS).toBe(REPORT_QUIET_MS);
   });
 });
