@@ -2,6 +2,7 @@ import { CliError } from "./cliError";
 import type { RunPort } from "./launcher/ports";
 import { claudeCodeKeychainService } from "./usage/signIn";
 import { KEYCHAIN_CACHE_SERVICE, KEYCHAIN_ITEM_NOT_FOUND_STATUS } from "./credentialCache";
+import { BLOCKING_STEP_TIMEOUTS_MS } from "./doorBounds";
 import { shellQuoted } from "./shellQuote";
 
 /**
@@ -111,6 +112,9 @@ export function keychainDeleteCommand(service: string, account: string | undefin
 /** What `identity add --keep-keychain-login`, and the door's `keepKeychainLogin`, do: the person says that a login the Keychain holds for the directory is wanted, which is otherwise refused because the new identity would start signed in as that account. One text, so the command line, the typed API and the MCP tool derived from it say the same. */
 export const KEEP_KEYCHAIN_LOGIN_DESCRIPTION =
   "Create the identity even though the macOS Keychain already holds a Claude Code login filed for its directory (left by an identity stored there that was moved with `identity rename --move` or removed); the identity starts signed in as that account. If another identity holds that login, the two share it. Without it that login is refused and the command that deletes it is printed.";
+
+/** How long a `security` call that can wait on a person (reading a password out of an item Claude Code wrote, adding to or deleting from the Keychain, each of which may raise an approval prompt) may run: as long as an interactive credential command, so the person has time to answer and a prompt nobody is watching still ends. The lookups that only read attributes never prompt and keep the real port's default bound. */
+const PERSON_PROMPT_TIMEOUT_MS = BLOCKING_STEP_TIMEOUTS_MS.credentialInteractive;
 
 /** What a question to the Keychain needs: the runner of `security` and the platform, since only macOS has a Keychain. */
 export interface KeychainProbe {
@@ -235,7 +239,7 @@ function addCommand(plan: KeychainLoginPlan, bytes: Buffer): string | undefined 
  * No message carries any text the tool printed, because it prints the password itself on standard error: a failure is reported by exit status alone.
  */
 export function readKeychainLogin(run: RunPort, plan: KeychainLoginPlan): Buffer {
-  const read = run.run("security", ["find-generic-password", "-s", plan.fromService, "-a", plan.account, "-g"]);
+  const read = run.run("security", ["find-generic-password", "-s", plan.fromService, "-a", plan.account, "-g"], undefined, { timeoutMs: PERSON_PROMPT_TIMEOUT_MS });
   if (read.status !== 0) {
     throw new KeychainLoginError(`Could not read the login stored under ${plan.fromService}: security exited ${statusPhrase(read.status)} while reading it.`);
   }
@@ -258,7 +262,7 @@ export function writeKeychainLogin(run: RunPort, plan: KeychainLoginPlan, bytes:
       `The login stored under ${plan.fromService} is too large to copy through the input line of \`security -i\`, which takes at most ${String(INTERACTIVE_LINE_LIMIT)} characters of a line, in the hex form or the quoted form. Nothing has been changed. To rename anyway, delete that Keychain item with \`${keychainDeleteCommand(plan.fromService, plan.account)}\`, then run the rename again (with no item there, nothing is left to copy), then sign in under the new name. This discards the stored login.`,
     );
   }
-  const added = run.run("security", ["-i"], `${command}\n`);
+  const added = run.run("security", ["-i"], `${command}\n`, { timeoutMs: PERSON_PROMPT_TIMEOUT_MS });
   if (added.status !== 0) {
     abandonCopy(run, plan, `Could not create the login under ${plan.toService}: security exited ${statusPhrase(added.status)} while adding it.`);
   }
@@ -279,7 +283,7 @@ function abandonCopy(run: RunPort, plan: KeychainLoginPlan, message: string): ne
 
 /** Deletes the login filed under `service` for `account`. An item already gone is fine, so this serves the final removal of the old login and the rollback of a copy alike. */
 export function deleteKeychainLogin(run: RunPort, service: string, account: string): void {
-  const result = run.run("security", ["delete-generic-password", "-s", service, "-a", account]);
+  const result = run.run("security", ["delete-generic-password", "-s", service, "-a", account], undefined, { timeoutMs: PERSON_PROMPT_TIMEOUT_MS });
   if (result.status !== 0 && result.status !== KEYCHAIN_ITEM_NOT_FOUND_STATUS) {
     throw new KeychainLoginError(`Could not delete the Keychain item ${service}: security exited ${statusPhrase(result.status)}${describe(result.stderr)}.`);
   }

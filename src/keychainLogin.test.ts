@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { deleteKeychainLogin, KeychainLoginError, planKeychainLogin, readKeychainLogin, writeKeychainLogin, type KeychainLoginPlan } from "./keychainLogin";
 import type { RunPort } from "./launcher/ports";
+import { BLOCKING_STEP_TIMEOUTS_MS } from "./doorBounds";
 import { createFakeKeychain } from "./keychainTestWorld";
 import { claudeCodeKeychainService } from "./usage/signIn";
 
@@ -205,5 +206,39 @@ describe("deleteKeychainLogin", () => {
     expect(() => {
       deleteKeychainLogin(keychain.run, FROM_SERVICE, "alex");
     }).not.toThrow();
+  });
+});
+
+describe("the bound of each security call a Keychain login move makes", () => {
+  /** What each call asked of the runner: the arguments that name the call and the timeout it named, if any. */
+  function recordedRun(): { readonly run: RunPort; readonly calls: { readonly args: readonly string[]; readonly timeoutMs: number | undefined }[] } {
+    const keychain = seeded();
+    const calls: { readonly args: readonly string[]; readonly timeoutMs: number | undefined }[] = [];
+    const run: RunPort = {
+      run: (command, args, input, options) => {
+        calls.push({ args, timeoutMs: options?.timeoutMs });
+        return keychain.run.run(command, args, input, options);
+      },
+    };
+    return { run, calls };
+  }
+
+  it("gives the calls that can wait on a person (a password read, an add, a delete) a person-sized bound, and leaves attribute lookups to the real port's default", () => {
+    const { run, calls } = recordedRun();
+    const plan = planKeychainLogin(run, FROM_DIR, TO_DIR);
+    if (plan === undefined) {
+      throw new Error("expected a plan");
+    }
+    copy(run, plan);
+    deleteKeychainLogin(run, plan.fromService, plan.account);
+    const prompting = (args: readonly string[]): boolean => args.includes("-g") || args[0] === "-i" || args[0] === "delete-generic-password";
+    expect(calls.some((call) => prompting(call.args))).toBe(true);
+    for (const call of calls) {
+      if (prompting(call.args)) {
+        expect(call.timeoutMs, call.args.join(" ")).toBe(BLOCKING_STEP_TIMEOUTS_MS.credentialInteractive);
+      } else {
+        expect(call.timeoutMs, call.args.join(" ")).toBeUndefined();
+      }
+    }
   });
 });

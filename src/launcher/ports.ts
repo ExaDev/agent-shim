@@ -114,7 +114,7 @@ interface RunResult {
 interface RunOptions {
   /** The child's whole environment, replacing the parent's; a variable mapped to undefined is left out. Omitted: the child inherits this process's environment. */
   readonly env?: Readonly<Record<string, string | undefined>>;
-  /** Kill the child after this many milliseconds. Omitted: it may run as long as it likes. */
+  /** Kill the child after this many milliseconds. Omitted: the real port applies the auxiliary command bound (`BLOCKING_STEP_TIMEOUTS_MS.auxiliaryCommand`), so a caller that may wait on a person (a Keychain read that prompts) names a person-sized bound of its own. */
   readonly timeoutMs?: number;
 }
 

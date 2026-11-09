@@ -1,5 +1,5 @@
 import { spawnSyncBlocking, spawnSyncUnbounded } from "./blockingSpawn";
-import { BLOCKING_STEP_TIMEOUTS_MS } from "./doorBounds";
+import { BLOCKING_STEP_TIMEOUTS_MS, RUN_PORT_DEFAULT_TIMEOUT_MS } from "./doorBounds";
 import { refuseToBlockInRole } from "./processRole";
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -435,7 +435,7 @@ export const realRunPort: RunPort = {
       maxBuffer: RUN_OUTPUT_LIMIT_BYTES,
       ...(input === undefined ? {} : { input }),
       ...(options?.env === undefined ? {} : { env: definedEntries(options.env) }),
-      timeout: options?.timeoutMs ?? BLOCKING_STEP_TIMEOUTS_MS.auxiliaryCommand,
+      timeout: options?.timeoutMs ?? RUN_PORT_DEFAULT_TIMEOUT_MS,
     });
     return { status: result.status, stdout: result.stdout, stderr: result.stderr };
   },
