@@ -38,6 +38,10 @@ const WEB_FETCH_USER_AGENT = "agent-shim-frontdoor";
 /** The error type prefix every target refusal carries, so the CLI's tool error names which leg failed; the statuses below complete it. */
 const ERROR_PREFIX = "web_fetch_";
 
+/** The width of one IPv4 octet in bits, and its mask, for reading the two 16-bit groups of a v4-mapped IPv6 address. */
+const V4_OCTET_BITS = 8;
+const V4_OCTET_MASK = 0xff;
+
 /** The v4 first octets the refusal covers whole: "this network" (RFC 791), the RFC 1918 private interior, and loopback (RFC 1122). */
 const V4_THIS_NETWORK_OCTET = 0;
 const V4_PRIVATE_A_OCTET = 10;
@@ -146,10 +150,16 @@ export function isPrivateAddress(address: string): boolean {
   }
   if (version === IP_VERSION_6) {
     const lower = address.toLowerCase();
-    // A v4-mapped address is judged as the address it carries.
+    // A v4-mapped address (`::ffff:a.b.c.d`) is judged as the address it carries, in both spellings: a URL's parser writes the hex form (`::ffff:7f00:1`), which is the one a bracketed literal in a fetched URL arrives as.
     const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(lower);
     if (mapped !== null) {
       return isPrivateAddress(mapped[1] ?? "");
+    }
+    const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(lower);
+    if (mappedHex !== null) {
+      const high = Number.parseInt(mappedHex[1] ?? "0", 16);
+      const low = Number.parseInt(mappedHex[2] ?? "0", 16);
+      return isPrivateAddress([high >> V4_OCTET_BITS, high & V4_OCTET_MASK, low >> V4_OCTET_BITS, low & V4_OCTET_MASK].join("."));
     }
     if (lower === "::" || lower === "::1") {
       return true;
