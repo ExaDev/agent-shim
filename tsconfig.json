@@ -10,6 +10,7 @@
     "skipLibCheck": true,
     "types": ["node"],
     "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
     "declaration": false,
     "sourceMap": true,
     "incremental": true,

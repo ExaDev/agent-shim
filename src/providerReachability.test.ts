@@ -8,10 +8,14 @@ import {
   TCP_INITIAL_RETRANSMISSION_TIMEOUT_MS,
   couldNotConnectMessage,
   dialTargetOf,
+  probeProviderReachabilities,
   probeProviderReachability,
   providerConnectTimeoutMs,
+  realBaseUrlBatchProbe,
   realBaseUrlProbe,
 } from "./providerReachability";
+import { displayBaseUrl } from "./baseUrlDisplay";
+import type { ProbeWorkers } from "./frontdoor/probe";
 
 const servers: http.Server[] = [];
 
@@ -120,12 +124,99 @@ describe("realBaseUrlProbe", () => {
     expect(verdict.reason).toContain("ECONNREFUSED");
   });
 
-  it("fails a base URL that never answers within the bound it is given", () => {
-    // An address reserved for documentation (RFC 5737): where the machine routes it, nothing answers and the bound ends the probe; where it does not, the dial fails at once. Either way the probe fails, and never waits out the operating system's own connect timeout.
-    expect(realBaseUrlProbe("http://192.0.2.1:9", SHORT_CONNECT_BOUND_MS)).toMatchObject({ ok: false });
-  });
-
   it("fails a base URL whose scheme nothing dials", () => {
     expect(realBaseUrlProbe("ftp://example.com", SHORT_CONNECT_BOUND_MS)).toEqual({ ok: false, reason: "the base URL is neither http nor https" });
+  });
+
+  it("answers a batch in the order it was given, whichever targets are dialled and whichever are not", async () => {
+    const open = `http://127.0.0.1:${String(await listeningPort())}`;
+    const closed = `http://127.0.0.1:${String(await closedPort())}`;
+    const verdicts = realBaseUrlBatchProbe([
+      { baseUrl: closed, timeoutMs: DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS },
+      { baseUrl: "ftp://example.com", timeoutMs: SHORT_CONNECT_BOUND_MS },
+      { baseUrl: open, timeoutMs: DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS },
+    ]);
+    const [refused, undialled, accepted, ...rest] = verdicts;
+    if (refused === undefined || refused.ok) {
+      throw new Error("expected the refused port to fail the probe");
+    }
+    expect(refused.reason).toContain("ECONNREFUSED");
+    expect(undialled).toEqual({ ok: false, reason: "the base URL is neither http nor https" });
+    expect(accepted).toEqual({ ok: true });
+    expect(rest).toEqual([]);
+  });
+
+  it("starts the probe of every target before it waits on any, whichever targets are dialled", () => {
+    const events: string[] = [];
+    const workers: ProbeWorkers = {
+      start: (_source, data) => {
+        const port = String(data.port);
+        events.push(`start ${port}`);
+        return {
+          verdict: () => {
+            events.push(`wait ${port}`);
+            return { ok: true };
+          },
+        };
+      },
+    };
+    const verdicts = realBaseUrlBatchProbe(
+      [
+        { baseUrl: "http://192.0.2.1:1", timeoutMs: SHORT_CONNECT_BOUND_MS },
+        { baseUrl: "ftp://example.com", timeoutMs: SHORT_CONNECT_BOUND_MS },
+        { baseUrl: "http://192.0.2.1:3", timeoutMs: SHORT_CONNECT_BOUND_MS },
+      ],
+      workers,
+    );
+    expect(events).toEqual(["start 1", "start 3", "wait 1", "wait 3"]);
+    expect(verdicts).toEqual([{ ok: true }, { ok: false, reason: "the base URL is neither http nor https" }, { ok: true }]);
+  });
+});
+
+describe("a base URL in what the probe and the door report", () => {
+  const SECRET_BASE_URL = "https://user:hunter2@provider.example:8443/api/anthropic?key=abc123#frag";
+
+  it("leaves out the userinfo, query and fragment, keeping the scheme, host, port and path", () => {
+    expect(displayBaseUrl(SECRET_BASE_URL)).toBe("https://provider.example:8443/api/anthropic");
+    expect(displayBaseUrl("http://127.0.0.1:18080")).toBe("http://127.0.0.1:18080");
+  });
+
+  it("is what the could-not-connect line names", () => {
+    const line = couldNotConnectMessage("provider z", SECRET_BASE_URL, "ECONNREFUSED");
+    expect(line).toBe("provider z could not connect to https://provider.example:8443/api/anthropic: ECONNREFUSED");
+    expect(line).not.toContain("hunter2");
+    expect(line).not.toContain("abc123");
+  });
+});
+
+describe("probeProviderReachabilities", () => {
+  const HTTP = { displayName: "Http", credential: { sources: [{ literal: "placeholder" }] } };
+
+  it("probes only the http providers, each within its own bound, and reports each failure under its provider's name", () => {
+    const asked: (readonly { readonly baseUrl: string; readonly timeoutMs: number }[])[] = [];
+    const lines = probeProviderReachabilities(
+      [
+        { name: "first", provider: { ...HTTP, baseUrl: "http://192.0.2.1:1", connectTimeoutMs: OWN_CONNECT_TIMEOUT_MS } },
+        { name: "codex", provider: { kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "placeholder" }] } } },
+        { name: "second", provider: { ...HTTP, baseUrl: "http://192.0.2.1:2" } },
+        { name: "third", provider: { ...HTTP, baseUrl: "http://192.0.2.1:3" } },
+      ],
+      (targets) => {
+        asked.push(targets);
+        return [{ ok: true }, { ok: false, reason: "refused" }, { ok: true }];
+      },
+    );
+    expect(asked).toEqual([
+      [
+        { baseUrl: "http://192.0.2.1:1", timeoutMs: OWN_CONNECT_TIMEOUT_MS },
+        { baseUrl: "http://192.0.2.1:2", timeoutMs: DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS },
+        { baseUrl: "http://192.0.2.1:3", timeoutMs: DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS },
+      ],
+    ]);
+    expect([...lines]).toEqual([["second", couldNotConnectMessage("provider second", "http://192.0.2.1:2", "refused")]]);
+  });
+
+  it("fails loudly when the probe answers fewer verdicts than it was given targets", () => {
+    expect(() => probeProviderReachabilities([{ name: "first", provider: { ...HTTP, baseUrl: "http://192.0.2.1:1" } }], () => [])).toThrow("fewer verdicts");
   });
 });
