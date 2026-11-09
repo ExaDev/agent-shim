@@ -281,6 +281,32 @@ describe("the pass-through route", () => {
     }
   });
 
+  it("gives a reason, not an empty one, when localhost refuses on both of its addresses", async () => {
+    const probe = http.createServer();
+    const deadPort = await listen(probe);
+    await new Promise<void>((resolve) => {
+      probe.closeAllConnections();
+      probe.close(() => {
+        resolve(undefined);
+      });
+    });
+    servers.splice(servers.indexOf(probe), 1);
+    const told: string[] = [];
+    const door = await startDoor({ baseUrl: `http://localhost:${String(deadPort)}`, stripPrefix: "/providers/z", headroomUpstream: undefined, couldNotConnect: (line) => {
+      told.push(line);
+    } });
+    try {
+      const response = await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", headers: { [AUTH_HEADER]: "launch-token-for-tests" }, body: "{}" });
+      expect(response.status).toBe(HTTP_STATUS.badGateway);
+      const body = (await response.json()) as { readonly error: { readonly message: string } };
+      expect(body.error.message).toMatch(/ECONNREFUSED/u);
+      expect(body.error.message).not.toMatch(/:\s*$/u);
+      expect(told).toEqual([body.error.message]);
+    } finally {
+      await door.close();
+    }
+  });
+
   it("gives up on an upstream whose dial never settles after its connect bound, naming the provider and its base URL", async () => {
     // The dial never settles, so nothing but the connect bound can end the wait: without it this request would hang until the test's own budget ran out.
     const told: string[] = [];

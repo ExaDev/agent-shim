@@ -104,6 +104,57 @@ describe("probeAccept", () => {
     expect(timer.cancelled()).toBe(true);
   }, REJECTION_TEST_BUDGET_MS);
 
+  it("flattens the AggregateError node emits when every address of a name refuses, so the reason names each attempt", async () => {
+    class Refused extends Error {
+      public readonly code = "ECONNREFUSED";
+    }
+    class Aggregate extends Error {
+      public readonly code = "ECONNREFUSED";
+      public readonly errors = [new Refused("connect ECONNREFUSED 127.0.0.1:1"), new Refused("connect ECONNREFUSED ::1:1")];
+      constructor() {
+        super("");
+      }
+    }
+    const verdict = await probeAccept(
+      async () =>
+        await doorDial(
+          {
+            connect: () => {
+              const socket = new SilentSocket();
+              queueMicrotask(() => {
+                socket.emit("error", new Aggregate());
+              });
+              return socket;
+            },
+            lookup: createDoorLookup({ isIP: net.isIP, resolve4: () => undefined }),
+            isIP: () => 0,
+          },
+          { host: "localhost", port: 1 },
+          new SourcePortRange(RANGE_START, RANGE_END),
+        ),
+      SHORT_BOUND_MS,
+      manualTimer().start,
+    );
+    expect(verdict).toEqual({ ok: false, reason: "ECONNREFUSED: connect ECONNREFUSED 127.0.0.1:1; connect ECONNREFUSED ::1:1" });
+  });
+
+  class CodedError extends Error {
+    public readonly code: string;
+    constructor(message: string, code: string) {
+      super(message);
+      this.code = code;
+    }
+  }
+
+  it("never gives an empty reason: a code with no message is the code, and neither is a plain statement", async () => {
+    const timer = manualTimer();
+    const bare = new SilentSocket();
+    const noMessage = await probeAccept<SilentSocket>(async () => await Promise.resolve({ error: new CodedError("", "EHOSTUNREACH"), socket: bare }), SHORT_BOUND_MS, timer.start);
+    expect(noMessage).toEqual({ ok: false, reason: "EHOSTUNREACH" });
+    const nothing = await probeAccept<SilentSocket>(async () => await Promise.resolve({ error: new Error(""), socket: bare }), SHORT_BOUND_MS, timer.start);
+    expect(nothing).toEqual({ ok: false, reason: "the connection failed with no reason given" });
+  });
+
   it("passes a dial that connects within the bound, writes nothing and closes it at once", async () => {
     const socket = new SilentSocket();
     const timer = manualTimer();

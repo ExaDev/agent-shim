@@ -80,6 +80,14 @@ export async function doorDial<S extends DialSocket>(io: DoorDialIo<S>, target: 
         resolve({ error: null, socket });
       });
       socket.once("error", (error) => {
+        // A name that resolves to several addresses (`localhost`: 127.0.0.1 and ::1) is dialled by trying each, and when every attempt fails node emits an AggregateError whose own message is empty: its reason is the attempts' reasons, joined, with the code kept, so no report built from `message` ends on "ECONNREFUSED: ".
+        const attempts: unknown = Reflect.get(error, "errors");
+        if (error.message === "" && Array.isArray(attempts) && attempts.length > 0) {
+          const flattened: NodeJS.ErrnoException = new Error(attempts.map((attempt: unknown) => (attempt instanceof Error ? attempt.message : String(attempt))).join("; "));
+          flattened.code = error.code;
+          resolve({ error: flattened, socket });
+          return;
+        }
         resolve({ error, socket });
       });
     });
@@ -123,7 +131,7 @@ export async function probeAccept<S extends DialSocket>(dial: () => Promise<Dial
         }
         settled = true;
         cancel();
-        resolve(outcome.error === null ? { ok: true } : { ok: false, reason: `${outcome.error.code === undefined ? "" : `${outcome.error.code}: `}${outcome.error.message}` });
+        resolve(outcome.error === null ? { ok: true } : { ok: false, reason: [outcome.error.code, outcome.error.message].filter((part) => part !== undefined && part !== "").join(": ") || "the connection failed with no reason given" });
       },
       // A dial that throws before it has a socket (a port the system refuses to connect to) rejects: that is the probe's answer, with the reason, not an unhandled rejection in the worker.
       (error: unknown) => {
@@ -132,7 +140,7 @@ export async function probeAccept<S extends DialSocket>(dial: () => Promise<Dial
         }
         settled = true;
         cancel();
-        resolve({ ok: false, reason: error instanceof Error ? error.message : String(error) });
+        resolve({ ok: false, reason: (error instanceof Error ? error.message : String(error)) || "the dial failed with no reason given" });
       },
     );
   });
