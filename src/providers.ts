@@ -32,7 +32,6 @@ import {
   type ProviderCatalogue,
   type Provider,
   isRouterProvider,
-  isHttpProvider,
 } from "./config/schema";
 import { UsageError } from "./cliError";
 import { catalogueCachePath, filterCatalogue, parseCatalogueCache } from "./providerCatalogue";
@@ -50,11 +49,6 @@ import { ProviderNotFoundError, providerExists, readProvider, listProviders, typ
 
 /** What `--connect-timeout`'s help says the default is. */
 const CONNECT_TIMEOUT_DEFAULT_HINT = `a duration such as 3s or 500ms; default ${String(DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS)}ms, the first SYN and two retransmissions`;
-
-/** `provider` with its base URL named as `displayBaseUrl` shows it, for a report that is logged by its readers (a write's `--json` result); a provider with no base URL is returned as it is. */
-function withDisplayedBaseUrl<P extends Provider>(provider: P): P {
-  return isHttpProvider(provider) ? { ...provider, baseUrl: displayBaseUrl(provider.baseUrl) } : provider;
-}
 
 /**
  * One provider as `provider show --json` and `provider list --json` print it: its name, the file's own fields (less its editor-only `$schema` pointer), and its credential block summarised, so no `literal` source's value is printed. `baseUrlOf` chooses how the base URL appears: `provider show --json` passes the identity, since it reads one file back so its value round-trips into `provider set`, and `provider list --json` passes `displayBaseUrl`, since a listing is read by dashboards and logs that never need a credential in a URL.
@@ -305,7 +299,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           ...(codex === undefined ? {} : { codex }),
           ...(antigravity === undefined ? {} : { antigravity }),
         });
-        reportMutation(options.json, { action: "created", kind: "provider", name, value: withDisplayedBaseUrl(created) }, () => {
+        reportMutation(options.json, { action: "created", kind: "provider", name, value: toProviderView(name, created, aliasesOf(readProviderAliases(paths), name), displayBaseUrl) }, () => {
           console.log(`Created provider "${name}" (${describeProviderEndpoint(created)}${isRouterProvider(created) ? "" : `, credential ${describeCredential(created.credential)}`}).`);
         });
       }),
@@ -400,7 +394,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           ...(options.unsetPickerModel === undefined ? {} : { unsetPickerModels: options.unsetPickerModel }),
           ...(catalogue === undefined ? {} : { catalogue }),
         });
-        reportMutation(json, { action: "updated", kind: "provider", name, value: withDisplayedBaseUrl(updated) }, () => {
+        reportMutation(json, { action: "updated", kind: "provider", name, value: toProviderView(name, updated, aliasesOf(readProviderAliases(paths), name), displayBaseUrl) }, () => {
           console.log(`Updated provider "${name}" (${describeProviderEndpoint(updated)}${isRouterProvider(updated) ? "" : `, credential ${describeCredential(updated.credential)}`}).`);
         });
       }),
