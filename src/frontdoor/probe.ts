@@ -118,7 +118,7 @@ request.on("error", (error) => finish(failed, (error.code ? error.code + ": " : 
 request.end();
 `);
 
-/** Where probe workers come from: `start` begins one and returns what blocks the calling thread on its verdict. Injected so a test can observe that every worker has started before any is waited on. */
+/** Where probe workers come from: `start` begins one and returns what blocks the calling thread on its verdict. Injected so a test can observe the order in which workers start and are waited on. */
 export interface ProbeWorkers {
   readonly start: (source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number) => { readonly verdict: () => ListenerVerdict };
 }

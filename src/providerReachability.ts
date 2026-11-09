@@ -49,7 +49,7 @@ export interface BaseUrlTarget {
   readonly timeoutMs: number;
 }
 
-/** `BaseUrlProbe` for several base URLs at once, run together; verdicts in the order the targets were given. */
+/** `BaseUrlProbe` for several base URLs: up to `MAX_CONCURRENT_PROBES` distinct targets run together and any more follow in rounds of that many, so the worst case is the longest bound times the number of rounds; verdicts in the order the targets were given. */
 export type BaseUrlBatchProbe = (targets: readonly BaseUrlTarget[]) => readonly ListenerVerdict[];
 
 /** The port no listener has and no connection can be made to: a URL accepts `:0`, and the system refuses to connect to it. */
@@ -61,7 +61,7 @@ const PORT_ZERO: ListenerVerdict = { ok: false, reason: "the base URL names port
 /** The verdict for a base URL whose scheme nothing dials. */
 const UNDIALLABLE: ListenerVerdict = { ok: false, reason: "the base URL is neither http nor https" };
 
-/** The real batch probe, with the source of its workers injectable so a test can observe their order: each connect on a worker thread, all started before the calling thread blocks on any, refused in a process whose event loop serves others. */
+/** The real batch probe, with the source of its workers injectable so a test can observe their order: each connect on a worker thread, up to `MAX_CONCURRENT_PROBES` of them started before the calling thread blocks on the first, refused in a process whose event loop serves others. */
 export const realBaseUrlBatchProbe = (targets: readonly BaseUrlTarget[], workers?: ProbeWorkers): readonly ListenerVerdict[] => {
   const dialled = targets.map((target) => ({ dial: dialTargetOf(target.baseUrl), timeoutMs: target.timeoutMs }));
   const probed = dialled.filter((entry) => entry.dial !== undefined && entry.dial.port !== NO_LISTENER_PORT);
