@@ -5,6 +5,7 @@ import * as net from "node:net";
 
 import { HTTP_STATUS } from "../codex/http";
 import { ExemptHttpAgent, ExemptTlsAgent } from "./connectEffects";
+import { dialHostOf } from "../baseUrlDial";
 
 /**
  * The worker's web-fetch proxy target side: the URL fetch the CLI delegates to the Remote Control host when its environment sends `CLAUDE_CODE_WEBFETCH_USE_CCR_PROXY`, served by the self-hosted surface so such a session does not break on the first fetch. The wire contract is the one the 2.1.289 CLI's own client half defines (its `THr`/`jPt` functions): a POST of `{url}` to `/{cse}/worker/web-fetch` answered with `{url, destination_url, text, content_type}` or `{error: {error_type, error_message}}`, read under a 12 MiB answer cap and a 40 s per-attempt timeout.
@@ -219,7 +220,7 @@ async function checkTarget(url: URL, deps: Readonly<RcWebFetchDeps>): Promise<Rc
   if (deps.allowPrivate) {
     return undefined;
   }
-  const hostname = url.hostname.replace(/^\[|\]$/g, "");
+  const hostname = dialHostOf(url);
   let addresses: readonly string[];
   try {
     addresses = net.isIP(hostname) === 0 ? await deps.lookup(hostname) : [hostname];
@@ -317,7 +318,7 @@ export function realRcWebFetch(options: { readonly allowPrivate: boolean }): RcW
       await new Promise<RcWebFetchHop>((resolve, reject) => {
         const request = (url.protocol === "https:" ? https : http).request(
           {
-            hostname: url.hostname,
+            hostname: dialHostOf(url),
             port: url.port === "" ? undefined : Number(url.port),
             method: "GET",
             path: `${url.pathname}${url.search}`,

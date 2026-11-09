@@ -7,7 +7,6 @@ import {
   DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS,
   TCP_INITIAL_RETRANSMISSION_TIMEOUT_MS,
   couldNotConnectMessage,
-  dialTargetOf,
   probeProviderReachabilities,
   probeProviderReachability,
   providerConnectTimeoutMs,
@@ -17,6 +16,7 @@ import {
   startProviderReachability,
   type StartBaseUrlProbe,
 } from "./providerReachability";
+import { dialTargetOf } from "./baseUrlDial";
 import { displayBaseUrl } from "./baseUrlDisplay";
 import type { ProbeWorkers } from "./frontdoor/probe";
 

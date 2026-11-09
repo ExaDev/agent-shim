@@ -245,7 +245,7 @@ describe("the production web-fetch dial", () => {
   const servers: http.Server[] = [];
 
   /** Starts the loopback stand-in every case in this block fetches, with its redirect hop. */
-  const startStandIn = async (): Promise<number> => {
+  const startStandIn = async (host = "127.0.0.1"): Promise<number> => {
     const server = http.createServer((request, response) => {
       if (request.url === "/start") {
         response.writeHead(HTTP_FOUND, { location: "/final" });
@@ -256,7 +256,7 @@ describe("the production web-fetch dial", () => {
       response.end("stand-in final page");
     });
     await new Promise<void>((resolve) => {
-      server.listen(0, "127.0.0.1", () => {
+      server.listen(0, host, () => {
         resolve(undefined);
       });
     });
@@ -273,6 +273,18 @@ describe("the production web-fetch dial", () => {
         server.closeAllConnections();
       });
     }
+  });
+
+  it("fetches a page at an IPv6 literal through the door's own agents, which dial the address and not the bracketed name", async () => {
+    let port: number;
+    try {
+      port = await startStandIn("::1");
+    } catch {
+      // A host with no IPv6 loopback cannot show this; every other host does.
+      return;
+    }
+    const fetched = await realRcWebFetch({ allowPrivate: true })(`http://[::1]:${String(port)}/start`);
+    expect(fetched.kind).toBe("fetched");
   });
 
   it("fetches through the door's own agents when the lift is set, and refuses the loopback without it", async () => {
