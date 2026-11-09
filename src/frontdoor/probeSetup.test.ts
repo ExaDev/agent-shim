@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { DOOR_SOURCE_PORT_COUNT, DOOR_SOURCE_PORT_END, DOOR_SOURCE_PORT_START, SourcePortRange } from "./connectEffects";
 import { createDoorLookup, doorDial, probeAccept, runAcceptProbe, type AcceptProbeDeps, type DialSocket } from "./doorDial";
-import { MAX_CONCURRENT_PROBES, probeAddressesAcceptSync, probeListenerAcceptSync, type ProbeWorkers } from "./probe";
+import { MAX_CONCURRENT_PROBES, probeAddressesAcceptSync, startAddressProbes, probeListenerAcceptSync, type ProbeWorkers } from "./probe";
 
 const RANGE_START = 47_900;
 const RANGE_END = 47_902;
@@ -112,6 +112,7 @@ function recordingWorkers(): { readonly workers: ProbeWorkers; readonly events: 
             events.push(`wait ${name}`);
             return { ok: false, reason: `verdict for ${name}` };
           },
+          cancel: () => undefined,
         };
       },
     },
@@ -147,7 +148,7 @@ describe("a batch of provider probes", () => {
     const workers: ProbeWorkers = {
       start: (_source, data) => {
         startedData.push(data);
-        return { verdict: () => ({ ok: true }) };
+        return { verdict: () => ({ ok: true }), cancel: () => undefined };
       },
     };
     probeAddressesAcceptSync(TARGETS, workers);
@@ -210,6 +211,7 @@ describe("a batch of provider probes at the size of a large configuration", () =
               alive -= 1;
               return { ok: true };
             },
+            cancel: () => undefined,
           };
         },
       },
@@ -256,7 +258,7 @@ describe("a batch of provider probes at the size of a large configuration", () =
           throw new Error("ERR_WORKER_INIT_FAILED");
         }
         const host = String(data.host);
-        return { verdict: () => { settled.push(host); return { ok: true }; } };
+        return { verdict: () => { settled.push(host); return { ok: true }; }, cancel: () => undefined };
       },
     };
     const verdicts = probeAddressesAcceptSync(distinctTargets(TARGET_COUNT), workers, 0);
@@ -267,7 +269,7 @@ describe("a batch of provider probes at the size of a large configuration", () =
 
   it("starts the batches of different base offsets apart, so batches running together do not begin at one port", () => {
     const firsts: number[] = [];
-    const workers: ProbeWorkers = { start: (_source, data) => { firsts.push(Number(data.portFirst)); return { verdict: () => ({ ok: true }) }; } };
+    const workers: ProbeWorkers = { start: (_source, data) => { firsts.push(Number(data.portFirst)); return { verdict: () => ({ ok: true }), cancel: () => undefined }; } };
     probeAddressesAcceptSync(distinctTargets(1), workers, 0);
     probeAddressesAcceptSync(distinctTargets(1), workers, OTHER_BASE);
     expect(firsts).toEqual([DOOR_SOURCE_PORT_START, DOOR_SOURCE_PORT_START + OTHER_BASE]);
@@ -275,7 +277,7 @@ describe("a batch of provider probes at the size of a large configuration", () =
 
   it("spreads a batch's workers over the range by the stride, one every range-width over the targets", () => {
     const firsts: number[] = [];
-    const workers: ProbeWorkers = { start: (_source, data) => { firsts.push(Number(data.portFirst)); return { verdict: () => ({ ok: true }) }; } };
+    const workers: ProbeWorkers = { start: (_source, data) => { firsts.push(Number(data.portFirst)); return { verdict: () => ({ ok: true }), cancel: () => undefined }; } };
     const TARGETS = 100;
     probeAddressesAcceptSync(distinctTargets(TARGETS), workers, 0);
     const stride = DOOR_SOURCE_PORT_COUNT / TARGETS;
@@ -286,7 +288,7 @@ describe("a batch of provider probes at the size of a large configuration", () =
     vi.resetModules();
     const fresh = await import("./probe");
     const firsts: number[] = [];
-    const workers: ProbeWorkers = { start: (_source, data) => { firsts.push(Number(data.portFirst)); return { verdict: () => ({ ok: true }) }; } };
+    const workers: ProbeWorkers = { start: (_source, data) => { firsts.push(Number(data.portFirst)); return { verdict: () => ({ ok: true }), cancel: () => undefined }; } };
     fresh.probeAddressesAcceptSync(distinctTargets(1), workers);
     expect(firsts).toEqual([DOOR_SOURCE_PORT_START + ((process.pid * PORT_BASE_SPREAD) % DOOR_SOURCE_PORT_COUNT)]);
   });
@@ -306,12 +308,43 @@ describe("a batch of provider probes at the size of a large configuration", () =
     expect(verdicts).toHaveLength(THIRD + 1);
   });
 
+  it("starts every probe without waiting for any, waits only in settle, and cancels the workers still running", () => {
+    const events: string[] = [];
+    const workers: ProbeWorkers = {
+      start: (_source, data) => {
+        const host = String(data.host);
+        events.push(`start ${host}`);
+        return {
+          verdict: () => {
+            events.push(`wait ${host}`);
+            return { ok: true };
+          },
+          cancel: () => {
+            events.push(`cancel ${host}`);
+          },
+        };
+      },
+    };
+    const targets = [
+      { host: "a.example", port: PORT, timeoutMs: PROBE_BOUND_MS },
+      { host: "b.example", port: PORT, timeoutMs: PROBE_BOUND_MS },
+    ];
+    const settled = startAddressProbes(targets, workers);
+    expect(events).toEqual(["start a.example", "start b.example"]);
+    expect(settled.settle()).toEqual([{ ok: true }, { ok: true }]);
+    expect(events.slice(2)).toEqual(["wait a.example", "wait b.example"]);
+    events.length = 0;
+    const abandoned = startAddressProbes(targets, workers);
+    abandoned.cancel();
+    expect(events).toEqual(["start a.example", "start b.example", "cancel a.example", "cancel b.example"]);
+  });
+
   it("gives two targets that differ only in their bound each their own bound and verdict", () => {
     const SHORT_BOUND_MS = 500;
     const LONG_BOUND_MS = 30_000;
     // The verdict names the bound its worker was given, so a probe shared between the two would show the same bound twice.
     const workers: ProbeWorkers = {
-      start: (_source, _data, timeoutMs) => ({ verdict: () => ({ ok: false, reason: `bound ${String(timeoutMs)}` }) }),
+      start: (_source, _data, timeoutMs) => ({ verdict: () => ({ ok: false, reason: `bound ${String(timeoutMs)}` }), cancel: () => undefined }),
     };
     const verdicts = probeAddressesAcceptSync(
       [
@@ -335,7 +368,7 @@ describe("probeListenerAcceptSync", () => {
     const workers: ProbeWorkers = {
       start: (_source, data) => {
         startedData = data;
-        return { verdict: () => ({ ok: true }) };
+        return { verdict: () => ({ ok: true }), cancel: () => undefined };
       },
     };
     expect(probeListenerAcceptSync(PORT, PROBE_BOUND_MS, workers)).toEqual({ ok: true });

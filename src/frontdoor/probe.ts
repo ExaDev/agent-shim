@@ -120,7 +120,13 @@ request.end();
 
 /** Where probe workers come from: `start` begins one and returns what blocks the calling thread on its verdict. Injected so a test can observe the order in which workers start and are waited on. */
 export interface ProbeWorkers {
-  readonly start: (source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number) => { readonly verdict: () => ListenerVerdict };
+  readonly start: (source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number) => StartedProbe;
+}
+
+/** A probe that has been started: `verdict` blocks the calling thread until it answers and ends its worker; `cancel` ends the worker of a probe nobody will wait on (idempotent, and harmless after `verdict`). */
+export interface StartedProbe {
+  readonly verdict: () => ListenerVerdict;
+  readonly cancel: () => void;
 }
 
 const realProbeWorkers: ProbeWorkers = { start: (source, data, timeoutMs) => startProbeWorker(source, data, timeoutMs) };
@@ -188,10 +194,16 @@ const processPortBase = (): number => (process.pid * PORT_BASE_SPREAD) % DOOR_SO
 /** A probe target's identity: two providers on one host and port with one bound need one connection between them. */
 const targetKey = (target: { readonly host: string; readonly port: number; readonly timeoutMs: number }): string => `${target.host}\u0000${String(target.port)}\u0000${String(target.timeoutMs)}`;
 
+/** A batch of address probes that has been started: `settle` blocks until every verdict is in and returns them in the order of the targets; `cancel` ends the workers of a batch nobody will settle. */
+export interface StartedAddressProbes {
+  readonly settle: () => readonly ListenerVerdict[];
+  readonly cancel: () => void;
+}
+
 /**
- * Whether the door's own dial reaches each address within its bound: one connect each, closed again the moment it is accepted, so no request reaches a listener. Targets that name the same host, port and bound are probed once and share the verdict. At most `MAX_CONCURRENT_PROBES` workers run at once, each started before the verdict of the one that many places ahead is waited on, so the probes run together up to that bound and the rest start as earlier ones answer. Each worker's source-port rotation starts at its own place in the reserved range: the batch's offset (`portBase`, from the process id by default, so batches of different processes start apart) plus the worker's index times a stride that spreads the batch's workers over the range, or by one port where there are more targets than ports. While the batch has no more unique targets than the range has ports, every worker's first port is its own, since workers running at once differ in index by fewer than `MAX_CONCURRENT_PROBES` and the stride is at least one; past the range's width the index wraps onto ports earlier workers used, which the dial walks past within its own retry bound (one attempt for each port of the range). The ports a probe used stay in TIME_WAIT for a while after it closes, so a process runs one batch: `doctor`, `check` and a launch each probe once. Verdicts are returned in the order of `targets`.
+ * Starts the probe of each address (`probeAddressesAcceptSync` is this and `settle` straight away), returning before it has waited on the last of them, so the caller can do other work while the dials are in flight. Whether the door's own dial reaches each address within its bound: one connect each, closed again the moment it is accepted, so no request reaches a listener. Targets that name the same host, port and bound are probed once and share the verdict. At most `MAX_CONCURRENT_PROBES` workers run at once, each started before the verdict of the one that many places ahead is waited on, so the probes run together up to that bound and the rest start as earlier ones answer. Each worker's source-port rotation starts at its own place in the reserved range: the batch's offset (`portBase`, from the process id by default, so batches of different processes start apart) plus the worker's index times a stride that spreads the batch's workers over the range, or by one port where there are more targets than ports. While the batch has no more unique targets than the range has ports, every worker's first port is its own, since workers running at once differ in index by fewer than `MAX_CONCURRENT_PROBES` and the stride is at least one; past the range's width the index wraps onto ports earlier workers used, which the dial walks past within its own retry bound (one attempt for each port of the range). The ports a probe used stay in TIME_WAIT for a while after it closes, so a process runs one batch: `doctor`, `check` and a launch each probe once. Verdicts are returned in the order of `targets`.
  */
-export function probeAddressesAcceptSync(targets: readonly { readonly host: string; readonly port: number; readonly timeoutMs: number }[], workers: ProbeWorkers = realProbeWorkers, portBase?: number): readonly ListenerVerdict[] {
+export function startAddressProbes(targets: readonly { readonly host: string; readonly port: number; readonly timeoutMs: number }[], workers: ProbeWorkers = realProbeWorkers, portBase?: number): StartedAddressProbes {
   refuseToBlockInRole("a synchronous probe of a provider's address");
   const base = portBase ?? processPortBase();
   const distinct = new Map<string, { readonly host: string; readonly port: number; readonly timeoutMs: number }>();
@@ -201,7 +213,7 @@ export function probeAddressesAcceptSync(targets: readonly { readonly host: stri
   const unique = Array.from(distinct.values());
   const stride = Math.max(1, Math.floor(DOOR_SOURCE_PORT_COUNT / unique.length));
   const verdicts = new Map<string, ListenerVerdict>();
-  const running: { readonly key: string; readonly verdict: () => ListenerVerdict }[] = [];
+  const running: { readonly key: string; readonly verdict: () => ListenerVerdict; readonly cancel: () => void }[] = [];
   const settleOldest = (): void => {
     const oldest = running.shift();
     if (oldest !== undefined) {
@@ -215,22 +227,37 @@ export function probeAddressesAcceptSync(targets: readonly { readonly host: stri
     const portFirst = DOOR_SOURCE_PORT_START + ((base + index * stride) % DOOR_SOURCE_PORT_COUNT);
     // A worker that cannot be started is that target's failed verdict, and the workers already running are still settled, so their threads are ended and the launch or doctor run goes on to say what it found.
     try {
-      running.push({ key: targetKey(target), verdict: workers.start(ACCEPT_PROBE_SOURCE, { host: target.host, port: target.port, portStart: DOOR_SOURCE_PORT_START, portEnd: DOOR_SOURCE_PORT_END, portFirst }, target.timeoutMs).verdict });
+      const started = workers.start(ACCEPT_PROBE_SOURCE, { host: target.host, port: target.port, portStart: DOOR_SOURCE_PORT_START, portEnd: DOOR_SOURCE_PORT_END, portFirst }, target.timeoutMs);
+      running.push({ key: targetKey(target), verdict: started.verdict, cancel: started.cancel });
     } catch (error) {
       const reason = `${PROBE_WORKER_FAILURE_PREFIX}the worker could not be started: ${error instanceof Error ? error.message : String(error)}`;
-      running.push({ key: targetKey(target), verdict: () => ({ ok: false, reason }) });
+      running.push({ key: targetKey(target), verdict: () => ({ ok: false, reason }), cancel: () => undefined });
     }
   });
-  while (running.length > 0) {
-    settleOldest();
-  }
-  return targets.map((target) => {
-    const verdict = verdicts.get(targetKey(target));
-    if (verdict === undefined) {
-      throw new Error("the batch probe settled no verdict for one of its targets");
-    }
-    return verdict;
-  });
+  return {
+    settle: () => {
+      while (running.length > 0) {
+        settleOldest();
+      }
+      return targets.map((target) => {
+        const verdict = verdicts.get(targetKey(target));
+        if (verdict === undefined) {
+          throw new Error("the batch probe settled no verdict for one of its targets");
+        }
+        return verdict;
+      });
+    },
+    cancel: () => {
+      for (const started of running.splice(0)) {
+        started.cancel();
+      }
+    },
+  };
+}
+
+/** Whether the door's own dial reaches each address within its bound, waiting for every verdict (see `startAddressProbes`). */
+export function probeAddressesAcceptSync(targets: readonly { readonly host: string; readonly port: number; readonly timeoutMs: number }[], workers: ProbeWorkers = realProbeWorkers, portBase?: number): readonly ListenerVerdict[] {
+  return startAddressProbes(targets, workers, portBase).settle();
 }
 
 /** The part of a worker thread this module uses, so a test can stand in a worker that reports an error. */
@@ -255,7 +282,7 @@ const spawnRealWorker: ProbeWorkerSpawn = (source, options) => new Worker(source
  *
  * The probe sources embed the source text of functions from this bundle (`Function.prototype.toString`), and the text must run on its own in the worker: it can reference nothing but its own parameters. A bundler option that rewrites function bodies (esbuild's `keepNames` injects calls to a `__name` helper that exists only in the bundle) makes the worker throw a ReferenceError. The check is deliberately narrow, on what is embedded and not on the whole bundle, since a bundled dependency compiled with `keepNames` is harmless: `probe.test.ts` builds this module with the release's own options (`scripts/bundle-options.mts`) and fails if the source handed to a worker contains a `__name` call or does not run in a worker.
  */
-export function startProbeWorker(source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number, spawn: ProbeWorkerSpawn = spawnRealWorker, startLimitMs: number = PROBE_WORKER_START_LIMIT_MS, wait: ProbeWait = Atomics.wait): { readonly verdict: () => ListenerVerdict } {
+export function startProbeWorker(source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number, spawn: ProbeWorkerSpawn = spawnRealWorker, startLimitMs: number = PROBE_WORKER_START_LIMIT_MS, wait: ProbeWait = Atomics.wait): StartedProbe {
   const startLimit = performance.now() + startLimitMs;
   const shared = new SharedArrayBuffer(HEADER_SLOTS * INT32_BYTES + REASON_BYTES);
   const header = new Int32Array(shared, 0, HEADER_SLOTS);
@@ -268,7 +295,7 @@ export function startProbeWorker(source: string, data: Readonly<Record<string, u
   } catch (error) {
     // A thread that cannot be created (out of memory, out of descriptors) is a failed probe, never a throw out of a launch or a batch whose other workers are already running.
     const reason = `${PROBE_WORKER_FAILURE_PREFIX}the worker could not be started: ${error instanceof Error ? error.message : String(error)}`;
-    return { verdict: () => ({ ok: false, reason }) };
+    return { verdict: () => ({ ok: false, reason }), cancel: () => undefined };
   }
   worker.on("error", (error: Error) => {
     if (Atomics.compareExchange(header, CLAIM_SLOT, 0, 1) !== 0) {
@@ -303,6 +330,9 @@ export function startProbeWorker(source: string, data: Readonly<Record<string, u
       } finally {
         void worker.terminate();
       }
+    },
+    cancel: () => {
+      void worker.terminate();
     },
   };
 }

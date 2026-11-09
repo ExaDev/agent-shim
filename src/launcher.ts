@@ -40,7 +40,7 @@ import { loadConfigFile } from "./config/load";
 import { flattenLayers } from "./resolve/flatten";
 import { assembleCascade } from "./resolve/walk";
 import { CREDENTIAL_TARGET_VARS, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type LaunchFlags, type Pool, type UpdateMode, isRouterProvider } from "./config/schema";
-import { unreachableProviderLine, type BaseUrlProbe } from "./providerReachability";
+import { startProviderReachability, type StartBaseUrlProbe, type StartedProviderReachability } from "./providerReachability";
 import { GlobalConfigSchema } from "./config/schema";
 import { CREDENTIAL_UNAVAILABLE_EXIT, credentialVariables, describeSource, identityCacheKey, resolveCredential, summariseCredential, type CredentialPort, type CredentialSummary, type ResolvedCredential } from "./credential";
 import type { CascadeInput } from "./resolve/walk";
@@ -115,8 +115,8 @@ export interface PrepareLaunchParams {
   readonly frontdoor?: FrontDoorPort;
   /** Resolves credential blocks (a provider's, or the launching identity's own). Omitted by a caller that cannot read secret files or run commands; a launch that needs a credential is then refused rather than started without it. */
   readonly credentials?: CredentialPort;
-  /** Opens one connection to an http provider's base URL, bounded by the provider's connect timeout. With it, a launch on an http provider whose base URL accepts no connection carries a warning naming the URL on its report, and goes ahead; a caller that cannot open connections omits it and reports nothing. */
-  readonly probeBaseUrl?: BaseUrlProbe;
+  /** Starts one connection to an http provider's base URL, bounded by the provider's connect timeout, and returns before it is answered. With it, a launch on an http provider whose base URL accepts no connection carries a warning naming the URL after its report, and goes ahead; a caller that cannot open connections omits it and reports nothing. */
+  readonly startBaseUrlProbe?: StartBaseUrlProbe;
   /** True when the user was asked on a terminal whether to create the selected configuration profile and chose to launch without it. Without that explicit choice, a selected profile with no file is refused rather than silently skipped. */
   readonly allowMissingConfigProfile?: boolean;
   /** The user-global `update.mode`, resolved from the same global config the launcher already loads. Absent means `off`, and `off` runs no launch-time update check at all. */
@@ -715,6 +715,16 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
   }
 }
 
+/** Runs `bringUp` and returns its result; when it throws (a refusal in a library host, a daemon that would not start), the provider reachability probe it overlaps is cancelled first, so no worker thread outlives a launch that never reads it. */
+function cancelOnThrow<T>(reachability: StartedProviderReachability | undefined, bringUp: () => T): T {
+  try {
+    return bringUp();
+  } catch (error) {
+    reachability?.cancel();
+    throw error;
+  }
+}
+
 /**
  * Prepares one `claude` launch, in order:
  *
@@ -731,7 +741,7 @@ function prepareRegisteredLaunch(params: PrepareLaunchParams, onRecorded: (remov
   const { env } = decided;
   const { identityDecision, configProfileDecision, resolvedProvider, identityCredential, poolPick, poolRanking, lastRanAs, billing, notes, flags: resolvedFlags, configDirEscapeHatch: configDirEscapeHatchApplies, decision } = decided;
 
-  // Everything the launch has to say about itself is collected as it is decided and printed as one block once the launch is ready to start, so what a person reads is a single table of facts and not lines scattered between the steps. Warnings follow it.
+  // Everything the launch has to say about itself is collected as it is decided and printed as one block once the launch is ready to start, so what a person reads is a single table of facts and not lines scattered between the steps. The warnings the launch raises as it decides follow it, the provider's unreachable warning first; a warning a daemon's bring-up raises is printed as it arises, above it.
   const rows: ReportRow[] = [
     ...decisionRows({
       identity: identityDecision.name,
@@ -809,83 +819,86 @@ function prepareRegisteredLaunch(params: PrepareLaunchParams, onRecorded: (remov
     }
   }
 
-  // A provider whose base URL accepts no connection now cannot answer the session's first request, so the launch warns, naming the URL, through `log.warn` like the launcher's other warnings: on standard error, so output a caller pipes from the session stays clean, and in the warnings a library host is handed. The launch still goes ahead, because the probe can be wrong about later: a tunnel that comes up a moment after, a base URL reachable only once the door is up, a provider that is still starting. When it is still down the door's answer and `doctor` say the same. Only the launch's own provider is probed: a provider the models block routes some requests to is reported by the door when a request reaches it.
-  const unreachable = resolvedProvider === undefined ? undefined : unreachableProviderLine(resolvedProvider.name, resolvedProvider.definition, params.probeBaseUrl);
+  // A provider whose base URL accepts no connection now cannot answer the session's first request, so the launch warns, naming the URL, through `log.warn` like the launcher's other warnings, after the report: on standard error, so output a caller pipes from the session stays clean, and in the warnings a library host is handed. The launch still goes ahead, because the probe can be wrong about later: a tunnel that comes up a moment after, a base URL reachable only once the door is up, a provider that is still starting. When it is still down the door's answer and `doctor` say the same. The probe is started here, before the daemons come up, and read just before the report, so a base URL nothing answers costs the launch only what the bring-up did not already spend. Only the launch's own provider is probed: a provider the models block routes some requests to is reported by the door when a request reaches it.
+  const reachability = resolvedProvider === undefined ? undefined : startProviderReachability(resolvedProvider.name, resolvedProvider.definition, params.startBaseUrlProbe);
+  const brought = cancelOnThrow(reachability, () => {
+    // The front door comes up first, before headroom: every routed session (a provider's, or headroom's) enters through it, and headroom's allowlist must hold the door's direct origin, which is what every provider session routed through headroom (a codex session's included) is forwarded back to, and the headroom supervisor lists the origin of a door that has served. `ensure` authenticates the door's listener over TLS before returning anything, so the address the child is handed below (and sends its credential to) belongs to a listener holding a leaf from agent-shim's CA.
+    const frontDoorPort = params.frontdoor;
+    const frontDoorEngaged = resolvedProvider !== undefined || resolvedFlags.headroom || resolvedFlags.trackUsage;
+    if (frontDoorEngaged && frontDoorPort === undefined) {
+      log.error("agent-shim: this launch routes through the front-door daemon, but this launcher has no front-door port wired; refusing to launch without it.");
+      proc.exit(1);
+    }
+    // The id this launch's requests carry in their session header, and the models block the door resolves them against: the global block live when this launch adds nothing to it, else the block this launch resolved (a deeper layer's definitions the door cannot read from the global file). An absent resolved block against a present global one means a deeper layer removed everything, which the door is told as an empty block.
+    const sessionId = params.supervised?.sessionId ?? randomUUID();
+    const resolvedModels = decided.models ?? (decided.globalModels === undefined ? undefined : {});
+    const sessionModels = isDeepStrictEqual(resolvedModels, decided.globalModels) ? undefined : resolvedModels;
+    const session = { sessionId, ...(decided.farmIdentity === undefined ? {} : { identity: decided.farmIdentity }), ...(sessionModels === undefined ? {} : { models: sessionModels }) };
+    let frontDoor = frontDoorEngaged && frontDoorPort !== undefined ? frontDoorPort.ensure(env.NODE_EXTRA_CA_CERTS, session) : undefined;
+    if (frontDoor !== undefined && frontDoorPort !== undefined) {
+      let beforePid = frontDoor.supervisorPid;
+      for (;;) {
+        const catalogueWarning = frontDoorPort.waitForCatalogues?.(frontDoor.supervisorPid);
+        if (catalogueWarning !== undefined) log.warn(catalogueWarning);
+        const after = readFrontDoorState(params.fs, paths.frontdoorStateFile);
+        if (after?.supervisorPid === undefined || after.supervisorPid === beforePid) break;
+        frontDoor = frontDoorPort.ensure(env.NODE_EXTRA_CA_CERTS, session);
+        if (frontDoor.supervisorPid === beforePid) break;
+        beforePid = frontDoor.supervisorPid;
+      }
+    }
+    if (frontDoor?.trustWarning !== undefined) {
+      log.warn(frontDoor.trustWarning);
+    }
+
+    let headroom: HeadroomUp | undefined;
+    const headroomPort = params.headroom;
+    if (resolvedFlags.headroom && headroomPort !== undefined) {
+      headroom = headroomPort.ensure({ routesProvider: resolvedProvider !== undefined });
+    } else if (resolvedFlags.headroom) {
+      log.error("agent-shim: headroom routing was requested but this launcher has no headroom port wired; refusing to launch without it.");
+      proc.exit(1);
+    }
+    rows.push(...routingRows({ frontDoor, headroom, provider: resolvedProvider !== undefined }));
+    const frontDoorRelease = frontDoor === undefined ? undefined : frontDoorPort?.release;
+
+    const finalEnv = buildEnv({
+      baseEnv: env,
+      configDirEscapeHatch: configDirEscapeHatchApplies,
+      identityId: decided.farmIdentity,
+      identitiesDir: paths.identitiesDir,
+      ...(resolvedProvider === undefined ? {} : { provider: resolvedProvider }),
+      ...(identityCredential === undefined ? {} : { identityCredential }),
+      ...(frontDoor === undefined ? {} : { frontdoor: frontDoor }),
+      ...(headroom === undefined ? {} : { headroom }),
+      sessionId,
+      remoteControl: resolvedFlags.remoteControl,
+     
+      ...(decided.models?.tiers === undefined ? {} : { tierModels: decided.models.tiers }),
+      proxyBypass: resolvedFlags.proxyBypass,
+      ...(resolvedFlags.statusline === undefined ? {} : { statusline: resolvedFlags.statusline }),
+    });
+
+    // Every daemon session registration this launch holds, released when the child exits.
+    const releases = [...(unregisterLaunch === undefined ? [] : [unregisterLaunch]), ...(headroom === undefined || headroomPort === undefined ? [] : [headroomPort.release]), ...(frontDoorRelease === undefined ? [] : [frontDoorRelease])];
+    const release = (): void => {
+      for (const registered of releases) {
+        registered();
+      }
+    };
+    const picker = decided.argsForSupervisor(frontDoor?.supervisorPid);
+    if (picker.pickerSuppressed) rows.push(noteRow("--settings was passed, so /model keeps Claude Code's own model names"));
+    rows.push(...notes.map(noteRow));
+    return { finalEnv, release, picker, sessionId };
+  });
+  const unreachable = reachability?.line();
+  log.report(rows);
   if (unreachable !== undefined) {
     log.warn(unreachable);
   }
-
-  // The front door comes up first, before headroom: every routed session (a provider's, or headroom's) enters through it, and headroom's allowlist must hold the door's direct origin, which is what every provider session routed through headroom (a codex session's included) is forwarded back to, and the headroom supervisor lists the origin of a door that has served. `ensure` authenticates the door's listener over TLS before returning anything, so the address the child is handed below (and sends its credential to) belongs to a listener holding a leaf from agent-shim's CA.
-  const frontDoorPort = params.frontdoor;
-  const frontDoorEngaged = resolvedProvider !== undefined || resolvedFlags.headroom || resolvedFlags.trackUsage;
-  if (frontDoorEngaged && frontDoorPort === undefined) {
-    log.error("agent-shim: this launch routes through the front-door daemon, but this launcher has no front-door port wired; refusing to launch without it.");
-    proc.exit(1);
-  }
-  // The id this launch's requests carry in their session header, and the models block the door resolves them against: the global block live when this launch adds nothing to it, else the block this launch resolved (a deeper layer's definitions the door cannot read from the global file). An absent resolved block against a present global one means a deeper layer removed everything, which the door is told as an empty block.
-  const sessionId = params.supervised?.sessionId ?? randomUUID();
-  const resolvedModels = decided.models ?? (decided.globalModels === undefined ? undefined : {});
-  const sessionModels = isDeepStrictEqual(resolvedModels, decided.globalModels) ? undefined : resolvedModels;
-  const session = { sessionId, ...(decided.farmIdentity === undefined ? {} : { identity: decided.farmIdentity }), ...(sessionModels === undefined ? {} : { models: sessionModels }) };
-  let frontDoor = frontDoorEngaged && frontDoorPort !== undefined ? frontDoorPort.ensure(env.NODE_EXTRA_CA_CERTS, session) : undefined;
-  if (frontDoor !== undefined && frontDoorPort !== undefined) {
-    let beforePid = frontDoor.supervisorPid;
-    for (;;) {
-      const catalogueWarning = frontDoorPort.waitForCatalogues?.(frontDoor.supervisorPid);
-      if (catalogueWarning !== undefined) log.warn(catalogueWarning);
-      const after = readFrontDoorState(params.fs, paths.frontdoorStateFile);
-      if (after?.supervisorPid === undefined || after.supervisorPid === beforePid) break;
-      frontDoor = frontDoorPort.ensure(env.NODE_EXTRA_CA_CERTS, session);
-      if (frontDoor.supervisorPid === beforePid) break;
-      beforePid = frontDoor.supervisorPid;
-    }
-  }
-  if (frontDoor?.trustWarning !== undefined) {
-    log.warn(frontDoor.trustWarning);
-  }
-
-  let headroom: HeadroomUp | undefined;
-  const headroomPort = params.headroom;
-  if (resolvedFlags.headroom && headroomPort !== undefined) {
-    headroom = headroomPort.ensure({ routesProvider: resolvedProvider !== undefined });
-  } else if (resolvedFlags.headroom) {
-    log.error("agent-shim: headroom routing was requested but this launcher has no headroom port wired; refusing to launch without it.");
-    proc.exit(1);
-  }
-  rows.push(...routingRows({ frontDoor, headroom, provider: resolvedProvider !== undefined }));
-  const frontDoorRelease = frontDoor === undefined ? undefined : frontDoorPort?.release;
-
-  const finalEnv = buildEnv({
-    baseEnv: env,
-    configDirEscapeHatch: configDirEscapeHatchApplies,
-    identityId: decided.farmIdentity,
-    identitiesDir: paths.identitiesDir,
-    ...(resolvedProvider === undefined ? {} : { provider: resolvedProvider }),
-    ...(identityCredential === undefined ? {} : { identityCredential }),
-    ...(frontDoor === undefined ? {} : { frontdoor: frontDoor }),
-    ...(headroom === undefined ? {} : { headroom }),
-    sessionId,
-    remoteControl: resolvedFlags.remoteControl,
-   
-    ...(decided.models?.tiers === undefined ? {} : { tierModels: decided.models.tiers }),
-    proxyBypass: resolvedFlags.proxyBypass,
-    ...(resolvedFlags.statusline === undefined ? {} : { statusline: resolvedFlags.statusline }),
-  });
-
-  // Every daemon session registration this launch holds, released when the child exits.
-  const releases = [...(unregisterLaunch === undefined ? [] : [unregisterLaunch]), ...(headroom === undefined || headroomPort === undefined ? [] : [headroomPort.release]), ...(frontDoorRelease === undefined ? [] : [frontDoorRelease])];
-  const release = (): void => {
-    for (const registered of releases) {
-      registered();
-    }
-  };
-  const picker = decided.argsForSupervisor(frontDoor?.supervisorPid);
-  if (picker.pickerSuppressed) rows.push(noteRow("--settings was passed, so /model keeps Claude Code's own model names"));
-  rows.push(...notes.map(noteRow));
-  log.report(rows);
   printDiagnosticLines(log, warnings, { errorsAsWarnings: false });
   const hold = (): HoldOutcome => holdBeforeLaunch({ delayMs: resolvedFlags.delayMs, pause: resolvedFlags.pause }, params.hold, log);
-  return { bin: decided.bin, args: picker.args, env: finalEnv, sessionId, release, markChildStarted: updateCheck.markChildStarted, hold, decision };
+  return { bin: decided.bin, args: brought.picker.args, env: brought.finalEnv, sessionId: brought.sessionId, release: brought.release, markChildStarted: updateCheck.markChildStarted, hold, decision };
 }
 
 /**

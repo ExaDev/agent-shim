@@ -1,6 +1,6 @@
 import { isHttpProvider, type HttpProvider, type Provider } from "./config/schema";
 import { displayBaseUrl } from "./baseUrlDisplay";
-import { probeAddressesAcceptSync, type ListenerVerdict, type ProbeWorkers } from "./frontdoor/probe";
+import { startAddressProbes, type ListenerVerdict, type ProbeWorkers } from "./frontdoor/probe";
 
 /**
  * The retransmission timeout a TCP sender uses before it has measured any round trip, which is the case for every connection's SYN: RFC 6298 section 2.1 sets it to one second, and both macOS and Linux start their SYN retransmissions from it.
@@ -61,36 +61,69 @@ const PORT_ZERO: ListenerVerdict = { ok: false, reason: "the base URL names port
 /** The verdict for a base URL whose scheme nothing dials. */
 const UNDIALLABLE: ListenerVerdict = { ok: false, reason: "the base URL is neither http nor https" };
 
-/** The real batch probe, with the source of its workers injectable so a test can observe their order: each connect on a worker thread, up to `MAX_CONCURRENT_PROBES` of them started before the calling thread blocks on the first, refused in a process whose event loop serves others. */
-export const realBaseUrlBatchProbe = (targets: readonly BaseUrlTarget[], workers?: ProbeWorkers): readonly ListenerVerdict[] => {
+/** A batch of base-URL probes that has been started: `verdicts` blocks until every one is in and returns them in the order of the targets; `cancel` ends the workers of a batch nobody will wait on. */
+export interface StartedBaseUrlBatchProbe {
+  readonly verdicts: () => readonly ListenerVerdict[];
+  readonly cancel: () => void;
+}
+
+/** Starts the real batch probe, returning before it has waited on any verdict so the caller can work meanwhile (see `realBaseUrlBatchProbe`, which waits straight away), with the source of its workers injectable so a test can observe their order: each connect on a worker thread, up to `MAX_CONCURRENT_PROBES` of them started before the calling thread blocks on the first, refused in a process whose event loop serves others. */
+export const startBaseUrlBatchProbe = (targets: readonly BaseUrlTarget[], workers?: ProbeWorkers): StartedBaseUrlBatchProbe => {
   const dialled = targets.map((target) => ({ dial: dialTargetOf(target.baseUrl), timeoutMs: target.timeoutMs }));
   const probed = dialled.filter((entry) => entry.dial !== undefined && entry.dial.port !== NO_LISTENER_PORT);
-  const verdicts = probeAddressesAcceptSync(probed.flatMap((entry) => (entry.dial === undefined ? [] : [{ ...entry.dial, timeoutMs: entry.timeoutMs }])), workers);
-  let next = 0;
-  return dialled.map((entry) => {
-    if (entry.dial === undefined) {
-      return UNDIALLABLE;
-    }
-    if (entry.dial.port === NO_LISTENER_PORT) {
-      return PORT_ZERO;
-    }
-    const verdict = verdicts[next];
-    next += 1;
-    if (verdict === undefined) {
-      throw new Error("the batch probe answered fewer verdicts than it was given addresses");
-    }
-    return verdict;
-  });
+  const started = startAddressProbes(probed.flatMap((entry) => (entry.dial === undefined ? [] : [{ ...entry.dial, timeoutMs: entry.timeoutMs }])), workers);
+  return {
+    cancel: started.cancel,
+    verdicts: () => {
+      const verdicts = started.settle();
+      let next = 0;
+      return dialled.map((entry) => {
+        if (entry.dial === undefined) {
+          return UNDIALLABLE;
+        }
+        if (entry.dial.port === NO_LISTENER_PORT) {
+          return PORT_ZERO;
+        }
+        const verdict = verdicts[next];
+        next += 1;
+        if (verdict === undefined) {
+          throw new Error("the batch probe answered fewer verdicts than it was given addresses");
+        }
+        return verdict;
+      });
+    },
+  };
 };
 
-/** The real probe of one base URL: a batch of one. */
-export const realBaseUrlProbe: BaseUrlProbe = (baseUrl, timeoutMs) => {
-  const [verdict] = realBaseUrlBatchProbe([{ baseUrl, timeoutMs }]);
-  if (verdict === undefined) {
-    throw new Error("the batch probe answered no verdict for one base URL");
-  }
-  return verdict;
+/** The real batch probe: each connect on a worker thread, up to `MAX_CONCURRENT_PROBES` of them started before the calling thread blocks on the first verdict. */
+export const realBaseUrlBatchProbe = (targets: readonly BaseUrlTarget[], workers?: ProbeWorkers): readonly ListenerVerdict[] => startBaseUrlBatchProbe(targets, workers).verdicts();
+
+/** A probe of one base URL that has been started: `verdict` blocks until it answers; `cancel` ends its worker. */
+export interface StartedBaseUrlProbe {
+  readonly verdict: () => ListenerVerdict;
+  readonly cancel: () => void;
+}
+
+/** Starts a probe of one base URL within `timeoutMs` without waiting for it. */
+export type StartBaseUrlProbe = (baseUrl: string, timeoutMs: number) => StartedBaseUrlProbe;
+
+/** The real start of a one-URL probe: a batch of one. */
+export const realStartBaseUrlProbe: StartBaseUrlProbe = (baseUrl, timeoutMs) => {
+  const started = startBaseUrlBatchProbe([{ baseUrl, timeoutMs }]);
+  return {
+    cancel: started.cancel,
+    verdict: () => {
+      const [verdict] = started.verdicts();
+      if (verdict === undefined) {
+        throw new Error("the batch probe answered no verdict for one base URL");
+      }
+      return verdict;
+    },
+  };
 };
+
+/** The real probe of one base URL: it waits for the verdict as soon as it has started it. */
+export const realBaseUrlProbe: BaseUrlProbe = (baseUrl, timeoutMs) => realStartBaseUrlProbe(baseUrl, timeoutMs).verdict();
 
 /** Whether a provider's base URL accepts a connection within its connect bound, with the line to report when it does not. */
 export type ProviderReachability = { readonly ok: true } | { readonly ok: false; readonly message: string };
@@ -101,13 +134,25 @@ export function probeProviderReachability(name: string, provider: Readonly<Pick<
   return verdict.ok ? { ok: true } : { ok: false, message: couldNotConnectMessage(`provider ${name}`, provider.baseUrl, verdict.reason) };
 }
 
-/** The line to report when `provider` is an http provider whose base URL accepts no connection; undefined when it accepts one, when the provider dials no base URL, or when no probe was given. */
-export function unreachableProviderLine(name: string, provider: Provider, probe: BaseUrlProbe | undefined): string | undefined {
-  if (probe === undefined || !isHttpProvider(provider)) {
+/** A launch's reachability check of its provider, started and not yet read: `line` blocks until the probe answers and gives the line to report when the base URL accepts no connection (undefined when it does); `cancel` ends the probe's worker where nobody will read it. */
+export interface StartedProviderReachability {
+  readonly line: () => string | undefined;
+  readonly cancel: () => void;
+}
+
+/** Starts the check of `provider`'s base URL, bounded by the provider's own connect timeout; undefined when the provider dials no base URL or no `start` was given. */
+export function startProviderReachability(name: string, provider: Provider, start: StartBaseUrlProbe | undefined): StartedProviderReachability | undefined {
+  if (start === undefined || !isHttpProvider(provider)) {
     return undefined;
   }
-  const reachability = probeProviderReachability(name, provider, probe);
-  return reachability.ok ? undefined : reachability.message;
+  const started = start(provider.baseUrl, providerConnectTimeoutMs(provider));
+  return {
+    cancel: started.cancel,
+    line: () => {
+      const verdict = started.verdict();
+      return verdict.ok ? undefined : couldNotConnectMessage(`provider ${name}`, provider.baseUrl, verdict.reason);
+    },
+  };
 }
 
 /** The line to report for each of `providers` whose base URL accepts no connection, by name, from one batch probe of every http provider among them, each within its own connect bound. A provider that dials no base URL, or that accepts a connection, has no line. */

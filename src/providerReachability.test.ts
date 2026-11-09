@@ -13,6 +13,9 @@ import {
   providerConnectTimeoutMs,
   realBaseUrlBatchProbe,
   realBaseUrlProbe,
+  startBaseUrlBatchProbe,
+  startProviderReachability,
+  type StartBaseUrlProbe,
 } from "./providerReachability";
 import { displayBaseUrl } from "./baseUrlDisplay";
 import type { ProbeWorkers } from "./frontdoor/probe";
@@ -165,14 +168,14 @@ describe("realBaseUrlProbe", () => {
 
   it("answers a base URL that names port 0 with a reason, as a verdict, without starting a probe for it", () => {
     const started: unknown[] = [];
-    const workers: ProbeWorkers = { start: (_source, data) => { started.push(data.port); return { verdict: () => ({ ok: true }) }; } };
+    const workers: ProbeWorkers = { start: (_source, data) => { started.push(data.port); return { verdict: () => ({ ok: true }), cancel: () => undefined }; } };
     expect(realBaseUrlBatchProbe([{ baseUrl: "http://h.example:0/", timeoutMs: SHORT_CONNECT_BOUND_MS }], workers)).toEqual([{ ok: false, reason: "the base URL names port 0, which nothing listens on" }]);
     expect(started).toEqual([]);
   });
 
   it("pairs each verdict with its own base URL when targets that are not dialled sit between and around dialled ones", () => {
     // Each probed target's verdict names its port, so a verdict handed to the wrong place shows.
-    const workers: ProbeWorkers = { start: (_source, data) => ({ verdict: () => ({ ok: false, reason: `probed ${String(data.port)}` }) }) };
+    const workers: ProbeWorkers = { start: (_source, data) => ({ verdict: () => ({ ok: false, reason: `probed ${String(data.port)}` }), cancel: () => undefined }) };
     const verdicts = realBaseUrlBatchProbe(
       [
         { baseUrl: "http://h.example:0/", timeoutMs: SHORT_CONNECT_BOUND_MS },
@@ -194,6 +197,29 @@ describe("realBaseUrlProbe", () => {
     ]);
   });
 
+  it("starts a one-URL probe without waiting, reads its verdict later, and hands the worker its cancellation", () => {
+    const events: string[] = [];
+    const workers: ProbeWorkers = {
+      start: () => {
+        events.push("worker start");
+        return { verdict: () => { events.push("worker wait"); return { ok: false, reason: "refused" }; }, cancel: () => { events.push("worker cancel"); } };
+      },
+    };
+    const read = startBaseUrlBatchProbe([{ baseUrl: "http://192.0.2.1:1", timeoutMs: SHORT_CONNECT_BOUND_MS }], workers);
+    expect(events).toEqual(["worker start"]);
+    expect(read.verdicts()).toEqual([{ ok: false, reason: "refused" }]);
+    const abandoned = startBaseUrlBatchProbe([{ baseUrl: "http://192.0.2.1:1", timeoutMs: SHORT_CONNECT_BOUND_MS }], workers);
+    abandoned.cancel();
+    expect(events).toEqual(["worker start", "worker wait", "worker start", "worker cancel"]);
+  });
+
+  it("reports the line for an http provider's refused connection when it is read, and nothing for a provider that dials no base URL or a launch given no probe", () => {
+    const refusing: StartBaseUrlProbe = () => ({ verdict: () => ({ ok: false, reason: "refused" }), cancel: () => undefined });
+    const provider = { displayName: "P", baseUrl: "http://h.example:1/v1", credential: { sources: [{ literal: "x" }] } };
+    expect(startProviderReachability("p", provider, refusing)?.line()).toBe("provider p could not connect to http://h.example:1/v1: refused");
+    expect(startProviderReachability("p", provider, undefined)).toBeUndefined();
+  });
+
   it("starts the probe of every target before it waits on any, whichever targets are dialled", () => {
     const events: string[] = [];
     const workers: ProbeWorkers = {
@@ -205,6 +231,7 @@ describe("realBaseUrlProbe", () => {
             events.push(`wait ${port}`);
             return { ok: true };
           },
+          cancel: () => undefined,
         };
       },
     };
