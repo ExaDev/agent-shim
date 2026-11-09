@@ -641,7 +641,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
       push("pool", "warn", describeSharedLoginMembers(poolName, shared), poolName);
     }
   }
-  // A cycle can only appear by editing config.json by hand (add and set refuse one), and every pool on a cycle is reported on a chain.
+  // A cycle can only appear by editing config.json by hand (add and set refuse one), and each group of pools that reach one another is reported once, on a chain through it.
   for (const chain of reportedPoolCycles(pools)) {
     push("pool", "fail", `Pool cycle: ${chain.join(" -> ")}. A pool cannot nest itself, directly or through another pool.`, chain[0]);
   }

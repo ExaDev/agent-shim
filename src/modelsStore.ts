@@ -64,7 +64,7 @@ export function memberKindOf(ref: string, models: ModelsConfig | undefined): "vi
 }
 
 /**
- * The members a virtual model's member list expands to, following nested virtual models: every concrete and family member the choice is finally taken over. Throws on a cycle, naming the chain, and on a nested virtual model that does not exist.
+ * The members a virtual model's member list expands to, following nested virtual models: every concrete and family member the choice is finally taken over. Throws on a cycle, naming the chain, and `VirtualModelNotFoundError` when `name` itself is not a virtual model; a member naming no virtual model is a concrete or family member.
  */
 export function expandMembers(name: string, models: ModelsConfig | undefined): readonly string[] {
   const virtual = models?.virtual ?? {};
