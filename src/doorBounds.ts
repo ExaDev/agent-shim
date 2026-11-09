@@ -22,6 +22,11 @@ export const BLOCKING_STEP_TIMEOUTS_MS = {
   credentialInteractive: CREDENTIAL_INTERACTIVE_TIMEOUT_MS,
 } as const;
 
+/**
+ * The bound `realRunPort.run` applies when a caller names none, which is `auxiliaryCommand`: every caller reachable from the door's reports (a git lookup, a `ps` read, a Keychain attribute lookup) takes it. A caller that can wait on a person names a person-sized bound of its own instead (`keychainLogin.ts`'s reads, adds and deletes, `usage/signIn.ts`'s `claude auth status`), which only the command line reaches, so it is never inside a door worker's stall limit.
+ */
+export const RUN_PORT_DEFAULT_TIMEOUT_MS = BLOCKING_STEP_TIMEOUTS_MS.auxiliaryCommand;
+
 /** The longest single blocking step a door worker task can take. */
 export const LONGEST_BLOCKING_STEP_MS = Math.max(...Object.values(BLOCKING_STEP_TIMEOUTS_MS));
 
