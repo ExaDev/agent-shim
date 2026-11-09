@@ -12,6 +12,7 @@ import type { RcDialAnswer, RcEventDial } from "./rcWrites";
 import { buildRcMarkReadBody } from "./rcWrites";
 import type { RcStreamDial } from "./rcStream";
 import { upstreamChunks } from "./server";
+import { createDoorLookup, doorDial, type DialOutcome as DoorDialOutcome, type DoorDialIo } from "./doorDial";
 
 /** The exclusive ceiling of the 2xx success class, whose bounds are fixed hundreds (RFC 9110 section 15); named once so a range check never carries a bare literal. */
 const SUCCESS_STATUS_MAX_EXCLUSIVE = 300;
@@ -23,22 +24,20 @@ function isSuccessful(status: number): boolean {
 
 /** The real `ConnectEffects` over node's own net, tls, and http. `connectTcp` opens real connections to the CONNECTed host, so tests that want a blind tunnel redirect it. */
 /**
- * A DNS lookup for the door's own upstream dials that bypasses the hosts file, because a transparent-interception deployment points the intercept hosts' names at this machine in /etc/hosts: getaddrinfo (Node's default lookup) would send the door's own upstream connections straight back into the intercept port, a loop, while `dns.resolve4` asks the resolver directly and returns the real address. The SNI and Host stay the real name; only the dial address comes from DNS.
- */
-
-/**
  * A range of local source ports the door's own upstream sockets bind, handed out in rotation because node binds one port per socket with no range option. The width is also the dial's retry bound: one attempt per port, so a fully-held range surfaces its last bind error instead of spinning. Injectable so the exhaustion tests hold a private range instead of racing every other worker for the door's real one.
  */
 export class SourcePortRange {
   readonly count: number;
   private next: number;
 
+  /** `first` is the port the rotation hands out first, `start` unless a caller gives its own: several rotations that serve one purpose at once (the probes of a batch) start apart, so they do not all bind the first port of the range and walk up it together. */
   constructor(
     readonly start: number,
     readonly end: number,
+    first: number = start,
   ) {
     this.count = end - start + 1;
-    this.next = start;
+    this.next = first;
   }
 
   /** The next port in rotation, wrapping from the end back to the start. */
@@ -52,15 +51,15 @@ export class SourcePortRange {
 /**
  * The first port of the door's reserved source range. The range must stay below the operating system's ephemeral range (49152 upward on macOS and per IANA), so nothing else on the machine is ever handed a port the door's rotation may hold.
  */
-const DOOR_SOURCE_PORT_START = 47900;
+export const DOOR_SOURCE_PORT_START = 47900;
 
 /**
  * How many source ports the door reserves. A closed upstream connection keeps its local port out of use for the TCP TIME_WAIT interval (twice the maximum segment lifetime, 30 s on macOS), so a range sustains about its width divided by that interval in new connections per second; a Remote Control fleet of concurrent sessions each holding a read stream and posting receipts needs far more than a few dozen ports. The range ends at 48899, short of the ephemeral start.
  */
-const DOOR_SOURCE_PORT_COUNT = 1000;
+export const DOOR_SOURCE_PORT_COUNT = 1000;
 
 /** The last port of the door's reserved source range, inclusive. */
-const DOOR_SOURCE_PORT_END = DOOR_SOURCE_PORT_START + DOOR_SOURCE_PORT_COUNT - 1;
+export const DOOR_SOURCE_PORT_END = DOOR_SOURCE_PORT_START + DOOR_SOURCE_PORT_COUNT - 1;
 
 /** The pf exemption an interception deployment loads alongside the redirect covers exactly this range: without it, the door's dial to the real address would be redirected straight back into its own transparent surface, an endless loop. */
 const DOOR_SOURCE_PORTS = new SourcePortRange(DOOR_SOURCE_PORT_START, DOOR_SOURCE_PORT_END);
@@ -76,50 +75,19 @@ const POOLED_SOCKETS_KEPT_IDLE = 2;
 /** The pooling both exempt agents share: without `keepAlive` node's agent opens a fresh connection (and so takes a fresh reserved port) for every request, which is what exhausted the range under per-chunk receipts and per-turn presence calls. */
 const POOLING = { keepAlive: true, timeout: POOLED_SOCKET_IDLE_MS, maxFreeSockets: POOLED_SOCKETS_KEPT_IDLE } as const;
 
-const realAddressLookup: LookupFunction = (host, _options, callback) => {
-  // An address literal is not a name to resolve; resolve4 would query DNS for it as a hostname and fail. Hand it straight back, so a loopback or otherwise-literal upstream (every test's local fake, and any loopback provider) keeps working under this lookup.
-  if (net.isIP(host) !== 0) {
-    callback(null, [{ address: host, family: net.isIP(host) }]);
-    return;
-  }
-  dns.resolve4(host, (error, addresses) => {
-    // The error branch first, because a failed resolve hands undefined as the addresses: reading the first address before checking would crash on it instead of surfacing the lookup's own failure.
-    if (error !== null) {
-      callback(error, [{ address: "", family: 4 }]);
-      return;
-    }
-    const first = addresses[0];
-    if (first === undefined) {
-      callback(new Error(`no A record for ${host}`), [{ address: "", family: 4 }]);
-      return;
-    }
-    callback(null, [{ address: first, family: 4 }]);
-  });
-};
+/** The door's lookup over the real resolver (see `createDoorLookup`). The SNI and Host stay the real name; only the dial address comes from DNS. `dns.resolve4` is read at each call, so a resolver reconfigured later is honoured. */
+const realAddressLookup: LookupFunction = createDoorLookup({ isIP: net.isIP, resolve4: (host, callback) => {
+  dns.resolve4(host, callback);
+} });
+
+/** The real `net` behind the door's dial, through the door's own lookup. */
+const realDialIo: DoorDialIo<net.Socket> = { connect: (options) => net.connect(options), lookup: realAddressLookup, isIP: net.isIP };
 
 /** The default port a plain-HTTP dial lands on when the request names none. */
 const HTTP_PORT = 80;
 
-/**
- * The errnos that mean this reserved port cannot serve this dial, so the next port of the range is worth trying: EADDRINUSE is the documented bind conflict, and EADDRNOTAVAIL is the form a port held by a long-lived sibling produces at connect time (the live observation behind the retry). Every other failure is a port-independent problem and surfaces unchanged.
- */
-const HELD_PORT_ERRNOS: ReadonlySet<string> = new Set(["EADDRINUSE", "EADDRNOTAVAIL"]);
-
-/** One dial's settled outcome: the socket with no error once its connection is established, or the socket the failure stopped on (dead by then) beside the error. The failed socket rides along because node's agent callback takes both, and ignores the socket whenever an error is set (exactly how node's own proxied https dial reports a failed tunnel). */
-type DialOutcome = { readonly error: null; readonly socket: net.Socket } | { readonly error: NodeJS.ErrnoException; readonly socket: net.Socket };
-
-/** Dials once and settles only once the outcome is certain, so a bind-phase failure can be told apart from a connection that is merely still coming up. */
-async function dialOnce(connectOptions: net.TcpSocketConnectOpts): Promise<DialOutcome> {
-  return await new Promise((resolve) => {
-    const socket = net.connect(connectOptions);
-    socket.once("connect", () => {
-      resolve({ error: null, socket });
-    });
-    socket.once("error", (error: NodeJS.ErrnoException) => {
-      resolve({ error, socket });
-    });
-  });
-}
+/** One of the door's own dials settled: see `doorDial`. */
+type DialOutcome = DoorDialOutcome<net.Socket>;
 
 /** Where one of the door's own upstream dials is headed: the request's own host and port, with the protocol's default when the request names none. */
 function dialTarget(options: http.ClientRequestArgs, defaultPort: number): { readonly host: string; readonly port: number } {
@@ -133,24 +101,9 @@ function literalDial(target: { readonly host: string; readonly port: number }): 
   return net.connect({ host: target.host, port: target.port });
 }
 
-/**
- * One of the door's own upstream dials for a real name: bound into the reserved source-port range and resolved through real DNS (the pf-exemption counterparts, keeping a redirected address's traffic from looping into the door's own transparent surface, which no address literal can name).
- *
- * The dial settles only once its outcome is certain, and a reserved port a long-lived sibling already holds (EADDRINUSE, or the EADDRNOTAVAIL of the live observation) is retried on the next port of the rotation, one attempt per port of the range, so a fully-held range surfaces the last bind error instead of spinning. Every other failure (a refused connection, a TLS fault) settles exactly as a bare dial's would.
- */
+/** One of the door's own upstream dials for a real name, bound into the reserved source-port range and resolved through the door's lookup: see `doorDial`. */
 async function reservedDial(target: { readonly host: string; readonly port: number }, ports: SourcePortRange): Promise<DialOutcome> {
-  // The rotation advances one full cycle over exactly the range's width of calls, so one attempt per port bounds the retry: the last attempt has tried every port once.
-  for (let attempt = 0; ; attempt += 1) {
-    const outcome = await dialOnce({ host: target.host, port: target.port, localPort: ports.take(), lookup: realAddressLookup });
-    if (outcome.error === null) {
-      return outcome;
-    }
-    const held = outcome.error.code !== undefined && HELD_PORT_ERRNOS.has(outcome.error.code);
-    // A failure that is not a held port, or a range whose every port has been tried once: this dial's own settled failure is the honest one to hand back.
-    if (!held || attempt === ports.count - 1) {
-      return outcome;
-    }
-  }
+  return await doorDial(realDialIo, target, ports);
 }
 
 /**
