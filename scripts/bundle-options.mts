@@ -5,6 +5,9 @@ import type * as esbuild from "esbuild";
 /** The lowest Node version this bundle is ever asked to run under — set by `commander@15`'s own `engines.node`, the strictest floor among this project's runtime dependencies, and mirrored in package.json's own `engines` field. Fixed rather than tied to whichever Node version happens to run this build script: the SEA binary embeds its own runtime regardless, and the npm-published bundle runs under whatever Node the installer has, which is only guaranteed to be at least this floor. */
 export const ESBUILD_TARGET = "node22";
 
+/** The name the single-executable build gives the command line bundle it embeds as an asset, so a front door worker thread can evaluate the code the binary runs (`src/frontdoor/doorWorker.ts` reads it by this name). */
+export const DOOR_WORKER_CODE_ASSET = "cli.cjs";
+
 /** The CommonJS bundle's stand-in for `import.meta.url`, declared by its banner and substituted for every bundled ES module's use of it. */
 const IMPORT_META_URL_VARIABLE = "__agentShimImportMetaUrl";
 
