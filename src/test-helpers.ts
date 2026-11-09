@@ -742,6 +742,23 @@ const SCAN_METHODS = ["includes", "indexOf", "lastIndexOf"];
  * Runs `run` with the array operations counted and returns the number of elements they visited: each call of a callback method (`filter`, `some`, `find`, `map` and the like), every element a scan method (`includes`, `indexOf`) may look at, and each step of an array iteration (so a spread or `for...of` that copies an array counts its length). A pass over a collection inside a pass over it, however it is written, makes the count grow with the square of the collection; a linear pass makes it grow with the collection. The arrays are restored however `run` ends.
  */
 export function countSteps(run: () => void): number {
+  const meter = startStepMeter();
+  try {
+    run();
+  } finally {
+    meter.stop();
+  }
+  return meter.now();
+}
+
+/** What `startStepMeter` returns: `now` is the elements visited since it started, `stop` puts the arrays back. */
+export interface StepMeter {
+  readonly now: () => number;
+  readonly stop: () => void;
+}
+
+/** The counting `countSteps` does, for a caller that reads the count while the work runs (to see the steps between two events) and stops it itself. */
+export function startStepMeter(): StepMeter {
   let steps = 0;
   const originals = new Map<PropertyKey, unknown>();
   const patch = (key: PropertyKey, make: (original: (self: unknown, args: readonly unknown[]) => unknown) => (this: unknown, ...args: readonly unknown[]) => unknown): void => {
@@ -780,14 +797,14 @@ export function countSteps(run: () => void): number {
       [Symbol.iterator]() { return this; },
     };
   });
-  try {
-    run();
-  } finally {
-    for (const [key, value] of originals) {
-      Reflect.defineProperty(Array.prototype, key, { value, writable: true, configurable: true, enumerable: false });
-    }
-  }
-  return steps;
+  return {
+    now: () => steps,
+    stop: () => {
+      for (const [key, value] of originals) {
+        Reflect.defineProperty(Array.prototype, key, { value, writable: true, configurable: true, enumerable: false });
+      }
+    },
+  };
 }
 
 /**
