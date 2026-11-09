@@ -46,9 +46,24 @@ describe("countSteps", () => {
     expect(countSteps(() => { ITEMS.findLastIndex((item) => item > 0); })).toBe(1);
   });
 
+  it("counts the callbacks and iterators of a Map and a Set", () => {
+    const map = new Map(ITEMS.map((item) => [item, item]));
+    const set = new Set(ITEMS);
+    let visited = 0;
+    expect(countSteps(() => { map.forEach((value) => { visited += value; }); })).toBe(LENGTH);
+    expect(countSteps(() => { set.forEach((value) => { visited += value; }); })).toBe(LENGTH);
+    expect(countSteps(() => { for (const value of set) { visited += value; } })).toBe(LENGTH + 1);
+    expect(countSteps(() => { for (const key of map.keys()) { visited += key; } })).toBe(LENGTH + 1);
+    expect(countSteps(() => { for (const value of map.values()) { visited += value; } })).toBe(LENGTH + 1);
+    expect(countSteps(() => { visited += [...set].length; })).toBe(LENGTH + 1);
+    expect(visited).toBeGreaterThan(0);
+    const before = Reflect.get(Map.prototype, "forEach");
+    countSteps(() => undefined);
+    expect(Reflect.get(Map.prototype, "forEach")).toBe(before);
+  });
+
   it("does not count what it says it does not count", () => {
     expect(countSteps(() => { ITEMS.slice(); ITEMS.concat(ITEMS); JSON.stringify(ITEMS); })).toBe(0);
-    expect(countSteps(() => { Array.of(...new Set(ITEMS)); })).toBe(LENGTH + 1);
     let total = 0;
     expect(countSteps(() => {
       for (let index = 0; index < LENGTH; index += 1) {

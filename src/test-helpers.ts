@@ -743,7 +743,7 @@ const ITERATOR_METHODS = [Symbol.iterator, "values", "keys", "entries"];
 const SCAN_METHODS = ["includes", "indexOf", "lastIndexOf"];
 
 /**
- * Runs `run` with the array operations counted and returns the number of elements they visited. Counted: each call of a callback method on an array (`filter`, `some`, `find`, `findIndex`, `findLast`, `findLastIndex`, `every`, `map`, `forEach`, `reduce`, `reduceRight`, `flatMap`), counted as one step per callback call; the length of the array for each `includes`, `indexOf` and `lastIndexOf`; and one step for each `next` of an iterator an array returns (its own, `values`, `keys` or `entries`), which a `for...of` and a spread of an array make. Not counted: iteration of a `Set` or `Map` (including a spread of one and `Map.forEach`), an indexed `for` loop, a sort comparator, the copies `slice`, `concat`, `join` and `toSorted` make, string building and `JSON.stringify`, and anything in native code. So a pass nested inside a pass makes the count grow with the square of the collection only when both passes run through what is counted. The arrays are restored however `run` ends.
+ * Runs `run` with the array operations counted and returns the number of elements they visited. Counted: each call of a callback method on an array (`filter`, `some`, `find`, `findIndex`, `findLast`, `findLastIndex`, `every`, `map`, `forEach`, `reduce`, `reduceRight`, `flatMap`), counted as one step per callback call; the length of the array for each `includes`, `indexOf` and `lastIndexOf`; and one step for each `next` of an iterator an array returns (its own, `values`, `keys` or `entries`), which a `for...of` and a spread of an array make. Counted the same way, for a `Map` and a `Set`: each callback call of `forEach` and each `next` of the iterator its own, `entries`, `keys` and `values` return (which a `for...of` and a spread make). Not counted: an indexed `for` loop, a sort comparator, the copies `slice`, `concat`, `join` and `toSorted` make, string building and `JSON.stringify`, and anything in native code. So a pass nested inside a pass makes the count grow with the square of the collection only when both passes run through what is counted. The arrays are restored however `run` ends.
  */
 export function countSteps(run: () => void): number {
   const meter = startStepMeter();
@@ -764,36 +764,30 @@ export interface StepMeter {
 /** The counting `countSteps` does (see it for what is and is not counted), for a caller that reads the count while the work runs (to see the steps between two events) and stops it itself. */
 export function startStepMeter(): StepMeter {
   let steps = 0;
-  const originals = new Map<PropertyKey, unknown>();
-  const patch = (key: PropertyKey, make: (original: (self: unknown, args: readonly unknown[]) => unknown) => (this: unknown, ...args: readonly unknown[]) => unknown): void => {
-    const original: unknown = Reflect.get(Array.prototype, key);
+  const originals: { readonly target: object; readonly key: PropertyKey; readonly value: unknown }[] = [];
+  const patch = (target: object, key: PropertyKey, make: (original: (self: unknown, args: readonly unknown[]) => unknown) => (this: unknown, ...args: readonly unknown[]) => unknown): void => {
+    const original: unknown = Reflect.get(target, key);
     if (typeof original !== "function") {
       return;
     }
-    originals.set(key, original);
-    Reflect.defineProperty(Array.prototype, key, { value: make((self, args): unknown => {
+    originals.push({ target, key, value: original });
+    Reflect.defineProperty(target, key, { value: make((self, args): unknown => {
       const result: unknown = Reflect.apply(original, self, args);
       return result;
     }), writable: true, configurable: true, enumerable: false });
   };
   const lengthOf = (self: unknown): number => (Array.isArray(self) ? self.length : 0);
-  for (const name of CALLBACK_METHODS) {
-    patch(name, (original) => function (this: unknown, callback: unknown, ...rest: readonly unknown[]) {
+  const callbackMethod = (target: object, name: string): void => {
+    patch(target, name, (original) => function (this: unknown, callback: unknown, ...rest: readonly unknown[]) {
       // `thisArg` is the second argument of every method but `reduce` and `reduceRight`, whose second is the initial value and whose callback has no `this`.
       const receiver: unknown = name === "reduce" || name === "reduceRight" ? undefined : rest[0];
       const counted = typeof callback === "function" ? function (this: unknown, ...args: readonly unknown[]): unknown { steps += 1; return Reflect.apply(callback, receiver, args); } : callback;
       // Built with `concat`, not a spread, so the meter does not count its own iteration.
       return original(this, [counted].concat(rest));
     });
-  }
-  for (const name of SCAN_METHODS) {
-    patch(name, (original) => function (this: unknown, ...args: readonly unknown[]) {
-      steps += lengthOf(this);
-      return original(this, args);
-    });
-  }
-  for (const name of ITERATOR_METHODS) {
-    patch(name, (original) => function (this: unknown) {
+  };
+  const iteratorMethod = (target: object, name: PropertyKey): void => {
+    patch(target, name, (original) => function (this: unknown) {
       const inner: unknown = original(this, []);
       const next: unknown = Reflect.get(Object(inner), "next");
       return {
@@ -805,14 +799,34 @@ export function startStepMeter(): StepMeter {
         [Symbol.iterator]() { return this; },
       };
     });
+  };
+  for (const name of CALLBACK_METHODS) {
+    callbackMethod(Array.prototype, name);
   }
+  for (const name of SCAN_METHODS) {
+    patch(Array.prototype, name, (original) => function (this: unknown, ...args: readonly unknown[]) {
+      steps += lengthOf(this);
+      return original(this, args);
+    });
+  }
+  for (const name of ITERATOR_METHODS) {
+    iteratorMethod(Array.prototype, name);
+  }
+  for (const target of [Map.prototype, Set.prototype]) {
+    callbackMethod(target, "forEach");
+    for (const name of ITERATOR_METHODS) {
+      iteratorMethod(target, name);
+    }
+  }
+  // The loops above ran through the patches already in place; counting starts here.
+  steps = 0;
   return {
     now: () => steps,
     stop: () => {
-      // `Map.forEach`, not a destructuring loop: destructuring an entry iterates an array, which the meter would count.
-      originals.forEach((value, key) => {
-        Reflect.defineProperty(Array.prototype, key, { value, writable: true, configurable: true, enumerable: false });
-      });
+      // `pop` until none is left, not `forEach` or a `for...of`: both are patched until every original is back.
+      for (let saved = originals.pop(); saved !== undefined; saved = originals.pop()) {
+        Reflect.defineProperty(saved.target, saved.key, { value: saved.value, writable: true, configurable: true, enumerable: false });
+      }
     },
   };
 }
