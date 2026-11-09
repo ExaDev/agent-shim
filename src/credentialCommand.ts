@@ -7,7 +7,7 @@ import path from "node:path";
 import { withExamples, type CommandDeps } from "./cli/commandDeps";
 import { CliError, EXIT_FAILURE, UsageError } from "./cliError";
 import { isRouterProvider, type Credential } from "./config/schema";
-import { CREDENTIAL_UNAVAILABLE_EXIT, describeCredential, identityCacheKey, resolveCredential, type CredentialPort } from "./credential";
+import { CREDENTIAL_INTERACTIVE_TIMEOUT_MS, CREDENTIAL_UNAVAILABLE_EXIT, describeCredential, identityCacheKey, resolveCredential, type CredentialPort } from "./credential";
 import { CachedCredentialSchema, effectiveStore, ttlMs, type CredentialCachePort } from "./credentialCache";
 import { identityIdOf, identityNotFound, identityRecords, readIdentityById, requireStoredIdentityId, setIdentityCredential } from "./identityStore";
 import { DuplicateIdentityNameError } from "./identityRecords";
@@ -58,7 +58,7 @@ function realCommandPorts(deps: CommandDeps): CredentialCommandPorts {
     platform: process.platform,
     now: () => Date.now(),
     ssh: (host, remoteCommand, input) => {
-      const result = spawnSyncBlocking("an ssh run", "ssh", ["--", host, remoteCommand], { input, encoding: "utf8", stdio: ["pipe", "pipe", "inherit"] });
+      const result = spawnSyncBlocking("an ssh run", "ssh", ["--", host, remoteCommand], { input, encoding: "utf8", timeout: CREDENTIAL_INTERACTIVE_TIMEOUT_MS, stdio: ["pipe", "pipe", "inherit"] });
       return { status: result.status, stdout: result.stdout };
     },
     readInput: readStandardInput,
@@ -261,7 +261,7 @@ export function registerCredentialCommand(program: Command, deps: CommandDeps, p
           return;
         }
         if (canonicalId === undefined) throw new CredentialCommandError("Remote identity disappeared while locked.");
-        const result = spawnSyncBlocking("a remote identity cache operation", "/bin/sh", ["-c", `${REMOTE_ROOT_SCRIPT}; ${remoteIdentityPushScript(name)}`], { input: "", encoding: "utf8", env: { ...process.env, AGENT_SHIM_HOME: deps.paths.root, AGENT_SHIM_RECEIVER_ID: canonicalId } });
+        const result = spawnSyncBlocking("a remote identity cache operation", "/bin/sh", ["-c", `${REMOTE_ROOT_SCRIPT}; ${remoteIdentityPushScript(name)}`], { input: "", encoding: "utf8", timeout: CREDENTIAL_INTERACTIVE_TIMEOUT_MS, env: { ...process.env, AGENT_SHIM_HOME: deps.paths.root, AGENT_SHIM_RECEIVER_ID: canonicalId } });
         if (result.status === 0) {
           const id = remoteReplyFields(result.stdout)[0];
           if (id === undefined || !isFileName(id) || id !== canonicalId) throw new CredentialCommandError("Remote identity check returned an invalid id.");

@@ -4,7 +4,8 @@ import { Worker } from "node:worker_threads";
 
 import { DOOR_WORKER_CODE_ASSET } from "../../scripts/bundle-options.mts";
 import { CliError } from "../cliError";
-import { CATALOGUE_REFRESH_TIMEOUT_MS } from "../providerCatalogue";
+import { LONGEST_BLOCKING_STEP_MS } from "../doorBounds";
+import { CATALOGUE_REFRESH_DEADLINE_MS } from "../providerCatalogue";
 import { isDoorWorkerMessage, type DoorWorkerData, type DoorWorkerTaskName, type DoorWorkerTasks } from "./doorWorkerProtocol";
 
 /**
@@ -33,17 +34,19 @@ const MAX_QUEUED_DOOR_WORKER_TASKS = 8;
 const DOOR_WORKER_MAX_OLD_GENERATION_MB = 512;
 
 /** The longest a report or a catalogue refresh runs in a worker in all, whatever its heartbeat says: a report of a configuration with many providers probes each one's connect bound, and a catalogue refresh is bounded by its own timeout. */
-const DOOR_WORKER_DEADLINES: Readonly<Record<DoorWorkerTaskName, number>> = {
+export const DOOR_WORKER_DEADLINES: Readonly<Record<DoorWorkerTaskName, number>> = {
   check: DOOR_REPORT_DEADLINE_MS,
   doctor: DOOR_REPORT_DEADLINE_MS,
-  "refresh-catalogue": CATALOGUE_REFRESH_TIMEOUT_MS,
+  "refresh-catalogue": CATALOGUE_REFRESH_DEADLINE_MS,
 };
 
 /** How often the watchdog looks at each running worker. */
 export const DOOR_WORKER_WATCHDOG_INTERVAL_MS = 1_000;
 
-/** The longest a single blocking step of a report runs without telling the heartbeat anything: the longest synchronous command timeout any report step uses (a Codex version check), doubled for a loaded machine. A report whose heartbeat does not move for this long is stalled. */
-const DOOR_WORKER_STALL_LIMIT_MS = 60_000;
+/**
+ * How long a worker's heartbeat may stand still before the watchdog stops it: above the longest single blocking step a worker task can take (`LONGEST_BLOCKING_STEP_MS`, the interactive credential command a person may take their time over), plus two watchdog intervals, one for the watchdog to look and one for the step's own start and end. A step that is still inside its own timeout therefore never looks stalled, and `doorWorker.test.ts` asserts this order together with the watchdog interval and the probe's wait slice (`PROBE_WAIT_SLICE_MS`), which beats well inside it.
+ */
+export const DOOR_WORKER_STALL_LIMIT_MS = LONGEST_BLOCKING_STEP_MS + DOOR_WORKER_WATCHDOG_INTERVAL_MS * 2;
 
 /** The input the host takes for a task, as `DoorWorkerTasks` declares it. */
 type InputOf<T extends DoorWorkerTaskName> = DoorWorkerTasks[T]["input"];

@@ -7,6 +7,7 @@ import type { ResolvedCredential } from "./credential";
 import type { HttpProvider, ProviderCatalogue } from "./config/schema";
 import type { LayoutPaths } from "./paths";
 import { providerFilePath } from "./config/names";
+import { BLOCKING_STEP_TIMEOUTS_MS, DOOR_WORKER_START_ALLOWANCE_MS } from "./doorBounds";
 
 /** The URLs a provider with no configured catalogue URL is asked: under its base URL, then under its host. */
 const DEFAULT_CANDIDATE_URLS = 2;
@@ -32,8 +33,14 @@ export const CATALOGUE_RETRY_MS = HOURS_BETWEEN_RETRIES * MS_PER_HOUR;
 const CATALOGUE_REQUEST_SECONDS = 10;
 const CATALOGUE_REQUEST_TIMEOUT_MS = CATALOGUE_REQUEST_SECONDS * MS_PER_SECOND;
 
-/** How long one refresh child may run: the two candidate URLs a provider without a configured one is asked, each for up to the request limit. The runner adds its own grace for the child's start-up and for resolving the credential. */
+/** How long one catalogue fetch may take: the two candidate URLs a provider without a configured one is asked, each for up to the request limit. */
 export const CATALOGUE_REFRESH_TIMEOUT_MS = DEFAULT_CANDIDATE_URLS * CATALOGUE_REQUEST_TIMEOUT_MS;
+
+/** What a refresh needs beyond the fetch itself: the worker thread starting and evaluating the bundle (`DOOR_WORKER_START_ALLOWANCE_MS`), resolving the provider's credential (a credential command, which may take its whole timeout) and, for a Codex provider, asking the Codex CLI its version. */
+export const CATALOGUE_WORKER_ALLOWANCE_MS = DOOR_WORKER_START_ALLOWANCE_MS + BLOCKING_STEP_TIMEOUTS_MS.credentialCommand + BLOCKING_STEP_TIMEOUTS_MS.codexVersion;
+
+/** How long the door lets one refresh run in all, and so how long a launch that waits for the door's catalogues waits for one: the fetch plus what the worker needs around it. */
+export const CATALOGUE_REFRESH_DEADLINE_MS = CATALOGUE_REFRESH_TIMEOUT_MS + CATALOGUE_WORKER_ALLOWANCE_MS;
 
 /** One model the provider's catalogue lists. `name` is its display name when the endpoint gives one. */
 const CatalogueModelSchema = z.strictObject({ id: z.string().min(1), name: z.string().min(1).optional() });

@@ -3,9 +3,8 @@ import os from "node:os";
 import type { FrontDoorPort } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
 import { listProviders } from "../providersStore";
-import { CATALOGUE_REFRESH_TIMEOUT_MS, CATALOGUE_RETRY_MS, catalogueCachePath, isCatalogueStale, parseCatalogueCache } from "../providerCatalogue";
+import { CATALOGUE_REFRESH_DEADLINE_MS, CATALOGUE_RETRY_MS, catalogueCachePath, isCatalogueStale, parseCatalogueCache } from "../providerCatalogue";
 import { savedCatalogueFingerprint } from "../codex/catalogueCredential";
-import { CHILD_GRACE_MS } from "../usage/childRun";
 import { realFarmFs, realIsFrontDoorSupervisor, realIsProcessRunning, realSleepSync, type DaemonSpawner } from "../realPorts";
 import { appendDoorLog } from "./doorLog";
 import type { RequestedReplacementReason } from "./replacement";
@@ -70,7 +69,7 @@ export function realRestartFrontDoor(paths: LayoutPaths, spawnDaemon: DaemonSpaw
 export function realFrontDoorPort(paths: LayoutPaths, spawnDaemon: DaemonSpawner): FrontDoorPort {
   return {
     waitForCatalogues: (supervisorPid) => {
-      const timedOut = deadlineAfter(CATALOGUE_REFRESH_TIMEOUT_MS + CHILD_GRACE_MS);
+      const timedOut = deadlineAfter(CATALOGUE_REFRESH_DEADLINE_MS);
       let requested = false;
       const warnings = new Set<string>();
       while (!isDeclaredFrontDoor(supervisorPid) && listProviders(paths).map(({ name, provider }) => {

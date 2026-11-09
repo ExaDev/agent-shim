@@ -13,7 +13,7 @@ import { declareThisProcessTheFrontDoor, resetFrontDoorDeclarationForTests } fro
 import { FRONT_DOOR_PROTOCOL, writeFrontDoorState } from "./state";
 import { realFarmFs } from "../realPorts";
 import { catalogueCredentialFingerprint } from "../codex/catalogueCredential";
-import { CATALOGUE_REFRESH_TIMEOUT_MS, CATALOGUE_RETRY_MS, catalogueCachePath } from "../providerCatalogue";
+import { CATALOGUE_REFRESH_DEADLINE_MS, CATALOGUE_REFRESH_TIMEOUT_MS, CATALOGUE_RETRY_MS, catalogueCachePath } from "../providerCatalogue";
 import { writeCatalogueStatus, writeFrontDoorCodexHome } from "./state";
 
 const POLLS_BEFORE_CACHE = 3;
@@ -80,7 +80,7 @@ describe("a launch the front door plans for itself", () => {
     expect(sleep).toHaveBeenCalledOnce();
   });
 
-  it("waits for a refresh child using its startup grace", () => {
+  it("waits for the door's catalogue refresh for as long as the door lets one run, which is longer than the fetch itself", () => {
     const paths = buildLayoutPaths(root);
     fs.mkdirSync(paths.providersDir, { recursive: true });
     fs.mkdirSync(paths.catalogueDir, { recursive: true });
@@ -110,6 +110,24 @@ describe("a launch the front door plans for itself", () => {
     vi.spyOn(realPorts, "realSleepSync").mockImplementation(() => { now += CATALOGUE_RETRY_MS; });
     const port = realFrontDoorPort(paths, () => { throw new Error("unexpected daemon"); });
     expect(port.waitForCatalogues?.(process.pid + 1)).toContain("Timed out waiting for provider catalogues");
+  });
+
+  it("gives up waiting for a catalogue once the door's refresh deadline has passed on the monotonic clock, naming the wait", () => {
+    const paths = buildLayoutPaths(root);
+    fs.mkdirSync(paths.providersDir, { recursive: true });
+    fs.mkdirSync(paths.catalogueDir, { recursive: true });
+    fs.writeFileSync(path.join(paths.providersDir, "http.json"), JSON.stringify({ displayName: "HTTP", baseUrl: "https://example.test", credential: { sources: [{ env: "TOKEN" }] }, catalogue: { tier: "haiku" } }));
+    let monotonic = performance.now();
+    let sleeps = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => monotonic);
+    vi.spyOn(realPorts, "realSleepSync").mockImplementation(() => {
+      // Each poll lets the clock pass a third of the deadline, so the wait ends on the poll after the deadline has passed.
+      monotonic += CATALOGUE_REFRESH_DEADLINE_MS / POLLS_BEFORE_CACHE;
+      sleeps += 1;
+    });
+    const port = realFrontDoorPort(paths, () => { throw new Error("unexpected daemon"); });
+    expect(port.waitForCatalogues?.(process.pid + 1)).toContain("Timed out waiting for provider catalogues");
+    expect(sleeps).toBe(POLLS_BEFORE_CACHE);
   });
 
   it("keeps waiting for a catalogue when only the wall clock jumps past the wait's bound, since the bound is on the monotonic clock", () => {

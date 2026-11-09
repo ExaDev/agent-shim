@@ -8,7 +8,7 @@ import { selfInvocation } from "../realPorts";
  */
 
 /** How long beyond a run's own time limit the child may take to start and wind down before it is killed: the executable's start-up and the SDK's shutdown, which the run's own limit does not cover. */
-export const CHILD_GRACE_MS = 30_000;
+const CHILD_GRACE_MS = 30_000;
 
 /** The last of a child's standard error kept for the failure message, enough for the launcher's own refusal text without holding a long transcript. */
 const STDERR_TAIL_CHARS = 2000;

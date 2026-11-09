@@ -11,6 +11,7 @@ import type { AsyncCredentialCacheEnv, CredentialCacheEnv } from "./credential";
 import { requireKeychainCacheDeleted } from "./keychainLogin";
 import { systemErrorCode } from "./sameDirectory";
 import { CachedCredentialSchema, KEYCHAIN_CACHE_SERVICE, type AsyncCredentialCachePort, type CachedCredential, type CredentialCachePort } from "./credentialCache";
+import { BLOCKING_STEP_TIMEOUTS_MS } from "./doorBounds";
 
 /** The `security` arguments that delete the credential cached for `owner` in the Keychain store, for a caller that runs `security` itself (the front door, without blocking). */
 export function keychainCacheDeleteArgs(owner: string): readonly string[] {
@@ -139,7 +140,7 @@ function requireKeychain(platform: NodeJS.Platform): void {
 
 /** Runs one `security` subcommand. `stdin`, when given, feeds `security -i` so a token never appears in the process list. */
 function security(args: readonly string[], stdin?: string): { status: number | null; stdout: string } {
-  const result = spawnSyncBlocking("a keychain call", "security", args, { encoding: "utf8", ...(stdin === undefined ? {} : { input: stdin }), stdio: ["pipe", "pipe", "ignore"] });
+  const result = spawnSyncBlocking("a keychain call", "security", args, { encoding: "utf8", timeout: BLOCKING_STEP_TIMEOUTS_MS.keychain, ...(stdin === undefined ? {} : { input: stdin }), stdio: ["pipe", "pipe", "ignore"] });
   return { status: result.status, stdout: result.stdout };
 }
 
