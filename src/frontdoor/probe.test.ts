@@ -242,10 +242,13 @@ function recordingWait(): { readonly wait: ProbeWait; readonly outcomes: () => r
 
 /** A worker that never runs anything: an emitter that can be told to report an error. */
 class FakeProbeWorker extends EventEmitter {
+  /** How many times the worker was told to end. */
+  public terminations = 0;
   public unref(): this {
     return this;
   }
   public async terminate(): Promise<number> {
+    this.terminations += 1;
     return await Promise.resolve(0);
   }
 }
@@ -369,6 +372,14 @@ finishProbe(workerData.failed, ${JSON.stringify(FAILURE_MESSAGE)});`;
     expect(recorded.outcomes().filter((outcome) => outcome.startsWith("start") && outcome.endsWith("timed-out"))).toEqual([]);
   });
 
+  it("ends the worker of a probe that is cancelled, without reading its verdict", () => {
+    const fake = new FakeProbeWorker();
+    const probeWorker = startProbeWorker("", {}, STARTUP_PROBE_BOUND_MS, () => fake);
+    expect(fake.terminations).toBe(0);
+    probeWorker.cancel();
+    expect(fake.terminations).toBe(1);
+  });
+
   it("does not let an error event on the worker reach the process, and reads as a failed probe", () => {
     const fake = new FakeProbeWorker();
     const recorded = recordingWait();
@@ -418,7 +429,7 @@ function acceptProbeSourceOf(bundled: Readonly<BundledProbe>): string {
   bundled.probeListenerAcceptSync(0, STARTUP_PROBE_BOUND_MS, {
     start: (source) => {
       handed = source;
-      return { verdict: () => ({ ok: true }) };
+      return { verdict: () => ({ ok: true }), cancel: () => undefined };
     },
   });
   return handed;
@@ -448,7 +459,7 @@ describe("the start signal of the probe sources", () => {
     ask({
       start: (source, data) => {
         handed = { source, data };
-        return { verdict: () => ({ ok: true }) };
+        return { verdict: () => ({ ok: true }), cancel: () => undefined };
       },
     });
     if (handed === undefined) {

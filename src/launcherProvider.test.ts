@@ -4,6 +4,7 @@ import { CREDENTIAL_UNAVAILABLE_EXIT } from "./credential";
 import { catalogueCredentialFingerprint } from "./codex/catalogueCredential";
 import { prepareLaunch, type RunLauncherParams } from "./launcher";
 import type { SupervisedLaunch } from "./launcher/claudeSession";
+import type { BaseUrlProbe, StartBaseUrlProbe } from "./providerReachability";
 import {
   createFakeFarmFs, discovered, FAKE_HOME, fakeCredentials, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv,
   reportedRow,
@@ -13,6 +14,9 @@ import {
 function launch(params: Omit<RunLauncherParams, "credentials" | "frontdoor"> & Partial<Pick<RunLauncherParams, "credentials" | "frontdoor">>): number {
   return runAndCaptureExit({ credentials: fakeCredentials(), frontdoor: fakeFrontDoorPort(), ...params });
 }
+
+/** A started probe whose verdict is `probe`'s answer, read when the launch asks for it. */
+const settledProbe = (probe: BaseUrlProbe): StartBaseUrlProbe => (baseUrl, timeoutMs) => ({ verdict: () => probe(baseUrl, timeoutMs), cancel: () => undefined });
 
 describe("runLauncher provider selection", () => {
   const providerZ = {
@@ -124,10 +128,10 @@ describe("runLauncher provider selection", () => {
       proc: fakeProc({ Z_API_TOKEN: "tok-z" }, ["--provider", "z", "--print"]),
       log,
       resolveClaudeBinary: () => discovered,
-      probeBaseUrl: (baseUrl, timeoutMs) => {
+      startBaseUrlProbe: settledProbe((baseUrl, timeoutMs) => {
         asked.push([baseUrl, timeoutMs]);
         return { ok: false, reason: "no connection accepted within 1500ms" };
-      },
+      }),
     });
 
     expect(asked).toEqual([[providerZ.baseUrl, ownConnectTimeoutMs]]);
@@ -149,10 +153,54 @@ describe("runLauncher provider selection", () => {
       proc: fakeProc({ Z_API_TOKEN: "tok-z" }, ["--provider", "z", "--print"]),
       log,
       resolveClaudeBinary: () => discovered,
-      probeBaseUrl: () => ({ ok: false, reason: "no connection accepted within 1500ms" }),
+      startBaseUrlProbe: settledProbe(() => ({ ok: false, reason: "no connection accepted within 1500ms" })),
     });
 
     expect(log.warns).toEqual(["provider z could not connect to https://api.z.ai/api/anthropic: no connection accepted within 1500ms"]);
+  });
+
+  /** Records, in one list and in the order they happen, the probe's start, read and cancellation, the door's bring-up and what the launch prints. */
+  function overlapWorld(verdict: () => ReturnType<BaseUrlProbe>, ensure?: () => void) {
+    const events: string[] = [];
+    const startBaseUrlProbe: StartBaseUrlProbe = () => {
+      events.push("probe start");
+      return {
+        verdict: () => {
+          events.push("probe read");
+          return verdict();
+        },
+        cancel: () => {
+          events.push("probe cancel");
+        },
+      };
+    };
+    const door = fakeFrontDoorPort();
+    const frontdoor: typeof door = {
+      ...door,
+      ensure: (inherited, session) => {
+        events.push("door ensure");
+        ensure?.();
+        return door.ensure(inherited, session);
+      },
+    };
+    const log = fakeLog();
+    const recordingLog = { ...log, report: (rows: Parameters<typeof log.report>[0]) => { events.push("report"); log.report(rows); }, warn: (message: string) => { events.push("warn"); log.warn(message); } };
+    const params = { paths, fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/z.json`]: providerZ }), proc: fakeProc({ Z_API_TOKEN: "tok-z" }, ["--provider", "z", "--print"]), log: recordingLog, resolveClaudeBinary: () => discovered, credentials: fakeCredentials(), frontdoor, startBaseUrlProbe } satisfies Parameters<typeof prepareLaunch>[0];
+    return { events, params };
+  }
+
+  it("starts the provider probe before the front door comes up and reads it after, so the wait overlaps the bring-up, then reports and warns in that order", () => {
+    const world = overlapWorld(() => ({ ok: false, reason: "no connection accepted within 1500ms" }));
+    prepareLaunch(world.params);
+    expect(world.events).toEqual(["probe start", "door ensure", "probe read", "report", "warn"]);
+  });
+
+  it("cancels the provider probe when the bring-up throws, and never reads it", () => {
+    const world = overlapWorld(() => ({ ok: true }), () => {
+      throw new Error("the door would not start");
+    });
+    expect(() => prepareLaunch(world.params)).toThrow("the door would not start");
+    expect(world.events).toEqual(["probe start", "door ensure", "probe cancel"]);
   });
 
   it("launches on a provider whose base URL accepts a connection, with no warning", () => {
@@ -165,7 +213,7 @@ describe("runLauncher provider selection", () => {
       proc: fakeProc({ Z_API_TOKEN: "tok-z" }, ["--provider", "z", "--print"]),
       log,
       resolveClaudeBinary: () => discovered,
-      probeBaseUrl: () => ({ ok: true }),
+      startBaseUrlProbe: settledProbe(() => ({ ok: true })),
     });
     expect(spawn.spawnSync).toHaveBeenCalledTimes(1);
     expect(log.warns).toEqual([]);
@@ -192,7 +240,7 @@ describe("runLauncher provider selection", () => {
         log: fakeLog(),
         resolveClaudeBinary: () => discovered,
         farm: fakeFarm(createFakeFarmFs({}), cascade),
-        probeBaseUrl: probe,
+        startBaseUrlProbe: settledProbe(probe),
       });
     }
     expect(asked).toEqual([providerZ.baseUrl]);
