@@ -25,11 +25,18 @@ export interface DoorWorkerTasks {
 /** The name of a task the door runs in a worker. */
 export type DoorWorkerTaskName = keyof DoorWorkerTasks;
 
-/** What a worker is started with: the task to run, its input and the shared heartbeat counter the door's watchdog reads. */
+/** What a worker needs to know about the door process it runs inside, which it cannot read from its own `process` (there `argv[1]` is the worker's eval marker): where the door's executable is, as the door resolved it, and the file whose content the door is running. */
+export interface DoorProcessFacts {
+  readonly ownExecutablePath: string;
+  readonly contentSourcePath: string;
+}
+
+/** What a worker is started with: the task to run, its input, the door's process facts and the shared heartbeat counter the door's watchdog reads. */
 export interface DoorWorkerData {
   readonly doorWorker: {
     readonly task: DoorWorkerTaskName;
     readonly input: unknown;
+    readonly facts: DoorProcessFacts;
     readonly heartbeat: SharedArrayBuffer;
   };
 }
@@ -49,7 +56,7 @@ export function isIdentifier(value: unknown): value is string {
 
 /** Whether `value` is the data a door worker is started with. */
 export function isDoorWorkerData(value: unknown): value is DoorWorkerData {
-  return typeof value === "object" && value !== null && "doorWorker" in value && typeof value.doorWorker === "object" && value.doorWorker !== null && "task" in value.doorWorker && "heartbeat" in value.doorWorker && value.doorWorker.heartbeat instanceof SharedArrayBuffer;
+  return typeof value === "object" && value !== null && "doorWorker" in value && typeof value.doorWorker === "object" && value.doorWorker !== null && "task" in value.doorWorker && "facts" in value.doorWorker && "heartbeat" in value.doorWorker && value.doorWorker.heartbeat instanceof SharedArrayBuffer;
 }
 
 /** Whether `value` is a message a door worker posts, of exactly the shape `DoorWorkerMessage` allows. */
