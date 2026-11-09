@@ -17,6 +17,12 @@ const REAL_LISTENER_BOUND_MS = 5_000;
 const RANGE_START = 1;
 const RANGE_END = 3;
 
+/**
+ * A source-port range a real dial can bind on every platform: above the privileged ports (a dial that binds one is refused with EACCES on Linux for an unprivileged user), below the operating system's ephemeral range (49152 upward), and clear of the door's own reserved range (`DOOR_SOURCE_PORT_START` and its width), which the probe workers of other tests draw from. `RANGE_START` and `RANGE_END` belong to fake sockets, which bind nothing.
+ */
+const BINDABLE_RANGE_START = 48_990;
+const BINDABLE_RANGE_END = 48_999;
+
 const servers: net.Server[] = [];
 
 afterEach(async () => {
@@ -311,7 +317,7 @@ describe("the door's lookup answers in the shape node asks for", () => {
       const outcome = await doorDial(
         { connect: (options) => net.connect(options), lookup, isIP: net.isIP },
         { host: "localhost", port: address.port },
-        new SourcePortRange(RANGE_START, RANGE_END),
+        new SourcePortRange(BINDABLE_RANGE_START, BINDABLE_RANGE_END),
       );
       outcome.socket.destroy();
       expect(outcome.error).toBeNull();
