@@ -15,6 +15,9 @@ const servers: http.Server[] = [];
 /** A connect bound short enough that a test waiting it out stays quick, and far above what a loopback connect takes, so a reachable loopback upstream never trips it. */
 const SHORT_CONNECT_BOUND_MS = 200;
 
+/** The connect bound of the test that a reachable upstream must NOT trip: a loaded machine can delay even a loopback connect past `SHORT_CONNECT_BOUND_MS`, so this is far above a healthy connect, and the upstream in that test answers after twice it, which is what shows the bound covers the connect only. */
+const REACHABLE_CONNECT_BOUND_MS = 1_000;
+
 /** How many connect bounds a test that the bound must end may take in all: the bound itself, and the rest for the door to answer on a loaded machine, still far short of the operating system's own connect timeout (75 s on macOS) the bound replaces. */
 const BOUNDS_PER_TEST_BUDGET = 10;
 
@@ -393,10 +396,10 @@ describe("the pass-through route", () => {
       setTimeout(() => {
         response.writeHead(HTTP_STATUS.ok, { "content-type": "application/json" });
         response.end('{"ok":true}');
-      }, SHORT_CONNECT_BOUND_MS + SHORT_CONNECT_BOUND_MS);
+      }, REACHABLE_CONNECT_BOUND_MS * 2);
     });
     const port = await listen(server);
-    const door = await startDoor({ baseUrl: `http://127.0.0.1:${String(port)}`, stripPrefix: "/providers/z", headroomUpstream: undefined, connectTimeoutMs: SHORT_CONNECT_BOUND_MS });
+    const door = await startDoor({ baseUrl: `http://127.0.0.1:${String(port)}`, stripPrefix: "/providers/z", headroomUpstream: undefined, connectTimeoutMs: REACHABLE_CONNECT_BOUND_MS });
     try {
       const response = await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", headers: { [AUTH_HEADER]: "launch-token-for-tests" }, body: "{}" });
       expect(response.status).toBe(HTTP_STATUS.ok);
