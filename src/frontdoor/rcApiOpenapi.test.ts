@@ -17,6 +17,7 @@ import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog } from "./rcEven
 import { createRcEventFanout } from "./rcStream";
 import type { FrontDoorStatus } from "./status";
 import { buildLayoutPaths } from "../paths";
+import { DOOR_REPORT_ENVIRONMENT_NOTE } from "./controlSchemas";
 
 /** The token the mounted door accepts, standing in for the per-generation value the real door writes owner-only. */
 const CONTROL_TOKEN = "unit-openapi-token";
@@ -391,10 +392,16 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
     expect(refused.status).toBe(HTTP_STATUS.unauthorized);
     const doc = await call("GET", "/openapi.json");
     expect(doc.status).toBe(HTTP_STATUS.ok);
-    const parsed = JSON.parse(doc.text) as { info: { title: string; version: string }; paths: Record<string, { get?: { responses?: Record<string, { content?: Record<string, unknown> } | undefined> } | undefined }> };
+    const parsed = JSON.parse(doc.text) as { info: { title: string; version: string }; paths: Record<string, { get?: { description?: string; responses?: Record<string, { content?: Record<string, unknown> } | undefined> } | undefined }> };
     expect(parsed.info.title).toBe("agent-shim front door API");
     expect(parsed.info.version).toMatch(/^\d+\.\d+\.\d+/);
     expect(Object.keys(parsed.paths).sort()).toEqual(EXPECTED_REST_PATHS);
+    // The two report procedures say under what environment they collect, in the same words, and name the statuses of their failures.
+    for (const route of ["/rest/check", "/rest/doctor"]) {
+      const description = parsed.paths[route]?.get?.description ?? "";
+      expect(description, route).toContain(DOOR_REPORT_ENVIRONMENT_NOTE);
+      expect(description, route).toContain("504 when the worker outlasted its deadline or stalled");
+    }
     // The SSE routes describe their wire shape, so a consumer knows what the stream is before dialling it.
     const streamResponses = parsed.paths["/rest/rc/events"]?.get?.responses;
     expect(Object.keys(streamResponses?.["200"]?.content ?? {})).toContain("text/event-stream");
