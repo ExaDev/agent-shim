@@ -8,9 +8,10 @@ import { Worker } from "node:worker_threads";
 import * as esbuild from "esbuild";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
+import { observeBlockingSteps } from "../processRole";
 import { cliBundleOptions } from "../../scripts/bundle-options.mts";
 import { LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial, type LeafCert } from "./connect";
-import { PROBE_WAIT_MARGIN_MS, PROBE_WORKER_FAILURE_PREFIX, PROBE_WORKER_START_LIMIT_MS, STARTED_SIGNAL_SOURCE, probeFrontDoorSync, probeListenerAcceptSync, probeWorkerSource, requestCatalogueRefreshSync, startProbeWorker, type ProbeWait, type ProbeWorkers } from "./probe";
+import { PROBE_WAIT_MARGIN_MS, PROBE_WAIT_SLICE_MS, PROBE_WORKER_FAILURE_PREFIX, PROBE_WORKER_START_LIMIT_MS, STARTED_SIGNAL_SOURCE, slicedProbeWait, probeFrontDoorSync, probeListenerAcceptSync, probeWorkerSource, requestCatalogueRefreshSync, startProbeWorker, type ProbeWait, type ProbeWorkers } from "./probe";
 import * as probe from "./probe";
 
 /** Enough time for the pure-JS 2048-bit keypairs this file generates. */
@@ -234,6 +235,31 @@ class FakeProbeWorker extends EventEmitter {
     return await Promise.resolve(0);
   }
 }
+
+describe("the sliced wait of a probe", () => {
+  /** Header slots of the size a probe uses; the wait reads slot 0. */
+  const header = (): Int32Array => new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+
+  it("notes a blocking step before each slice and answers timed-out after the whole bound, ending no slice early", () => {
+    let noted = 0;
+    const remove = observeBlockingSteps(() => {
+      noted += 1;
+    });
+    try {
+      // One millisecond more than a slice: the first slice runs out, a second remains.
+      expect(slicedProbeWait(header(), 0, 0, PROBE_WAIT_SLICE_MS + 1)).toBe("timed-out");
+      expect(noted).toBeGreaterThanOrEqual(2);
+    } finally {
+      remove();
+    }
+  });
+
+  it("answers at once with not-equal when the slot already differs, like one wait", () => {
+    const slots = header();
+    Atomics.store(slots, 0, 1);
+    expect(slicedProbeWait(slots, 0, 0, PROBE_WAIT_SLICE_MS + PROBE_WAIT_SLICE_MS)).toBe("not-equal");
+  });
+});
 
 describe("a probe worker that fails", () => {
   const FAILURE_MESSAGE = "probe-source-failure";
