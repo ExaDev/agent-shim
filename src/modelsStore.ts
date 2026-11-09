@@ -69,6 +69,7 @@ export function memberKindOf(ref: string, models: ModelsConfig | undefined): "vi
 export function expandMembers(name: string, models: ModelsConfig | undefined): readonly string[] {
   const virtual = models?.virtual ?? {};
   const expanded: string[] = [];
+  const seen = new Set<string>();
   const walk = (current: string, chain: readonly string[]): void => {
     const nested = virtual[current];
     if (nested !== undefined) {
@@ -80,7 +81,8 @@ export function expandMembers(name: string, models: ModelsConfig | undefined): r
       }
       return;
     }
-    if (!expanded.includes(current)) {
+    if (!seen.has(current)) {
+      seen.add(current);
       expanded.push(current);
     }
   };

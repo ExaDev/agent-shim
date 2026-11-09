@@ -154,8 +154,11 @@ export type ModelRelation = "same" | "similar" | "distinct";
 
 /** Compares two model names' identities. Same is an automatic match; similar (a version or variant apart, or one family another vendor claims) is proposed and never merged without a decision; distinct is neither. */
 export function relateModels(left: string, right: string): ModelRelation {
-  const a = modelIdentity(left);
-  const b = modelIdentity(right);
+  return relateIdentities(modelIdentity(left), modelIdentity(right));
+}
+
+/** `relateModels` over identities already worked out, for a caller that compares one name with many and would otherwise parse it for each comparison. */
+export function relateIdentities(a: Readonly<ModelIdentity>, b: Readonly<ModelIdentity>): ModelRelation {
   if (a.familyAndVersion !== b.familyAndVersion) {
     return sameFamilyOtherVersion(a, b) ? "similar" : "distinct";
   }

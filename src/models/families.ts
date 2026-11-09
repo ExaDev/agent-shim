@@ -34,41 +34,131 @@ function assertionsOf(models: ModelsConfig | undefined): IdentityAssertions {
   return { same: models?.same ?? [], distinct: models?.distinct ?? [] };
 }
 
-/** Whether two targets are one model: the user's assertions are about refs and take precedence (a `distinct` pair never is; a `same` group always is), and otherwise the model names decide, unless the user has pinned either target into a group it is not in, which turns the likeness into a proposal only. */
-function sameModel(left: string, right: string, assertions: Readonly<IdentityAssertions>): boolean {
-  if (assertions.distinct.some(([a, b]) => (a === left && b === right) || (a === right && b === left))) {
+/** The user's assertions indexed for the questions `sameModel` asks of every pair, so each answer is a lookup and not a search through the assertions: the `distinct` pairs as keys in both orders, each ref's first `same` group, and each `same` group's members as a set. */
+interface IndexedAssertions {
+  readonly distinct: ReadonlySet<string>;
+  readonly sameGroupOf: ReadonlyMap<string, readonly string[]>;
+  readonly membersOf: ReadonlyMap<readonly string[], ReadonlySet<string>>;
+}
+
+const PAIR_SEPARATOR = "\u0000";
+
+function indexAssertions(assertions: Readonly<IdentityAssertions>): IndexedAssertions {
+  const distinct = new Set<string>();
+  for (const [a, b] of assertions.distinct) {
+    distinct.add(`${a}${PAIR_SEPARATOR}${b}`);
+    distinct.add(`${b}${PAIR_SEPARATOR}${a}`);
+  }
+  const sameGroupOf = new Map<string, readonly string[]>();
+  const membersOf = new Map<readonly string[], ReadonlySet<string>>();
+  for (const group of assertions.same) {
+    membersOf.set(group, new Set(group));
+    for (const ref of group) {
+      if (!sameGroupOf.has(ref)) {
+        sameGroupOf.set(ref, group);
+      }
+    }
+  }
+  return { distinct, sameGroupOf, membersOf };
+}
+
+/** A target with what deciding whether two are one model reads of it, worked out once: its model name's identity bucket (the family and version, then the variant: two names the automatic rule calls the same share it). */
+interface TargetFacts {
+  readonly ref: string;
+  readonly model: string;
+  readonly bucket: string;
+}
+
+function factsOf(ref: string): TargetFacts {
+  const model = modelOf(ref);
+  const identity = modelIdentity(model);
+  return { ref, model, bucket: `${identity.familyAndVersion}${PAIR_SEPARATOR}${identity.variant}` };
+}
+
+/** Whether two targets are one model: the user's assertions are about refs and take precedence (a `distinct` pair never is; a `same` group always is), and otherwise the model names decide, unless the user has asserted one of them into a group the other is not in. */
+function sameModel(left: TargetFacts, right: TargetFacts, assertions: IndexedAssertions): boolean {
+  if (assertions.distinct.has(`${left.ref}${PAIR_SEPARATOR}${right.ref}`)) {
     return false;
   }
-  const leftGroup = assertions.same.find((group) => group.includes(left));
-  const rightGroup = assertions.same.find((group) => group.includes(right));
+  const leftGroup = assertions.sameGroupOf.get(left.ref);
+  const rightGroup = assertions.sameGroupOf.get(right.ref);
   if (leftGroup !== undefined && leftGroup === rightGroup) {
     return true;
   }
-  if ((leftGroup !== undefined && !leftGroup.includes(right)) || (rightGroup !== undefined && !rightGroup.includes(left))) {
+  if ((leftGroup !== undefined && assertions.membersOf.get(leftGroup)?.has(right.ref) !== true) || (rightGroup !== undefined && assertions.membersOf.get(rightGroup)?.has(left.ref) !== true)) {
     return false;
   }
-  return relateModels(modelOf(left), modelOf(right)) === "same";
+  return relateModels(left.model, right.model) === "same";
 }
 
-/** Whether a `names` entry pins `ref` into a family: the entry is either the full ref or just the model name. */
-function pinnedTo(settings: FamilySettings | undefined, ref: string): boolean {
-  return settings?.names?.some((name) => name === ref || name === modelOf(ref)) === true;
+/** What `pinnedTo` finds, indexed: the first family (in the order of the config) whose `names` hold a target's full ref or its model name. */
+function pinIndex(settingsByKey: Readonly<Record<string, FamilySettings>>): (ref: string, model: string) => string | undefined {
+  const firstEntryOf = new Map<string, { readonly order: number; readonly key: string }>();
+  Object.entries(settingsByKey).forEach(([key, settings], order) => {
+    for (const name of settings.names ?? []) {
+      if (!firstEntryOf.has(name)) {
+        firstEntryOf.set(name, { order, key });
+      }
+    }
+  });
+  return (ref, model) => {
+    const byRef = firstEntryOf.get(ref);
+    const byModel = firstEntryOf.get(model);
+    if (byRef === undefined || byModel === undefined) {
+      return (byRef ?? byModel)?.key;
+    }
+    return byRef.order <= byModel.order ? byRef.key : byModel.key;
+  };
 }
 
 /**
- * Groups `refs` into families. A target joins the family of the first target it is the same model as (the names say so, or the user asserted it, and never when the user asserted they are distinct); a `names` pin in the family settings overrides the names; and an account ref only appears in a family the user put it in, because nothing else says which models an account offers. Order is the catalogue's, so a family's refs keep the order they were listed in.
+ * Groups `refs` into families. A target joins the family of the first target it is the same model as (the names say so, or the user asserted it, and never when the user asserted they are distinct); a `names` pin overrides that and puts it in the family of that key. The groups a target can join are found through two indexes, the identity bucket of its model name and the `same` assertion it is in, so each target is compared only with the groups that hold a candidate (what the automatic rule or an assertion can call the same model), never with every group; the result is the one the comparison against every group in turn would give.
  */
 export function buildFamilies(refs: readonly string[], models: ModelsConfig | undefined): readonly Family[] {
-  const assertions = assertionsOf(models);
+  const assertions = indexAssertions(assertionsOf(models));
   const settingsByKey = models?.families ?? {};
-  const groups: { key: string; refs: string[] }[] = [];
-  for (const ref of refs) {
-    const pinnedKey = Object.entries(settingsByKey).find(([, settings]) => pinnedTo(settings, ref))?.[0];
-    const joined = groups.find((group) => (pinnedKey === undefined ? group.refs.some((first) => sameModel(first, ref, assertions)) : group.key === pinnedKey));
-    if (joined !== undefined) {
-      joined.refs.push(ref);
+  const pinnedKeyOf = pinIndex(settingsByKey);
+  const groups: { key: string; refs: string[]; facts: TargetFacts[] }[] = [];
+  const groupOfKey = new Map<string, number>();
+  const groupsOfBucket = new Map<string, Set<number>>();
+  const groupsOfAssertion = new Map<readonly string[], Set<number>>();
+  const addTo = <K>(index: Map<K, Set<number>>, key: K, at: number): void => {
+    const held = index.get(key);
+    if (held === undefined) {
+      index.set(key, new Set([at]));
     } else {
-      groups.push({ key: pinnedKey ?? familyKeyOf(modelOf(ref)), refs: [ref] });
+      held.add(at);
+    }
+  };
+  for (const ref of refs) {
+    const facts = factsOf(ref);
+    const pinnedKey = pinnedKeyOf(ref, facts.model);
+    let joinedAt: number | undefined;
+    if (pinnedKey !== undefined) {
+      joinedAt = groupOfKey.get(pinnedKey);
+    } else {
+      const assertion = assertions.sameGroupOf.get(ref);
+      const candidates = new Set<number>([...(groupsOfBucket.get(facts.bucket) ?? []), ...(assertion === undefined ? [] : (groupsOfAssertion.get(assertion) ?? []))]);
+      joinedAt = [...candidates].sort((left, right) => left - right).find((at) => groups[at]?.facts.some((first) => sameModel(first, facts, assertions)) === true);
+    }
+    const at = joinedAt ?? groups.length;
+    if (joinedAt === undefined) {
+      const key = pinnedKey ?? familyKeyOf(facts.model);
+      groups.push({ key, refs: [], facts: [] });
+      if (!groupOfKey.has(key)) {
+        groupOfKey.set(key, at);
+      }
+    }
+    const group = groups[at];
+    if (group === undefined) {
+      throw new Error("a family group was indexed before it was made");
+    }
+    group.refs.push(ref);
+    group.facts.push(facts);
+    addTo(groupsOfBucket, facts.bucket, at);
+    const assertedInto = assertions.sameGroupOf.get(ref);
+    if (assertedInto !== undefined) {
+      addTo(groupsOfAssertion, assertedInto, at);
     }
   }
   return groups.map((group) => ({ key: group.key, refs: group.refs, settings: settingsByKey[group.key] ?? {} }));
@@ -103,9 +193,18 @@ export function sharedFamilies(families: readonly Family[]): readonly Family[] {
  */
 export function expandFamilyMembers(members: readonly string[], families: readonly Family[]): readonly string[] {
   const expanded: string[] = [];
+  const seen = new Set<string>();
+  // The first family of a key, as `familyNamed` finds it.
+  const familyByKey = new Map<string, Family>();
+  for (const family of families) {
+    if (!familyByKey.has(`${FAMILY_PREFIX}${family.key}`)) {
+      familyByKey.set(`${FAMILY_PREFIX}${family.key}`, family);
+    }
+  }
   for (const member of members) {
-    for (const ref of member.startsWith(FAMILY_PREFIX) ? (familyNamed(families, member)?.refs ?? []) : [member]) {
-      if (!expanded.includes(ref)) {
+    for (const ref of member.startsWith(FAMILY_PREFIX) ? (familyByKey.get(member)?.refs ?? []) : [member]) {
+      if (!seen.has(ref)) {
+        seen.add(ref);
         expanded.push(ref);
       }
     }

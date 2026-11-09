@@ -1,7 +1,7 @@
 import type { ModelsConfig } from "../config/schema";
 import { expandMembers, memberKindOf } from "../modelsStore";
 import { FAMILY_PREFIX, buildFamilies, familyKeyOf } from "./families";
-import { relateModels } from "./identity";
+import { modelIdentity, relateIdentities, type ModelIdentity } from "./identity";
 
 /** What the models doctor check needs from its surroundings. */
 export interface ModelsDoctorInput {
@@ -68,15 +68,31 @@ export function modelsFindings(input: Readonly<ModelsDoctorInput>): readonly Mod
     }
   }
   const modelOfRef = (ref: string): string => ref.slice(ref.indexOf("/") + 1);
+  // Each ref's identity is worked out once however many comparisons it takes part in.
+  const identityByRef = new Map<string, ModelIdentity>();
+  const identityOf = (ref: string): ModelIdentity => {
+    let identity = identityByRef.get(ref);
+    if (identity === undefined) {
+      identity = modelIdentity(modelOfRef(ref));
+      identityByRef.set(ref, identity);
+    }
+    return identity;
+  };
+  const distinctPairs = new Set<string>();
+  for (const [a, b] of models.distinct ?? []) {
+    distinctPairs.add(`${a}\u0000${b}`);
+    distinctPairs.add(`${b}\u0000${a}`);
+  }
+  // Every pair of an asserted group is a pair the check reports on when it holds, so the pairs are enumerated; each costs a comparison of two identities already worked out.
   for (const group of models.same ?? []) {
     for (let outer = 0; outer < group.length; outer += 1) {
       for (let inner = outer + 1; inner < group.length; inner += 1) {
         const left = group[outer] ?? "";
         const right = group[inner] ?? "";
-        if (!left.startsWith("acct:") && !right.startsWith("acct:") && relateModels(modelOfRef(left), modelOfRef(right)) === "distinct") {
+        if (!left.startsWith("acct:") && !right.startsWith("acct:") && relateIdentities(identityOf(left), identityOf(right)) === "distinct") {
           findings.push({ severity: "warn", message: `"${left}" and "${right}" are asserted to be one model, but their names say they are different models; check the assertion is not a typo.` });
         }
-        if ((models.distinct ?? []).some(([a, b]) => (a === left && b === right) || (a === right && b === left))) {
+        if (distinctPairs.has(`${left}\u0000${right}`)) {
           findings.push({ severity: "fail", message: `"${left}" and "${right}" are asserted to be both one model and two models.` });
         }
       }
@@ -84,7 +100,24 @@ export function modelsFindings(input: Readonly<ModelsDoctorInput>): readonly Mod
   }
   for (const [name, model] of Object.entries(models.virtual ?? {})) {
     const concrete = model.members.filter((member) => memberKindOf(member, models) === "provider" && member.includes("/"));
-    const looksAlike = concrete.flatMap((left, index) => concrete.slice(index + 1).filter((right) => relateModels(modelOfRef(left), modelOfRef(right)) === "same").map((right) => [left, right] as const));
+    // Two members the names call the same model share their family, version and variant, so each member is compared only with the later members of its bucket, in the order the pairs were found before.
+    const bucketOf = (ref: string): string => `${identityOf(ref).familyAndVersion}\u0000${identityOf(ref).variant}`;
+    const buckets = new Map<string, string[]>();
+    for (const member of concrete) {
+      const held = buckets.get(bucketOf(member));
+      if (held === undefined) {
+        buckets.set(bucketOf(member), [member]);
+      } else {
+        held.push(member);
+      }
+    }
+    const seenInBucket = new Map<string, number>();
+    const looksAlike = concrete.flatMap((left) => {
+      const bucket = buckets.get(bucketOf(left)) ?? [];
+      const at = seenInBucket.get(bucketOf(left)) ?? 0;
+      seenInBucket.set(bucketOf(left), at + 1);
+      return bucket.slice(at + 1).filter((right) => relateIdentities(identityOf(left), identityOf(right)) === "same").map((right) => [left, right] as const);
+    });
     for (const [left, right] of looksAlike) {
       findings.push({ severity: "warn", message: `Virtual model "${name}" lists "${left}" and "${right}", which look like one model; a member ${FAMILY_PREFIX}${familyKeyOf(modelOfRef(left))} names every target of it.` });
     }

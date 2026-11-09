@@ -11,7 +11,7 @@ import { buildLayoutPaths } from "./paths";
 import { growsLinearly, startStepMeter } from "./test-helpers";
 
 /**
- * Each report is run against a farm in which every collection the user sizes is large and degenerate at once: identities with a readable name, with none (a file that is not JSON), all claiming one name, symlinks to one directory and displaced ones (an interrupted resync left their identity.json only in a superseded farm), a pool of many members with a usage log of several records for each, many registered sessions, many providers and many configuration profiles. The array steps a report makes (`countSteps`) must grow exactly linearly with the farm (`growsLinearly`: counts are deterministic, so the slope may not grow), and so must the most steps it makes between two file system notes, which is what the door's silence window sees as a stall.
+ * Each report is run against a farm in which every collection the user sizes is large and degenerate at once: identities with a readable name, with none (a file that is not JSON), all claiming one name, symlinks to one directory and displaced ones (an interrupted resync left their identity.json only in a superseded farm), a pool of many members with a usage log of several records for each, many registered sessions, many providers, a models block as large as the farm and many configuration profiles. The array steps a report makes (`countSteps`) must grow exactly linearly with the farm (`growsLinearly`: counts are deterministic, so the slope may not grow), and so must the most steps it makes between two file system notes, which is what the door's silence window sees as a stall.
  *
  * What this can catch: a pass over a collection nested inside a pass over it that runs through the counted array operations, over the whole farm. What it cannot see: a quadratic cost that does not run through them (a `Set` or `Map` iteration, an indexed `for` loop, a sort comparator, a copy by `slice`, `concat` or `JSON.stringify`, string building), one in native code, one over a collection this farm does not hold (registered sessions, many providers), and a cost that grows with something other than the farm's size.
  */
@@ -23,6 +23,7 @@ const REPORT_SIZES = [FIRST_FARM, FIRST_FARM * DOUBLE, FIRST_FARM * QUADRUPLE] a
 const GROUPS = 4;
 const UUID_TAIL_DIGITS = 12;
 const RECORDS_PER_MEMBER = 5;
+const SAME_GROUP_SIZE = 3;
 const MINUTE_MS = 60_000;
 const FIRST_SESSION_PID = 400_000;
 const SUPERVISOR_PID = 399_999;
@@ -97,6 +98,17 @@ function buildFarm(size: number) {
   for (let index = 0; index < each; index += 1) {
     fs.writeFileSync(path.join(paths.providersDir, `codexp${String(index)}.json`), JSON.stringify({ kind: "codex", displayName: `Codex ${String(index)}`, credential: { sources: [{ literal: "placeholder" }] } }));
   }
+  // A models block as large as the farm: a virtual model naming every provider's target, one virtual model for each identity, a `same` assertion over each three targets, a `distinct` assertion between neighbours, a family pin for each of a few families and prices for every target. Groups are small as a person writes them; it is their number that grows.
+  const targets = Array.from({ length: each }, (_, index) => `codexp${String(index)}/model-${String(index)}`);
+  const triples = Array.from({ length: Math.floor(each / SAME_GROUP_SIZE) }, (_, index) => targets.slice(index * SAME_GROUP_SIZE, (index + 1) * SAME_GROUP_SIZE));
+  fs.writeFileSync(paths.globalConfigFile, JSON.stringify({
+    models: {
+      virtual: { wide: { mode: "cheapest", members: targets }, ...Object.fromEntries(members.map((member) => [`v-${member}`, { mode: "ordered", members: [targets[0] ?? "x/y", `acct:${member}/opus`] }])) },
+      same: triples,
+      distinct: targets.slice(1).map((target, index) => [targets[index] ?? "x/y", target]),
+      prices: Object.fromEntries(targets.map((target) => [target, { input: 1, output: 2 }])),
+    },
+  }));
   addPool(paths, "wide", members);
   fs.mkdirSync(path.join(home, "work"), { recursive: true });
   return paths;
