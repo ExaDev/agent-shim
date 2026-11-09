@@ -305,6 +305,28 @@ describe("a batch of provider probes at the size of a large configuration", () =
     expect(run.started()).toBe(2);
     expect(verdicts).toHaveLength(THIRD + 1);
   });
+
+  it("gives two targets that differ only in their bound each their own bound and verdict", () => {
+    const SHORT_BOUND_MS = 500;
+    const LONG_BOUND_MS = 30_000;
+    // The verdict names the bound its worker was given, so a probe shared between the two would show the same bound twice.
+    const workers: ProbeWorkers = {
+      start: (_source, _data, timeoutMs) => ({ verdict: () => ({ ok: false, reason: `bound ${String(timeoutMs)}` }) }),
+    };
+    const verdicts = probeAddressesAcceptSync(
+      [
+        { host: "same.example", port: PORT, timeoutMs: SHORT_BOUND_MS },
+        { host: "same.example", port: PORT, timeoutMs: LONG_BOUND_MS },
+        { host: "same.example", port: PORT, timeoutMs: SHORT_BOUND_MS },
+      ],
+      workers,
+    );
+    expect(verdicts).toEqual([
+      { ok: false, reason: `bound ${String(SHORT_BOUND_MS)}` },
+      { ok: false, reason: `bound ${String(LONG_BOUND_MS)}` },
+      { ok: false, reason: `bound ${String(SHORT_BOUND_MS)}` },
+    ]);
+  });
 });
 
 describe("probeListenerAcceptSync", () => {
