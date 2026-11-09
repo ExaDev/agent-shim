@@ -479,4 +479,71 @@ describe("the door worker host", () => {
     host.stop();
     await running.catch(() => undefined);
   });
+
+  it("fails a request whose thread cannot be created, frees its place and starts an equal request fresh, with nothing unhandled", async () => {
+    const lines: string[] = [];
+    let throwing = true;
+    const started: FakeWorker[] = [];
+    const spawn: DoorWorkerSpawn = (_code, data) => {
+      if (throwing) {
+        const failure = new RangeError("SECRET-marker out of memory detail");
+        Object.defineProperty(failure, "code", { value: "ERR_WORKER_INIT_FAILED", enumerable: true });
+        throw failure;
+      }
+      const worker = new FakeWorker(data);
+      started.push(worker);
+      return worker;
+    };
+    const host = createDoorWorkerHost({ code: "code", facts: FACTS, spawn, clock: manualClock(), stallLimitMs: STALL_MS, deadlineMs: DEADLINES, maxConcurrent: 1, log: (line) => { lines.push(line); } });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const first = host.run("doctor", { root: "/a" }, identity);
+      const queued = host.run("doctor", { root: "/b" }, identity);
+      const failure = await first.then(() => undefined, (error: unknown) => error);
+      expect(failure).toBeInstanceOf(DoorWorkerFailedError);
+      const message = failure instanceof Error ? failure.message : "";
+      expect(message).toContain("its thread could not be started (RangeError, ERR_WORKER_INIT_FAILED)");
+      expect(message).not.toContain("SECRET-marker");
+      // The place went back: the queued request was handed it and failed the same way, it did not wait for ever.
+      await expect(queued).rejects.toBeInstanceOf(DoorWorkerFailedError);
+      expect(lines.join("\n")).not.toContain("SECRET-marker");
+      // An equal request starts fresh, once the thread can be created again.
+      throwing = false;
+      const fresh = host.run("doctor", { root: "/a" }, identity);
+      await settle();
+      expect(started).toHaveLength(1);
+      started[0]?.answer("ok");
+      await expect(fresh).resolves.toBe("ok");
+      await settle();
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("ends a thread whose watching could not be set up, and returns its place", async () => {
+    const started: FakeWorker[] = [];
+    const spawn: DoorWorkerSpawn = (_code, data) => {
+      const worker = new FakeWorker(data);
+      started.push(worker);
+      return worker;
+    };
+    const clock: DoorWorkerClock = {
+      now: () => 0,
+      every: () => {
+        throw new Error("SECRET-marker no timer");
+      },
+    };
+    const host = createDoorWorkerHost({ code: "code", facts: FACTS, spawn, clock, stallLimitMs: STALL_MS, deadlineMs: DEADLINES, maxConcurrent: 1 });
+    const failure = await host.run("doctor", { root: "/a" }, identity).then(() => undefined, (error: unknown) => error);
+    expect(failure).toBeInstanceOf(DoorWorkerFailedError);
+    expect(failure instanceof Error ? failure.message : "").not.toContain("SECRET-marker");
+    await settle();
+    expect(started[0]?.terminations).toBe(1);
+    expect(started[0]?.ended).toBe(true);
+  });
 });
