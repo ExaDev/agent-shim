@@ -49,6 +49,13 @@ export type DoorWorkerMessage = { readonly kind: "done"; readonly value: unknown
 /** An error class name or code as a worker may post it: a short identifier, which cannot carry a message. */
 const IDENTIFIER = /^[A-Za-z][A-Za-z0-9_]{0,63}$/u;
 
+/** The class name and short code of an error as a worker may carry them across the door boundary: each only when it is a short identifier, so neither can hold a message. The one place that decides what of an error leaves a worker, for a posted failure and for an uncaught error alike. */
+export function identifiedFailure(error: unknown): { readonly name: string; readonly code?: string } {
+  const name = error instanceof Error && isIdentifier(error.name) ? error.name : "Error";
+  const code: unknown = error instanceof Error && "code" in error ? error.code : undefined;
+  return isIdentifier(code) ? { name, code } : { name };
+}
+
 /** Whether `value` is a short identifier. */
 export function isIdentifier(value: unknown): value is string {
   return typeof value === "string" && IDENTIFIER.test(value);

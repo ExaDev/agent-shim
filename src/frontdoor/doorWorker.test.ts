@@ -79,7 +79,7 @@ const STALL_MS = 10_000;
 const identity = (value: unknown): never => value as never;
 
 /** A host over fake workers, with the ones it started listed in order. */
-function hostOver(options: { readonly maxConcurrent?: number; readonly maxQueued?: number; readonly stuck?: boolean } = {}) {
+function hostOver(options: { readonly maxConcurrent?: number; readonly maxQueued?: number; readonly stuck?: boolean; readonly log?: (line: string) => void } = {}) {
   const started: FakeWorker[] = [];
   const spawn: DoorWorkerSpawn = (_code, data) => {
     const worker = new FakeWorker(data, options.stuck);
@@ -87,7 +87,7 @@ function hostOver(options: { readonly maxConcurrent?: number; readonly maxQueued
     return worker;
   };
   const clock = manualClock();
-  const host = createDoorWorkerHost({ code: "code", facts: FACTS, spawn, clock, stallLimitMs: STALL_MS, deadlineMs: DEADLINES, ...(options.maxConcurrent === undefined ? {} : { maxConcurrent: options.maxConcurrent }), ...(options.maxQueued === undefined ? {} : { maxQueued: options.maxQueued }) });
+  const host = createDoorWorkerHost({ code: "code", facts: FACTS, spawn, clock, stallLimitMs: STALL_MS, deadlineMs: DEADLINES, ...(options.maxConcurrent === undefined ? {} : { maxConcurrent: options.maxConcurrent }), ...(options.maxQueued === undefined ? {} : { maxQueued: options.maxQueued }), ...(options.log === undefined ? {} : { log: options.log }) });
   return { host, started, clock };
 }
 
@@ -427,5 +427,56 @@ describe("the door worker host", () => {
     await settle();
     started[0]?.emit("message", { kind: "failed", name: "Error", code: "ENOENT", message: "TOPSECRET stderr" });
     await expect(running).rejects.toThrow("something other than a result");
+  });
+
+  it("never carries the message of a worker's uncaught error into the rejection or the log, only its class and code", async () => {
+    const lines: string[] = [];
+    const { host, started } = hostOver({ log: (line) => { lines.push(line); } });
+    const running = host.run("doctor", { root: "/a" }, identity);
+    await settle();
+    const error = new TypeError("SECRET-marker printed by a credential command");
+    Object.defineProperty(error, "code", { value: "ERR_THING", enumerable: true });
+    started[0]?.emit("error", error);
+    const failure = await running.then(() => undefined, (rejected: unknown) => rejected);
+    expect(failure).toBeInstanceOf(DoorWorkerFailedError);
+    const message = failure instanceof Error ? failure.message : "";
+    expect(message).toContain("it raised TypeError (ERR_THING)");
+    expect(message).not.toContain("SECRET-marker");
+    expect(lines.join("\n")).not.toContain("SECRET-marker");
+    expect(lines).toHaveLength(1);
+  });
+
+  it("logs exactly one line, with the task and kind and no message, for each way a task fails or is refused", async () => {
+    const outcomes: { readonly name: string; readonly kind: string; readonly run: (world: ReturnType<typeof hostOver>) => Promise<unknown> }[] = [
+      { name: "a worker error", kind: "worker", run: async (world) => { const running = world.host.run("doctor", { root: "/a" }, identity); await settle(); world.started[0]?.emit("error", new Error("SECRET-marker")); return await running; } },
+      { name: "a worker that ends with no answer", kind: "worker", run: async (world) => { const running = world.host.run("doctor", { root: "/a" }, identity); await settle(); world.started[0]?.emit("exit", 1); return await running; } },
+      { name: "a posted failure", kind: "worker", run: async (world) => { const running = world.host.run("doctor", { root: "/a" }, identity); await settle(); world.started[0]?.emit("message", { kind: "failed", name: "TypeError" }); return await running; } },
+      { name: "a stall", kind: "stalled", run: async (world) => { const running = world.host.run("doctor", { root: "/a" }, identity); await settle(); world.clock.advance(STALL_MS + DOOR_WORKER_WATCHDOG_INTERVAL_MS * 2); return await running; } },
+      { name: "a deadline", kind: "deadline", run: async (world) => { const running = world.host.run("doctor", { root: "/a" }, identity); await settle(); for (let at = 0; at <= DEADLINES.doctor; at += DOOR_WORKER_WATCHDOG_INTERVAL_MS) { world.started[0]?.beat(); world.clock.advance(DOOR_WORKER_WATCHDOG_INTERVAL_MS); } return await running; } },
+      { name: "the door stopping", kind: "stopped", run: async (world) => { const running = world.host.run("doctor", { root: "/a" }, identity); await settle(); world.host.stop(); return await running; } },
+      { name: "an answer that is not a valid result", kind: "answer", run: async (world) => { const running = world.host.run("doctor", { root: "/a" }, () => { throw new Error("SECRET-marker"); }); await settle(); world.started[0]?.answer("x"); return await running; } },
+      { name: "a cancelled request with nobody else waiting", kind: "cancelled", run: async (world) => { const abort = new AbortController(); const running = world.host.run("doctor", { root: "/a" }, identity, abort.signal); await settle(); abort.abort(); return await running; } },
+      { name: "an input that does not fit", kind: "input", run: async (world) => await world.host.run("doctor", {} as never, identity) },
+    ];
+    for (const outcome of outcomes) {
+      const lines: string[] = [];
+      const world = hostOver({ log: (line) => { lines.push(line); } });
+      await outcome.run(world).then(() => undefined, () => undefined);
+      await settle();
+      expect(lines, outcome.name).toHaveLength(1);
+      expect(lines[0], outcome.name).toContain("door worker ");
+      expect(lines[0], outcome.name).toContain(`(${outcome.kind})`);
+      expect(lines[0], outcome.name).not.toContain("SECRET-marker");
+    }
+  });
+
+  it("logs a refusal when every worker is busy and the queue is full", async () => {
+    const lines: string[] = [];
+    const { host } = hostOver({ maxConcurrent: 1, maxQueued: 0, log: (line) => { lines.push(line); } });
+    const running = host.run("doctor", { root: "/a" }, identity);
+    await expect(host.run("doctor", { root: "/b" }, identity)).rejects.toBeInstanceOf(DoorWorkerBusyError);
+    expect(lines).toEqual(["door worker doctor refused: every worker is busy and the queue is full"]);
+    host.stop();
+    await running.catch(() => undefined);
   });
 });

@@ -25,7 +25,7 @@ import {
 /** The doctor report as the control API returns it. */
 type DoctorRunOutput = z.output<typeof DoctorRunOutputSchema>;
 import { createCodexApiRouter, type CodexApiDeps } from "./codexApi";
-import { DoorWorkerBusyError } from "./doorWorker";
+import { DoorWorkerBusyError, DoorWorkerFailedError } from "./doorWorker";
 import { createConfigApiRouter, type ConfigApiDeps } from "./configApi";
 import { createEventsApiRouter, type DoorEventsApiDeps } from "./eventsApi";
 import { createLifecycleApiRouter, type LifecycleApiDeps } from "./lifecycleApi";
@@ -50,17 +50,26 @@ import type { PrePipelineApi } from "./server";
  * This router is reads only; the door's writes live in routers of their own so each is a decision of its own (`lifecycleApi.ts` for the restart and the update check, `codexApi.ts` for the Codex sign-in, `configApi.ts` for identity, configuration-profile, provider, pool and directory-rule management). `createDoorApiNodeHandler` mounts these routers and the door-wide `events.subscribe` router beside the Remote Control router on the one prefix the provider listener already serves, so a consumer dials one address with one token for the whole door.
  */
 
-/** Runs `collect`, answering a door whose workers are all busy as the retryable `SERVICE_UNAVAILABLE` it stands for. */
-async function orBusy<T>(collect: () => Promise<T>): Promise<T> {
+/**
+ * Runs `collect` and answers what a door worker did not complete as the status it stands for, carrying the door's own message (which names the cause and the command to run from a shell for the detail, never a worker's message): every worker busy or the door ending is a retryable `SERVICE_UNAVAILABLE`, a task that outlasted its deadline or whose heartbeat stood still is a `GATEWAY_TIMEOUT`, and a worker that failed, answered something invalid, was refused its input or lost its caller is an `INTERNAL_SERVER_ERROR`. Any other error is not this function's to name and passes through.
+ */
+async function orFailed<T>(collect: () => Promise<T>): Promise<T> {
   try {
     return await collect();
   } catch (error) {
     if (error instanceof DoorWorkerBusyError) {
       throw new ORPCError("SERVICE_UNAVAILABLE", { message: error.message, cause: error });
     }
+    if (error instanceof DoorWorkerFailedError) {
+      const code = error.kind === "stopped" ? "SERVICE_UNAVAILABLE" : error.kind === "deadline" || error.kind === "stalled" ? "GATEWAY_TIMEOUT" : "INTERNAL_SERVER_ERROR";
+      throw new ORPCError(code, { message: error.message, cause: error });
+    }
     throw error;
   }
 }
+
+/** What the two report procedures say of their failures, listed once so the documents of both name the same statuses. */
+const REPORT_FAILURES_DESCRIPTION = "The report is collected in a worker thread of the door with the door's own environment and PATH (as the door would launch), not the caller's. 503 when every worker is busy or the door is ending, 504 when the worker outlasted its deadline or stalled, 500 when it failed; each message names the cause and the command to run from a shell for the detail.";
 
 /** Everything the control-plane procedures need, injected so they serve against fakes in tests exactly as the door's real wiring serves against this machine. */
 export interface ControlApiDeps {
@@ -162,16 +171,16 @@ export function createControlApiRouter(deps: ControlApiDeps) {
     check: {
       // The report's own JSON shape is the contract (the same one `check --json` prints and `checkReportSchema.ts` defines), so the procedure returns exactly that conversion.
       run: authed
-        .meta(openapi({ method: "GET", path: "/rest/check", summary: "Run the check report for one directory", tags: [CHECK_API_TAG] }))
+        .meta(openapi({ method: "GET", path: "/rest/check", summary: "Run the check report for one directory", description: REPORT_FAILURES_DESCRIPTION, tags: [CHECK_API_TAG] }))
         .input(CheckRunInputSchema)
         .output(CheckReportJsonSchema)
-        .handler(async ({ input, signal }) => await orBusy(async () => await deps.checkReport(input.path, input.identity, signal))),
+        .handler(async ({ input, signal }) => await orFailed(async () => await deps.checkReport(input.path, input.identity, signal))),
     },
     doctor: {
       run: authed
-        .meta(openapi({ method: "GET", path: "/rest/doctor", summary: "Run the doctor report", tags: [DOCTOR_API_TAG] }))
+        .meta(openapi({ method: "GET", path: "/rest/doctor", summary: "Run the doctor report", description: REPORT_FAILURES_DESCRIPTION, tags: [DOCTOR_API_TAG] }))
         .output(DoctorRunOutputSchema)
-        .handler(async ({ signal }) => await orBusy(async () => await deps.doctorReport(signal))),
+        .handler(async ({ signal }) => await orFailed(async () => await deps.doctorReport(signal))),
     },
     pool: {
       pick: authed

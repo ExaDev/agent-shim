@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 
-import { DoorWorkerBusyError } from "./doorWorker";
+import { DoorWorkerBusyError, DoorWorkerFailedError } from "./doorWorker";
 import { checkReportToJson, runCheck, type CheckReport, type RunCheckParams } from "../checkReport";
 import type { Pool } from "../config/schema";
 import type { DoctorReport } from "../doctorReport";
@@ -318,10 +318,37 @@ describe("the door's control-plane API", () => {
       }
     });
 
-    it("leaves any other failure of a collector as the failure it is", async () => {
+    it.each([
+      ["a stall", "stalled", "GATEWAY_TIMEOUT"],
+      ["a deadline", "deadline", "GATEWAY_TIMEOUT"],
+      ["the door ending", "stopped", "SERVICE_UNAVAILABLE"],
+      ["a worker error", "worker", "INTERNAL_SERVER_ERROR"],
+      ["an answer that is not a valid result", "answer", "INTERNAL_SERVER_ERROR"],
+      ["a refused input", "input", "INTERNAL_SERVER_ERROR"],
+      ["a caller that went away", "cancelled", "INTERNAL_SERVER_ERROR"],
+    ] as const)("answers %s as %s with the door's own message and its next step, for both reports", async (_outcome, kind, code) => {
+      const failed = await mountClient(
+        {
+          ...DEPS,
+          checkReport: async () => await Promise.reject(new DoorWorkerFailedError("check", `a reason of kind ${kind}`, kind)),
+          doctorReport: async () => await Promise.reject(new DoorWorkerFailedError("doctor", `a reason of kind ${kind}`, kind)),
+        },
+        CONTROL_TOKEN,
+      );
+      try {
+        await expect(failed.client.check.run({ path: `${FAKE_HOME}/work` })).rejects.toMatchObject({ code, message: expect.stringMatching(/a reason of kind .*run `agent-shim check` from a shell/u) as unknown });
+        await expect(failed.client.doctor.run()).rejects.toMatchObject({ code, message: expect.stringMatching(/a reason of kind .*run `agent-shim doctor` from a shell/u) as unknown });
+      } finally {
+        await failed.close();
+      }
+    });
+
+    it("leaves a failure that is not a door worker's as the failure it is", async () => {
       const broken = await mountClient({ ...DEPS, doctorReport: async () => await Promise.reject(new Error("disk gone")) }, CONTROL_TOKEN);
       try {
-        await expect(broken.client.doctor.run()).rejects.not.toMatchObject({ code: "SERVICE_UNAVAILABLE" });
+        const failure: unknown = await broken.client.doctor.run().then(() => undefined, (error: unknown) => error);
+        expect(failure).toMatchObject({ code: "INTERNAL_SERVER_ERROR" });
+        expect(failure).not.toMatchObject({ message: expect.stringMatching(/agent-shim doctor/u) as unknown });
       } finally {
         await broken.close();
       }
