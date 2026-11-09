@@ -11,7 +11,6 @@ import { cliBundleOptions } from "../../scripts/bundle-options.mts";
 import { CheckReportJsonSchema } from "../checkReportSchema";
 import { DoctorRunOutputSchema } from "./controlSchemas";
 import { createDoorWorkerHost } from "./doorWorker";
-import { enterProcessRole } from "../processRole";
 
 /** The longest a test waits for the real worker to evaluate the bundle and answer: a bound a loaded machine does not reach, since the wait is on the worker's answer and not on a clock. */
 const REAL_WORKER_TEST_BUDGET_MS = 120_000;
@@ -64,14 +63,13 @@ describe("a door worker running the real bundle", () => {
   });
 
   it(
-    "collects the doctor and check reports of a configuration with an http provider in threads of the door, whose role refuses to block, from code that no longer exists on disk, and leaves the event loop running",
+    "collects the doctor and check reports of a configuration with an http provider in worker threads of the door, from code that no longer exists on disk, and leaves the door's thread running",
     async () => {
-      const leave = enterProcessRole("frontdoor-supervisor");
       const host = createDoorWorkerHost({ code, facts: { ownExecutablePath: bundlePath, contentSourcePath: bundlePath }, deadlineMs: { check: REAL_WORKER_TEST_BUDGET_MS, doctor: REAL_WORKER_TEST_BUDGET_MS, "refresh-catalogue": REAL_WORKER_TEST_BUDGET_MS } });
       try {
         const root = path.join(dir, "home");
         fs.mkdirSync(path.join(root, "providers"), { recursive: true });
-        // A provider whose base URL nothing listens on: collecting its report runs the launcher's synchronous probe, which the door's own role refuses.
+        // A provider whose base URL nothing listens on: collecting its report runs the launcher's synchronous probe, which blocks its thread for the provider's connect bound: the worker's thread, never the door's.
         fs.writeFileSync(path.join(root, "providers", "closed.json"), JSON.stringify({ displayName: "Closed", baseUrl: "http://127.0.0.1:1", credential: { sources: [{ literal: "placeholder" }] } }));
         const [doctor, ticks] = await ticksDuring(async () => await host.run("doctor", { root }, (value) => DoctorRunOutputSchema.parse(value)));
         // The door's own thread kept running while the report was collected: timer ticks fell between the request and its answer, which a report collected on this thread cannot allow.
@@ -82,7 +80,6 @@ describe("a door worker running the real bundle", () => {
         expect(Array.isArray(check.entries)).toBe(true);
       } finally {
         host.stop();
-        leave();
       }
     },
     REAL_WORKER_TEST_BUDGET_MS,
