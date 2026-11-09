@@ -41,6 +41,48 @@ function portOf(text: string): number | string {
   return port >= 1 && port <= MAX_TCP_PORT ? port : `has a port outside 1 to ${String(MAX_TCP_PORT)}`;
 }
 
+/** The longest a label may be (RFC 1035). */
+export const MAX_LABEL_LENGTH = 63;
+
+/** The longest a name may be in its dotted form (RFC 1035). */
+export const MAX_NAME_LENGTH = 253;
+
+/** The parts of a dotted-decimal IPv4 address. */
+const IPV4_PARTS = 4;
+
+/** The largest value of one part of a dotted-decimal IPv4 address. */
+const MAX_OCTET = 255;
+
+/** One label of a reg-name: letters, digits and interior hyphens only. */
+const LDH_LABEL = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+
+/** A dotted-decimal IPv4 address: four decimal parts of 0 to 255, none with a leading zero. */
+function isDottedDecimal(host: string): boolean {
+  const parts = host.split(".");
+  return parts.length === IPV4_PARTS && parts.every((part) => /^(?:0|[1-9]\d{0,2})$/.test(part) && Number(part) <= MAX_OCTET);
+}
+
+/**
+ * The host an unbracketed authority names, lowercased, or the refusal. The grammar is positive: a reg-name of letters, digits and interior hyphens in labels of 1 to 63 characters (253 in all), or a dotted-decimal IPv4 address. Nothing else is dialled, so a byte `net.connect` would throw on (a NUL, a control character, a percent escape, a comma, a wildcard, an empty label) is refused with the 400 the client is owed instead of an accept followed by a drop.
+ */
+function nameOf(host: string): string | DialAuthorityRefusal {
+  const lowered = host.toLowerCase();
+  if (isDottedDecimal(lowered)) {
+    return lowered;
+  }
+  if (lowered.length > MAX_NAME_LENGTH) {
+    return { refusal: `a host longer than ${String(MAX_NAME_LENGTH)} characters` };
+  }
+  const labels = lowered.split(".");
+  if (labels.some((label) => label.length > MAX_LABEL_LENGTH)) {
+    return { refusal: `a host with a label longer than ${String(MAX_LABEL_LENGTH)} characters` };
+  }
+  if (!labels.every((label) => LDH_LABEL.test(label))) {
+    return { refusal: "a host that is not letters, digits and interior hyphens in non-empty dot-separated labels" };
+  }
+  return lowered;
+}
+
 /** Lowercases a host but not its zone id, which names an interface and is case-sensitive. */
 function lowerHost(host: string): string {
   const zone = host.indexOf("%");
@@ -88,8 +130,12 @@ export function parseDialAuthority(authority: string, defaultPort: number): Dial
   if (/[[\]]/.test(host)) {
     return { refusal: "an authority with brackets round something other than an IPv6 literal" };
   }
+  const name = nameOf(host);
+  if (typeof name !== "string") {
+    return name;
+  }
   const port = colon === -1 ? defaultPort : portOf(authority.slice(colon + 1));
-  return typeof port === "string" ? { refusal: `an authority that ${port}` } : { host: host.toLowerCase(), port };
+  return typeof port === "string" ? { refusal: `an authority that ${port}` } : { host: name, port };
 }
 
 /** The default port of each scheme a base URL may use, for a URL that names none. */
