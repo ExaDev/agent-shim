@@ -407,13 +407,16 @@ export const ProviderCatalogueSchema = z.strictObject({
 });
 export type ProviderCatalogue = z.infer<typeof ProviderCatalogueSchema>;
 
+/** The longest delay a Node timer holds: `setTimeout` takes a signed 32-bit millisecond count (2^31 - 1 at most) and runs anything longer after 1 ms instead, so a bound past it would fire at once. */
+export const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
 const HttpProviderSchema = z.strictObject({
   $schema: z.string().optional(),
   kind: z.literal("http").optional(),
   displayName: z.string().min(1),
   baseUrl: z.url(),
   /** How long opening a TCP connection to `baseUrl` may take before the provider counts as unreachable: the door's forwarding gives up and answers naming the provider, and `doctor`, `check` and a launch's probe are bounded by it. Defaults to `DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS`. Bounds the connect only, never the wait for the answer. */
-  connectTimeoutMs: z.int().positive().optional(),
+  connectTimeoutMs: z.int().positive().max(MAX_TIMER_DELAY_MS).optional(),
   credential: ProviderCredentialSchema,
   env: ProviderEnvSchema.optional(),
   /** Extra models `/model` lists beside the ones the tier settings name. */
