@@ -739,7 +739,7 @@ const CALLBACK_METHODS = ["filter", "some", "find", "findIndex", "findLast", "ev
 const SCAN_METHODS = ["includes", "indexOf", "lastIndexOf"];
 
 /**
- * Runs `run` with the array operations counted and returns the number of elements they visited: each call of a callback method (`filter`, `some`, `find`, `map` and the like), every element a scan method (`includes`, `indexOf`) may look at, and each step of an array iteration (so a spread or `for...of` that copies an array counts its length). A pass over a collection inside a pass over it, however it is written, makes the count grow with the square of the collection; a linear pass makes it grow with the collection. The arrays are restored however `run` ends.
+ * Runs `run` with the array operations counted and returns the number of elements they visited. Counted: each call of a callback method on an array (`filter`, `some`, `find`, `findIndex`, `findLast`, `every`, `map`, `forEach`, `reduce`, `flatMap`), counted as one step per callback call; the length of the array for each `includes`, `indexOf` and `lastIndexOf`; and one step for each `next` of an array's iterator, which a `for...of` and a spread of an array make. Not counted: iteration of a `Set` or `Map` (including a spread of one and `Map.forEach`), an indexed `for` loop, a sort comparator, the copies `slice`, `concat`, `join` and `toSorted` make, `findLastIndex`, string building and `JSON.stringify`, and anything in native code. So a pass nested inside a pass makes the count grow with the square of the collection only when both passes run through what is counted. The arrays are restored however `run` ends.
  */
 export function countSteps(run: () => void): number {
   const meter = startStepMeter();
@@ -757,7 +757,7 @@ export interface StepMeter {
   readonly stop: () => void;
 }
 
-/** The counting `countSteps` does, for a caller that reads the count while the work runs (to see the steps between two events) and stops it itself. */
+/** The counting `countSteps` does (see it for what is and is not counted), for a caller that reads the count while the work runs (to see the steps between two events) and stops it itself. */
 export function startStepMeter(): StepMeter {
   let steps = 0;
   const originals = new Map<PropertyKey, unknown>();
@@ -775,8 +775,11 @@ export function startStepMeter(): StepMeter {
   const lengthOf = (self: unknown): number => (Array.isArray(self) ? self.length : 0);
   for (const name of CALLBACK_METHODS) {
     patch(name, (original) => function (this: unknown, callback: unknown, ...rest: readonly unknown[]) {
-      const counted = typeof callback === "function" ? (...args: readonly unknown[]): unknown => { steps += 1; return Reflect.apply(callback, undefined, args); } : callback;
-      return original(this, [counted, ...rest]);
+      // `thisArg` is the second argument of every method but `reduce`, whose second is the initial value and whose callback has no `this`.
+      const receiver: unknown = name === "reduce" ? undefined : rest[0];
+      const counted = typeof callback === "function" ? function (this: unknown, ...args: readonly unknown[]): unknown { steps += 1; return Reflect.apply(callback, receiver, args); } : callback;
+      // Built with `concat`, not a spread, so the meter does not count its own iteration.
+      return original(this, [counted].concat(rest));
     });
   }
   for (const name of SCAN_METHODS) {
@@ -800,9 +803,10 @@ export function startStepMeter(): StepMeter {
   return {
     now: () => steps,
     stop: () => {
-      for (const [key, value] of originals) {
+      // `Map.forEach`, not a destructuring loop: destructuring an entry iterates an array, which the meter would count.
+      originals.forEach((value, key) => {
         Reflect.defineProperty(Array.prototype, key, { value, writable: true, configurable: true, enumerable: false });
-      }
+      });
     },
   };
 }
