@@ -48,3 +48,32 @@ describe("readDoorWorkerCode", () => {
     expect(readDoorWorkerCode(path.join(dir, "agent-shim-sea-does-not-exist"))).toBe("the embedded text");
   });
 });
+
+describe("createRealDoorWorkerHost", () => {
+  beforeEach(() => {
+    sea.isSea = false;
+    sea.assets.clear();
+  });
+
+  it("runs a task in a real worker over the bundle text it read at construction, after the file is gone, with the door's facts", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-real-host-"));
+    const bundle = path.join(dir, "cli.cjs");
+    // A stand-in bundle: answers the task it was given and the paths it was told, which is all a worker of the real host is handed.
+    fs.writeFileSync(bundle, 'const { parentPort, workerData } = require("node:worker_threads"); parentPort.postMessage({ kind: "done", value: { task: workerData.doorWorker.task, facts: workerData.doorWorker.facts } });');
+    const { createRealDoorWorkerHost } = await import("./doorWorker");
+    const host = createRealDoorWorkerHost({ ownExecutablePath: "/door/bin/agent-shim", contentSourcePath: bundle }, () => undefined);
+    fs.rmSync(dir, { recursive: true, force: true });
+    try {
+      expect(await host.run("doctor", { root: "/shim" }, (value) => value as never)).toEqual({ task: "doctor", facts: { ownExecutablePath: "/door/bin/agent-shim", contentSourcePath: bundle } });
+    } finally {
+      host.stop();
+    }
+  });
+
+  it("is the one host the front door builds, and the host both the reports and the catalogue refresh run through", () => {
+    const wiring = fs.readFileSync(path.resolve(__dirname, "commands.ts"), "utf8");
+    expect(wiring.match(/createRealDoorWorkerHost\(/gu)).toHaveLength(1);
+    expect(wiring).toContain("...doorReportPorts(doorWorkers, paths.root)");
+    expect(wiring).toContain('doorWorkers.run("refresh-catalogue"');
+  });
+});
