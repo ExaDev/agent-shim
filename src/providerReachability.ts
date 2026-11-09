@@ -52,17 +52,27 @@ export interface BaseUrlTarget {
 /** `BaseUrlProbe` for several base URLs at once, run together; verdicts in the order the targets were given. */
 export type BaseUrlBatchProbe = (targets: readonly BaseUrlTarget[]) => readonly ListenerVerdict[];
 
+/** The port no listener has and no connection can be made to: a URL accepts `:0`, and the system refuses to connect to it. */
+const NO_LISTENER_PORT = 0;
+
+/** The verdict for a base URL that names port 0. */
+const PORT_ZERO: ListenerVerdict = { ok: false, reason: "the base URL names port 0, which nothing listens on" };
+
 /** The verdict for a base URL whose scheme nothing dials. */
 const UNDIALLABLE: ListenerVerdict = { ok: false, reason: "the base URL is neither http nor https" };
 
 /** The real batch probe, with the source of its workers injectable so a test can observe their order: each connect on a worker thread, all started before the calling thread blocks on any, refused in a process whose event loop serves others. */
 export const realBaseUrlBatchProbe = (targets: readonly BaseUrlTarget[], workers?: ProbeWorkers): readonly ListenerVerdict[] => {
   const dialled = targets.map((target) => ({ dial: dialTargetOf(target.baseUrl), timeoutMs: target.timeoutMs }));
-  const verdicts = probeAddressesAcceptSync(dialled.flatMap((entry) => (entry.dial === undefined ? [] : [{ ...entry.dial, timeoutMs: entry.timeoutMs }])), workers);
+  const probed = dialled.filter((entry) => entry.dial !== undefined && entry.dial.port !== NO_LISTENER_PORT);
+  const verdicts = probeAddressesAcceptSync(probed.flatMap((entry) => (entry.dial === undefined ? [] : [{ ...entry.dial, timeoutMs: entry.timeoutMs }])), workers);
   let next = 0;
   return dialled.map((entry) => {
     if (entry.dial === undefined) {
       return UNDIALLABLE;
+    }
+    if (entry.dial.port === NO_LISTENER_PORT) {
+      return PORT_ZERO;
     }
     const verdict = verdicts[next];
     next += 1;

@@ -45,23 +45,29 @@ class SilentSocket extends EventEmitter implements DialSocket {
 }
 
 /** A timer the test fires by hand, so the bound is exercised without waiting on any network. */
-function manualTimer(): { readonly start: (callback: () => void, ms: number) => () => void; readonly fire: () => void; readonly armedMs: () => number | undefined } {
+function manualTimer(): { readonly start: (callback: () => void, ms: number) => () => void; readonly fire: () => void; readonly cancelled: () => boolean; readonly armedMs: () => number | undefined } {
   let pending: (() => void) | undefined;
   let armed: number | undefined;
+  let wasCancelled = false;
   return {
     start: (callback, ms) => {
       pending = callback;
       armed = ms;
       return () => {
         pending = undefined;
+        wasCancelled = true;
       };
     },
     fire: () => {
       pending?.();
     },
     armedMs: () => armed,
+    cancelled: () => wasCancelled,
   };
 }
+
+/** What a test of a dial that rejects may take: a rejection nobody answers leaves the verdict unsettled, and the test must fail on that instead of waiting for the suite's hang guard. */
+const REJECTION_TEST_BUDGET_MS = 5_000;
 
 describe("probeAccept", () => {
   it("fails a dial that has not connected when its bound expires, writes nothing, and closes the socket when the dial settles late", async () => {
@@ -86,6 +92,17 @@ describe("probeAccept", () => {
     expect(socket.destroyed).toBe(true);
     expect(socket.writes).toBe(0);
   });
+
+  it("answers a dial that rejects before it has a socket with the reason, as a verdict, and cancels its timer", async () => {
+    const timer = manualTimer();
+    const verdict = await probeAccept<SilentSocket>(
+      async () => await Promise.reject(new RangeError("Port should be > 0 and < 65536. Received type number (0).")),
+      SHORT_BOUND_MS,
+      timer.start,
+    );
+    expect(verdict).toEqual({ ok: false, reason: "Port should be > 0 and < 65536. Received type number (0)." });
+    expect(timer.cancelled()).toBe(true);
+  }, REJECTION_TEST_BUDGET_MS);
 
   it("passes a dial that connects within the bound, writes nothing and closes it at once", async () => {
     const socket = new SilentSocket();
