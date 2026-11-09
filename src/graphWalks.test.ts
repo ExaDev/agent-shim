@@ -131,38 +131,72 @@ describe("poolCycleOf and reportedPoolCycles", () => {
     expect(cycles).toBeGreaterThan(0);
   });
 
-  /** Whether two pools each reach the other, by the walk over every path. */
-  const reachesEachOther = (pools: Readonly<Record<string, Pool>>, left: string, right: string): boolean => {
-    const reaches = (from: string, to: string): boolean => {
-      const seen = new Set<string>();
-      const walk = (current: string): boolean => nestedNames(pools, current).some((nested) => nested === to || (!seen.has(nested) && (seen.add(nested), walk(nested))));
-      return walk(from);
-    };
-    return reaches(left, right) && reaches(right, left);
+  /** The report as `doctor` made it before the walks stayed inside components: a walk from every pool in the code-unit order of the names, a chain kept unless an earlier one had the same pools. */
+  function naiveReport(pools: Readonly<Record<string, Pool>>): readonly (readonly string[])[] {
+    const keys = new Set<string>();
+    const chains: (readonly string[])[] = [];
+    for (const name of Object.keys(pools).sort()) {
+      const chain = naiveCycleOf(pools, name);
+      if (chain === undefined) {
+        continue;
+      }
+      const key = [...chain].slice(0, -1).sort().join(">");
+      if (!keys.has(key)) {
+        keys.add(key);
+        chains.push(chain);
+      }
+    }
+    return chains;
+  }
+
+  /** The names of the random graphs' pools, spelt so that code-unit order differs from locale order (capitals sort before lower case in one and with it in the other). */
+  const SPELLINGS = ["p0", "P1", "alpha", "Zeta", "b2", "B3", "z4"];
+  const respelt = (pools: Record<string, Pool>): Record<string, Pool> => {
+    const spell = (name: string): string => SPELLINGS[Number(name.slice(1))] ?? name;
+    return Object.fromEntries(Object.entries(pools).map(([name, pool]) => [spell(name), { ...pool, identities: pool.identities.map((entry) => { const identity = poolMemberIdentity(entry); const nested = poolNameOf(identity); const renamed = nested === undefined ? identity : `pool:${spell(nested)}`; return typeof entry === "string" ? renamed : { ...entry, identity: renamed }; }) }]));
   };
 
-  it("reports one chain for each group of pools reaching one another, a real cycle through the group's first name, and the first chain exactly", () => {
+  it("reports exactly the chains the walk from every pool reports, in the same order, for many random graphs", () => {
     let reported = 0;
     for (let seed = 1; seed <= SEEDS; seed += 1) {
-      const pools = randomPools(seed);
-      const cyclic = Object.keys(pools).sort().filter((name) => naiveCycleOf(pools, name) !== undefined);
-      // The groups, each named by its first pool.
-      const firsts = cyclic.filter((name) => cyclic.find((other) => other === name || reachesEachOther(pools, name, other)) === name);
-      const chains = reportedPoolCycles(pools);
-      reported += chains.length;
-      expect(chains.map((chain) => chain[0]), `seed ${String(seed)}`).toEqual(firsts);
-      for (const chain of chains) {
-        expect(chain, `seed ${String(seed)}`).toEqual(naiveCycleOf(pools, chain[0] ?? ""));
+      for (const pools of [randomPools(seed), respelt(randomPools(seed))]) {
+        const expected = naiveReport(pools);
+        reported += expected.length;
+        expect(reportedPoolCycles(pools), `seed ${String(seed)}`).toEqual(expected);
       }
     }
     expect(reported).toBeGreaterThan(0);
+  });
+
+  it("reports both cycles through a pool that two others nest, as the walk from each pool does", () => {
+    const pools = { A: { identities: ["pool:B", "pool:C"] }, B: { identities: ["pool:A"] }, C: { identities: ["pool:A"] } };
+    expect(reportedPoolCycles(pools)).toEqual([["A", "B", "A"], ["C", "A", "C"]]);
+  });
+
+  it("lists pools in code-unit order, so capitals come before lower case whatever the locale", () => {
+    const pools = { alpha: { identities: ["pool:alpha"] }, Zeta: { identities: ["pool:Zeta"] } };
+    expect(reportedPoolCycles(pools)).toEqual([["Zeta", "Zeta"], ["alpha", "alpha"]]);
+  });
+
+  it("walks a branching component once for each distinct chain it must report, never once for each path", () => {
+    // Every pool of the diamond chain is on a cycle through the last pool back to the first, and the chains differ from pool to pool (each takes its own side at each level), so the report is as long as the pools times their chain: the work is bounded by that, which is polynomial where the paths are exponential.
+    const cyclic = (levels: number): Record<string, Pool> => ({ ...diamondChainPools(levels), [`d${String(levels)}`]: { identities: ["pool:d0"] } });
+    const BOUND_FACTOR = 12;
+    for (const levels of LEVELS) {
+      const pools = cyclic(levels);
+      const chains = reportedPoolCycles(pools);
+      const steps = countSteps(() => { reportedPoolCycles(pools); });
+      const poolCount = Object.keys(pools).length;
+      expect(steps, `levels ${String(levels)}`).toBeLessThanOrEqual(BOUND_FACTOR * poolCount * poolCount);
+      expect(chains.length).toBeGreaterThan(1);
+    }
   });
 
   it("walks each pool once: a ring, a chain of two-pool cycles and a chain of diamonds make steps that grow linearly", () => {
     expectLinear(CHAIN, (size) => countSteps(() => { reportedPoolCycles(ringPools(size)); }));
     expectLinear(CHAIN, (size) => countSteps(() => { reportedPoolCycles(chainedPairs(size)); }));
     expectLinear(CHAIN, (size) => countSteps(() => { reportedPoolCycles(longChain(size)); }));
-    expectLinear(LEVELS, (levels) => countSteps(() => { reportedPoolCycles({ ...diamondChainPools(levels), back: { identities: ["pool:d0"] }, [`d${String(levels)}`]: { identities: ["pool:d0"] } }); }));
+    expectLinear(LEVELS, (levels) => countSteps(() => { reportedPoolCycles({ ...diamondChainPools(levels), [`d${String(levels)}`]: { identities: ["i0"] } }); }));
     expectLinear(CHAIN, (size) => countSteps(() => { poolCycleOf(longChain(size), "c0"); }));
     expectLinear(LEVELS, (levels) => countSteps(() => { poolCycleOf(diamondChainPools(levels), "d0"); }));
   });

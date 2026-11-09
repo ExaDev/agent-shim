@@ -141,16 +141,44 @@ function cyclicComponents(pools: Readonly<Record<string, Pool>>): readonly Reado
 }
 
 /**
- * The cycles `doctor` reports: one chain for each group of pools that all reach one another (a strongly connected component with a cycle in it), the chain `poolCycleOf` finds through the group's first pool by name, in the order of those names. Pools on a ring are one group and are reported once; a group with several cycles through it shows one, and the next shows once that is fixed. Found with one pass over the graph and a walk within each group, so the cost grows with the graph however many cycles it holds.
+ * The cycles `doctor` reports: for each pool that is on a cycle, in the code-unit order of the pool names, the chain `poolCycleOf` finds through it, unless an earlier pool's chain had the same pools. A pool in no cycle has no chain. Each walk stays inside the pool's own strongly connected component (every pool on a path from a pool back to itself is in it) and visits each pool of it once.
+ *
+ * A pool is not walked when it lies on an earlier chain on which every pool has exactly one nested pool in the component: the walk from it is forced round that chain, so it gives the same pools. That keeps a ring of any length to one walk. Other components cost one walk for each pool on a cycle, each bounded by the pools and nested entries of its component; there the chains can differ from pool to pool and the report has to name each distinct one, so the work is bounded by the distinct chains it must find and not by the paths.
  */
 export function reportedPoolCycles(pools: Readonly<Record<string, Pool>>): readonly (readonly string[])[] {
-  return cyclicComponents(pools)
-    .flatMap((component) => {
-      const first = [...component].sort()[0];
-      const chain = first === undefined ? undefined : poolCycleOf(pools, first, component);
-      return chain === undefined ? [] : [chain];
-    })
-    .sort((left, right) => (left[0] ?? "").localeCompare(right[0] ?? ""));
+  const componentOf = new Map<string, ReadonlySet<string>>();
+  for (const component of cyclicComponents(pools)) {
+    for (const name of component) {
+      componentOf.set(name, component);
+    }
+  }
+  const inComponentOutDegree = (name: string, component: ReadonlySet<string>): number => nestedPoolsOf(pools, name).filter((nested) => component.has(nested)).length;
+  const reported = new Set<string>();
+  const forced = new Set<string>();
+  const chains: (readonly string[])[] = [];
+  // The default sort is by UTF-16 code unit, the order the report has always listed pools in.
+  for (const name of Object.keys(pools).sort()) {
+    const component = componentOf.get(name);
+    if (component === undefined || forced.has(name)) {
+      continue;
+    }
+    const chain = poolCycleOf(pools, name, component);
+    if (chain === undefined) {
+      continue;
+    }
+    const key = chain.slice(0, -1).sort().join(">");
+    if (reported.has(key)) {
+      continue;
+    }
+    reported.add(key);
+    chains.push(chain);
+    if (chain.slice(0, -1).every((member) => inComponentOutDegree(member, component) === 1)) {
+      for (const member of chain) {
+        forced.add(member);
+      }
+    }
+  }
+  return chains;
 }
 
 /**
