@@ -152,7 +152,7 @@ export interface ReportRow {
 /** Where the launcher reports what it decided and why — refusals, warnings about an identity that could not be loaded, and (per the "strictly-better than the legacy script" goal) which identity/profile ended up selected. */
 export interface LogPort {
   readonly info: (message: string) => void;
-  /** Prints the facts a launch reports about itself as one block, with the formatting the output takes. */
+  /** Prints the facts a launch reports about itself as one block, with the formatting the output takes. The command line's port writes it, like every other line, to standard error, which leaves standard output to the child. */
   readonly report: (rows: readonly ReportRow[]) => void;
   readonly warn: (message: string) => void;
   readonly error: (message: string) => void;
