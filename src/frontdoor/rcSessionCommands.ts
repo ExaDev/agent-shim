@@ -158,8 +158,8 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
   /** Resolves the session's route, gates its version and runs the verb there, all inside the session's queue. */
   const onRoute = async <T>(sessionId: string, options: RcSessionCommandOptions, actions: RouteActions<T>): Promise<RcSessionCommandResult<T>> =>
     await serialised(sessionId, async () => {
-      const signal = options.signal ?? new AbortController().signal;
-      if (signal.aborted) {
+      const { signal } = options;
+      if (signal?.aborted === true) {
         return { ok: false, message: `the request for session ${sessionId} was aborted before it ran` };
       }
       const target = await deps.supervisedOf(sessionId);
@@ -173,7 +173,7 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
         // The plugin answers only once the session is idle (a request queued behind a turn waiting on a permission prompt waits as long as the prompt does), so the wait is bounded here: the request's own signal or the wait, whichever ends first.
         const waitMs = options.waitMs ?? COMPACT_TIMEOUT_MS;
         const timeout = AbortSignal.timeout(waitMs);
-        const bounded = AbortSignal.any([signal, timeout]);
+        const bounded = signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
         try {
           return await actions.supervised(target, bounded, waitMs);
         } catch (error) {
@@ -198,7 +198,7 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
         // One deadline for the whole verb, however many commands it runs (a goal set reads the goal it replaces first): each command's own wait is the whole bound, and this signal ends the verb once the bound has passed in total.
         const waitMs = options.waitMs ?? deps.selfHost.defaultWaitMs;
         const timeout = AbortSignal.timeout(waitMs);
-        const result = await actions.selfHosted(deps.selfHost, AbortSignal.any([signal, timeout]));
+        const result = await actions.selfHosted(deps.selfHost, signal === undefined ? timeout : AbortSignal.any([signal, timeout]));
         if (!result.ok && timeout.aborted) {
           return { ok: false, message: `session ${sessionId}'s worker did not answer within ${String(waitMs)} ms in all; it may still be queued behind a running turn, so read the session's stream before asking again` };
         }
