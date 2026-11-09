@@ -146,6 +146,23 @@ describe("realBaseUrlProbe", () => {
     expect(rest).toEqual([]);
   });
 
+  it("gives a reason for a closed localhost port, for the probe and for the line doctor and the door report, never an empty one", async () => {
+    const port = await closedPort();
+    const [verdict] = realBaseUrlBatchProbe([{ baseUrl: `http://localhost:${String(port)}`, timeoutMs: DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS }]);
+    if (verdict === undefined || verdict.ok) {
+      throw new Error("expected the refused localhost port to fail the probe");
+    }
+    expect(verdict.reason).toMatch(/^ECONNREFUSED: .*ECONNREFUSED/u);
+    expect(verdict.reason).not.toMatch(/:\s*$/u);
+    const line = couldNotConnectMessage("provider local", `http://localhost:${String(port)}`, verdict.reason);
+    expect(line).toBe(`provider local could not connect to http://localhost:${String(port)}: ${verdict.reason}`);
+  });
+
+  it("never lets a report end on a bare colon, whatever reason it is given", () => {
+    expect(couldNotConnectMessage("provider p", "http://h.example", "")).toBe("provider p could not connect to http://h.example: the connection failed with no reason given");
+    expect(couldNotConnectMessage("provider p", "http://h.example", "  ")).toMatch(/: the connection failed with no reason given$/u);
+  });
+
   it("answers a base URL that names port 0 with a reason, as a verdict, without starting a probe for it", () => {
     const started: unknown[] = [];
     const workers: ProbeWorkers = { start: (_source, data) => { started.push(data.port); return { verdict: () => ({ ok: true }) }; } };

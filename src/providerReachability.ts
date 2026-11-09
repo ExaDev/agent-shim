@@ -37,7 +37,7 @@ export function dialTargetOf(baseUrl: string): { readonly host: string; readonly
 
 /** The one line every surface (the door's answer and its log, `doctor`, `check` and a launch) says when a connection to an upstream could not be opened. `subject` names what was dialled (`provider spark`); the base URL is named as `displayBaseUrl` shows it. */
 export function couldNotConnectMessage(subject: string, baseUrl: string, reason: string): string {
-  return `${subject} could not connect to ${displayBaseUrl(baseUrl)}: ${reason}`;
+  return `${subject} could not connect to ${displayBaseUrl(baseUrl)}: ${reason.trim() === "" ? "the connection failed with no reason given" : reason}`;
 }
 
 /** Opens one TCP connection to `baseUrl`'s host and port within `timeoutMs` and closes it at once, sending nothing. */
