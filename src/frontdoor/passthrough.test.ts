@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
 import { admitLaunchToken, followsLaunchFlag } from "../test-helpers";
-import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS } from "../providerReachability";
+import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS, realBaseUrlProbe } from "../providerReachability";
 import { armConnectDeadline, createPassthroughRoute, type PassthroughTarget } from "./passthrough";
 import { serveRouted } from "./pipeline";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
@@ -386,6 +386,40 @@ describe("the pass-through route", () => {
       expect(printed).toContain(`http://127.0.0.1:${String(port)}/v1 dropped the connection`);
       expect(printed).not.toContain("hunter2");
       expect(printed).not.toContain("abc123");
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("reaches an upstream whose base URL is an IPv6 literal, by the same host the launch probe dials", async () => {
+    const server = http.createServer((_request, response) => {
+      response.writeHead(HTTP_STATUS.ok, { "content-type": "application/json" });
+      response.end('{"ok":true}');
+    });
+    servers.push(server);
+    const bound = await new Promise<boolean>((resolve) => {
+      server.once("error", () => {
+        resolve(false);
+      });
+      server.listen(0, "::1", () => {
+        resolve(true);
+      });
+    });
+    // A host with no IPv6 loopback cannot show this; every other host does.
+    if (!bound) {
+      return;
+    }
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("server has no TCP address");
+    }
+    const baseUrl = `http://[::1]:${String(address.port)}`;
+    expect(realBaseUrlProbe(baseUrl, DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS)).toEqual({ ok: true });
+    const door = await startDoor({ baseUrl, stripPrefix: "/providers/z", headroomUpstream: undefined });
+    try {
+      const response = await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", headers: { [AUTH_HEADER]: "launch-token-for-tests" }, body: "{}" });
+      expect(response.status).toBe(HTTP_STATUS.ok);
+      expect(await response.json()).toEqual({ ok: true });
     } finally {
       await door.close();
     }

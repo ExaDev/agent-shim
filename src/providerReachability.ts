@@ -1,4 +1,5 @@
 import { isHttpProvider, type HttpProvider, type Provider } from "./config/schema";
+import { dialTargetOf } from "./baseUrlDial";
 import { displayBaseUrl } from "./baseUrlDisplay";
 import { startAddressProbes, type ListenerVerdict, type ProbeWorkers, type StartedProbe } from "./frontdoor/probe";
 
@@ -20,19 +21,6 @@ export const DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS = TCP_INITIAL_RETRANSMISSION_TI
 /** The bound on opening a connection to `provider`'s base URL: its own `connectTimeoutMs`, else the derived default. */
 export function providerConnectTimeoutMs(provider: Readonly<Pick<HttpProvider, "connectTimeoutMs">>): number {
   return provider.connectTimeoutMs ?? DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS;
-}
-
-/** The default port of each scheme a base URL may use, for a URL that names none. */
-const DEFAULT_PORTS: Readonly<Record<string, number>> = { "http:": 80, "https:": 443 };
-
-/** The host and port a base URL's connections are opened to, an IPv6 literal without the brackets the URL form needs; undefined for a scheme that is neither http nor https, which nothing dials. */
-export function dialTargetOf(baseUrl: string): { readonly host: string; readonly port: number } | undefined {
-  const url = new URL(baseUrl);
-  const defaultPort = DEFAULT_PORTS[url.protocol];
-  if (defaultPort === undefined) {
-    return undefined;
-  }
-  return { host: url.hostname.replace(/^\[(.*)\]$/, "$1"), port: url.port === "" ? defaultPort : Number(url.port) };
 }
 
 /** The one line every surface (the door's answer and its log, `doctor`, `check` and a launch) says when a connection to an upstream could not be opened. `subject` names what was dialled (`provider spark`); the base URL is named as `displayBaseUrl` shows it. */

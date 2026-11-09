@@ -10,6 +10,7 @@ import { ExemptHttpAgent, ExemptTlsAgent } from "./connectEffects";
 import { quotaRefusalHeaders } from "../usage/unifiedRefusal";
 import type { FrontDoorRoute } from "./route";
 import { upstreamChunks } from "./server";
+import { dialHostOf } from "../baseUrlDial";
 
 /** Everything one pass-through forwards to. */
 export interface PassthroughTarget {
@@ -104,7 +105,7 @@ export function createPassthroughRoute(name: string, target: PassthroughTarget, 
       delete headers.host;
       await new Promise<void>((resolve) => {
         const options: http.RequestOptions = {
-          host: base.hostname,
+          host: dialHostOf(base),
           port: base.port === "" ? undefined : Number(base.port),
           method: request.method,
           path: `${basePath}${path}${incoming.search}`,
