@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -17,10 +18,12 @@ const REAL_WORKER_TEST_BUDGET_MS = 120_000;
 describe("a door worker running the real bundle", () => {
   let dir: string;
   let code: string;
+  let bundlePath: string;
 
   beforeAll(async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-door-worker-"));
     const outfile = path.join(dir, "cli.cjs");
+    bundlePath = outfile;
     await esbuild.build({ ...cliBundleOptions(path.resolve(__dirname, "..", "..")), outfile, logLevel: "silent" });
     // The text is read once, as the door reads it at start; the file goes away before any worker runs.
     code = fs.readFileSync(outfile, "utf8");
@@ -35,7 +38,7 @@ describe("a door worker running the real bundle", () => {
     "collects the doctor and check reports of a configuration with an http provider in threads of the door, whose role refuses to block, from code that no longer exists on disk, and leaves the event loop running",
     async () => {
       const leave = enterProcessRole("frontdoor-supervisor");
-      const host = createDoorWorkerHost({ code, deadlineMs: { check: REAL_WORKER_TEST_BUDGET_MS, doctor: REAL_WORKER_TEST_BUDGET_MS, "refresh-catalogue": REAL_WORKER_TEST_BUDGET_MS } });
+      const host = createDoorWorkerHost({ code, facts: { ownExecutablePath: bundlePath, contentSourcePath: bundlePath }, deadlineMs: { check: REAL_WORKER_TEST_BUDGET_MS, doctor: REAL_WORKER_TEST_BUDGET_MS, "refresh-catalogue": REAL_WORKER_TEST_BUDGET_MS } });
       let ticks = 0;
       let running = true;
       const spin = (): void => {
@@ -69,7 +72,7 @@ describe("a door worker running the real bundle", () => {
   it(
     "carries nothing a credential command printed to standard error out of a worker, in a failure or in a report",
     async () => {
-      const host = createDoorWorkerHost({ code, deadlineMs: { check: REAL_WORKER_TEST_BUDGET_MS, doctor: REAL_WORKER_TEST_BUDGET_MS, "refresh-catalogue": REAL_WORKER_TEST_BUDGET_MS } });
+      const host = createDoorWorkerHost({ code, facts: { ownExecutablePath: bundlePath, contentSourcePath: bundlePath }, deadlineMs: { check: REAL_WORKER_TEST_BUDGET_MS, doctor: REAL_WORKER_TEST_BUDGET_MS, "refresh-catalogue": REAL_WORKER_TEST_BUDGET_MS } });
       const root = path.join(dir, "home-secret");
       fs.mkdirSync(path.join(root, "providers"), { recursive: true });
       const marker = "STDERR-MARKER-TOPSECRET";
@@ -96,6 +99,41 @@ describe("a door worker running the real bundle", () => {
         expect(seen[0]).toContain("agent-shim provider models --refresh");
       } finally {
         host.stop();
+      }
+    },
+    REAL_WORKER_TEST_BUDGET_MS,
+  );
+
+  it(
+    "reports the same path-resolution findings in a worker as the command line does, for a plain-bundle install on PATH, from the facts the door passes",
+    async () => {
+      // A plain-bundle install: the bundle is an executable named agent-shim in a directory on PATH.
+      const bin = path.join(dir, "install", "bin");
+      fs.mkdirSync(bin, { recursive: true });
+      const installed = path.join(bin, "agent-shim");
+      fs.writeFileSync(installed, code, { mode: 0o755 });
+      const root = path.join(dir, "home-path");
+      fs.mkdirSync(root, { recursive: true });
+      const before = { PATH: process.env.PATH, AGENT_SHIM_HOME: process.env.AGENT_SHIM_HOME };
+      process.env.PATH = `${bin}${path.delimiter}${before.PATH ?? ""}`;
+      process.env.AGENT_SHIM_HOME = root;
+      const host = createDoorWorkerHost({ code, facts: { ownExecutablePath: installed, contentSourcePath: installed }, deadlineMs: { check: REAL_WORKER_TEST_BUDGET_MS, doctor: REAL_WORKER_TEST_BUDGET_MS, "refresh-catalogue": REAL_WORKER_TEST_BUDGET_MS } });
+      try {
+        const cli = spawnSync(process.execPath, [installed, "doctor", "--json"], { env: process.env, encoding: "utf8" });
+        const fromCli = DoctorRunOutputSchema.parse(JSON.parse(cli.stdout));
+        const fromWorker = await host.run("doctor", { root }, (value) => DoctorRunOutputSchema.parse(value));
+        const pathFindings = (report: typeof fromCli): readonly string[] => report.findings.filter((finding) => finding.section === "path-resolution").map((finding) => `${finding.severity}: ${finding.message}`);
+        expect(pathFindings(fromCli).length).toBeGreaterThan(0);
+        expect(pathFindings(fromWorker)).toEqual(pathFindings(fromCli));
+      } finally {
+        host.stop();
+        for (const [name, value] of Object.entries(before)) {
+          if (value === undefined) {
+            Reflect.deleteProperty(process.env, name);
+          } else {
+            process.env[name] = value;
+          }
+        }
       }
     },
     REAL_WORKER_TEST_BUDGET_MS,

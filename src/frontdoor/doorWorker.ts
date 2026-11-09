@@ -8,7 +8,7 @@ import { DOOR_WORKER_CODE_ASSET } from "../../scripts/bundle-options.mts";
 import { CliError } from "../cliError";
 import { LONGEST_BLOCKING_STEP_MS } from "../doorBounds";
 import { CATALOGUE_REFRESH_DEADLINE_MS } from "../providerCatalogue";
-import { doorWorkerInputSchemas, isDoorWorkerMessage, type DoorWorkerData, type DoorWorkerTaskName, type DoorWorkerTasks } from "./doorWorkerProtocol";
+import { doorWorkerInputSchemas, isDoorWorkerMessage, type DoorProcessFacts, type DoorWorkerData, type DoorWorkerTaskName, type DoorWorkerTasks } from "./doorWorkerProtocol";
 
 /**
  * The front door runs the work that blocks its thread (a report's synchronous probes, a catalogue refresh's credential commands) in a worker thread of its own process, never in its event loop and never in a child process.
@@ -111,6 +111,8 @@ const realClock: DoorWorkerClock = {
 /** What the host takes: the code its workers run, and the seams a test replaces. */
 export interface DoorWorkerHostOptions {
   readonly code: string;
+  /** What the workers are told about the door process they run inside. */
+  readonly facts: DoorProcessFacts;
   readonly spawn?: DoorWorkerSpawn;
   readonly clock?: DoorWorkerClock;
   /** How long a worker's heartbeat may stand still before the watchdog stops it. */
@@ -227,7 +229,7 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
     const startedAt = clock.now();
     let lastBeat = Atomics.load(beats, 0);
     let lastBeatAt = startedAt;
-    const worker = spawn(options.code, { doorWorker: { task: flight.task, input: flight.input, heartbeat } });
+    const worker = spawn(options.code, { doorWorker: { task: flight.task, input: flight.input, facts: options.facts, heartbeat } });
     let stopWatchdog: () => void = () => undefined;
     let threadEnded = false;
     let terminating = false;
@@ -378,7 +380,7 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
   };
 }
 
-/** The host a real front door runs its worker tasks through: the code text is read now, once, from the embedded asset or the bundle at `bundlePath`, and every task has its deadline. */
-export function createRealDoorWorkerHost(bundlePath: string): DoorWorkerHost {
-  return createDoorWorkerHost({ code: readDoorWorkerCode(bundlePath), deadlineMs: DOOR_WORKER_DEADLINES });
+/** The host a real front door runs its worker tasks through: the code text is read now, once, from the embedded asset or from the bundle file at `facts.contentSourcePath`, every task has its deadline, and the workers are told the door's own executable and content paths. */
+export function createRealDoorWorkerHost(facts: DoorProcessFacts): DoorWorkerHost {
+  return createDoorWorkerHost({ code: readDoorWorkerCode(facts.contentSourcePath), facts, deadlineMs: DOOR_WORKER_DEADLINES });
 }

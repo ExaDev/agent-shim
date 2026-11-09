@@ -5,6 +5,7 @@ import { collectDoctorReport } from "../doctorReport";
 import { buildLayoutPaths } from "../paths";
 import { observeBlockingSteps } from "../processRole";
 import { refreshCatalogueForReal } from "../realCatalogueRefresh";
+import { adoptProcessPathFacts } from "../realPorts";
 import { doorWorkerInputSchemas, isDoorWorkerData, isIdentifier, type DoorWorkerMessage, type DoorWorkerTaskName, type DoorWorkerTasks } from "./doorWorkerProtocol";
 
 /** Runs `task` on `input` against this worker's environment, which is a copy of the door's at the moment the worker started and whose module state (roles, caches, file wrappers) is its own. */
@@ -42,7 +43,8 @@ export async function runDoorWorkerEntry(): Promise<void> {
   if (parentPort === null || !isDoorWorkerData(workerData)) {
     return;
   }
-  const { task, input, heartbeat } = workerData.doorWorker;
+  const { task, input, heartbeat, facts } = workerData.doorWorker;
+  adoptProcessPathFacts(facts);
   const beats = new Int32Array(heartbeat);
   observeBlockingSteps(() => {
     Atomics.add(beats, 0, 1);

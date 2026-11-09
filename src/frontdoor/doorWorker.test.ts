@@ -73,6 +73,7 @@ function manualClock(): DoorWorkerClock & { readonly advance: (ms: number) => vo
   };
 }
 
+const FACTS = { ownExecutablePath: "/bin/agent-shim", contentSourcePath: "/bin/agent-shim" } as const;
 const DEADLINES = { check: 100_000, doctor: 100_000, "refresh-catalogue": 100_000 } as const;
 const STALL_MS = 10_000;
 const identity = (value: unknown): never => value as never;
@@ -86,7 +87,7 @@ function hostOver(options: { readonly maxConcurrent?: number; readonly maxQueued
     return worker;
   };
   const clock = manualClock();
-  const host = createDoorWorkerHost({ code: "code", spawn, clock, stallLimitMs: STALL_MS, deadlineMs: DEADLINES, ...(options.maxConcurrent === undefined ? {} : { maxConcurrent: options.maxConcurrent }), ...(options.maxQueued === undefined ? {} : { maxQueued: options.maxQueued }) });
+  const host = createDoorWorkerHost({ code: "code", facts: FACTS, spawn, clock, stallLimitMs: STALL_MS, deadlineMs: DEADLINES, ...(options.maxConcurrent === undefined ? {} : { maxConcurrent: options.maxConcurrent }), ...(options.maxQueued === undefined ? {} : { maxQueued: options.maxQueued }) });
   return { host, started, clock };
 }
 
@@ -383,7 +384,7 @@ describe("the door worker host", () => {
         started.push(worker);
         return worker;
       };
-      const host = createDoorWorkerHost({ code: "code", spawn, stallLimitMs: STALL_MS, deadlineMs: DEADLINES });
+      const host = createDoorWorkerHost({ code: "code", facts: FACTS, spawn, stallLimitMs: STALL_MS, deadlineMs: DEADLINES });
       const running = host.run("doctor", { root: "/a" }, identity);
       await vi.advanceTimersByTimeAsync(0);
       const wall = Date.now();

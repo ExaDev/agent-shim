@@ -891,8 +891,26 @@ export function resolveOwnExecutablePath(env: {
   return viaPath ?? candidate;
 }
 
+/**
+ * What a front door worker thread is told about the door process it runs inside: in a worker `process.argv[1]` is the worker's own eval marker, so the two paths every reader below derives from it would be false there. Set once by the worker entry from the facts the door read from its own process; every real reader of the paths answers with them, so no reader needs to know it runs in a worker.
+ */
+interface ProcessPathFacts {
+  readonly ownExecutablePath: string;
+  readonly contentSourcePath: string;
+}
+
+let processPathFacts: ProcessPathFacts | undefined;
+
+/** Makes `realOwnExecutablePath` and `realContentSourcePath` answer with the door's facts (a worker thread's only way to know them). */
+export function adoptProcessPathFacts(facts: ProcessPathFacts): void {
+  processPathFacts = facts;
+}
+
 /** Real-wired convenience over `resolveOwnExecutablePath`, reading the actual process globals — this is what every real call site (`cli.ts`, `doctor.ts`, `claudeShim.ts`'s command wiring) should use instead of reading `process.argv[1]`/`process.execPath` directly. */
 export function realOwnExecutablePath(): string {
+  if (processPathFacts !== undefined) {
+    return processPathFacts.ownExecutablePath;
+  }
   return resolveOwnExecutablePath({
     argv1: process.argv[1],
     execPath: process.execPath,
@@ -913,6 +931,9 @@ export function resolveContentSourcePath(env: { readonly isSea: boolean; readonl
 
 /** Real-wired convenience over `resolveContentSourcePath`. */
 export function realContentSourcePath(): string {
+  if (processPathFacts !== undefined) {
+    return processPathFacts.contentSourcePath;
+  }
   return resolveContentSourcePath({ isSea: isSea(), execPath: process.execPath, argv1: process.argv[1] });
 }
 
