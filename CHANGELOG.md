@@ -1,3 +1,21 @@
+## [14.0.1](https://github.com/ExaDev/agent-shim/compare/v14.0.0...v14.0.1) (2026-11-09)
+
+### Documentation
+
+* say exactly what the Homebrew guard tests check ([22c12fe](https://github.com/ExaDev/agent-shim/commit/22c12feb4b6607f219854cbb045c735b1a1afca8))
+
+### Continuous Integration
+
+* judge every Homebrew install by its version, and match the real broken-pipe signature ([e2a2563](https://github.com/ExaDev/agent-shim/commit/e2a256371960219ed17de685eeff5e49ad4baf99))
+* match brew's broken pipe line as Actions renders it, and compare the version from stdout ([704fec4](https://github.com/ExaDev/agent-shim/commit/704fec444c79be2b66da0b87fa25ca75c8bfed36))
+* strip colour from brew's broken pipe line before matching it ([fee2991](https://github.com/ExaDev/agent-shim/commit/fee2991437363461567fd426620485e0ef1a92b4))
+* tap and install the Homebrew formula with brew's output off the runner pipe ([932381c](https://github.com/ExaDev/agent-shim/commit/932381c22b37d828a3b9112922f4f71c2e7c8605))
+* verify the Homebrew install through the shared step in every job ([0613a5a](https://github.com/ExaDev/agent-shim/commit/0613a5a7f2b952578beb001f32f41a398ee726cc))
+
+### Tests
+
+* **ci:** find each Homebrew verification job by id and refuse brew calls in any shape ([63c4d8c](https://github.com/ExaDev/agent-shim/commit/63c4d8ca0de436d2a7c339a0fe7f916074140daf))
+
 ## [14.0.0](https://github.com/ExaDev/agent-shim/compare/v13.0.0...v14.0.0) (2026-11-09)
 
 ### ⚠ BREAKING CHANGES
