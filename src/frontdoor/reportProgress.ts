@@ -36,6 +36,9 @@ export const REPORT_SIZE_PREFIX = "agent-shim-report-bytes ";
 /** The longest the size line can be: the prefix, the digits of the largest size a number holds exactly and the line feed. */
 const REPORT_SIZE_LINE_MAX_CHARS = REPORT_SIZE_PREFIX.length + String(Number.MAX_SAFE_INTEGER).length + 1;
 
+/** What the size on a size line must be: decimal digits and nothing else, so a size that `Number` would read from an empty string, spaces, an exponent, a prefix or a sign is refused. */
+const SIZE_DIGITS = /^\d+$/u;
+
 /** The line a report child prints before a report of `bytes` bytes. */
 export function encodeReportSize(bytes: number): string {
   return `${REPORT_SIZE_PREFIX}${String(bytes)}\n`;
@@ -70,7 +73,8 @@ export function createReportOutputReader(fail: (reason: string) => void): Report
           return;
         }
         const line = header.subarray(0, lineEnd).toString("latin1");
-        const size = line.startsWith(REPORT_SIZE_PREFIX) ? Number(line.slice(REPORT_SIZE_PREFIX.length)) : Number.NaN;
+        const digits = line.startsWith(REPORT_SIZE_PREFIX) ? line.slice(REPORT_SIZE_PREFIX.length) : "";
+        const size = SIZE_DIGITS.test(digits) ? Number(digits) : Number.NaN;
         if (!Number.isSafeInteger(size) || size < 0) {
           fail("printed output without announcing its size");
           return;

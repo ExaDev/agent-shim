@@ -176,6 +176,24 @@ describe("the report output reader", () => {
     expect(read([`${encodeReportSize(2)}abc`]).failures).toEqual(["printed more than the 2 bytes it announced"]);
   });
 
+  it.each(["", " 12", "12 ", "12\r", "1e3", "0x10", "+5", "-4", "1.5", "１２", "12abc"])("refuses the size %j as malformed, and keeps no report", (size) => {
+    const failures: string[] = [];
+    const reader = createReportOutputReader((reason) => { failures.push(reason); });
+    reader.push(`${REPORT_SIZE_PREFIX}${size}\n{}`);
+    expect(failures).toEqual(["printed output without announcing its size"]);
+    expect(reader.report()).toBe("");
+  });
+
+  it("accepts a size of digits, including zero and leading zeros", () => {
+    const failures: string[] = [];
+    const empty = createReportOutputReader((reason) => { failures.push(reason); });
+    empty.push(`${REPORT_SIZE_PREFIX}0\n`);
+    const padded = createReportOutputReader((reason) => { failures.push(reason); });
+    padded.push(`${REPORT_SIZE_PREFIX}002\n{}`);
+    expect(failures).toEqual([]);
+    expect(padded.report()).toBe("{}");
+  });
+
   it("fails on output with no size line, a malformed one or one that never ends", () => {
     expect(read(["{}\n"]).failures).toEqual(["printed output without announcing its size"]);
     expect(read([`${REPORT_SIZE_PREFIX}many\n`]).failures).toEqual(["printed output without announcing its size"]);
