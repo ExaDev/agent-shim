@@ -78,7 +78,7 @@ export type DoorWorkerSpawn = (code: string, workerData: DoorWorkerData) => Door
 const spawnRealDoorWorker: DoorWorkerSpawn = (code, workerData) =>
   new Worker(code, { eval: true, workerData, resourceLimits: { maxOldGenerationSizeMb: DOOR_WORKER_MAX_OLD_GENERATION_MB } });
 
-/** The clock the watchdog runs on, injected so a test drives it. */
+/** The clock the watchdog runs on, injected so a test drives it. The real one is monotonic (`performance.now`), so a wall clock step cannot fire a deadline or a stall limit early. */
 export interface DoorWorkerClock {
   readonly now: () => number;
   /** Calls `callback` every `ms` until the returned function is called. */
@@ -86,7 +86,7 @@ export interface DoorWorkerClock {
 }
 
 const realClock: DoorWorkerClock = {
-  now: () => Date.now(),
+  now: () => performance.now(),
   every: (callback, ms) => {
     const timer = setInterval(callback, ms);
     timer.unref();

@@ -86,10 +86,13 @@ describe("a launch the front door plans for itself", () => {
     fs.mkdirSync(paths.catalogueDir, { recursive: true });
     fs.writeFileSync(path.join(paths.providersDir, "http.json"), JSON.stringify({ displayName: "HTTP", baseUrl: "https://example.test", credential: { sources: [{ env: "TOKEN" }] }, catalogue: { tier: "sonnet" } }));
     let now = Date.now();
+    let monotonic = performance.now();
     let sleeps = 0;
     vi.spyOn(Date, "now").mockImplementation(() => now);
+    vi.spyOn(performance, "now").mockImplementation(() => monotonic);
     vi.spyOn(realPorts, "realSleepSync").mockImplementation(() => {
       now += CATALOGUE_REFRESH_TIMEOUT_MS / 2;
+      monotonic += CATALOGUE_REFRESH_TIMEOUT_MS / 2;
       sleeps++;
       if (sleeps === POLLS_BEFORE_CACHE) fs.writeFileSync(path.join(paths.catalogueDir, "http.json"), JSON.stringify({ fetchedAt: now, url: "https://example.test/v1/models", models: [{ id: "model" }] }));
     });
@@ -109,6 +112,27 @@ describe("a launch the front door plans for itself", () => {
     expect(port.waitForCatalogues?.(process.pid + 1)).toContain("Timed out waiting for provider catalogues");
   });
 
+  it("keeps waiting for a catalogue when only the wall clock jumps past the wait's bound, since the bound is on the monotonic clock", () => {
+    const paths = buildLayoutPaths(root);
+    fs.mkdirSync(paths.providersDir, { recursive: true });
+    fs.mkdirSync(paths.catalogueDir, { recursive: true });
+    fs.writeFileSync(path.join(paths.providersDir, "http.json"), JSON.stringify({ displayName: "HTTP", baseUrl: "https://example.test", credential: { sources: [{ env: "TOKEN" }] }, catalogue: { tier: "haiku" } }));
+    let now = Date.now();
+    let sleeps = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    vi.spyOn(realPorts, "realSleepSync").mockImplementation(() => {
+      // The wall clock steps two refresh bounds forward, and the monotonic clock stands still.
+      now += CATALOGUE_REFRESH_TIMEOUT_MS * 2;
+      sleeps += 1;
+      if (sleeps === POLLS_BEFORE_CACHE) {
+        fs.writeFileSync(path.join(paths.catalogueDir, "http.json"), JSON.stringify({ fetchedAt: now, url: "https://example.test/v1/models", models: [{ id: "model" }] }));
+      }
+    });
+    const port = realFrontDoorPort(paths, () => { throw new Error("unexpected daemon"); });
+    expect(port.waitForCatalogues?.(process.pid + 1)).toBeUndefined();
+    expect(sleeps).toBe(POLLS_BEFORE_CACHE);
+  });
+
   it("reports later provider failures when an earlier provider times out", () => {
     const paths = buildLayoutPaths(root);
     const pid = process.pid + 1;
@@ -117,9 +141,11 @@ describe("a launch the front door plans for itself", () => {
     for (const name of ["first", "second"]) fs.writeFileSync(path.join(paths.providersDir, `${name}.json`), JSON.stringify({ displayName: name, baseUrl: "https://example.test", credential: { sources: [{ env: "TOKEN" }] }, catalogue: { tier: "sonnet" } }));
     writeFrontDoorCodexHome(realFarmFs, paths.frontdoorDir, pid, root, generation);
     let now = Date.now();
+    let monotonic = performance.now();
     writeCatalogueStatus(realFarmFs, paths, pid, generation, "second", "failed", undefined, now);
     vi.spyOn(Date, "now").mockImplementation(() => now);
-    vi.spyOn(realPorts, "realSleepSync").mockImplementation(() => { now += CATALOGUE_RETRY_MS / 2; });
+    vi.spyOn(performance, "now").mockImplementation(() => monotonic);
+    vi.spyOn(realPorts, "realSleepSync").mockImplementation(() => { now += CATALOGUE_RETRY_MS / 2; monotonic += CATALOGUE_RETRY_MS / 2; });
     const warning = realFrontDoorPort(paths, () => { throw new Error("unexpected daemon"); }).waitForCatalogues?.(pid);
     expect(warning).toContain("second");
     expect(warning).toContain("Timed out");

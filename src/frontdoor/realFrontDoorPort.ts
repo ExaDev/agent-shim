@@ -14,6 +14,7 @@ import { readCatalogueStatus, readFrontDoorCodexRecord, readFrontDoorState, remo
 import { probeFrontDoorSync, requestCatalogueRefreshSync } from "./probe";
 import { isDeclaredFrontDoor, isFrontDoorSupervisorPid } from "./selfIdentity";
 import { resolveTrustBundle, type TrustBundleFs } from "./trust";
+import { deadlineAfter } from "../monotonicClock";
 
 
 /** The real file effects for `resolveTrustBundle`. The bundle is public certificate material, so the atomic write's owner-only mode costs nothing: only this user's children read it. */
@@ -69,7 +70,7 @@ export function realRestartFrontDoor(paths: LayoutPaths, spawnDaemon: DaemonSpaw
 export function realFrontDoorPort(paths: LayoutPaths, spawnDaemon: DaemonSpawner): FrontDoorPort {
   return {
     waitForCatalogues: (supervisorPid) => {
-      const deadline = Date.now() + CATALOGUE_REFRESH_TIMEOUT_MS + CHILD_GRACE_MS;
+      const timedOut = deadlineAfter(CATALOGUE_REFRESH_TIMEOUT_MS + CHILD_GRACE_MS);
       let requested = false;
       const warnings = new Set<string>();
       while (!isDeclaredFrontDoor(supervisorPid) && listProviders(paths).map(({ name, provider }) => {
@@ -100,7 +101,7 @@ export function realFrontDoorPort(paths: LayoutPaths, spawnDaemon: DaemonSpawner
         const cache = parseCatalogueCache(realFarmFs.readFileUtf8(catalogueCachePath(paths, name)));
         return cache === undefined || isCatalogueStale(cache, Date.now());
       }).some(Boolean)) {
-        if (Date.now() >= deadline) return [...warnings, "Timed out waiting for provider catalogues"].join("; ");
+        if (timedOut()) return [...warnings, "Timed out waiting for provider catalogues"].join("; ");
         if (!requested) {
           const door = readFrontDoorState(realFarmFs, paths.frontdoorStateFile);
           const token = realFarmFs.readFileUtf8(paths.frontdoorControlTokenFile)?.trim();
