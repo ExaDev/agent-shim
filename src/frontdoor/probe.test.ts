@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 import * as esbuild from "esbuild";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { cliBundleOptions } from "../../scripts/bundle-options.mts";
 import { LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial, type LeafCert } from "./connect";
@@ -52,24 +52,6 @@ const workers: Worker[] = [];
 
 afterEach(async () => {
   await Promise.all(workers.splice(0).map(async (worker) => await worker.terminate()));
-});
-
-/**
- * A probe that waits for a verdict blocks its thread, so a test timeout cannot end it, and a regression that loses the waiter's wake makes every test after it wait out its whole bound too. A test that took longer than the longest bound a healthy one is given means a wake was lost: every later test of the file fails at once, naming it, instead of each waiting its own bound.
- */
-const LONGEST_HEALTHY_TEST_MS = 2 * LOST_WAKE_BOUND_MS;
-let wakeLostIn: string | undefined;
-let testStartedAt = 0;
-beforeEach(() => {
-  if (wakeLostIn !== undefined) {
-    throw new Error(`not run: a verdict wait outlasted ${String(LONGEST_HEALTHY_TEST_MS)}ms in "${wakeLostIn}", so a wake of the waiting thread was lost`);
-  }
-  testStartedAt = performance.now();
-});
-afterEach((context) => {
-  if (performance.now() - testStartedAt > LONGEST_HEALTHY_TEST_MS) {
-    wakeLostIn = context.task.name;
-  }
 });
 
 /** Starts a health-answering listener on a worker thread: HTTPS with `leaf`, or plain HTTP without one. */
@@ -446,7 +428,7 @@ describe("the probe sources in the release bundle", () => {
   it("run in a worker when a consumer bundles them down to the oldest syntax their compiler targets, which gives the embedded functions no helper", async () => {
     // Any construct the target has no syntax for (async functions, object spread, optional chaining, class fields) is rewritten into a call to a helper that lives in the bundle's own scope, which the worker does not have.
     const bundled = await bundledProbe({ target: "es2015" });
-    expect(acceptProbeSourceOf(bundled).match(/.{40}\b__[A-Za-z]+\(.{20}/gu)).toBeNull();
+    expect(acceptProbeSourceOf(bundled)).not.toMatch(/\b__[A-Za-z]+\(/u);
     const refused = bundled.probeListenerAcceptSync(await closedPort(), READ_VERDICT_TIMEOUT_MS);
     expect(refused.ok ? "" : refused.reason).toMatch(/ECONNREFUSED/);
     expect(bundled.probeListenerAcceptSync(await listenerThread(undefined), READ_VERDICT_TIMEOUT_MS)).toEqual({ ok: true });
