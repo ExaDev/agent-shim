@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { DOOR_WORKER_WATCHDOG_INTERVAL_MS, DoorWorkerBusyError, DoorWorkerFailedError, createDoorWorkerHost, type DoorWorkerClock, type DoorWorkerSpawn } from "./doorWorker";
 import type { DoorWorkerData } from "./doorWorkerProtocol";
@@ -369,6 +369,31 @@ describe("the door worker host", () => {
       expect(spawnedAfterStop, `seed ${String(seed)}`).toBe(0);
       expect(started.every((worker) => worker.terminations <= 1), `seed ${String(seed)}`).toBe(true);
       expect(started.every((worker) => worker.ended), `seed ${String(seed)}`).toBe(true);
+    }
+  });
+
+  it("does not stop a worker when the wall clock jumps forward, since the watchdog reads the monotonic clock", async () => {
+    // Real clock, real intervals: only the interval timer is faked, so the watchdog runs when time is advanced here while `performance.now` stands still.
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const started: FakeWorker[] = [];
+      const spawn: DoorWorkerSpawn = (_code, data) => {
+        const worker = new FakeWorker(data);
+        started.push(worker);
+        return worker;
+      };
+      const host = createDoorWorkerHost({ code: "code", spawn, stallLimitMs: STALL_MS, deadlineMs: DEADLINES });
+      const running = host.run("doctor", { root: "/a" }, identity);
+      await vi.advanceTimersByTimeAsync(0);
+      const wall = Date.now();
+      vi.spyOn(Date, "now").mockReturnValue(wall + DEADLINES.doctor * 2);
+      await vi.advanceTimersByTimeAsync(DOOR_WORKER_WATCHDOG_INTERVAL_MS + DOOR_WORKER_WATCHDOG_INTERVAL_MS);
+      expect(started[0]?.terminations).toBe(0);
+      started[0]?.answer("ok");
+      await expect(running).resolves.toBe("ok");
+    } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
     }
   });
 });
