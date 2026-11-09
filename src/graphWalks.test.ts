@@ -546,18 +546,36 @@ describe("the window reads of pools and jobs", () => {
     return [...new Set(pool.identities.flatMap((member) => naiveIdentitiesOf(poolMemberIdentity(member), pools, visited)))];
   }
 
-  it("reports the compacting pools and the jobs the walk of every identity of every selector reports, for many random graphs", () => {
+  it("reports the guarded members, the compacting pools and the jobs the walk of every identity of every selector reports, for many random graphs", () => {
     let reported = 0;
     for (let seed = 1; seed <= SEEDS; seed += 1) {
       const next = seededGenerator(seed);
-      const pools = Object.fromEntries(Object.entries(randomPools(seed)).map(([name, pool]) => [name, { ...pool, identities: pool.identities.map(poolMemberIdentity), ...(next() < DAG_CHANCE ? { compactBeforeLimit: true } : {}) }]));
+      const pools = Object.fromEntries(Object.entries(randomPools(seed)).map(([name, pool]) => [name, { ...pool, ...(next() < DAG_CHANCE ? { compactBeforeLimit: true } : {}) }]));
       const received = new Map<string, ReadonlySet<Window> | undefined>(DIRECT.map((identity) => [identity, next() < DAG_CHANCE ? undefined : new Set(WINDOWS.filter(() => next() < DAG_CHANCE))]));
       const windowsOf = (identity: string): ReadonlySet<Window> | undefined => received.get(identity);
-      const jobs: Record<string, Job> = Object.fromEntries(Array.from({ length: 1 + Math.floor(next() * MOST_ENTRIES) }, (_, index) => [`job${String(index)}`, { target: (next() < DAG_CHANCE ? { pool: `p${String(Math.floor(next() * MOST_POOLS))}` } : { identity: DIRECT[Math.floor(next() * DIRECT.length)] ?? "i0" }), trigger: { beforeReset: JOB_WINDOWS[Math.floor(next() * JOB_WINDOWS.length)] ?? "fiveHour", lead: "10m" }, prompt: "p", cwd: "/w", timeout: "1h" } as const]));
-      const expectedPools = Object.entries(pools).flatMap(([poolName, pool]) => (pool.compactBeforeLimit === true ? naiveIdentitiesOf(`pool:${poolName}`, pools).flatMap((identity) => {
-        const has = windowsOf(identity);
-        return has !== undefined && !has.has("fiveHour") && !has.has("sevenDay") ? [`Pool "${poolName}" compacts before the limit, but ${identity} reports no five-hour or seven-day window, so its sessions are never compacted before the limit.`] : [];
-      }) : []));
+      const jobs: Record<string, Job> = Object.fromEntries(Array.from({ length: 1 + Math.floor(next() * MOST_ENTRIES) }, (_, index) => [`job${String(index)}`, {
+        target: next() < DAG_CHANCE ? { pool: `p${String(Math.floor(next() * MOST_POOLS))}` } : { identity: DIRECT[Math.floor(next() * DIRECT.length)] ?? "i0" },
+        trigger: { beforeReset: JOB_WINDOWS[Math.floor(next() * JOB_WINDOWS.length)] ?? "fiveHour", lead: "10m" },
+        prompt: "p",
+        cwd: "/w",
+        timeout: "1h",
+      } as const]));
+      // The conditions `randomPools` writes read the seven-day utilisation and nothing else.
+      const expectedPools = Object.entries(pools).flatMap(([poolName, pool]) => [
+        ...pool.identities.flatMap((member) => {
+          if (typeof member === "string") {
+            return [];
+          }
+          return naiveIdentitiesOf(member.identity, pools).flatMap((identity) => {
+            const has = windowsOf(identity);
+            return has !== undefined && !has.has("sevenDay") ? [`Pool "${poolName}" guards ${member.identity} with a condition that reads quota.sevenDay, but ${identity} reports no seven-day window, so the condition is undecided for it and it always ranks last within its class.`] : [];
+          });
+        }),
+        ...(pool.compactBeforeLimit === true ? naiveIdentitiesOf(`pool:${poolName}`, pools).flatMap((identity) => {
+          const has = windowsOf(identity);
+          return has !== undefined && !has.has("fiveHour") && !has.has("sevenDay") ? [`Pool "${poolName}" compacts before the limit, but ${identity} reports no five-hour or seven-day window, so its sessions are never compacted before the limit.`] : [];
+        }) : []),
+      ]);
       const expectedJobs = Object.entries(jobs).flatMap(([jobName, job]) => {
         if (!("beforeReset" in job.trigger)) {
           return [];
@@ -573,6 +591,35 @@ describe("the window reads of pools and jobs", () => {
       expect(jobWindowReadFindings(jobs, pools, windowsOf).map((finding) => finding.message), `seed ${String(seed)}`).toEqual(expectedJobs);
     }
     expect(reported).toBeGreaterThan(0);
+  });
+
+  const nestedEntry = (index: number, guarded: boolean): Pool["identities"][number] => (guarded ? { identity: `pool:k${String(index)}`, when: { kind: "compare", op: "lt", left: { kind: "reference", key: "quota.sevenDay.utilization" }, right: { kind: "numberLiteral", value: 0.5 } } } : `pool:k${String(index)}`);
+
+  /** A chain of pools, each nesting the next (behind a condition when `guarded`) and holding an identity of its own, every pool compacting before the limit. */
+  const compactingChain = (length: number, guarded: boolean): Record<string, Pool> => Object.fromEntries(Array.from({ length }, (_, index) => [`k${String(index)}`, {
+    compactBeforeLimit: true,
+    identities: [`own${String(index)}`, ...(index + 1 < length ? [nestedEntry(index + 1, guarded)] : [])],
+  } satisfies Pool]));
+
+  it("asks each identity once, and walks each pool of a chain once, whatever the chain holds", () => {
+    for (const guarded of [false, true]) {
+      // Nothing lacks a window, only the identity at the bottom does, and everything does.
+      for (const lacking of ["none", "bottom", "all"] as const) {
+        const calls: number[] = [];
+        expectLinear(CHAIN, (length) => {
+          let asked = 0;
+          const windowsOf = (identity: string): ReadonlySet<Window> | undefined => {
+            asked += 1;
+            return lacking === "all" || (lacking === "bottom" && identity === `own${String(length - 1)}`) ? new Set() : new Set(WINDOWS);
+          };
+          const steps = countSteps(() => { poolWindowReadFindings(compactingChain(length, guarded), windowsOf); });
+          calls.push(asked);
+          // Every identity of the chain is asked about once for each query that reaches it, never again.
+          expect(asked, `${lacking} ${guarded ? "guarded" : "plain"} ${String(length)}`).toBeLessThanOrEqual(length);
+          return lacking === "all" ? 0 : steps;
+        });
+      }
+    }
   });
 
   it("reads each selector once for any number of jobs naming it, in a pool of as many members", () => {

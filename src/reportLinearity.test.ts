@@ -5,12 +5,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { noteFileSystemWork, observeBlockingSteps } from "./blockingSteps";
 import { collectCheckReport } from "./checkReport";
+import { GlobalConfigSchema } from "./config/schema";
 import { collectDoctorReport } from "./doctorReport";
 import { buildLayoutPaths } from "./paths";
 import { diamondChainPools, growsLinearly, ringPools, startStepMeter } from "./test-helpers";
 
 /**
- * Each report (`check` for an identity, `check` for a pool, `doctor`) is run against a farm in which every collection the user sizes is large and degenerate at once, with `ps`, `security` and `git` standing in as scripts that answer at once with the output the real ones give, so the code that reads their output runs and not its failure branch. The farm holds: identities with a readable name, with none (a file that is not JSON), all claiming one name, symlinks to one directory and displaced ones (an interrupted resync left their identity.json only in a superseded farm); a usage log of several records for each readable identity; registered front-door sessions, half of them naming an identity; codex providers; a chain of configuration profiles, each extending the next and adding a virtual model, named as the default profile; directory rules, half of them for the directory the reports run in; global `launch`; pools (one of every readable identity, a chain of diamonds, a ring) and jobs on the wide pool; and a models block with virtual models, tiers, hidden targets, `same` and `distinct` assertions, a family pin for each target, and prices. The array steps a report makes (`countSteps`), the blocking steps it begins and the most steps it makes between two file system notes (which is what the door's silence window sees as a stall) must each grow exactly linearly with the farm (`growsLinearly`: counts are deterministic, so the slope may not grow).
+ * Each report (`check` for an identity, `check` for a pool, `doctor`) is run against a farm in which every collection the user sizes is large and degenerate at once, with `ps`, `security` and `git` standing in as scripts that answer at once with the output the real ones give, so the code that reads their output runs and not its failure branch. The farm holds: identities with a readable name, with none (a file that is not JSON), all claiming one name, symlinks to one directory and displaced ones (an interrupted resync left their identity.json only in a superseded farm); a usage log of several records for each readable identity; registered front-door sessions, half of them naming an identity; codex providers; a chain of configuration profiles, each extending the next and adding a virtual model, named as the default profile; directory rules, half of them for the directory the reports run in; global `launch`; pools (one of every readable identity, one of those that report a five-hour window, a chain of diamonds, a ring) and jobs on the steady pool; a chain of pools that compact before the limit and nest the next behind a condition on the five-hour window; a usage snapshot for each readable identity, every second one with a five-hour window and the rest with none; and a models block with virtual models, tiers, hidden targets, `same` and `distinct` assertions, a family pin for each target, and prices. The array steps a report makes (`countSteps`), the blocking steps it begins and the most steps it makes between two file system notes (which is what the door's silence window sees as a stall) must each grow exactly linearly with the farm (`growsLinearly`: counts are deterministic, so the slope may not grow).
  *
  * What this can catch: a pass over a collection nested inside a pass over it that runs through the counted array operations (see `countSteps` for which), over the whole farm, and a command run once for each element. What it cannot see: a quadratic cost that does not run through them, one in native code, and a cost that grows with something other than the farm's size.
  *
@@ -50,6 +51,20 @@ const STUBS: Readonly<Record<string, string>> = {
 /** The other commands the package spawns, stubbed to log that they were run and to fail, so the claim that the reports run none of them is tested and not only stated. */
 const UNREACHED_COMMANDS = ["launchctl", "mise", "codex", "uv", "headroom", "ssh", "stty", "claude"] as const;
 const UNREACHED_LOG = "unreached.log";
+
+/**
+ * A chain of pools that each compact before the limit and nest the next behind a condition on the five-hour window, each holding an identity that reports a five-hour window, and the last one holding an identity that reports none. Every pool of the chain reaches that one identity and no other that lacks a window, so the doctor's window checks have one finding for each pool and walk what they must to find it.
+ */
+function compactingChain(length: number, members: readonly string[]): Record<string, unknown> {
+  return Object.fromEntries(Array.from({ length }, (_, index) => [`k${String(index)}`, {
+    compactBeforeLimit: true,
+    resumeOnLimit: true,
+    identities: [
+      members[(index * IDENTITIES_PER_RULE) % members.length] ?? "readable0",
+      ...(index + 1 < length ? [{ identity: `pool:k${String(index + 1)}`, when: { kind: "compare", op: "lt", left: { kind: "reference", key: "quota.fiveHour.utilization" }, right: { kind: "numberLiteral", value: 0.5 } } }] : [members[1] ?? "readable1"]),
+    ],
+  }]));
+}
 
 let home: string;
 let previousHome: string | undefined;
@@ -136,6 +151,13 @@ function buildFarm(size: number) {
   fs.writeFileSync(paths.directoryRulesFile, JSON.stringify({
     rules: Array.from({ length: each }, (_, index) => ({ path: index % 2 === 0 ? path.join(home, "work") : path.join(home, `elsewhere${String(index)}`), configProfile: `profile${String(each - 1)}`, launch: { delay: "1s" } })),
   }));
+  // A usage snapshot for each readable identity: every second one reports a five-hour window only and the rest report none, so the window checks of the doctor have identities to report on.
+  fs.mkdirSync(paths.usageSnapshotsDir, { recursive: true });
+  members.forEach((member, index) => {
+    const seen = new Date().toISOString();
+    const unified = index % IDENTITIES_PER_RULE === 0 ? { fiveHour: { utilization: 0.5, resetsAt: new Date(Date.now() + MINUTE_MS * IDENTITIES_PER_LEVEL).toISOString() } } : {};
+    fs.writeFileSync(path.join(paths.usageSnapshotsDir, `${member}.json`), JSON.stringify({ schemaVersion: 1, identity: member, updatedAt: seen, providers: { anthropic: { lastRequestAt: seen, lastStatus: 200, rateLimit: { observedAt: seen, headers: {}, unified } } } }));
+  });
   // A usage log whose records reach into the current five-hour window, several for each member: what a pool pick reads for each member.
   const day = new Date().toISOString().slice(0, "YYYY-MM-DD".length);
   const lines = members.flatMap((member) => Array.from({ length: RECORDS_PER_MEMBER }, (_, index) => `${JSON.stringify({ schemaVersion: 1, at: new Date(Date.now() - (index + 1) * MINUTE_MS).toISOString(), identity: member, provider: "anthropic", route: "r", method: "POST", endpoint: "/v1/messages", status: 200, latencyMs: 1, durationMs: 1, outcome: "completed" })}\n`));
@@ -160,13 +182,13 @@ function buildFarm(size: number) {
   // A models block as large as the farm: a virtual model naming every provider's target, one virtual model for each identity, a `same` assertion over each three targets, a `distinct` assertion between neighbours, a family pin for each target, tier pointers, hidden targets and prices for every target. Groups are small as a person writes them; it is their number that grows.
   const targets = Array.from({ length: each }, (_, index) => `codexp${String(index)}/model-${String(index)}`);
   const triples = Array.from({ length: Math.floor(each / SAME_GROUP_SIZE) }, (_, index) => targets.slice(index * SAME_GROUP_SIZE, (index + 1) * SAME_GROUP_SIZE));
-  // Pools: one of every readable identity, a chain of diamonds of them (the paths through it double with each level) and a ring, which `pool add` refuses and a hand-edited file can hold. One job for each pair of identities runs on the wide pool before its five-hour window resets.
+  // Pools: one of every readable identity, a chain of diamonds of them (the paths through it double with each level) and a ring, which `pool add` refuses and a hand-edited file can hold. One job for each pair of identities runs on the steady pool (the identities that report a five-hour window) before that window resets, so the doctor's window check walks the pool and finds nothing to report: the findings a check makes for each of many jobs are the output, which grows with them by design.
   const levels = Math.floor(each / IDENTITIES_PER_LEVEL);
-  const jobs = Object.fromEntries(Array.from({ length: Math.floor(each / IDENTITIES_PER_JOB) }, (_, index) => [`job${String(index)}`, { target: { pool: "wide" }, trigger: { beforeReset: "fiveHour", lead: "10m" }, prompt: "summarise", cwd: path.join(home, "work"), timeout: "1h" }]));
-  fs.writeFileSync(paths.globalConfigFile, JSON.stringify({
+  const jobs = Object.fromEntries(Array.from({ length: Math.floor(each / IDENTITIES_PER_JOB) }, (_, index) => [`job${String(index)}`, { target: { pool: "steady" }, trigger: { beforeReset: "fiveHour", lead: "10m" }, prompt: "summarise", cwd: path.join(home, "work"), timeout: "1h" }]));
+  const globalConfig: unknown = {
     defaultConfigProfile: "profile0",
     launch: { trackUsage: true },
-    pools: { wide: { identities: members }, ...diamondChainPools(levels, (side, level) => members[(level * IDENTITIES_PER_LEVEL + (side === "a" ? 1 : 2)) % members.length] ?? "readable0"), ...ringPools(Math.floor(each / IDENTITIES_PER_RULE)) },
+    pools: { wide: { identities: members }, steady: { identities: members.filter((_, index) => index % IDENTITIES_PER_RULE === 0) }, ...diamondChainPools(levels, (side, level) => members[(level * IDENTITIES_PER_LEVEL + (side === "a" ? 1 : 2)) % members.length] ?? "readable0"), ...ringPools(Math.floor(each / IDENTITIES_PER_RULE)), ...compactingChain(each, members) },
     jobs,
     models: {
       pickerLabelSpaces: true,
@@ -178,7 +200,10 @@ function buildFarm(size: number) {
       families: Object.fromEntries(targets.map((target, index) => [`family-${String(index)}`, { names: [target], mode: "ordered" }])),
       prices: Object.fromEntries(targets.map((target) => [target, { input: 1, output: 2 }])),
     },
-  }));
+  };
+  // A farm the schema refuses would have every report fail its configuration and measure nothing past it.
+  GlobalConfigSchema.parse(globalConfig);
+  fs.writeFileSync(paths.globalConfigFile, JSON.stringify(globalConfig));
   fs.mkdirSync(path.join(home, "work"), { recursive: true });
   return paths;
 }
