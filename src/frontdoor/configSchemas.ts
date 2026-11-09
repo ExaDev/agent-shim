@@ -62,6 +62,7 @@ const storedMutationOutput = <Kind extends string, Action extends "created" | "u
 
 /** One identity as a write reports it. The stored credential block is reported as its summary, never its sources' values. */
 const IdentityValueSchema = z.strictObject({
+  agent: z.enum(["claude", "codex"]).optional(),
   name: z.string(),
   label: z.string().optional(),
   defaultConfigProfile: z.string().optional(),

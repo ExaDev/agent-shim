@@ -8,6 +8,7 @@ import { CODEX_CATEGORIES } from "./codex/categories";
 import { loadClassification } from "./config/classify";
 import { CREDENTIAL_TARGETS, IdentitySchema, type Anchor, type CredentialSource, type CredentialTarget } from "./config/schema";
 import { describeCredential, summariseCredential, type CredentialSummary } from "./credential";
+import { identityWriteView } from "./identityWriteView";
 import { runProfileWizard, type PromptsPort } from "./configure";
 import { PromptCancelledError, UsageError } from "./cliError";
 import { resolveFarmConflicts, type FarmConflictChoice } from "./launcher/farmResolve";
@@ -265,7 +266,7 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
         const created = options.agent === "codex"
           ? addIdentity(paths, name, { agent: "codex" })
           : addNewIdentity(paths, name, renamePorts, options.keepKeychainLogin === true);
-        reportMutation(options.json, { action: "created", kind: "identity", name, value: created }, () => {
+        reportMutation(options.json, { action: "created", kind: "identity", name, value: identityWriteView(created) }, () => {
           console.log(`Created identity "${name}".`);
         });
       }),
@@ -447,7 +448,11 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
           const updated = setIdentityAnchors(paths, name, options.anchor === false ? undefined : options.anchor);
           messages.push(updated.anchors === undefined ? `Identity "${name}" no longer has anchors.` : `Identity "${name}" now has anchors ${updated.anchors.map(formatAnchor).join(" ")}.`);
         }
-        reportMutation(json, { action: "updated", kind: "identity", name, value: readIdentity(paths, name) }, () => {
+        const stored = readIdentity(paths, name);
+        if (stored === undefined) {
+          throw identityNotFound(paths, name);
+        }
+        reportMutation(json, { action: "updated", kind: "identity", name, value: identityWriteView(stored) }, () => {
           for (const message of messages) {
             console.log(message);
           }
