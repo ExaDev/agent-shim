@@ -40,4 +40,6 @@ done
 # Workers are the cores the machine's run queue leaves free, and at least one: vitest starts a pool the size of the core count by default, so several pushes at once on a shared machine each oversubscribe it, and every test slows until the guards against a hang fire on tests that did nothing wrong.
 base=$(git merge-base origin/main HEAD) &&
 workers=$(node -p "Math.max(1, os.availableParallelism() - Math.ceil(os.loadavg()[0]))") &&
-pnpm typecheck && pnpm schema && git diff --exit-code schema/ && pnpm knip && pnpm test -- --changed "$base" --passWithNoTests --maxWorkers="$workers"
+# The tests that pin a documented or generated surface run on every push, whatever the changed files reach through the module graph: the library's exported names (`src/index.test.ts`, which `docs/library.md` must match), the command tree and its help (`src/program.test.ts`) and the configuration schemas (`src/config/schema.test.ts`). A change to an export, a command or a schema that the changed-files selection did not lead to them reached CI untested twice.
+surface_tests="src/index.test.ts src/program.test.ts src/config/schema.test.ts"
+pnpm typecheck && pnpm schema && git diff --exit-code schema/ && pnpm knip && pnpm test -- --changed "$base" --passWithNoTests --maxWorkers="$workers" && pnpm test -- $surface_tests --maxWorkers="$workers"
