@@ -7,10 +7,9 @@ const GENERATION = "10000000-0000-4000-8000-000000000001";
 const SUPERVISOR_PID = 123;
 
 const mocks = vi.hoisted(() => {
-  const state: { posted: unknown[]; workerData: unknown; refresh: ReturnType<typeof vi.fn> } = { posted: [], workerData: undefined, refresh: vi.fn() };
+  const state: { posted: unknown[]; workerData: unknown; refresh: ReturnType<typeof vi.fn>; check: ReturnType<typeof vi.fn<() => unknown>>; doctor: ReturnType<typeof vi.fn<() => unknown>> } = { posted: [], workerData: undefined, refresh: vi.fn(), check: vi.fn<() => unknown>(), doctor: vi.fn<() => unknown>() };
   return state;
 });
-
 
 vi.mock("node:worker_threads", () => ({
   get parentPort() {
@@ -21,10 +20,15 @@ vi.mock("node:worker_threads", () => ({
   },
 }));
 vi.mock("../realCatalogueRefresh", () => ({ refreshCatalogueForReal: mocks.refresh }));
+vi.mock("../checkReport", () => ({ collectCheckReport: mocks.check, checkReportToJson: (report: unknown) => ({ json: report }) }));
+vi.mock("../doctorReport", () => ({ collectDoctorReport: mocks.doctor }));
+
+/** The facts the door passes its workers about its own process. */
+const FACTS = { ownExecutablePath: "/door/bin/agent-shim", contentSourcePath: "/door/lib/cli.cjs" };
 
 /** What the worker posts for a task asked of it. */
-async function postedFor(task: string, input: unknown): Promise<DoorWorkerMessage> {
-  mocks.workerData = { doorWorker: { task, input, heartbeat: new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT) } };
+async function postedFor(task: string, input: unknown, heartbeat: Readonly<SharedArrayBuffer> = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)): Promise<DoorWorkerMessage> {
+  mocks.workerData = { doorWorker: { task, input, facts: FACTS, heartbeat } };
   mocks.posted.length = 0;
   const { runDoorWorkerEntry } = await import("./doorWorkerEntry");
   await runDoorWorkerEntry();
@@ -43,6 +47,8 @@ function errorWith(error: Error, fields: Readonly<Record<string, string>>): Erro
 describe("the door worker entry", () => {
   beforeEach(() => {
     mocks.refresh.mockReset().mockResolvedValue(undefined);
+    mocks.check.mockReset();
+    mocks.doctor.mockReset();
   });
 
   it("hands the supervisor and its generation to the catalogue refresh, so a refresh for a door that was replaced is refused there", async () => {
@@ -67,5 +73,38 @@ describe("the door worker entry", () => {
     const message = await postedFor("refresh-catalogue", { root: "/shim", name: "c", supervisorPid: -1, generation: "not-a-uuid" });
     expect(message.kind).toBe("failed");
     expect(mocks.refresh).not.toHaveBeenCalled();
+  });
+
+  it("collects the check report for the directory and identity asked, against the state root it was given", async () => {
+    mocks.check.mockReturnValue("the report");
+    expect(await postedFor("check", { root: "/shim", path: "/work", identity: "work" })).toEqual({ kind: "done", value: { json: "the report" } });
+    expect(mocks.check).toHaveBeenCalledWith({ paths: buildLayoutPaths("/shim"), cwd: "/work", identity: "work", env: process.env });
+  });
+
+  it("collects the doctor report as ok and its findings", async () => {
+    mocks.doctor.mockReturnValue({ ok: false, findings: [{ section: "provider", severity: "fail", message: "m" }], extra: "dropped" });
+    expect(await postedFor("doctor", { root: "/shim" })).toEqual({ kind: "done", value: { ok: false, findings: [{ section: "provider", severity: "fail", message: "m" }] } });
+    expect(mocks.doctor).toHaveBeenCalledWith({ paths: buildLayoutPaths("/shim"), env: process.env });
+  });
+
+  it("answers a task it does not know as a failure and runs nothing", async () => {
+    expect(await postedFor("nonexistent", { root: "/shim" })).toMatchObject({ kind: "failed" });
+    expect(mocks.check).not.toHaveBeenCalled();
+    expect(mocks.doctor).not.toHaveBeenCalled();
+    expect(mocks.refresh).not.toHaveBeenCalled();
+  });
+
+  it("beats the heartbeat for every blocking step the task takes, and adopts the door's executable paths for the readers of them", async () => {
+    const heartbeat = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+    const { realOwnExecutablePath, realContentSourcePath, realSleepSync } = await import("../realPorts");
+    mocks.doctor.mockImplementation(function takeTwoBlockingSteps() {
+      realSleepSync(0);
+      realSleepSync(0);
+      return { ok: true, findings: [] };
+    });
+    await postedFor("doctor", { root: "/shim" }, heartbeat);
+    expect(Atomics.load(new Int32Array(heartbeat), 0)).toBeGreaterThanOrEqual(2);
+    expect(realOwnExecutablePath()).toBe(FACTS.ownExecutablePath);
+    expect(realContentSourcePath()).toBe(FACTS.contentSourcePath);
   });
 });
