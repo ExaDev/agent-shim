@@ -10,7 +10,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { cliBundleOptions } from "../../scripts/bundle-options.mts";
 import { LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial, type LeafCert } from "./connect";
-import { PROBE_WAIT_MARGIN_MS, PROBE_WORKER_FAILURE_PREFIX, PROBE_WORKER_START_LIMIT_MS, STARTED_SIGNAL_SOURCE, probeFrontDoorSync, probeListenerAcceptSync, probeWorkerSource, requestCatalogueRefreshSync, startProbeWorker, type ProbeWorkers } from "./probe";
+import { PROBE_WAIT_MARGIN_MS, PROBE_WORKER_FAILURE_PREFIX, PROBE_WORKER_START_LIMIT_MS, STARTED_SIGNAL_SOURCE, probeFrontDoorSync, probeListenerAcceptSync, probeWorkerSource, requestCatalogueRefreshSync, startProbeWorker, type ProbeWait, type ProbeWorkers } from "./probe";
 import * as probe from "./probe";
 
 /** Enough time for the pure-JS 2048-bit keypairs this file generates. */
@@ -227,6 +227,19 @@ finishProbe(workerData.ok, "");
   });
 });
 
+/** `Atomics.wait` that records how each wait ended, by slot: a test of a prompt wake asserts that no wait ran out of time, which holds on a loaded host however slowly a thread starts, where an elapsed-time bound is a bet on the host. */
+function recordingWait(): { readonly wait: ProbeWait; readonly outcomes: () => readonly string[] } {
+  const outcomes: string[] = [];
+  return {
+    wait: (header, index, value, timeoutMs) => {
+      const outcome = Atomics.wait(header, index, value, timeoutMs);
+      outcomes.push(`${index === 0 ? "verdict" : "start"}: ${outcome}`);
+      return outcome;
+    },
+    outcomes: () => outcomes,
+  };
+}
+
 /** A worker that never runs anything: an emitter that can be told to report an error. */
 class FakeProbeWorker extends EventEmitter {
   public unref(): this {
@@ -243,8 +256,6 @@ describe("a probe worker that fails", () => {
   /** What every probe source declares before it uses `STARTED_SIGNAL_SOURCE`. */
   const WORKER_DATA_SOURCE = `const { workerData } = require("node:worker_threads");`;
 
-  /** How many times shorter than the start limit a prompt wake must be: a wake that did not happen waits out the whole limit, and a loaded machine's start-up and scheduling stay well inside half of it. */
-  const PROMPT_WAKE_DIVISOR = 2;
 
   function failureReason(source: string): string {
     const verdict = startProbeWorker(source, {}, STARTUP_PROBE_BOUND_MS).verdict();
@@ -299,9 +310,10 @@ describe("a probe worker that fails", () => {
   it("keeps the verdict a worker published before it failed, since only the first verdict counts", () => {
     // The only wake is the failure handler's, which comes after the claimed `ok` was stored: a handler that overwrote the verdict would be read. The probe's bound is many start limits, so a wake that never came would wait out that bound, far past what even a heavily loaded host takes to start a worker and run its handler.
     const source = `${WORKER_DATA_SOURCE}\n${STARTED_SIGNAL_SOURCE}\n${SETTLE_SOURCE}\n${claimAndStoreSilently("workerData.ok")}\nthrow new Error(${JSON.stringify(FAILURE_MESSAGE)});`;
-    const startedAt = performance.now();
-    expect(startProbeWorker(source, {}, LOST_WAKE_BOUND_MS).verdict()).toEqual({ ok: true });
-    expect(performance.now() - startedAt).toBeLessThan(LOST_WAKE_BOUND_MS / PROMPT_WAKE_DIVISOR);
+    const recorded = recordingWait();
+    expect(startProbeWorker(source, {}, LOST_WAKE_BOUND_MS, undefined, PROBE_WORKER_START_LIMIT_MS, recorded.wait).verdict()).toEqual({ ok: true });
+    // The waiter was woken, not timed out, whichever wait it was in.
+    expect(recorded.outcomes().filter((outcome) => outcome.endsWith("timed-out"))).toEqual([]);
   });
 
   it("keeps a failure when an ok is written after it", () => {
@@ -340,32 +352,34 @@ finishProbe(workerData.failed, ${JSON.stringify(FAILURE_MESSAGE)});`;
   });
 
   it("does not wait out the start limit when the worker failed before the waiter began to wait", () => {
-    const probeWorker = startProbeWorker(`${WORKER_DATA_SOURCE}\nthrow new Error(${JSON.stringify(FAILURE_MESSAGE)});`, {}, STARTUP_PROBE_BOUND_MS);
+    const recorded = recordingWait();
+    const probeWorker = startProbeWorker(`${WORKER_DATA_SOURCE}\nthrow new Error(${JSON.stringify(FAILURE_MESSAGE)});`, {}, STARTUP_PROBE_BOUND_MS, undefined, PROBE_WORKER_START_LIMIT_MS, recorded.wait);
     // Block this thread for the wait margin, far longer than a worker needs to fail, so the failure and its wake are over before the first wait: only the stored started flag, not the wake, can end the wait then.
     Atomics.wait(new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)), 0, 0, PROBE_WAIT_MARGIN_MS);
-    const startedAt = performance.now();
     const verdict = probeWorker.verdict();
-    expect(performance.now() - startedAt).toBeLessThan(PROBE_WORKER_START_LIMIT_MS / PROMPT_WAKE_DIVISOR);
+    // The start wait found the started flag already set (or was woken), and did not run out of its limit.
+    expect(recorded.outcomes().filter((outcome) => outcome.startsWith("start") && outcome.endsWith("timed-out"))).toEqual([]);
     expect(verdict.ok).toBe(false);
   });
 
   it("wakes the waiter promptly when it fails before it signals that it started, instead of sitting out the start limit", () => {
-    const startedAt = performance.now();
-    expectFailureVerdict(`${WORKER_DATA_SOURCE}\nthrow new Error(${JSON.stringify(FAILURE_MESSAGE)});`);
-    expect(performance.now() - startedAt).toBeLessThan(PROBE_WORKER_START_LIMIT_MS / PROMPT_WAKE_DIVISOR);
+    const recorded = recordingWait();
+    const verdict = startProbeWorker(`${WORKER_DATA_SOURCE}\nthrow new Error(${JSON.stringify(FAILURE_MESSAGE)});`, {}, STARTUP_PROBE_BOUND_MS, undefined, PROBE_WORKER_START_LIMIT_MS, recorded.wait).verdict();
+    expect(verdict.ok ? "" : verdict.reason).toContain(FAILURE_MESSAGE);
+    expect(recorded.outcomes().filter((outcome) => outcome.startsWith("start") && outcome.endsWith("timed-out"))).toEqual([]);
   });
 
   it("does not let an error event on the worker reach the process, and reads as a failed probe", () => {
     const fake = new FakeProbeWorker();
-    const probeWorker = startProbeWorker("", {}, STARTUP_PROBE_BOUND_MS, () => fake);
+    const recorded = recordingWait();
+    const probeWorker = startProbeWorker("", {}, STARTUP_PROBE_BOUND_MS, () => fake, PROBE_WORKER_START_LIMIT_MS, recorded.wait);
     // An EventEmitter with no listener for "error" throws it, as a real Worker does into the process.
     const error = new Error(FAILURE_MESSAGE);
     error.stack = "STACK-TEXT at /some/private/path";
     expect(() => fake.emit("error", error)).not.toThrow();
-    const startedAt = performance.now();
     const verdict = probeWorker.verdict();
-    // Only the listener's started mark ends the start wait: the fake worker runs nothing, so a listener that wrote the verdict without it would leave the waiter sitting out the start limit.
-    expect(performance.now() - startedAt).toBeLessThan(PROBE_WORKER_START_LIMIT_MS / PROMPT_WAKE_DIVISOR);
+    // Only the listener's started mark ends the start wait: the fake worker runs nothing, so a listener that wrote the verdict without it would leave the waiter sitting out the start limit, and that wait would end timed out.
+    expect(recorded.outcomes().filter((outcome) => outcome.startsWith("start") && outcome.endsWith("timed-out"))).toEqual([]);
     expect(verdict.ok ? "" : verdict.reason).toBe(`${PROBE_WORKER_FAILURE_PREFIX}${FAILURE_MESSAGE}`);
   });
 });
@@ -475,9 +489,15 @@ describe("the start signal of the probe sources", () => {
     const address = silent.address();
     const port = typeof address === "object" && address !== null ? address.port : 0;
     try {
-      const verdict = run({ start: (source, data, timeoutMs) => startProbeWorker(source, data, timeoutMs, undefined, SHORT_START_LIMIT_MS) }, port, authority.certPem);
+      // The start limit is shorter than the probe's own bound, and a loaded host may take longer than it to start a thread. The start wait is therefore made to outlast the start, and the test is of what the limit applies to: the verdict wait must be given the probe's own bound and margin, not the start limit.
+      const waits: { readonly index: number; readonly timeoutMs: number }[] = [];
+      const wait: ProbeWait = (header, index, value, timeoutMs) => {
+        waits.push({ index, timeoutMs });
+        return Atomics.wait(header, index, value, index === 0 ? timeoutMs : PROBE_WORKER_START_LIMIT_MS);
+      };
+      const verdict = run({ start: (source, data, timeoutMs) => startProbeWorker(source, data, timeoutMs, undefined, SHORT_START_LIMIT_MS, wait) }, port, authority.certPem);
+      expect(waits.filter((entry) => entry.index === 0).map((entry) => entry.timeoutMs)).toEqual([SILENT_PROBE_BOUND_MS + PROBE_WAIT_MARGIN_MS]);
       const reason = verdict.ok ? "" : verdict.reason;
-      expect(reason).not.toContain("did not start");
       expect(reason).toMatch(/no answer within|did not finish within/);
     } finally {
       silent.close();

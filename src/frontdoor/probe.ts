@@ -240,6 +240,9 @@ interface ProbeWorkerHandle {
   readonly terminate: () => Promise<number>;
 }
 
+/** The blocking wait on a header slot: `Atomics.wait`, which a test replaces with one that records how each wait ended (woken, already changed, or out of time), so a test of a prompt wake asserts on that outcome and not on how long the host took. */
+export type ProbeWait = (header: Int32Array, index: number, value: number, timeoutMs: number) => "ok" | "not-equal" | "timed-out";
+
 /** Starts a worker thread running `source`; the real one is `node:worker_threads`. */
 export type ProbeWorkerSpawn = (source: string, options: WorkerOptions) => ProbeWorkerHandle;
 
@@ -252,7 +255,7 @@ const spawnRealWorker: ProbeWorkerSpawn = (source, options) => new Worker(source
  *
  * The probe sources embed the source text of functions from this bundle (`Function.prototype.toString`), and the text must run on its own in the worker: it can reference nothing but its own parameters. A bundler option that rewrites function bodies (esbuild's `keepNames` injects calls to a `__name` helper that exists only in the bundle) makes the worker throw a ReferenceError. The check is deliberately narrow, on what is embedded and not on the whole bundle, since a bundled dependency compiled with `keepNames` is harmless: `probe.test.ts` builds this module with the release's own options (`scripts/bundle-options.mts`) and fails if the source handed to a worker contains a `__name` call or does not run in a worker.
  */
-export function startProbeWorker(source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number, spawn: ProbeWorkerSpawn = spawnRealWorker, startLimitMs: number = PROBE_WORKER_START_LIMIT_MS): { readonly verdict: () => ListenerVerdict } {
+export function startProbeWorker(source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number, spawn: ProbeWorkerSpawn = spawnRealWorker, startLimitMs: number = PROBE_WORKER_START_LIMIT_MS, wait: ProbeWait = Atomics.wait): { readonly verdict: () => ListenerVerdict } {
   const startLimit = performance.now() + startLimitMs;
   const shared = new SharedArrayBuffer(HEADER_SLOTS * INT32_BYTES + REASON_BYTES);
   const header = new Int32Array(shared, 0, HEADER_SLOTS);
@@ -282,12 +285,12 @@ export function startProbeWorker(source: string, data: Readonly<Record<string, u
   return {
     verdict: () => {
       try {
-        Atomics.wait(header, STARTED_SLOT, WORKER_NOT_STARTED, Math.max(0, startLimit - performance.now()));
+        wait(header, STARTED_SLOT, WORKER_NOT_STARTED, Math.max(0, startLimit - performance.now()));
         // A worker that answered already has started, whether or not its signal was seen first.
         if (Atomics.load(header, STARTED_SLOT) === WORKER_NOT_STARTED && Atomics.load(header, 0) === VERDICT_PENDING) {
           return { ok: false, reason: `the probe worker did not start within ${String(startLimitMs)}ms` };
         }
-        Atomics.wait(header, 0, VERDICT_PENDING, timeoutMs + PROBE_WAIT_MARGIN_MS);
+        wait(header, 0, VERDICT_PENDING, timeoutMs + PROBE_WAIT_MARGIN_MS);
         const verdict = Atomics.load(header, 0);
         if (verdict === VERDICT_PENDING) {
           return { ok: false, reason: `the probe did not finish within ${String(timeoutMs + PROBE_WAIT_MARGIN_MS)}ms` };
