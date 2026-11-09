@@ -24,7 +24,9 @@ case "$1" in
     echo "$FAKE_INSTALL_ERR" >&2
     # brew's ofail line, as brew renders it: an Actions annotation under Actions, "Error: " elsewhere.
     if [ -n "$FAKE_OFAIL" ]; then
-      if [ "$GITHUB_ACTIONS" = true ]; then echo "::error::$FAKE_OFAIL" >&2; else echo "Error: $FAKE_OFAIL" >&2; fi
+      if [ "$GITHUB_ACTIONS" = true ]; then echo "::error::$FAKE_OFAIL" >&2
+      elif [ -n "$HOMEBREW_COLOR" ]; then printf '\\033[31mError:\\033[0m %s\\n' "$FAKE_OFAIL" >&2
+      else echo "Error: $FAKE_OFAIL" >&2; fi
     fi
     exit "\${FAKE_INSTALL_STATUS:-0}" ;;
   list) if [ -n "$FAKE_INSTALLED" ]; then echo "agent-shim $FAKE_INSTALLED"; fi; exit 0 ;;
@@ -73,6 +75,7 @@ describe("the Homebrew install step", () => {
   const ENVIRONMENTS: readonly { readonly name: string; readonly env: Record<string, string> }[] = [
     { name: "under Actions, where brew writes ::error::", env: { GITHUB_ACTIONS: "true", CI: "true" } },
     { name: "outside Actions, where brew writes Error: ", env: { GITHUB_ACTIONS: "", CI: "" } },
+    { name: "outside Actions with colour on, where brew writes Error: in red", env: { GITHUB_ACTIONS: "", CI: "", HOMEBREW_COLOR: "1" } },
   ];
 
   it("counts the failing run's own signature as done in each of brew's two renderings, when the install is there at the released version", () => {
@@ -111,6 +114,10 @@ describe("the Homebrew install step", () => {
       "agent-shim: Broken pipe",
       "saw exadev/agent-shim/agent-shim: Broken pipe in the output",
       "Error: No available formula",
+      "\u001B[31mError:\u001B[0m exadev/agent-shim/other: Broken pipe",
+      "\u001B[31mWarning:\u001B[0m exadev/agent-shim/agent-shim: Broken pipe",
+      "\u001B[31mError:\u001B[0m exadev/agent-shim/agent-shim: Broken pipe now",
+      "\u001B[Error: exadev/agent-shim/agent-shim: Broken pipe",
     ];
     for (const line of nearMisses) {
       const result = run({ FAKE_INSTALL_STATUS: "1", FAKE_INSTALL_ERR: line, FAKE_INSTALLED: EXPECTED });

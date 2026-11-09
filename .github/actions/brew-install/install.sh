@@ -20,7 +20,10 @@ install_broken_pipe() {
   # Lower-cased with tr, not `${formula,,}`: macOS runners run this under bash 3.2.
   local lowered
   lowered="$(printf '%s' "$formula" | tr '[:upper:]' '[:lower:]')"
-  awk -v message="$lowered: Broken pipe" '$0 == message || $0 == "::error::" message || $0 == "Error: " message { found = 1 } END { exit !found }' "$log"
+  # Colour is stripped first: with HOMEBREW_COLOR set and no CI variables brew writes the word Error in red, `ESC[31mError:ESC[0m <formula>: Broken pipe`. Only SGR sequences (`ESC[` digits and semicolons, `m`) go, with a literal ESC from printf, which sed on bash 3.2 and BSD and GNU sed all take; the comparison stays exact.
+  local esc
+  esc="$(printf '\033')"
+  sed -e "s/${esc}\\[[0-9;]*m//g" "$log" | awk -v message="$lowered: Broken pipe" '$0 == message || $0 == "::error::" message || $0 == "Error: " message { found = 1 } END { exit !found }'
 }
 
 run_brew() {
