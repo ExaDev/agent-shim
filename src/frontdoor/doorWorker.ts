@@ -2,11 +2,13 @@ import fs from "node:fs";
 import { getAsset, isSea } from "node:sea";
 import { Worker } from "node:worker_threads";
 
+import { z } from "zod";
+
 import { DOOR_WORKER_CODE_ASSET } from "../../scripts/bundle-options.mts";
 import { CliError } from "../cliError";
 import { LONGEST_BLOCKING_STEP_MS } from "../doorBounds";
 import { CATALOGUE_REFRESH_DEADLINE_MS } from "../providerCatalogue";
-import { isDoorWorkerMessage, type DoorWorkerData, type DoorWorkerTaskName, type DoorWorkerTasks } from "./doorWorkerProtocol";
+import { doorWorkerInputSchemas, isDoorWorkerMessage, type DoorWorkerData, type DoorWorkerTaskName, type DoorWorkerTasks } from "./doorWorkerProtocol";
 
 /**
  * The front door runs the work that blocks its thread (a report's synchronous probes, a catalogue refresh's credential commands) in a worker thread of its own process, never in its event loop and never in a child process.
@@ -61,10 +63,17 @@ export class DoorWorkerBusyError extends CliError {
   }
 }
 
-/** Raised when a task's worker ended without an answer, or was stopped by the watchdog, the caller or the door. */
+/** What a caller does next when a task failed: the detail the door does not carry is what the command line prints. */
+const NEXT_STEP: Readonly<Record<DoorWorkerTaskName, string>> = {
+  check: "run `agent-shim check` from a shell for the detail",
+  doctor: "run `agent-shim doctor` from a shell for the detail",
+  "refresh-catalogue": "run `agent-shim provider models --refresh <name>` from a shell for the detail",
+};
+
+/** Raised when a task's worker ended without an answer, was stopped by the watchdog, the caller or the door, or answered something that was not a valid result. `reason` names the cause in the door's own words (never a worker's message), and the message ends with what to do next. */
 export class DoorWorkerFailedError extends CliError {
-  constructor(task: DoorWorkerTaskName, reason: string) {
-    super(`${task} failed in its worker: ${reason}`);
+  constructor(task: DoorWorkerTaskName | "an unknown task", reason: string) {
+    super(`${task} failed in its worker: ${reason}${task === "an unknown task" ? "" : `; ${NEXT_STEP[task]}`}`);
     this.name = "DoorWorkerFailedError";
   }
 }
@@ -270,7 +279,7 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
         if (value.kind === "done") {
           flight.outcome.resolve(value.value);
         } else {
-          flight.outcome.reject(new DoorWorkerFailedError(flight.task, `${value.name}: ${value.message}`));
+          flight.outcome.reject(new DoorWorkerFailedError(flight.task, `it ended with ${value.name}${value.code === undefined ? "" : ` (${value.code})`}`));
         }
       });
     });
@@ -324,6 +333,14 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
 
   return {
     run: async <T extends DoorWorkerTaskName>(task: T, input: InputOf<T>, parse: (value: unknown) => OutputOf<T>, signal?: AbortSignal): Promise<OutputOf<T>> => {
+      // Before any thread exists: a task the door does not know, or an input that does not fit it, is refused here.
+      if (!Object.hasOwn(doorWorkerInputSchemas, task)) {
+        throw new DoorWorkerFailedError("an unknown task", "the door has no such task");
+      }
+      const accepted = doorWorkerInputSchemas[task].safeParse(input);
+      if (!accepted.success) {
+        throw new DoorWorkerFailedError(task, `its input was refused (${accepted.error.issues.map((issue) => issue.path.join(".")).join(", ")})`);
+      }
       if (signal?.aborted === true) {
         throw new DoorWorkerFailedError(task, "it was cancelled");
       }
@@ -341,7 +358,13 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
       };
       signal?.addEventListener("abort", onAbort, { once: true });
       try {
-        return parse(await Promise.race([flight.outcome.promise, released.promise]));
+        const answer = await Promise.race([flight.outcome.promise, released.promise]);
+        try {
+          return parse(answer);
+        } catch (error) {
+          // A worker's answer that does not fit the schema is its failure, named by where it did not fit and not by the value.
+          throw new DoorWorkerFailedError(task, `its answer was not a valid result${error instanceof z.ZodError ? ` (${error.issues.map((issue) => issue.path.join(".")).join(", ")})` : ""}`);
+        }
       } finally {
         signal?.removeEventListener("abort", onAbort);
       }

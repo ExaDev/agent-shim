@@ -5,7 +5,7 @@ import { collectDoctorReport } from "../doctorReport";
 import { buildLayoutPaths } from "../paths";
 import { observeBlockingSteps } from "../processRole";
 import { refreshCatalogueForReal } from "../realCatalogueRefresh";
-import { doorWorkerInputSchemas, isDoorWorkerData, type DoorWorkerMessage, type DoorWorkerTaskName, type DoorWorkerTasks } from "./doorWorkerProtocol";
+import { doorWorkerInputSchemas, isDoorWorkerData, isIdentifier, type DoorWorkerMessage, type DoorWorkerTaskName, type DoorWorkerTasks } from "./doorWorkerProtocol";
 
 /** Runs `task` on `input` against this worker's environment, which is a copy of the door's at the moment the worker started and whose module state (roles, caches, file wrappers) is its own. */
 async function runTask(task: DoorWorkerTaskName, input: unknown, env: NodeJS.ProcessEnv): Promise<DoorWorkerTasks[DoorWorkerTaskName]["output"]> {
@@ -28,8 +28,15 @@ async function runTask(task: DoorWorkerTaskName, input: unknown, env: NodeJS.Pro
   }
 }
 
+/** The failure a worker posts for an error: its class name and short code if they are identifiers, never its message. */
+function failureOf(error: unknown): DoorWorkerMessage {
+  const name = error instanceof Error && isIdentifier(error.name) ? error.name : "Error";
+  const code: unknown = error instanceof Error && "code" in error ? error.code : undefined;
+  return isIdentifier(code) ? { kind: "failed", name, code } : { kind: "failed", name };
+}
+
 /**
- * Runs the task a front door asked of this worker and posts its answer once. Called by the command line entry point when it is evaluated as a worker thread with door worker data; every blocking step the task takes beats the shared heartbeat the door's watchdog reads, and a task that throws answers `failed` with the error's name and message, never its stack.
+ * Runs the task a front door asked of this worker and posts its answer once. Called by the command line entry point when it is evaluated as a worker thread with door worker data; every blocking step the task takes beats the shared heartbeat the door's watchdog reads, and a task that throws answers `failed` with the error's class name and code, never its message or stack.
  */
 export async function runDoorWorkerEntry(): Promise<void> {
   if (parentPort === null || !isDoorWorkerData(workerData)) {
@@ -46,6 +53,6 @@ export async function runDoorWorkerEntry(): Promise<void> {
   try {
     post({ kind: "done", value: await runTask(task, input, process.env) });
   } catch (error) {
-    post({ kind: "failed", name: error instanceof Error ? error.name : "Error", message: error instanceof Error ? error.message : String(error) });
+    post(failureOf(error));
   }
 }

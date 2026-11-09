@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import { DOOR_WORKER_WATCHDOG_INTERVAL_MS, DoorWorkerBusyError, DoorWorkerFailedError, createDoorWorkerHost, type DoorWorkerClock, type DoorWorkerSpawn } from "./doorWorker";
 import type { DoorWorkerData } from "./doorWorkerProtocol";
@@ -134,12 +135,12 @@ describe("the door worker host", () => {
     await expect(queued).resolves.toBe("two");
   });
 
-  it("terminates a worker that fails, whose error names the task and the reason, and one that ends with no answer", async () => {
+  it("terminates a worker that fails, whose error names the task, the error class and a next step, and one that ends with no answer", async () => {
     const { host, started } = hostOver();
     const failed = host.run("check", { root: "/r", path: "/p" }, identity);
     await settle();
-    started[0]?.emit("message", { kind: "failed", name: "Error", message: "no such directory" });
-    await expect(failed).rejects.toThrow("check failed in its worker: Error: no such directory");
+    started[0]?.emit("message", { kind: "failed", name: "TypeError", code: "ENOENT" });
+    await expect(failed).rejects.toThrow("check failed in its worker: it ended with TypeError (ENOENT); run `agent-shim check` from a shell for the detail");
     const ended = host.run("doctor", { root: "/r" }, identity);
     await settle();
     started[1]?.emit("exit", 1);
@@ -395,5 +396,35 @@ describe("the door worker host", () => {
       vi.restoreAllMocks();
       vi.useRealTimers();
     }
+  });
+
+  it("refuses an unknown task and an input that does not fit, before any worker exists, naming the fields and not the values", async () => {
+    const { host, started } = hostOver();
+    await expect(host.run("nonexistent" as never, {} as never, identity)).rejects.toThrow("no such task");
+    await expect(host.run("check", { root: "/r", path: "", secret: "TOPSECRET" } as never, identity)).rejects.toThrow(/input was refused \(path/u);
+    await expect(host.run("check", { root: "/r", path: "", secret: "TOPSECRET" } as never, identity)).rejects.not.toThrow(/TOPSECRET/u);
+    await settle();
+    expect(started).toHaveLength(0);
+  });
+
+  it("names where a worker's answer did not fit the schema, not the value, and ends the message with a next step", async () => {
+    const { host, started } = hostOver();
+    const running = host.run("doctor", { root: "/a" }, (value) => z.strictObject({ ok: z.boolean() }).parse(value) as never);
+    await settle();
+    started[0]?.answer({ ok: "TOPSECRET" });
+    const failure = await running.then(() => undefined, (error: unknown) => error);
+    expect(failure).toBeInstanceOf(DoorWorkerFailedError);
+    const message = failure instanceof Error ? failure.message : "";
+    expect(message).toContain("its answer was not a valid result (ok)");
+    expect(message).toContain("agent-shim doctor");
+    expect(message).not.toContain("TOPSECRET");
+  });
+
+  it("refuses a failure message that carries anything beyond a class name and a code", async () => {
+    const { host, started } = hostOver();
+    const running = host.run("doctor", { root: "/a" }, identity);
+    await settle();
+    started[0]?.emit("message", { kind: "failed", name: "Error", code: "ENOENT", message: "TOPSECRET stderr" });
+    await expect(running).rejects.toThrow("something other than a result");
   });
 });
