@@ -12,6 +12,7 @@ import { PoolPickReportSchema, type PoolPickReport } from "../usage/pickReportSc
 import type { UsageSnapshot } from "../usage/schema";
 import {
   CheckRunInputSchema,
+  DOOR_REPORT_ENVIRONMENT_NOTE,
   DoctorRunOutputSchema,
   FrontDoorSessionsOutputSchema,
   FrontDoorStatusOutputSchema,
@@ -68,8 +69,8 @@ async function orFailed<T>(collect: () => Promise<T>): Promise<T> {
   }
 }
 
-/** What the two report procedures say of their failures, listed once so the documents of both name the same statuses. */
-const REPORT_FAILURES_DESCRIPTION = "The report is collected in a worker thread of the door with the door's own environment and PATH (as the door would launch), not the caller's. 503 when every worker is busy or the door is ending, 504 when the worker outlasted its deadline or stalled, 500 when it failed; each message names the cause and the command to run from a shell for the detail.";
+/** What the two report procedures say of their environment and of their failures, listed once so the documents of both say the same things. */
+const REPORT_DESCRIPTION = `${DOOR_REPORT_ENVIRONMENT_NOTE} 503 when every worker is busy or the door is ending, 504 when the worker outlasted its deadline or stalled, 500 when it failed; each message names the cause and the command to run from a shell for the detail.`;
 
 /** Everything the control-plane procedures need, injected so they serve against fakes in tests exactly as the door's real wiring serves against this machine. */
 export interface ControlApiDeps {
@@ -171,14 +172,14 @@ export function createControlApiRouter(deps: ControlApiDeps) {
     check: {
       // The report's own JSON shape is the contract (the same one `check --json` prints and `checkReportSchema.ts` defines), so the procedure returns exactly that conversion.
       run: authed
-        .meta(openapi({ method: "GET", path: "/rest/check", summary: "Run the check report for one directory", description: REPORT_FAILURES_DESCRIPTION, tags: [CHECK_API_TAG] }))
+        .meta(openapi({ method: "GET", path: "/rest/check", summary: "Run the check report for one directory", description: REPORT_DESCRIPTION, tags: [CHECK_API_TAG] }))
         .input(CheckRunInputSchema)
         .output(CheckReportJsonSchema)
         .handler(async ({ input, signal }) => await orFailed(async () => await deps.checkReport(input.path, input.identity, signal))),
     },
     doctor: {
       run: authed
-        .meta(openapi({ method: "GET", path: "/rest/doctor", summary: "Run the doctor report", description: REPORT_FAILURES_DESCRIPTION, tags: [DOCTOR_API_TAG] }))
+        .meta(openapi({ method: "GET", path: "/rest/doctor", summary: "Run the doctor report", description: REPORT_DESCRIPTION, tags: [DOCTOR_API_TAG] }))
         .output(DoctorRunOutputSchema)
         .handler(async ({ signal }) => await orFailed(async () => await deps.doctorReport(signal))),
     },
