@@ -78,10 +78,15 @@ function zaiWindow(limit: z.infer<typeof ZaiLimitSchema>): ProviderQuotaWindow {
   };
 }
 
+/** Whether `baseUrl` is a URL whose host is `host`: a comparison with a known provider's name, never a dial. */
+function isHostedAt(baseUrl: string, host: string): boolean {
+  return URL.canParse(baseUrl) && new URL(baseUrl).hostname === host;
+}
+
 /** z.ai's quota endpoint for the GLM Coding Plan. It takes the same key Claude Code authenticates with, sent raw in `Authorization` with no `Bearer` prefix. */
 export const zaiQuotaAdapter: ProviderQuotaAdapter = {
   source: ZAI_SOURCE,
-  matches: (baseUrl) => URL.canParse(baseUrl) && new URL(baseUrl).hostname === ZAI_HOST,
+  matches: (baseUrl) => isHostedAt(baseUrl, ZAI_HOST),
   fetch: async (apiKey, http, signal, nowMs) => {
     const response = await http(ZAI_QUOTA_URL, { authorization: apiKey, accept: "application/json" }, signal);
     if (response.status !== HTTP_OK) {
@@ -160,7 +165,7 @@ function nextUtcMidnight(nowMs: number): string {
  */
 export const openRouterQuotaAdapter: ProviderQuotaAdapter = {
   source: OPENROUTER_SOURCE,
-  matches: (baseUrl) => URL.canParse(baseUrl) && new URL(baseUrl).hostname === OPENROUTER_HOST,
+  matches: (baseUrl) => isHostedAt(baseUrl, OPENROUTER_HOST),
   fetch: async (apiKey, http, signal, nowMs) => {
     const key = await openRouterGet(OPENROUTER_KEY_URL, OpenRouterKeySchema, apiKey, http, signal);
     if (key === "forbidden") {
@@ -234,7 +239,7 @@ const ANTIGRAVITY_WINDOW_MS: Readonly<Record<string, number>> = {
  */
 export const antigravityQuotaAdapter: ProviderQuotaAdapter = {
   source: ANTIGRAVITY_SOURCE,
-  matches: (baseUrl) => URL.canParse(baseUrl) && new URL(baseUrl).hostname === ANTIGRAVITY_HOST,
+  matches: (baseUrl) => isHostedAt(baseUrl, ANTIGRAVITY_HOST),
   fetch: async (apiKey, http, signal, nowMs) => {
     const headers = { authorization: `Bearer ${apiKey}`, "content-type": "application/json", "user-agent": CCPA_USER_AGENT };
     const summaryResponse = await http(ANTIGRAVITY_QUOTA_URL, headers, signal, { method: "POST", body: JSON.stringify({ project: "aicode-consumers" }) });

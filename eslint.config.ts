@@ -1,6 +1,7 @@
 import { defineConfig } from "eslint/config";
 import globals from "globals";
 import exadev from "@exadev/eslint-config";
+import { dialPlugin } from "./eslint-rules/dial";
 
 export default defineConfig([
   { ignores: ["dist", "coverage", "node_modules"] },
@@ -12,6 +13,42 @@ export default defineConfig([
     },
   },
   ...exadev,
+  {
+    files: ["src/**/*.ts"],
+    ignores: ["src/**/*.test.ts", "src/**/*TestWorld.ts", "src/test-helpers.ts"],
+    plugins: { dial: dialPlugin },
+    rules: {
+      // Every dial target comes from one host rule (src/baseUrlDial.ts): a URL's host keeps an IPv6 literal's brackets and a colon split takes the literal's colons for a port, and either fails to dial.
+      "dial/no-url-host-read": ["error", { allow: [
+        // The host rule itself.
+        { file: "src/baseUrlDial.ts", within: ["dialHostOf"] },
+        // A URL printed for a person, never dialled.
+        { file: "src/baseUrlDisplay.ts", within: ["displayBaseUrl"] },
+        // Tests that an allowlist entry names a host: nothing connects to it.
+        { file: "src/headroom/state.ts", within: ["isAdmissibleUrl"] },
+        // Compares a base URL's host with a known provider's name: nothing connects to it.
+        { file: "src/usage/providerQuota.ts", within: ["isHostedAt"] },
+      ] }],
+    },
+  },
+
+  {
+    files: ["src/frontdoor/**/*.ts", "src/baseUrl*.ts", "src/provider*.ts"],
+    ignores: ["src/**/*.test.ts", "src/**/*TestWorld.ts"],
+    plugins: { dial: dialPlugin },
+    rules: {
+      // The code that turns an authority or a URL into a dial target never cuts one at a colon itself.
+      "dial/no-colon-split": ["error", { allow: [
+        // The shared authority parser itself.
+        { file: "src/baseUrlDial.ts", within: ["parseDialAuthority"] },
+        // A Basic credential pair, a header line and a server-sent-events field line: colon-separated, none an authority.
+        { file: "src/frontdoor/capability.ts", within: ["capabilityFromProxyAuthorization"] },
+        { file: "src/frontdoor/connect.ts", within: ["proxyAuthorizationOf"] },
+        { file: "src/frontdoor/rcStream.ts", within: ["createSseParser"] },
+      ] }],
+    },
+  },
+
   {
     files: ["src/frontdoor/doorDial.ts"],
     rules: {
