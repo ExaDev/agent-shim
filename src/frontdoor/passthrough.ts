@@ -3,6 +3,7 @@ import * as https from "node:https";
 import type { IncomingMessage } from "node:http";
 
 import { HTTP_STATUS } from "../codex/http";
+import { displayBaseUrl } from "../baseUrlDisplay";
 import { couldNotConnectMessage } from "../providerReachability";
 import { forwardableHeaders } from "./connect";
 import { ExemptHttpAgent, ExemptTlsAgent } from "./connectEffects";
@@ -77,15 +78,20 @@ function responseHeaders(headers: Readonly<http.IncomingHttpHeaders>): Record<st
   return result;
 }
 
+/** The door's own keep-alive agents, which dial from its reserved source ports through its lookup. */
+function exemptAgentFor(tls: boolean): http.Agent {
+  return tls ? new ExemptTlsAgent() : new ExemptHttpAgent();
+}
+
 /**
- * The pass-through route: streams a request to an Anthropic-compatible upstream and the response back, never buffering a body. This is what an `http` provider's sessions ride, and what a bare `/v1/` request on the connect surface reaches when its session did not ask for headroom.
+ * The pass-through route: streams a request to an Anthropic-compatible upstream and the response back, never buffering a body. This is what an `http` provider's sessions ride, and what a bare `/v1/` request on the connect surface reaches when its session did not ask for headroom. `agentFor` makes the route's keep-alive agent for its upstream's protocol: the door's own agents, or a stand-in under test.
  */
-export function createPassthroughRoute(name: string, target: PassthroughTarget): FrontDoorRoute {
+export function createPassthroughRoute(name: string, target: PassthroughTarget, agentFor: (tls: boolean) => http.Agent = exemptAgentFor): FrontDoorRoute {
   const base = new URL(target.baseUrl);
   const tls = base.protocol === "https:";
   const basePath = base.pathname.replace(/\/+$/, "");
   // Keep-alive so a session reusing its connection gets its forwarded requests served over reused upstream connections too, the way a direct connection would.
-  const agent = tls ? new ExemptTlsAgent() : new ExemptHttpAgent();
+  const agent = agentFor(tls);
   return {
     name,
     headroomEligible: true,
@@ -148,7 +154,7 @@ export function createPassthroughRoute(name: string, target: PassthroughTarget):
                 response.destroy();
               } else {
                 response.start(HTTP_STATUS.badGateway, { "Content-Type": "application/json" });
-                await response.write(JSON.stringify({ type: "error", error: { type: "api_error", message: `${target.subject} at ${target.baseUrl} dropped the connection` } }));
+                await response.write(JSON.stringify({ type: "error", error: { type: "api_error", message: `${target.subject} at ${displayBaseUrl(target.baseUrl)} dropped the connection` } }));
                 response.end();
               }
             }
@@ -165,7 +171,7 @@ export function createPassthroughRoute(name: string, target: PassthroughTarget):
           }
           failed = true;
           if (!response.headersSent) {
-            const message = connected ? `${target.subject} at ${target.baseUrl} dropped the connection before answering: ${error.message}` : couldNotConnectMessage(target.subject, target.baseUrl, error.message);
+            const message = connected ? `${target.subject} at ${displayBaseUrl(target.baseUrl)} dropped the connection before answering: ${error.message}` : couldNotConnectMessage(target.subject, target.baseUrl, error.message);
             if (!connected) {
               target.couldNotConnect(message);
             }

@@ -15,8 +15,18 @@ const servers: http.Server[] = [];
 /** A connect bound short enough that a test waiting it out stays quick, and far above what a loopback connect takes, so a reachable loopback upstream never trips it. */
 const SHORT_CONNECT_BOUND_MS = 200;
 
-/** An address reserved for documentation (RFC 5737) that nothing answers: where the machine routes it, the SYN goes unanswered and only the connect bound ends the wait. */
-const UNANSWERED_BASE_URL = "http://192.0.2.1:9";
+/** How many connect bounds a test that the bound must end may take in all: the bound itself, and the rest for the door to answer on a loaded machine, still far short of the operating system's own connect timeout (75 s on macOS) the bound replaces. */
+const BOUNDS_PER_TEST_BUDGET = 10;
+
+/** The test's own budget for a request the connect bound must end. */
+const TEST_BUDGET_MS = SHORT_CONNECT_BOUND_MS * BOUNDS_PER_TEST_BUDGET;
+
+/** An agent whose dial never settles: the stand-in for a host that never answers the SYN, reached through the asynchronous dial form the door's reserved-port agent uses. */
+class NeverConnectingAgent extends http.Agent {
+  createConnection(): undefined {
+    return undefined;
+  }
+}
 
 /** Characters in a refusal body that put it past what the route holds to read (16,384 bytes). */
 const REFUSAL_BODY_PAST_LIMIT = 20_000;
@@ -74,8 +84,12 @@ async function fakeUpstream(): Promise<{ readonly port: number; readonly seen: (
 }
 
 /** Starts a door serving exactly one pass-through route at the given target. */
-async function startDoor(target: { readonly baseUrl: string; readonly stripPrefix: string | undefined; readonly headroomUpstream: string | undefined } & Partial<Pick<PassthroughTarget, "connectTimeoutMs" | "couldNotConnect">>): Promise<{ readonly url: string; readonly close: () => Promise<void> }> {
-  const route = createPassthroughRoute("http:z", { subject: "provider z", connectTimeoutMs: DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS, couldNotConnect: () => undefined, ...target });
+async function startDoor(
+  target: { readonly baseUrl: string; readonly stripPrefix: string | undefined; readonly headroomUpstream: string | undefined } & Partial<Pick<PassthroughTarget, "connectTimeoutMs" | "couldNotConnect">>,
+  agentFor?: (tls: boolean) => http.Agent,
+): Promise<{ readonly url: string; readonly close: () => Promise<void> }> {
+  const full: PassthroughTarget = { subject: "provider z", connectTimeoutMs: DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS, couldNotConnect: () => undefined, ...target };
+  const route = agentFor === undefined ? createPassthroughRoute("http:z", full) : createPassthroughRoute("http:z", full, agentFor);
   const server = createFrontDoorServer(
     async (request) => {
       await serveRouted(request, {
@@ -267,18 +281,82 @@ describe("the pass-through route", () => {
     }
   });
 
-  it("gives up on an upstream that never accepts the connection after its connect bound, naming the provider and its base URL", async () => {
-    // Where the machine does not route the address the dial fails at once instead; either way the client hears the provider could not be connected to, long before the operating system's own connect timeout.
+  it("gives up on an upstream whose dial never settles after its connect bound, naming the provider and its base URL", async () => {
+    // The dial never settles, so nothing but the connect bound can end the wait: without it this request would hang until the test's own budget ran out.
     const told: string[] = [];
-    const door = await startDoor({ baseUrl: UNANSWERED_BASE_URL, stripPrefix: "/providers/z", headroomUpstream: undefined, connectTimeoutMs: SHORT_CONNECT_BOUND_MS, couldNotConnect: (line) => {
+    const door = await startDoor(
+      { baseUrl: "http://provider.example:9", stripPrefix: "/providers/z", headroomUpstream: undefined, connectTimeoutMs: SHORT_CONNECT_BOUND_MS, couldNotConnect: (line) => {
+        told.push(line);
+      } },
+      () => new NeverConnectingAgent(),
+    );
+    try {
+      const response = await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", headers: { [AUTH_HEADER]: "launch-token-for-tests" }, body: "{}" });
+      expect(response.status).toBe(HTTP_STATUS.badGateway);
+      expect(told).toEqual([`provider z could not connect to http://provider.example:9: no connection within ${String(SHORT_CONNECT_BOUND_MS)}ms`]);
+      expect(await response.json()).toMatchObject({ type: "error", error: { type: "api_error", message: told[0] } });
+    } finally {
+      await door.close();
+    }
+  }, TEST_BUDGET_MS);
+
+  it("names the base URL without its userinfo or query in what the client and the log are told", async () => {
+    const probe = http.createServer();
+    const deadPort = await listen(probe);
+    await new Promise<void>((resolve) => {
+      probe.close(() => {
+        resolve(undefined);
+      });
+    });
+    servers.splice(servers.indexOf(probe), 1);
+    const told: string[] = [];
+    const door = await startDoor({ baseUrl: `http://user:hunter2@127.0.0.1:${String(deadPort)}/v1?key=abc123`, stripPrefix: "/providers/z", headroomUpstream: undefined, couldNotConnect: (line) => {
       told.push(line);
     } });
     try {
       const response = await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", headers: { [AUTH_HEADER]: "launch-token-for-tests" }, body: "{}" });
-      expect(response.status).toBe(HTTP_STATUS.badGateway);
-      expect(told).toHaveLength(1);
-      expect(told[0]).toMatch(/^provider z could not connect to http:\/\/192\.0\.2\.1:9: /);
-      expect(await response.json()).toMatchObject({ type: "error", error: { type: "api_error", message: told[0] } });
+      const printed = [await response.text(), ...told].join("\n");
+      expect(printed).toContain(`http://127.0.0.1:${String(deadPort)}/v1`);
+      expect(printed).not.toContain("hunter2");
+      expect(printed).not.toContain("abc123");
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("names the base URL without its userinfo or query when the upstream drops the connection before answering", async () => {
+    const upstream = http.createServer((request) => {
+      request.socket.destroy();
+    });
+    const port = await listen(upstream);
+    const door = await startDoor({ baseUrl: `http://user:hunter2@127.0.0.1:${String(port)}/v1?key=abc123`, stripPrefix: "/providers/z", headroomUpstream: undefined, couldNotConnect: () => undefined });
+    try {
+      const response = await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", headers: { [AUTH_HEADER]: "launch-token-for-tests" }, body: "{}" });
+      const printed = await response.text();
+      expect(printed).toContain(`http://127.0.0.1:${String(port)}/v1 dropped the connection before answering`);
+      expect(printed).not.toContain("hunter2");
+      expect(printed).not.toContain("abc123");
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("names the base URL without its userinfo or query when the upstream drops a held refusal body before the head went out", async () => {
+    const upstream = http.createServer((request, response) => {
+      response.writeHead(HTTP_STATUS.tooManyRequests, { "content-type": "application/json" });
+      response.write("{");
+      setTimeout(() => {
+        request.socket.destroy();
+      }, 0);
+    });
+    const port = await listen(upstream);
+    const door = await startDoor({ baseUrl: `http://user:hunter2@127.0.0.1:${String(port)}/v1?key=abc123`, stripPrefix: "/providers/z", headroomUpstream: undefined, couldNotConnect: () => undefined });
+    try {
+      const response = await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", headers: { [AUTH_HEADER]: "launch-token-for-tests" }, body: "{}" });
+      const printed = await response.text();
+      expect(printed).toContain(`http://127.0.0.1:${String(port)}/v1 dropped the connection`);
+      expect(printed).not.toContain("hunter2");
+      expect(printed).not.toContain("abc123");
     } finally {
       await door.close();
     }
@@ -304,13 +382,6 @@ describe("the pass-through route", () => {
 });
 
 describe("armConnectDeadline", () => {
-  /** An agent whose dial never settles: the stand-in for a host that never answers the SYN, reached through the asynchronous dial form the door's reserved-port agent uses. */
-  class NeverConnectingAgent extends http.Agent {
-    createConnection(): undefined {
-      return undefined;
-    }
-  }
-
   it("destroys a request whose connection has not opened within the bound, and says it never connected", async () => {
     const forward = http.request({ host: "127.0.0.1", port: 9, agent: new NeverConnectingAgent() });
     let connection: { readonly connected: () => boolean } | undefined;
@@ -321,5 +392,5 @@ describe("armConnectDeadline", () => {
     expect(forward.destroyed).toBe(true);
     expect(error.message).toBe(`no connection within ${String(SHORT_CONNECT_BOUND_MS)}ms`);
     expect(connection?.connected()).toBe(false);
-  });
+  }, TEST_BUDGET_MS);
 });

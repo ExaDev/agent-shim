@@ -1,4 +1,5 @@
 import { isHttpProvider, type HttpProvider, type Provider } from "./config/schema";
+import { displayBaseUrl } from "./baseUrlDisplay";
 import { probeAddressAcceptSync, type ListenerVerdict } from "./frontdoor/probe";
 
 /**
@@ -34,9 +35,9 @@ export function dialTargetOf(baseUrl: string): { readonly host: string; readonly
   return { host: url.hostname.replace(/^\[(.*)\]$/, "$1"), port: url.port === "" ? defaultPort : Number(url.port) };
 }
 
-/** The one line every surface (the door's answer and its log, `doctor`, `check` and a launch) says when a connection to an upstream could not be opened. `subject` names what was dialled (`provider spark`). */
+/** The one line every surface (the door's answer and its log, `doctor`, `check` and a launch) says when a connection to an upstream could not be opened. `subject` names what was dialled (`provider spark`); the base URL is named as `displayBaseUrl` shows it, without its userinfo or query. */
 export function couldNotConnectMessage(subject: string, baseUrl: string, reason: string): string {
-  return `${subject} could not connect to ${baseUrl}: ${reason}`;
+  return `${subject} could not connect to ${displayBaseUrl(baseUrl)}: ${reason}`;
 }
 
 /** Opens one TCP connection to `baseUrl`'s host and port within `timeoutMs` and closes it at once, sending nothing. */

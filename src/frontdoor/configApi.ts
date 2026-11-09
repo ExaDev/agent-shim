@@ -19,6 +19,7 @@ import { poolNameOf } from "../launcher/identity";
 import type { LayoutPaths } from "../paths";
 import { resolveWithAsyncRuns, type AsyncRun } from "../replayRun";
 import { addPool, changePool, isPoolChange, PoolAlreadyExistsError, PoolNotFoundError, readPools, removePool, requirePool } from "../poolStore";
+import { displayBaseUrl } from "../baseUrlDisplay";
 import { addProvider, ProviderAlreadyExistsError, ProviderNotFoundError, providerExists, readProvider, removeProvider, requireProviderExists, updateProvider } from "../providersStore";
 import {
   ConfigIdentityAddInputSchema,
@@ -168,7 +169,7 @@ function identityValue(name: string, paths: LayoutPaths) {
   };
 }
 
-/** One provider as a write reports it, the shape `provider show --json` prints. */
+/** One provider as a write reports it, the shape `provider show --json` prints except that its base URL is named as `displayBaseUrl` shows it, since a base URL may carry a credential and a write's report is logged by its callers. */
 function providerValue(name: string, provider: Provider) {
   return {
     name,
@@ -180,7 +181,7 @@ function providerValue(name: string, provider: Provider) {
       ? (provider.antigravity === undefined ? {} : { antigravity: provider.antigravity })
       : isRouterProvider(provider)
       ? {}
-      : { baseUrl: provider.baseUrl }),
+      : { baseUrl: displayBaseUrl(provider.baseUrl) }),
     ...(isRouterProvider(provider) ? {} : { credential: summariseCredential(provider.credential), ...(provider.env === undefined ? {} : { env: provider.env }) }),
   };
 }

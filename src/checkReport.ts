@@ -17,6 +17,7 @@ import { parseEnvBool } from "./cli/envBool";
 import type { CHECK_CREDENTIAL_APPLIES, CheckReportJson } from "./checkReportSchema";
 import { ConfigFileNotJsonError, ConfigValidationError } from "./config/load";
 import { SHIPPED_CATEGORY_DEFAULTS, isHttpProvider, isRouterProvider, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type Identity, type Provider } from "./config/schema";
+import { displayBaseUrl } from "./baseUrlDisplay";
 import { probeProviderReachability, realBaseUrlProbe, type BaseUrlProbe } from "./providerReachability";
 import { identityIdOf } from "./identityStore";
 import { formatCredentialSummary, identityCacheKey, summariseCredential, type CredentialCacheEnv, type CredentialSummary } from "./credential";
@@ -424,7 +425,7 @@ function buildProviderReachability(provider: CheckProviderInput | undefined, pro
   if (provider?.definition === undefined || probe === undefined || !isHttpProvider(provider.definition)) {
     return undefined;
   }
-  const { baseUrl } = provider.definition;
+  const baseUrl = displayBaseUrl(provider.definition.baseUrl);
   const reachability = probeProviderReachability(provider.name, provider.definition, probe);
   return reachability.ok ? { name: provider.name, baseUrl, ok: true } : { name: provider.name, baseUrl, ok: false, message: reachability.message };
 }
