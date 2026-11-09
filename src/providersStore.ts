@@ -471,16 +471,21 @@ export function removeProvider(paths: LayoutPaths, name: string): void {
 }
 
 /**
- * The provider name the cascade selects through `launch.provider`, if any layer sets one, else `identityProvider`, the provider the launching identity declares in its `identity.json`. Last layer wins, the same rule `flattenLayers` applies to every other launch flag, and the identity's own declaration ranks beneath every layer.
+ * The provider the cascade's layers select through `launch.provider`, if any layer sets one. Last layer wins, the same rule `flattenLayers` applies to every other launch flag. Assembling the cascade follows every profile it extends, so a caller asking for many launches over one cascade asks once and passes the answer on.
  */
-export function cascadeProviderName(cascade: CascadeInput, identityProvider?: string): string | undefined {
+export function cascadeLaunchProvider(cascade: CascadeInput): string | undefined {
   let name: string | undefined;
   for (const layer of assembleCascade(cascade).layers) {
     if (layer.launch?.provider !== undefined) {
       name = layer.launch.provider;
     }
   }
-  return name ?? identityProvider;
+  return name;
+}
+
+/** The provider name the cascade selects through `launch.provider`, if any layer sets one, else `identityProvider`, the provider the launching identity declares in its `identity.json`. The identity's own declaration ranks beneath every layer. */
+export function cascadeProviderName(cascade: CascadeInput, identityProvider?: string): string | undefined {
+  return cascadeLaunchProvider(cascade) ?? identityProvider;
 }
 
 /** Inputs to `resolveProvider`. */
@@ -525,8 +530,13 @@ type ProviderNaming = Pick<ResolveProviderParams, "paths" | "port" | "cliProvide
  * The name of the provider a launch routes through, if any: the `--provider` flag first, then the cascade's `launch.provider` selection, then the launching identity's own `provider`, with a former name resolved to the provider it became. Returns undefined when nothing selected a provider at all. A name no provider file defines is returned as named, for the caller to refuse.
  */
 export function selectedProviderName(params: ProviderNaming): string | undefined {
+  return selectedProviderNameFrom({ ...params, cascadeProvider: params.cascade === undefined ? undefined : cascadeLaunchProvider(params.cascade) });
+}
+
+/** `selectedProviderName` for a caller that has already asked the cascade (`cascadeLaunchProvider`), so a launch over a cascade shared by many does not assemble it again. */
+export function selectedProviderNameFrom(params: Omit<ProviderNaming, "cascade"> & { readonly cascadeProvider: string | undefined }): string | undefined {
   const cliName = params.cliProvider !== undefined && params.cliProvider !== "" ? params.cliProvider : undefined;
-  const named = cliName ?? (params.cascade === undefined ? params.identityProvider : cascadeProviderName(params.cascade, params.identityProvider));
+  const named = cliName ?? params.cascadeProvider ?? params.identityProvider;
   if (named === undefined) {
     return undefined;
   }

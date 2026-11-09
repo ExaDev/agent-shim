@@ -35,6 +35,21 @@ function resolver(files: Record<string, unknown>, overrides: Partial<MemberProvi
 describe("memberProviderResolver", () => {
   const members = { [identityFile("work")]: identity("work"), [identityFile("personal")]: identity("personal", { provider: "own" }), [providerFile("own")]: PROVIDER, [providerFile("flag")]: PROVIDER, [providerFile("pinned")]: PROVIDER };
 
+  it("loads the profiles of the cascade once, however many members ask", () => {
+    const loads: string[] = [];
+    const MEMBERS = 12;
+    const files = Object.fromEntries(Array.from({ length: MEMBERS }, (_, index) => [identityFile(`m${String(index)}`), identity(`m${String(index)}`)]));
+    const loadProfile: CascadeInput["loadProfile"] = (name) => {
+      loads.push(name);
+      return { name, profile: name === "base" ? { launch: { provider: "pinned" } } : {} };
+    };
+    const providerOf = resolver({ ...files, [providerFile("pinned")]: PROVIDER }, { loadCascade: () => ({ home: FAKE_HOME, loadProfile, baseConfigProfile: "base", levels: [] }) });
+    const answers = Array.from({ length: MEMBERS }, (_, index) => providerOf(`m${String(index)}`));
+    expect(answers).toEqual(Array.from({ length: MEMBERS }, () => "pinned"));
+    // The cascade is assembled once (a profile is loaded once to linearise it and once for its layer), not once for each member.
+    expect(loads.length).toBeLessThanOrEqual(2);
+  });
+
   it("gives every member the provider the launch flag names, outranking what a member declares", () => {
     const providerOf = resolver(members, { cliProvider: "flag" });
     expect([providerOf("work"), providerOf("personal")]).toEqual(["flag", "flag"]);

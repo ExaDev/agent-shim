@@ -1,6 +1,6 @@
 import { ConfigFileNotJsonError, ConfigValidationError } from "../config/load";
 import type { LayoutPaths } from "../paths";
-import { cascadeProviderName, LegacyProviderFileError, selectedProviderName } from "../providersStore";
+import { cascadeLaunchProvider, LegacyProviderFileError, selectedProviderNameFrom } from "../providersStore";
 import type { CascadeInput } from "../resolve/walk";
 import type { ProviderOf, UnreadableProvider } from "../usage/poolPick";
 import { decideConfigProfile, identityReader, type IdentityReader } from "./identity";
@@ -48,13 +48,15 @@ export function memberProviderResolver(params: MemberProviderParams): ProviderOf
   }
   const cliProvider = params.cliProvider;
   const identities = identityReader(params.paths.identitiesDir, params.fs);
-  const cascades = new Map<string | undefined, CascadeInput>();
-  const cascadeOver = (baseConfigProfile: string | undefined): CascadeInput => {
+  // A cascade, and the provider its layers select, worked out once for each configuration profile however many members run under it: assembling a cascade follows every profile it extends.
+  const cascades = new Map<string | undefined, { readonly cascade: CascadeInput; readonly provider: string | undefined }>();
+  const cascadeOver = (baseConfigProfile: string | undefined): { readonly cascade: CascadeInput; readonly provider: string | undefined } => {
     const cached = cascades.get(baseConfigProfile);
     if (cached !== undefined) {
       return cached;
     }
-    const loaded = params.loadCascade(baseConfigProfile);
+    const cascade = params.loadCascade(baseConfigProfile);
+    const loaded = { cascade, provider: cascadeLaunchProvider(cascade) };
     cascades.set(baseConfigProfile, loaded);
     return loaded;
   };
@@ -78,13 +80,13 @@ export function memberProviderResolver(params: MemberProviderParams): ProviderOf
     const flagged = cliProvider !== undefined && cliProvider !== "" ? cliProvider : undefined;
     let named = flagged ?? declared?.provider;
     try {
-      const cascade = cascadeOver(profile.name);
-      named = flagged ?? cascadeProviderName(cascade, declared?.provider);
-      return selectedProviderName({
+      const { provider: cascadeProvider } = cascadeOver(profile.name);
+      named = flagged ?? cascadeProvider ?? declared?.provider;
+      return selectedProviderNameFrom({
         paths: params.paths,
         port: params.fs,
         ...(cliProvider === undefined ? {} : { cliProvider }),
-        cascade,
+        cascadeProvider,
         ...(declared?.provider === undefined ? {} : { identityProvider: declared.provider }),
       });
     } catch (error) {
