@@ -8,12 +8,14 @@ export function dialHostOf(url: Readonly<Pick<URL, "hostname">>): string {
 /** The default port of each scheme a base URL may use, for a URL that names none. */
 const DEFAULT_PORTS: Readonly<Record<string, number>> = { "http:": 80, "https:": 443 };
 
-/** The host and port a base URL's connections are opened to; undefined for a scheme that is neither http nor https, which nothing dials. */
-export function dialTargetOf(baseUrl: string): { readonly host: string; readonly port: number } | undefined {
+/**
+ * The host and port a base URL's connections are opened to. The URL is an `http` provider's base URL, which the schema holds to http or https and a port a listener can have (`HttpBaseUrlSchema`), so any other scheme is a caller's fault and throws.
+ */
+export function dialTargetOf(baseUrl: string): { readonly host: string; readonly port: number } {
   const url = new URL(baseUrl);
   const defaultPort = DEFAULT_PORTS[url.protocol];
   if (defaultPort === undefined) {
-    return undefined;
+    throw new Error(`${url.protocol} is not a scheme a provider's base URL can have`);
   }
   return { host: dialHostOf(url), port: url.port === "" ? defaultPort : Number(url.port) };
 }

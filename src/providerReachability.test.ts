@@ -96,8 +96,8 @@ describe("dialTargetOf", () => {
     expect(dialTargetOf("http://[::1]:8000")).toEqual({ host: "::1", port: 8000 });
   });
 
-  it("has no target for a scheme nothing dials", () => {
-    expect(dialTargetOf("ftp://example.com")).toBeUndefined();
+  it("refuses a scheme nothing dials, which a provider's schema never lets through", () => {
+    expect(() => dialTargetOf("ftp://example.com")).toThrow("not a scheme");
   });
 });
 
@@ -127,24 +127,17 @@ describe("realBaseUrlProbe", () => {
     expect(verdict.reason).toContain("ECONNREFUSED");
   });
 
-  it("fails a base URL whose scheme nothing dials", () => {
-    expect(realBaseUrlProbe("ftp://example.com", SHORT_CONNECT_BOUND_MS)).toEqual({ ok: false, reason: "the base URL is neither http nor https" });
-  });
-
-  it("answers a batch in the order it was given, whichever targets are dialled and whichever are not", async () => {
+  it("answers a batch in the order it was given", async () => {
     const open = `http://127.0.0.1:${String(await listeningPort())}`;
     const closed = `http://127.0.0.1:${String(await closedPort())}`;
-    const verdicts = realBaseUrlBatchProbe([
+    const [refused, accepted, ...rest] = realBaseUrlBatchProbe([
       { baseUrl: closed, timeoutMs: DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS },
-      { baseUrl: "ftp://example.com", timeoutMs: SHORT_CONNECT_BOUND_MS },
       { baseUrl: open, timeoutMs: DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS },
     ]);
-    const [refused, undialled, accepted, ...rest] = verdicts;
     if (refused === undefined || refused.ok) {
       throw new Error("expected the refused port to fail the probe");
     }
     expect(refused.reason).toContain("ECONNREFUSED");
-    expect(undialled).toEqual({ ok: false, reason: "the base URL is neither http nor https" });
     expect(accepted).toEqual({ ok: true });
     expect(rest).toEqual([]);
   });
@@ -166,35 +159,14 @@ describe("realBaseUrlProbe", () => {
     expect(couldNotConnectMessage("provider p", "http://h.example", "  ")).toMatch(/: the connection failed with no reason given$/u);
   });
 
-  it("answers a base URL that names port 0 with a reason, as a verdict, without starting a probe for it", () => {
-    const started: unknown[] = [];
-    const workers: ProbeWorkers = { start: (_source, data) => { started.push(data.port); return { verdict: () => ({ ok: true }), cancel: () => undefined }; } };
-    expect(realBaseUrlBatchProbe([{ baseUrl: "http://h.example:0/", timeoutMs: SHORT_CONNECT_BOUND_MS }], workers)).toEqual([{ ok: false, reason: "the base URL names port 0, which nothing listens on" }]);
-    expect(started).toEqual([]);
-  });
-
-  it("pairs each verdict with its own base URL when targets that are not dialled sit between and around dialled ones", () => {
-    // Each probed target's verdict names its port, so a verdict handed to the wrong place shows.
+  it("pairs each verdict with its own base URL", () => {
+    // Each target's verdict names its port, so a verdict handed to the wrong place shows.
     const workers: ProbeWorkers = { start: (_source, data) => ({ verdict: () => ({ ok: false, reason: `probed ${String(data.port)}` }), cancel: () => undefined }) };
     const verdicts = realBaseUrlBatchProbe(
-      [
-        { baseUrl: "http://h.example:0/", timeoutMs: SHORT_CONNECT_BOUND_MS },
-        { baseUrl: "http://192.0.2.1:11", timeoutMs: SHORT_CONNECT_BOUND_MS },
-        { baseUrl: "ftp://example.com", timeoutMs: SHORT_CONNECT_BOUND_MS },
-        { baseUrl: "http://192.0.2.1:12", timeoutMs: SHORT_CONNECT_BOUND_MS },
-        { baseUrl: "http://h.example:0/", timeoutMs: SHORT_CONNECT_BOUND_MS },
-        { baseUrl: "ftp://example.org", timeoutMs: SHORT_CONNECT_BOUND_MS },
-      ],
+      ["11", "12", "13"].map((port) => ({ baseUrl: `http://192.0.2.1:${port}`, timeoutMs: SHORT_CONNECT_BOUND_MS })),
       workers,
     );
-    expect(verdicts.map((verdict) => (verdict.ok ? "ok" : verdict.reason))).toEqual([
-      "the base URL names port 0, which nothing listens on",
-      "probed 11",
-      "the base URL is neither http nor https",
-      "probed 12",
-      "the base URL names port 0, which nothing listens on",
-      "the base URL is neither http nor https",
-    ]);
+    expect(verdicts.map((verdict) => (verdict.ok ? "ok" : verdict.reason))).toEqual(["probed 11", "probed 12", "probed 13"]);
   });
 
   it("starts a one-URL probe without waiting, reads its verdict later, and hands the worker its cancellation", () => {
@@ -220,7 +192,7 @@ describe("realBaseUrlProbe", () => {
     expect(startProviderReachability("p", provider, undefined)).toBeUndefined();
   });
 
-  it("starts the probe of every target before it waits on any, whichever targets are dialled", () => {
+  it("starts the probe of every target before it waits on any", () => {
     const events: string[] = [];
     const workers: ProbeWorkers = {
       start: (_source, data) => {
@@ -238,13 +210,12 @@ describe("realBaseUrlProbe", () => {
     const verdicts = realBaseUrlBatchProbe(
       [
         { baseUrl: "http://192.0.2.1:1", timeoutMs: SHORT_CONNECT_BOUND_MS },
-        { baseUrl: "ftp://example.com", timeoutMs: SHORT_CONNECT_BOUND_MS },
         { baseUrl: "http://192.0.2.1:3", timeoutMs: SHORT_CONNECT_BOUND_MS },
       ],
       workers,
     );
     expect(events).toEqual(["start 1", "start 3", "wait 1", "wait 3"]);
-    expect(verdicts).toEqual([{ ok: true }, { ok: false, reason: "the base URL is neither http nor https" }, { ok: true }]);
+    expect(verdicts).toEqual([{ ok: true }, { ok: true }]);
   });
 });
 

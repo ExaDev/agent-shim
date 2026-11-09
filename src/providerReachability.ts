@@ -40,15 +40,6 @@ export interface BaseUrlTarget {
 /** `BaseUrlProbe` for several base URLs: up to `MAX_CONCURRENT_PROBES` distinct targets run together and any more follow in rounds of that many, so the worst case is the longest bound times the number of rounds; verdicts in the order the targets were given. */
 export type BaseUrlBatchProbe = (targets: readonly BaseUrlTarget[]) => readonly ListenerVerdict[];
 
-/** The port no listener has and no connection can be made to: a URL accepts `:0`, and the system refuses to connect to it. */
-const NO_LISTENER_PORT = 0;
-
-/** The verdict for a base URL that names port 0. */
-const PORT_ZERO: ListenerVerdict = { ok: false, reason: "the base URL names port 0, which nothing listens on" };
-
-/** The verdict for a base URL whose scheme nothing dials. */
-const UNDIALLABLE: ListenerVerdict = { ok: false, reason: "the base URL is neither http nor https" };
-
 /** A batch of base-URL probes that has been started: `verdicts` blocks until every one is in and returns them in the order of the targets; `cancel` ends the workers of a batch nobody will wait on. */
 export interface StartedBaseUrlBatchProbe {
   readonly verdicts: () => readonly ListenerVerdict[];
@@ -57,30 +48,8 @@ export interface StartedBaseUrlBatchProbe {
 
 /** Starts the real batch probe, returning before it has waited on any verdict so the caller can work meanwhile (see `realBaseUrlBatchProbe`, which waits straight away), with the source of its workers injectable so a test can observe their order: each connect on a worker thread, up to `MAX_CONCURRENT_PROBES` of them started before the calling thread blocks on the first, refused in a process whose event loop serves others. */
 export const startBaseUrlBatchProbe = (targets: readonly BaseUrlTarget[], workers?: ProbeWorkers): StartedBaseUrlBatchProbe => {
-  const dialled = targets.map((target) => ({ dial: dialTargetOf(target.baseUrl), timeoutMs: target.timeoutMs }));
-  const probed = dialled.filter((entry) => entry.dial !== undefined && entry.dial.port !== NO_LISTENER_PORT);
-  const started = startAddressProbes(probed.flatMap((entry) => (entry.dial === undefined ? [] : [{ ...entry.dial, timeoutMs: entry.timeoutMs }])), workers);
-  return {
-    cancel: started.cancel,
-    verdicts: () => {
-      const verdicts = started.settle();
-      let next = 0;
-      return dialled.map((entry) => {
-        if (entry.dial === undefined) {
-          return UNDIALLABLE;
-        }
-        if (entry.dial.port === NO_LISTENER_PORT) {
-          return PORT_ZERO;
-        }
-        const verdict = verdicts[next];
-        next += 1;
-        if (verdict === undefined) {
-          throw new Error("the batch probe answered fewer verdicts than it was given addresses");
-        }
-        return verdict;
-      });
-    },
-  };
+  const started = startAddressProbes(targets.map((target) => ({ ...dialTargetOf(target.baseUrl), timeoutMs: target.timeoutMs })), workers);
+  return { cancel: started.cancel, verdicts: started.settle };
 };
 
 /** The real batch probe: each connect on a worker thread, up to `MAX_CONCURRENT_PROBES` of them started before the calling thread blocks on the first verdict. */

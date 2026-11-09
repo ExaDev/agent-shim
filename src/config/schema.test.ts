@@ -354,6 +354,16 @@ describe("ProviderSchema", () => {
     }
   });
 
+  it("rejects a baseUrl whose scheme is not http or https, or that names port 0, with a message that says what to give instead", () => {
+    const messages = (baseUrl: string): string =>
+      JSON.stringify(ProviderSchema.safeParse({ ...base, baseUrl, credential }).error?.issues.map((issue) => issue.message));
+    expect(messages("ftp://example.com/")).toContain("must be an http or https URL, not ftp");
+    expect(messages("http://localhost:0/")).toContain("must not name port 0");
+    expect(messages("https://example.com:0")).toContain("must not name port 0");
+    // A port that merely contains a zero is a port.
+    expect(ProviderSchema.safeParse({ ...base, baseUrl: "http://localhost:10/", credential }).success).toBe(true);
+  });
+
   it("rejects a baseUrl that is not a URL", () => {
     expect(ProviderSchema.safeParse({ ...base, baseUrl: "not-a-url", credential }).success).toBe(false);
   });
