@@ -9,6 +9,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ExemptHttpAgent, realConnectEffects, SourcePortRange } from "./connectEffects";
 import { HTTP_OK } from "./connectTestWorld";
 
+/** The status the door answers with when the upstream cannot be reached. */
+const HTTP_BAD_GATEWAY = 502;
+
 /** The name every dial in this file resolves: a documentation-reserved TLD, so nothing but this file's resolver stand-in can ever answer it, and a dial through the exempt agent takes the real-name path (reserved source port, DNS lookup) rather than the address-literal shortcut. */
 const DIAL_NAME = "reserved-range-test.invalid";
 
@@ -305,6 +308,71 @@ describe("the exempt agents' reserved source-port rotation", () => {
         socket.destroy();
       }
       await upstream.close();
+    }
+  });
+});
+
+describe("the answer to a request whose upstream cannot be reached", () => {
+  /** A port nothing listens on: bound and released, so the connect to it is refused. */
+  async function closedPort(): Promise<number> {
+    const server = net.createServer();
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => {
+        resolve(undefined);
+      });
+    });
+    const bound = server.address();
+    if (bound === null || typeof bound === "string") {
+      throw new Error("the probe server did not bind a TCP port");
+    }
+    await new Promise<void>((resolve) => {
+      server.close(() => {
+        resolve(undefined);
+      });
+    });
+    return bound.port;
+  }
+
+  it("names why a name that resolves to both loopback addresses refused every connection, without the local end of the connection", async () => {
+    const refusedPort = await closedPort();
+    const effects = realConnectEffects(PRIVATE_RANGE);
+    const front = http.createServer((request, response) => {
+      effects.forwardHttp({ host: "localhost", port: refusedPort, tls: false }, request, response);
+    });
+    await new Promise<void>((resolve) => {
+      front.listen(0, "127.0.0.1", () => {
+        resolve(undefined);
+      });
+    });
+    try {
+      const bound = front.address();
+      if (bound === null || typeof bound === "string") {
+        throw new Error("the front server did not bind a TCP port");
+      }
+      const answer = await new Promise<{ readonly status: number | undefined; readonly body: string }>((resolve, reject) => {
+        http
+          .get({ host: "127.0.0.1", port: bound.port, path: "/", agent: false }, (response) => {
+            const chunks: Buffer[] = [];
+            response.on("data", (chunk: Buffer) => {
+              chunks.push(chunk);
+            });
+            response.on("end", () => {
+              resolve({ status: response.statusCode, body: Buffer.concat(chunks).toString("utf8") });
+            });
+          })
+          .on("error", reject);
+      });
+      expect(answer.status).toBe(HTTP_BAD_GATEWAY);
+      expect(answer.body).toMatch(/^agent-shim headroom: upstream unreachable \(.*ECONNREFUSED.*\)$/u);
+      expect(answer.body).not.toContain("()");
+      expect(answer.body).not.toContain("Local (");
+    } finally {
+      front.closeAllConnections();
+      await new Promise<void>((resolve) => {
+        front.close(() => {
+          resolve(undefined);
+        });
+      });
     }
   });
 });
