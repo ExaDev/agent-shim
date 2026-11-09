@@ -13,6 +13,13 @@ export default defineConfig([
   },
   ...exadev,
   {
+    files: ["src/frontdoor/doorDial.ts"],
+    rules: {
+      // The probe worker embeds these functions as source text, and a compiler targeting a syntax below ES2017 rewrites an `async` function into a call to a helper that lives in the bundle's scope and not in the worker's (`probe.test.ts` bundles the probe at es2015 to prove none is left), so they return promises explicitly.
+      "@typescript-eslint/promise-function-async": "off",
+    },
+  },
+  {
     files: ["src/doctorReport.ts"],
     rules: {
       // This file is the whole-config audit: one section per noun the tool owns, over shared validate-and-report helpers. Splitting it would duplicate those helpers across a file per noun.
