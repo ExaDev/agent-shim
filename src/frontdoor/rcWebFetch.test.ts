@@ -73,6 +73,10 @@ describe("the private-address rule", () => {
     expect(isPrivateAddress("93.184.216.34")).toBe(false);
     expect(isPrivateAddress("8.8.8.8")).toBe(false);
     expect(isPrivateAddress("2606:4700::6810:84e4")).toBe(false);
+    // A URL's parser writes a v4-mapped literal in hex, so that spelling is judged as the address it carries too.
+    expect(isPrivateAddress("::ffff:7f00:1")).toBe(true);
+    expect(isPrivateAddress("::ffff:a00:1")).toBe(true);
+    expect(isPrivateAddress("::ffff:5db8:d822")).toBe(false);
     expect(isPrivateAddress("127.0.0.1")).toBe(true);
     expect(isPrivateAddress("127.255.0.1")).toBe(true);
     expect(isPrivateAddress("0.0.0.0")).toBe(true);
@@ -120,6 +124,19 @@ describe("the worker web-fetch bounds", () => {
       expect(outcome.errorType).toBe("web_fetch_scheme");
     }
     expect(dialled).toEqual([]);
+  });
+
+  it("refuses a bracketed IPv6 literal that is a private address as private, never as a name that did not resolve", async () => {
+    for (const literal of ["[::1]", "[::ffff:127.0.0.1]"]) {
+      // The resolver would fail for a name, so a literal sent to it (brackets left on, which net.isIP takes for a name) answers "did not resolve" and not "private".
+      const scripted = scriptedDial({ "/probe": hopOf(HTTP_STATUS.ok, { contentType: "text/plain", body: "internal" }) }, { lookup: async () => await Promise.reject(new Error("ENOTFOUND")) });
+      const refused = await fetchThroughWebProxy(`http://${literal}:8000/probe`, scripted.deps);
+      expect(refused.kind, literal).toBe("refused");
+      if (refused.kind === "refused") {
+        expect(refused.errorType, literal).toBe("web_fetch_private_address");
+      }
+      expect(scripted.dialled, literal).toEqual([]);
+    }
   });
 
   it("refuses a name that resolves to a private address, and dials it once the lift is set", async () => {
@@ -275,12 +292,15 @@ describe("the production web-fetch dial", () => {
     }
   });
 
-  it("fetches a page at an IPv6 literal through the door's own agents, which dial the address and not the bracketed name", async () => {
-    let port: number;
+  it("fetches a page at an IPv6 literal through the door's own agents, which dial the address and not the bracketed name", async (context) => {
+    let port: number | undefined;
     try {
       port = await startStandIn("::1");
     } catch {
-      // A host with no IPv6 loopback cannot show this; every other host does.
+      // A host with no IPv6 loopback cannot show this; the report lists the test as skipped there, not passed.
+      context.skip();
+    }
+    if (port === undefined) {
       return;
     }
     const fetched = await realRcWebFetch({ allowPrivate: true })(`http://[::1]:${String(port)}/start`);
