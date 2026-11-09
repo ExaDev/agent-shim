@@ -4,7 +4,7 @@ import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:
 import type * as net from "node:net";
 import type { Duplex } from "node:stream";
 
-import { parseDialAuthority, type DialAuthorityRefusal } from "../baseUrlDial";
+import { parseDialAuthority } from "../baseUrlDial";
 import { issueCaCertificate, issueLeafCertificate } from "./x509";
 import type { ConnectCapture, PassthroughObserver } from "./capture";
 import { pumpTapSession } from "./tap";
@@ -124,9 +124,10 @@ export interface ConnectTarget {
   readonly port: number;
 }
 
-/** Parses a CONNECT authority (`host`, `host:port`, `[v6]` or `[v6]:port`; a bare host means 443) through the rule every dial target takes (`parseDialAuthority`), or the refusal naming what is wrong with it. */
-export function parseConnectTarget(authority: string): ConnectTarget | DialAuthorityRefusal {
-  return parseDialAuthority(authority, HTTPS_PORT);
+/** Parses a CONNECT authority (`host`, `host:port`, `[v6]` or `[v6]:port`; a bare host means 443) through the rule every dial target takes (`parseDialAuthority`), or undefined when it cannot be dialled. The refusal's reason is `parseDialAuthority(authority, HTTPS_PORT)`'s own result. */
+export function parseConnectTarget(authority: string): ConnectTarget | undefined {
+  const parsed = parseDialAuthority(authority, HTTPS_PORT);
+  return "refusal" in parsed ? undefined : parsed;
 }
 
 /** Whether a CONNECT target's host (port already stripped) is one whose TLS this proxy terminates. */
@@ -737,7 +738,7 @@ function routeConnect(socket: net.Socket, head: string, context: ConnectionConte
   const requestLine = head.split("\r\n", 1)[0] ?? "";
   const parts = requestLine.split(" ");
   const authority = parts.length === CONNECT_LINE_TOKENS && parts[0]?.toUpperCase() === "CONNECT" ? (parts[1] ?? "") : undefined;
-  const target = authority === undefined ? undefined : parseConnectTarget(authority);
+  const target = authority === undefined ? undefined : parseDialAuthority(authority, HTTPS_PORT);
   if (target === undefined || "refusal" in target) {
     refuse(socket, REFUSAL.badRequest, target === undefined ? [] : [`${REFUSAL_HEADER}: ${target.refusal}`]);
     return;

@@ -31,9 +31,9 @@ describe("CONNECT routing decisions", () => {
     expect(parseConnectTarget("[::ffff:127.0.0.1]:8443")).toEqual({ host: "::ffff:127.0.0.1", port: 8443 });
   });
 
-  it("refuses an authority that names no host or an unusable port, saying why", () => {
+  it("returns undefined for an authority that names no host or an unusable port", () => {
     for (const authority of ["", ":443", "host:not-a-port", "host:0", "host:70000", "::1", "[::1", "[::1]x", "[]:443", "user@host:443"]) {
-      expect(parseConnectTarget(authority), authority).toHaveProperty("refusal");
+      expect(parseConnectTarget(authority), authority).toBeUndefined();
     }
   });
 
