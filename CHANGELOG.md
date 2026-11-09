@@ -1,3 +1,52 @@
+## [14.0.0](https://github.com/ExaDev/agent-shim/compare/v13.0.0...v14.0.0) (2026-11-09)
+
+### ⚠ BREAKING CHANGES
+
+* **frontdoor:** the library no longer exports DoorReportUnavailableError, and the
+  ControlApiDeps checkReport and doctorReport dependencies now return promises that resolve to
+  the report as JSON and take the caller's abort signal. A host that supplied synchronous
+  collectors, or caught DoorReportUnavailableError, supplies asynchronous ones and catches
+  DoorWorkerBusyError (answered as a retryable SERVICE_UNAVAILABLE) instead.
+
+### Features
+
+* **frontdoor:** note blocking steps and wait for a probe verdict in slices ([d3dfa3b](https://github.com/ExaDev/agent-shim/commit/d3dfa3b107285d107cdaf6be4220241d45558284))
+* **frontdoor:** run blocking door work in a worker thread of the door itself ([19683a1](https://github.com/ExaDev/agent-shim/commit/19683a1856407ec4017e3d74c944692ecc0fe49f))
+
+### Bug Fixes
+
+* **frontdoor:** bound the worker watchdog and the launch's catalogue wait on the monotonic clock ([19f9506](https://github.com/ExaDev/agent-shim/commit/19f950634e5e58345dfd2c5217453fed34fe98a5))
+* **frontdoor:** carry no worker message across the door boundary ([8eba29a](https://github.com/ExaDev/agent-shim/commit/8eba29adc44aaf40905cb40284c01b93c905dddc))
+* **frontdoor:** collect the check and doctor reports in the door's worker threads ([d570d21](https://github.com/ExaDev/agent-shim/commit/d570d213866b430843a3a19aed063ebc1da786b5))
+* **frontdoor:** derive the door worker bounds and give every blocking step a timeout ([561c6be](https://github.com/ExaDev/agent-shim/commit/561c6bed522a7c5eca201865e1090e7ab79f4aed))
+* **frontdoor:** fail a door worker flight whose thread cannot be created or watched ([7b8b34f](https://github.com/ExaDev/agent-shim/commit/7b8b34fb2c6b7498f98740bd59d2211e5896634c))
+* **frontdoor:** keep an absent abort signal absent ([fdc7f59](https://github.com/ExaDev/agent-shim/commit/fdc7f59d4eac0736a12bf032aa3630b2a7028e52))
+* **frontdoor:** keep the door worker host's books through cancel, stop and a stuck thread ([05a6c89](https://github.com/ExaDev/agent-shim/commit/05a6c898c09a2c2e84dfe63b728bd451a6f9df75))
+* **frontdoor:** name every door worker failure by kind, log it and answer it as a status ([c27a5c1](https://github.com/ExaDev/agent-shim/commit/c27a5c157e07b63e909a6bc7846b1fdda33caa1d))
+* **frontdoor:** refresh provider catalogues in the door's worker, not a spawned copy ([f6f9618](https://github.com/ExaDev/agent-shim/commit/f6f9618aff2f6ba61a4f924ab61b50b848e3ee08))
+* **frontdoor:** tell a door worker the door's own executable paths ([f314a86](https://github.com/ExaDev/agent-shim/commit/f314a8651807f836d846a97ee5ec87ff42407fe5))
+* **keychain:** give the Keychain calls that can wait on a person a person-sized bound ([65b81e8](https://github.com/ExaDev/agent-shim/commit/65b81e870a988ffae8c842ceb8375c691a3b1d59))
+* **lint:** refuse every way of substituting a signal nothing can abort ([bc380ca](https://github.com/ExaDev/agent-shim/commit/bc380cae39c296c7c7fe928b9818fab38a8bf29c))
+
+### Code Refactoring
+
+* **frontdoor:** keep isIdentifier private to the worker protocol module ([7648a8d](https://github.com/ExaDev/agent-shim/commit/7648a8dfa321faf0f2f22614df06e08cad4a9c2f))
+
+### Documentation
+
+* **frontdoor:** say once under what environment the door collects check and doctor ([61ad7af](https://github.com/ExaDev/agent-shim/commit/61ad7afeba122532def4e9dd7e9635df95f04a3c))
+* limit the removed-build claim to the tasks the door runs in workers ([d0df8dc](https://github.com/ExaDev/agent-shim/commit/d0df8dc2112af00b100ef16a0133aeb77597e690))
+* say that system sleep stretches a monotonic deadline and never shortens it ([ac2da0a](https://github.com/ExaDev/agent-shim/commit/ac2da0ae9a221ea11b5a8e8b31e12138e01c2a78))
+
+### Tests
+
+* **frontdoor:** cover the real door worker host and the one place the door builds it ([9519167](https://github.com/ExaDev/agent-shim/commit/9519167ccf8b1fc7b7e346bbd524531c5dc30275))
+* **frontdoor:** cover the worker entry's check, doctor, unknown task and heartbeat wiring ([7ce6cd2](https://github.com/ExaDev/agent-shim/commit/7ce6cd21673bf26489ec42d9b7e24454b89f5090))
+* **frontdoor:** do not expect a Claude home to hold entries in the worker bundle test ([e404f2a](https://github.com/ExaDev/agent-shim/commit/e404f2aae706e44ce614afbebd9527b577e4f77f))
+* **frontdoor:** lay the plain-bundle install out as npm does in the worker path test ([dc21b6d](https://github.com/ExaDev/agent-shim/commit/dc21b6d06ea5d387cf7cd37e64ef30b567d7dddd))
+* **frontdoor:** show the door thread free by timer ticks against a blocked control ([35bd526](https://github.com/ExaDev/agent-shim/commit/35bd526cd39604c743853473fe65b7678d8616ec))
+* **frontdoor:** stop claiming a process role in the worker bundle test ([e869a99](https://github.com/ExaDev/agent-shim/commit/e869a9980edfeeaec31ada8364c9542daee792e5))
+
 ## [13.0.0](https://github.com/ExaDev/agent-shim/compare/v12.2.0...v13.0.0) (2026-11-09)
 
 ### ⚠ BREAKING CHANGES
