@@ -14,7 +14,7 @@ import { diamondChainPools, growsLinearly, ringPools, startStepMeter } from "./t
  *
  * What this can catch: a pass over a collection nested inside a pass over it that runs through the counted array operations (see `countSteps` for which), over the whole farm, and a command run once for each element. What it cannot see: a quadratic cost that does not run through them, one in native code, and a cost that grows with something other than the farm's size.
  *
- * Not held by the farm, so not measured: the global `walkUpLimit`, `categories`, `entries`, `headroom`, `frontdoor` and `update` keys and a models `show` list; committed `.agent-shim.json` files; identities with a credential block, a provider, a codex login or account metadata; providers of the kinds `http`, `router` and `antigravity`; a `check` for a codex agent; and any command other than `ps`, `security` and `git`, which are the ones the reports ran on this farm when every command was logged. The reports are also run on one shape of each collection: the farm grows by repeating it, so a cost that depends on a different shape (a profile chain that branches, pools that nest unevenly) is covered by the walk tests of `graphWalks.test.ts` and not here.
+ * The scripts are `sh` scripts, so the farm is built for the platforms the tests run on (Linux and macOS); the Windows jobs only build and smoke-test the binary. Not held by the farm, so not measured: the global `walkUpLimit`, `categories`, `entries`, `headroom`, `frontdoor` and `update` keys and a models `show` list; committed `.agent-shim.json` files; identities with a credential block, a provider, a codex login or account metadata; providers of the kinds `http`, `router` and `antigravity`; a `check` for a codex agent; and any command other than `ps`, `security` and `git`, which are the ones the reports ran on this farm when every command was logged. The reports are also run on one shape of each collection: the farm grows by repeating it, so a cost that depends on a different shape (a profile chain that branches, pools that nest unevenly) is covered by the walk tests of `graphWalks.test.ts` and not here.
  */
 /** The smallest farm a report is measured at, and the factors of it the next two are: doubling twice, so a pass over a collection inside a pass over it makes the last step cost four times the first. */
 const FIRST_FARM = 200;
@@ -39,7 +39,7 @@ const STUB_MODE = 0o755;
 
 
 /**
- * The stubbed commands, by name. `ps` prints the listing the farm wrote beside it (what `ps -E` prints on macOS: a pid, a parent pid, the command and its environment). `security` finds the item of every service whose hash ends in an even hex digit and reports the rest missing, as the Keychain does. `git` answers the branch query only.
+ * The stubbed commands, by name. `ps` prints the listing the farm wrote beside it (what `ps -E` prints on macOS: a pid, a parent pid, the command and its environment). `security` (asked on macOS only) finds the item of every service whose hash ends in an even hex digit and reports the rest missing, as the Keychain does; elsewhere a login is a `.credentials.json` file, which the farm writes for every second readable identity so both answers occur on every platform. `git` answers the branch query only.
  */
 const STUBS: Readonly<Record<string, string>> = {
   ps: 'cat "$(dirname "$0")/ps.out"',
@@ -104,6 +104,10 @@ function buildFarm(size: number) {
   for (let index = 0; index < each; index += 1) {
     write(`readable${String(index)}`, JSON.stringify({ name: `readable${String(index)}` }));
     members.push(`readable${String(index)}`);
+    // A stored login in the file Claude Code keeps on every platform, for every second identity; macOS also asks the Keychain, whose stub answers for some of the rest.
+    if (index % IDENTITIES_PER_RULE === 0) {
+      fs.writeFileSync(path.join(paths.identitiesDir, `readable${String(index)}`, ".credentials.json"), "{}");
+    }
     write(`nameless${String(index)}`, "{ not json");
     write(`dup${String(index)}`, JSON.stringify({ name: "dup" }));
   }
@@ -242,7 +246,7 @@ describe("the reports on a farm where every collection is large and degenerate",
     const paths = buildFarm(FIRST_FARM);
     const report = collectDoctorReport({ paths, env: { ...process.env, HOME: home } });
     const text = JSON.stringify(report);
-    // `security` finds the item of some identities and not of others, so the doctor reports both.
+    // A login file is there for some identities and not for others (and on macOS the `security` stub finds the item of some of the rest), so the doctor reports both on every platform.
     expect(text).toContain("signed in");
     expect(text).toContain("signed out");
   });
