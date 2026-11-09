@@ -71,9 +71,18 @@ export default defineConfig([
       // A signal a caller did not give is absent, and stays `AbortSignal | undefined` end to end: a fresh `new AbortController().signal` in its place is a signal nothing can abort, which looks like cancellation support and gives none.
       "no-restricted-syntax": [
         "error",
+        // `x ?? new AbortController().signal`, `(x ?? new AbortController()).signal`, `x || ...` and the same as a ternary, with the controller built inline or ahead of the expression (`x ?? controller.signal`): each hands a caller that gave no signal one nothing can abort.
         {
-          selector: "LogicalExpression[operator='??'] > MemberExpression.right[property.name='signal'] > NewExpression.object[callee.name='AbortController']",
-          message: "Keep an absent AbortSignal absent (AbortSignal | undefined) rather than substituting one nothing can abort.",
+          selector: ":matches(LogicalExpression[operator='??'], LogicalExpression[operator='||']) > NewExpression.right[callee.name='AbortController']",
+          message: "Keep an absent AbortSignal absent (AbortSignal | undefined) rather than substituting a controller nothing can abort.",
+        },
+        {
+          selector: ":matches(LogicalExpression[operator='??'], LogicalExpression[operator='||']) > MemberExpression.right[property.name='signal']",
+          message: "Keep an absent AbortSignal absent (AbortSignal | undefined) rather than substituting a signal nothing can abort.",
+        },
+        {
+          selector: "ConditionalExpression > :matches(NewExpression[callee.name='AbortController'], MemberExpression[property.name='signal'])",
+          message: "Keep an absent AbortSignal absent (AbortSignal | undefined) rather than substituting a signal nothing can abort.",
         },
       ],
     },
