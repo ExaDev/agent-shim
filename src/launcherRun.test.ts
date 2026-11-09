@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runLaunchPlan, type LaunchPlan } from "./launcher";
 import { LAUNCH_CANCELLED_EXIT, type HoldOutcome } from "./launcher/hold";
 import { runClaudeLaunch } from "./launchRun";
-import { LaunchRefusedError } from "./launchWiring";
+import { LaunchRefusedError, prepareClaudeLaunch } from "./launchWiring";
 import type { SpawnResult } from "./launcher/ports";
 import { addIdentity } from "./identityStore";
 import { addPool } from "./poolStore";
@@ -130,6 +130,36 @@ describe.skipIf(process.platform === "win32")("runClaudeLaunch", () => {
     const record = stubClaude(0);
     await expect(runClaudeLaunch({ argv: ["@nobody"], cwd: root, env: {}, paths })).rejects.toThrow(LaunchRefusedError);
     expect(nodeFs.existsSync(record)).toBe(false);
+  });
+
+  /** Writes `contents` as the identity's stored login file, which the launch reads for its account row. */
+  function writeLoginFile(paths: LayoutPaths, identity: string, contents: string): void {
+    nodeFs.writeFileSync(path.join(paths.identitiesDir, identity, ".claude.json"), contents);
+  }
+
+  it("hands a library host the warnings the launch raised, which the command line prints to standard error", () => {
+    const paths = buildLayoutPaths(root);
+    addIdentity(paths, "work");
+    writeLoginFile(paths, "work", "{ not json");
+    stubClaude(0);
+    const plan = prepareClaudeLaunch({ argv: ["@work", "--no-track-usage", "--print"], cwd: root, env: {}, paths });
+    plan.release();
+    expect(plan.warnings).toEqual([expect.stringContaining(".claude.json") as unknown]);
+  });
+
+  it("gives runClaudeLaunch's caller each warning as the launch is prepared, and standard error when no handler is named", async () => {
+    const paths = buildLayoutPaths(root);
+    addIdentity(paths, "work");
+    writeLoginFile(paths, "work", "{ not json");
+    stubClaude(0);
+    const warned: string[] = [];
+    await runClaudeLaunch({ argv: ["@work", "--no-track-usage", "--print"], cwd: root, env: {}, paths, onWarning: (message) => { warned.push(message); } });
+    expect(warned).toEqual([expect.stringContaining(".claude.json") as unknown]);
+    const written: string[] = [];
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => { written.push(String(chunk)); return true; });
+    await runClaudeLaunch({ argv: ["@work", "--no-track-usage", "--print"], cwd: root, env: {}, paths });
+    stderr.mockRestore();
+    expect(written.join("")).toContain(".claude.json");
   });
 
   /** Writes the rejected seven-day window that makes `identity` ineligible for a pool pick, as an observation of just now would. */

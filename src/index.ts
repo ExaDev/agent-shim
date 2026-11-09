@@ -563,7 +563,7 @@ export {
 } from "./doctorReport";
 export { prepareLaunch, resolveLaunch, runLauncher, runLaunchPlan, type LaunchDecision, type LaunchPlan, type LaunchPoolDecision, type LaunchResolution, type PrepareLaunchParams, type RunLauncherParams } from "./launcher";
 export { spawnClaude, type SpawnClaudeParams } from "./launcher/spawn";
-export { LaunchRefusedError, prepareClaudeLaunch, resolveClaudeLaunch, type ClaudeLaunchResolution, type PrepareClaudeLaunchOptions, type ResolveClaudeLaunchOptions } from "./launchWiring";
+export { LaunchRefusedError, prepareClaudeLaunch, resolveClaudeLaunch, type ClaudeLaunchPlan, type ClaudeLaunchResolution, type PrepareClaudeLaunchOptions, type ResolveClaudeLaunchOptions } from "./launchWiring";
 export { runClaudeLaunch, type RunClaudeLaunchOptions } from "./launchRun";
 export { poolSelectedByLaunch, refreshLaunchPoolUsage, refreshPoolUsage, type RefreshLaunchPoolUsageOptions, type RefreshPoolUsageParams } from "./poolUsageRefresh";
 export { refreshStalePoolMembers, type RefreshStalePoolMembersParams } from "./launcher/poolRefresh";
