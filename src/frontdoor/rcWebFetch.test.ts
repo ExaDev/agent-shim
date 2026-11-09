@@ -261,6 +261,25 @@ describe("the worker web-fetch bounds", () => {
 describe("the production web-fetch dial", () => {
   const servers: http.Server[] = [];
 
+  /** Binds `server` on `host` with an ephemeral port and resolves to the port, or rejects with the bind error: waiting on the success callback alone would never settle when the host cannot bind the address. */
+  const bindOn = async (server: http.Server, host: string): Promise<number> => {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, host, () => {
+        server.off("error", reject);
+        resolve(undefined);
+      });
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("the stand-in did not bind a TCP port");
+    }
+    return address.port;
+  };
+
+  /** The errors a host without an address (an IPv6 loopback it does not have, a documentation address nothing is assigned) answers a bind with: the address is not available, or its family is not supported. */
+  const isAddressUnavailable = (error: unknown): boolean => error instanceof Error && "code" in error && (error.code === "EADDRNOTAVAIL" || error.code === "EAFNOSUPPORT");
+
   /** Starts the loopback stand-in every case in this block fetches, with its redirect hop. */
   const startStandIn = async (host = "127.0.0.1"): Promise<number> => {
     const server = http.createServer((request, response) => {
@@ -272,13 +291,8 @@ describe("the production web-fetch dial", () => {
       response.writeHead(HTTP_STATUS.ok, { "content-type": "text/plain" });
       response.end("stand-in final page");
     });
-    await new Promise<void>((resolve) => {
-      server.listen(0, host, () => {
-        resolve(undefined);
-      });
-    });
     servers.push(server);
-    return (server.address() as { port: number }).port;
+    return await bindOn(server, host);
   };
 
   afterEach(async () => {
@@ -292,12 +306,27 @@ describe("the production web-fetch dial", () => {
     }
   });
 
+  it("rejects a bind to an address the host does not have, instead of never settling, and only for the errors that mean the address is unavailable", async () => {
+    // 2001:db8::/32 is reserved for documentation, so no host has an address in it.
+    await expect(startStandIn("2001:db8::99")).rejects.toSatisfy(isAddressUnavailable);
+    // A name that is not an address is some other bind failure, which a skip must not hide.
+    const failure = await startStandIn("not an address").then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(Error);
+    expect(isAddressUnavailable(failure)).toBe(false);
+  });
+
   it("fetches a page at an IPv6 literal through the door's own agents, which dial the address and not the bracketed name", async (context) => {
     let port: number | undefined;
     try {
       port = await startStandIn("::1");
-    } catch {
-      // A host with no IPv6 loopback cannot show this; the report lists the test as skipped there, not passed.
+    } catch (error) {
+      // A host with no IPv6 loopback cannot show this; the report lists the test as skipped there, not passed. Any other bind failure is a failure.
+      if (!isAddressUnavailable(error)) {
+        throw error;
+      }
       context.skip();
     }
     if (port === undefined) {
