@@ -29,13 +29,17 @@ export function createDoorLookup(io: DoorLookupIo): LookupFunction {
     }
     io.resolve4(host, (error, addresses) => {
       // The error branch first, because a failed resolve hands undefined as the addresses.
+      // What the failure of a name means for this lookup, said where the failure is read: the door asks DNS for A records and nothing else, so a name only /etc/hosts or mDNS knows (an alias, a `.local` name) and a host that has only AAAA records are unreachable for the door as they are for the probe, which is no fault of the provider.
+      const hint = " (the door resolves names through DNS A records only, never the hosts file or mDNS and not AAAA records: give an IPv4 address for a host DNS does not list)";
       if (error !== null) {
-        callback(error, [{ address: "", family: 4 }]);
+        const described = new Error(error.message + hint);
+        Object.defineProperty(described, "code", { value: error.code, enumerable: true });
+        callback(described, [{ address: "", family: 4 }]);
         return;
       }
       const first = addresses[0];
       if (first === undefined) {
-        callback(new Error(`no A record for ${host}`), [{ address: "", family: 4 }]);
+        callback(new Error(`no A record for ${host}` + hint), [{ address: "", family: 4 }]);
         return;
       }
       callback(null, [{ address: first, family: 4 }]);
