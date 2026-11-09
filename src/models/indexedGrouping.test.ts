@@ -52,7 +52,7 @@ const MODELS = ["glm-5.3", "glm-5.1", "claude-opus-5-5", "claude-opus-5-5-high",
 const PROVIDERS = ["z", "s", "m", "antigravity", "acct:work", "codex"];
 
 describe("buildFamilies, indexed", () => {
-  const SEEDS = 120;
+  const SEEDS = 400;
   const REFS_PER_SEED = 24;
 
   it("gives the result the comparison against every group gives, for many random catalogues, assertions and pins", () => {
@@ -86,6 +86,34 @@ describe("buildFamilies, indexed", () => {
       return countSteps(() => { buildFamilies(refs, { same: [refs], families: {} }); });
     });
     expect(growsLinearly(sizes, [counts[0] ?? 0, counts[1] ?? 0, counts[2] ?? 0]), `steps ${counts.join(", ")}`).toBe(true);
+  });
+});
+
+describe("buildFamilies, with many assertions sharing a model name", () => {
+  const FIRST = 100;
+  const SECOND = 200;
+  const THIRD = 400;
+  const sizes = [FIRST, SECOND, THIRD] as const;
+  const SMALL_SCENARIO = 10;
+
+  /** Each of `providers` providers offers the same model name and asserts it is one model with an alias of its own, so every provider's target is in a different `same` group and all of them share one identity bucket; each also has a target in no assertion. */
+  const scenario = (providers: number) => {
+    const asserted = Array.from({ length: providers }, (_, index) => [`p${String(index)}/claude-opus-4`, `p${String(index)}/opus-alias`]);
+    const plain = Array.from({ length: providers }, (_, index) => `u${String(index)}/claude-opus-4`);
+    return { refs: [...asserted.flat(), ...plain], models: { same: asserted, families: {} } satisfies ModelsConfig };
+  };
+
+  it("makes steps that grow linearly with the providers, as the groups an assertion excludes are not compared", () => {
+    const counts = sizes.map((size) => {
+      const { refs, models } = scenario(size);
+      return countSteps(() => { buildFamilies(refs, models); });
+    });
+    expect(growsLinearly(sizes, [counts[0] ?? 0, counts[1] ?? 0, counts[2] ?? 0]), `steps ${counts.join(", ")}`).toBe(true);
+  });
+
+  it("gives the families the comparison against every group gives for that scenario", () => {
+    const { refs, models } = scenario(SMALL_SCENARIO);
+    expect(buildFamilies(refs, models).map((family) => ({ key: family.key, refs: family.refs }))).toEqual(naiveFamilies(refs, models));
   });
 });
 

@@ -34,10 +34,11 @@ function assertionsOf(models: ModelsConfig | undefined): IdentityAssertions {
   return { same: models?.same ?? [], distinct: models?.distinct ?? [] };
 }
 
-/** The user's assertions indexed for the questions `sameModel` asks of every pair, so each answer is a lookup and not a search through the assertions: the `distinct` pairs as keys in both orders, each ref's first `same` group, and each `same` group's members as a set. */
+/** The user's assertions indexed for the questions `sameModel` asks of every pair, so each answer is a lookup and not a search through the assertions: the `distinct` pairs as keys in both orders, each ref's first `same` group, every `same` group a ref is in, and each `same` group's members as a set. */
 interface IndexedAssertions {
   readonly distinct: ReadonlySet<string>;
   readonly sameGroupOf: ReadonlyMap<string, readonly string[]>;
+  readonly groupsContaining: ReadonlyMap<string, readonly (readonly string[])[]>;
   readonly membersOf: ReadonlyMap<readonly string[], ReadonlySet<string>>;
 }
 
@@ -50,16 +51,23 @@ function indexAssertions(assertions: Readonly<IdentityAssertions>): IndexedAsser
     distinct.add(`${b}${PAIR_SEPARATOR}${a}`);
   }
   const sameGroupOf = new Map<string, readonly string[]>();
+  const groupsContaining = new Map<string, (readonly string[])[]>();
   const membersOf = new Map<readonly string[], ReadonlySet<string>>();
   for (const group of assertions.same) {
     membersOf.set(group, new Set(group));
-    for (const ref of group) {
+    for (const ref of membersOf.get(group) ?? []) {
       if (!sameGroupOf.has(ref)) {
         sameGroupOf.set(ref, group);
       }
+      const held = groupsContaining.get(ref);
+      if (held === undefined) {
+        groupsContaining.set(ref, [group]);
+      } else {
+        held.push(group);
+      }
     }
   }
-  return { distinct, sameGroupOf, membersOf };
+  return { distinct, sameGroupOf, groupsContaining, membersOf };
 }
 
 /** A target with what deciding whether two are one model reads of it, worked out once: its model name's identity bucket (the family and version, then the variant: two names the automatic rule calls the same share it). */
@@ -112,7 +120,7 @@ function pinIndex(settingsByKey: Readonly<Record<string, FamilySettings>>): (ref
 }
 
 /**
- * Groups `refs` into families. A target joins the family of the first target it is the same model as (the names say so, or the user asserted it, and never when the user asserted they are distinct); a `names` pin overrides that and puts it in the family of that key. The groups a target can join are found through two indexes, the identity bucket of its model name and the `same` assertion it is in, so each target is compared only with the groups that hold a candidate (what the automatic rule or an assertion can call the same model), never with every group; the result is the one the comparison against every group in turn would give.
+ * Groups `refs` into families. A target joins the family of the first target it is the same model as (the names say so, or the user asserted it, and never when the user asserted they are distinct); a `names` pin overrides that and puts it in the family of that key. Only the groups that can hold a target it is the same model as are compared, found through two indexes, and the result is the one the comparison against every group in turn would give. A target in no `same` assertion is the same model only as a target in none whose model name is the same, so it is compared with the groups of its identity bucket that hold such a target. A target in an assertion is the same model only as a target of the first assertion group it is in, so it is compared with the groups that hold one, however many other groups share its model name.
  */
 export function buildFamilies(refs: readonly string[], models: ModelsConfig | undefined): readonly Family[] {
   const assertions = indexAssertions(assertionsOf(models));
@@ -120,8 +128,8 @@ export function buildFamilies(refs: readonly string[], models: ModelsConfig | un
   const pinnedKeyOf = pinIndex(settingsByKey);
   const groups: { key: string; refs: string[]; facts: TargetFacts[] }[] = [];
   const groupOfKey = new Map<string, number>();
-  const groupsOfBucket = new Map<string, Set<number>>();
-  const groupsOfAssertion = new Map<readonly string[], Set<number>>();
+  const groupsOfUnassertedInBucket = new Map<string, Set<number>>();
+  const groupsHoldingMemberOf = new Map<readonly string[], Set<number>>();
   const addTo = <K>(index: Map<K, Set<number>>, key: K, at: number): void => {
     const held = index.get(key);
     if (held === undefined) {
@@ -133,13 +141,13 @@ export function buildFamilies(refs: readonly string[], models: ModelsConfig | un
   for (const ref of refs) {
     const facts = factsOf(ref);
     const pinnedKey = pinnedKeyOf(ref, facts.model);
+    const assertion = assertions.sameGroupOf.get(ref);
     let joinedAt: number | undefined;
     if (pinnedKey !== undefined) {
       joinedAt = groupOfKey.get(pinnedKey);
     } else {
-      const assertion = assertions.sameGroupOf.get(ref);
-      const candidates = new Set<number>([...(groupsOfBucket.get(facts.bucket) ?? []), ...(assertion === undefined ? [] : (groupsOfAssertion.get(assertion) ?? []))]);
-      joinedAt = [...candidates].sort((left, right) => left - right).find((at) => groups[at]?.facts.some((first) => sameModel(first, facts, assertions)) === true);
+      const candidates = assertion === undefined ? groupsOfUnassertedInBucket.get(facts.bucket) : groupsHoldingMemberOf.get(assertion);
+      joinedAt = [...(candidates ?? [])].sort((left, right) => left - right).find((at) => groups[at]?.facts.some((first) => sameModel(first, facts, assertions)) === true);
     }
     const at = joinedAt ?? groups.length;
     if (joinedAt === undefined) {
@@ -155,10 +163,11 @@ export function buildFamilies(refs: readonly string[], models: ModelsConfig | un
     }
     group.refs.push(ref);
     group.facts.push(facts);
-    addTo(groupsOfBucket, facts.bucket, at);
-    const assertedInto = assertions.sameGroupOf.get(ref);
-    if (assertedInto !== undefined) {
-      addTo(groupsOfAssertion, assertedInto, at);
+    if (assertion === undefined) {
+      addTo(groupsOfUnassertedInBucket, facts.bucket, at);
+    }
+    for (const held of assertions.groupsContaining.get(ref) ?? []) {
+      addTo(groupsHoldingMemberOf, held, at);
     }
   }
   return groups.map((group) => ({ key: group.key, refs: group.refs, settings: settingsByKey[group.key] ?? {} }));
