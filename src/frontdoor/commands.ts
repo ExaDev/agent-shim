@@ -155,6 +155,7 @@ export function realStatOwnExecutable(watchPath: string): () => OwnExecutableSta
   return () => {
     // throwIfNoEntry, because an absent entry is the remove-then-link or deleted case the supervisor deliberately ignores rather than a crash.
     const st = fs.statSync(watchPath, { throwIfNoEntry: false });
+    // A replacement is the device, inode, size or modification time changing, any one of them; the numbers are the lossy kind (`fileIdentity.ts`), which can only hide an inode change that a size or modification time change shows as well, never invent one.
     return st?.isFile() !== true ? undefined : { dev: st.dev, ino: st.ino, size: st.size, mtimeMs: st.mtimeMs };
   };
 }

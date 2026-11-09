@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { DOOR_SOURCE_PORT_COUNT, DOOR_SOURCE_PORT_END, DOOR_SOURCE_PORT_START, SourcePortRange } from "./connectEffects";
 import { createDoorLookup, doorDial, probeAccept, runAcceptProbe, type AcceptProbeDeps, type DialSocket } from "./doorDial";
@@ -167,6 +167,8 @@ describe("a batch of provider probes", () => {
 
 describe("a batch of provider probes at the size of a large configuration", () => {
   const OTHER_BASE = 40;
+  /** What a process id is multiplied by to place its first batch (see `probe.ts`). */
+  const PORT_BASE_SPREAD = 389;
   /** The share of the reserved range, as its reciprocal, that probes may hold between them. */
   const PROBE_SHARE_DENOMINATOR = 100;
   const FIRST = 100;
@@ -249,6 +251,24 @@ describe("a batch of provider probes at the size of a large configuration", () =
     probeAddressesAcceptSync(distinctTargets(1), workers, 0);
     probeAddressesAcceptSync(distinctTargets(1), workers, OTHER_BASE);
     expect(firsts).toEqual([DOOR_SOURCE_PORT_START, DOOR_SOURCE_PORT_START + OTHER_BASE]);
+  });
+
+  it("spreads a batch's workers over the range by the stride, one every range-width over the targets", () => {
+    const firsts: number[] = [];
+    const workers: ProbeWorkers = { start: (_source, data) => { firsts.push(Number(data.portFirst)); return { verdict: () => ({ ok: true }) }; } };
+    const TARGETS = 100;
+    probeAddressesAcceptSync(distinctTargets(TARGETS), workers, 0);
+    const stride = DOOR_SOURCE_PORT_COUNT / TARGETS;
+    expect(firsts).toEqual(Array.from({ length: TARGETS }, (_, index) => DOOR_SOURCE_PORT_START + index * stride));
+  });
+
+  it("places a fresh process's first batch at its id times the spread, so processes with successive ids start apart", async () => {
+    vi.resetModules();
+    const fresh = await import("./probe");
+    const firsts: number[] = [];
+    const workers: ProbeWorkers = { start: (_source, data) => { firsts.push(Number(data.portFirst)); return { verdict: () => ({ ok: true }) }; } };
+    fresh.probeAddressesAcceptSync(distinctTargets(1), workers);
+    expect(firsts).toEqual([DOOR_SOURCE_PORT_START + ((process.pid * PORT_BASE_SPREAD) % DOOR_SOURCE_PORT_COUNT)]);
   });
 
   it("starts a later batch of the same process past the ports the earlier one used, so it does not walk over them", () => {

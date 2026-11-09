@@ -286,6 +286,7 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
   let served: readonly FrontDoorSessionSummary[] | undefined;
   const binaryReplaced = (): boolean => {
     const current = ports.statOwnExecutable();
+    // The device and inode are plain numbers here (the lossy kind in `fileIdentity.ts`), deliberately: a replaced binary differs in its size or modification time too, so a precision loss can hide an inode change only where another field shows it.
     // A present-but-different stat is the turnover signal; an absent one (a deleted binary, or a remove-then-link install between its removal and its relink) is not, and a stat returning to the exact captured identity after such a window is equally not, so a half-applied install never flaps the door.
     return current !== undefined && servingBinary !== undefined && (current.dev !== servingBinary.dev || current.ino !== servingBinary.ino || current.size !== servingBinary.size || current.mtimeMs !== servingBinary.mtimeMs);
   };

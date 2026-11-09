@@ -148,6 +148,7 @@ export function createIdentityNameReader(paths: LayoutPaths): IdentityNameReader
         const directory = fs.statSync(paths.identitiesDir, { throwIfNoEntry: false });
         const entries = directory === undefined ? "" : fs.readdirSync(paths.identitiesDir).sort().join("\u0000");
         const known = absent.get(id);
+        // The inode is a cache validator beside the modification time here and in the hit below: a hit needs every field to match, so a lossy number can only make an entry look unchanged where its time and size are unchanged too.
         if (directory !== undefined && known?.mtimeMs === directory.mtimeMs && known.ino === directory.ino && known.entries === entries) {
           return known.name;
         }

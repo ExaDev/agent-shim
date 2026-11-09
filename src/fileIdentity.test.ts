@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { fileKey, hasFileNumber, sameFile } from "./fileIdentity";
 import { directoryKey, sameDirectory } from "./sameDirectory";
@@ -45,6 +45,24 @@ describe("file identity above the exact range of a number", () => {
   it("reads a platform that gives no file number as having none", () => {
     expect(hasFileNumber(statOf(NO_INO))).toBe(false);
     expect(hasFileNumber(statOf(SMALL_INO))).toBe(true);
+  });
+
+  it("reads the real stat of a directory as bigints, whatever the number of its inode", () => {
+    const directory = fs.mkdtempSync(path.join(fs.realpathSync(process.env.TMPDIR ?? "/tmp"), "file-identity-real-"));
+    const spy = vi.spyOn(fs, "statSync");
+    try {
+      const key = directoryKey(directory);
+      // The stat `directoryKey` made, before this test makes one of its own.
+      expect(spy).toHaveBeenCalledWith(directory, expect.objectContaining({ bigint: true }));
+      expect(key).toBe(fileKey(fs.statSync(directory, { bigint: true })));
+      const other = path.join(directory, "other");
+      fs.mkdirSync(other);
+      expect(sameDirectory(directory, other)).toBe(false);
+      expect(sameDirectory(directory, directory)).toBe(true);
+    } finally {
+      spy.mockRestore();
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("is true of a real directory and of a symlink to it", () => {
