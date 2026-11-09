@@ -67,7 +67,7 @@ async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEn
   const invocation = selfInvocation(args);
   const command = `agent-shim ${args.join(" ")}`;
   limit.signal?.throwIfAborted();
-  const { status, stdout, stderr } = await new Promise<{ readonly status: number | null; readonly stdout: string; readonly stderr: string }>((resolve, reject) => {
+  const { status, stdout, stderr, shortRead } = await new Promise<{ readonly status: number | null; readonly stdout: string; readonly stderr: string; readonly shortRead: { readonly received: number; readonly announced: number } | undefined }>((resolve, reject) => {
     const child = limit.spawn(invocation.command, [...invocation.args], { stdio: ["ignore", "pipe", "pipe", "pipe"], env: { ...env, [REPORT_PROGRESS_FD_ENV]: String(REPORT_PROGRESS_FD) }, detached: true });
     const releases: (() => void)[] = [];
     const finish = (settle: () => void): void => {
@@ -107,11 +107,14 @@ async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEn
       err = (err + chunk).slice(-STDERR_TAIL_CHARS);
     });
     child.once("error", (error) => { finish(() => { reject(error); }); });
-    child.once("close", (code) => { finish(() => { resolve({ status: code, stdout: output.report(), stderr: err }); }); });
+    child.once("close", (code) => { finish(() => { resolve({ status: code, stdout: output.report(), stderr: err, shortRead: output.shortRead() }); }); });
   });
   const diagnostics = stderr.trim();
   if (!REPORTED_STATUSES.has(status) || stdout.trim() === "") {
     throw new Error(diagnostics === "" ? `${command} exited ${String(status)} without a report` : diagnostics);
+  }
+  if (shortRead !== undefined) {
+    throw new Error(`${command} printed ${String(shortRead.received)} of the ${String(shortRead.announced)} bytes it announced${diagnostics === "" ? "" : `: ${diagnostics}`}`);
   }
   try {
     const parsed: unknown = JSON.parse(stdout);

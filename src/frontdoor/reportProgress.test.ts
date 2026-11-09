@@ -156,6 +156,17 @@ describe("the report output reader", () => {
     expect(read(["x".repeat(REPORT_SIZE_PREFIX.length + String(Number.MAX_SAFE_INTEGER).length + 2)]).failures).toEqual(["printed output without announcing its size"]);
   });
 
+  it("says how much of the announced size is missing once the child has ended, and nothing when the report is whole", () => {
+    const reader = createReportOutputReader(() => undefined);
+    expect(reader.shortRead()).toBeUndefined();
+    const announced = "abcdefghij";
+    const FIRST_PART = 3;
+    reader.push(`${encodeReportSize(announced.length)}${announced.slice(0, FIRST_PART)}`);
+    expect(reader.shortRead()).toEqual({ received: FIRST_PART, announced: announced.length });
+    reader.push(announced.slice(FIRST_PART));
+    expect(reader.shortRead()).toBeUndefined();
+  });
+
   it("is told of a report's size by the installed observer, before the report", () => {
     const printed: string[] = [];
     const stop = installReportProgress({ [REPORT_PROGRESS_FD_ENV]: String(DESCRIPTOR) }, () => undefined, () => 0, {}, (text) => { printed.push(text); });

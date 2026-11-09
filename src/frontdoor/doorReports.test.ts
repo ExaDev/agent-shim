@@ -368,6 +368,13 @@ describe("the door's check and doctor reports", () => {
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(/expected|invalid|required/i);
   });
 
+  it("names the short read when a child exits having printed fewer bytes than it announced", async () => {
+    const announced = 100;
+    const partial = '{"a":1}';
+    const reports = createDoorReports({ selfInvocation: nodeRunning(`process.stdout.write(${JSON.stringify(encodeReportSize(announced))}); process.stdout.write(${JSON.stringify(partial)});`), env: {} });
+    await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`printed ${String(partial.length)} of the ${String(announced)} bytes it announced`);
+  });
+
   it("ends a child that prints without announcing a size", async () => {
     const reports = createDoorReports({ selfInvocation: nodeRunning(`process.stdout.write("{}".repeat(100));`), env: {}, silenceMs: LONG_BOUND_MS });
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow("printed output without announcing its size");

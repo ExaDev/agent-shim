@@ -41,10 +41,11 @@ export function encodeReportSize(bytes: number): string {
   return `${REPORT_SIZE_PREFIX}${String(bytes)}\n`;
 }
 
-/** What `createReportOutputReader` returns: `push` takes standard output as it arrives, `report` is the report read so far (empty until the size line is whole). */
+/** What `createReportOutputReader` returns: `push` takes standard output as it arrives, `report` is the report read so far (empty until the size line is whole), and `shortRead` says how many bytes of the announced size are missing once the child has ended (undefined when the report is whole or no size was announced). */
 export interface ReportOutputReader {
   readonly push: (chunk: string) => void;
   readonly report: () => string;
+  readonly shortRead: () => { readonly received: number; readonly announced: number } | undefined;
 }
 
 /**
@@ -83,6 +84,7 @@ export function createReportOutputReader(fail: (reason: string) => void): Report
       report += rest;
     },
     report: () => report,
+    shortRead: () => (announced !== undefined && reportBytes < announced ? { received: reportBytes, announced } : undefined),
   };
 }
 
