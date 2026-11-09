@@ -271,6 +271,56 @@ describe("doorDial", () => {
   });
 });
 
+describe("the door's lookup answers in the shape node asks for", () => {
+  const lookup = createDoorLookup({ isIP: net.isIP, resolve4: (_host, callback) => { callback(null, ["192.0.2.7"]); } });
+
+  /** What the lookup hands its callback for `host`, with `all` as the dial would ask. */
+  function answered(host: string, all: boolean): readonly unknown[] {
+    let handed: readonly unknown[] = [];
+    lookup(host, { all }, (...args: readonly unknown[]) => {
+      handed = args;
+    });
+    return handed;
+  }
+
+  it("answers an array when all addresses are asked for, and one address and its family when one is", () => {
+    for (const host of ["localhost", "sub.localhost", "spark.example", "10.0.0.5"]) {
+      const [error, many] = answered(host, true);
+      expect(error, host).toBeNull();
+      expect(Array.isArray(many), host).toBe(true);
+      const [singleError, address, family] = answered(host, false);
+      expect(singleError, host).toBeNull();
+      expect(typeof address, host).toBe("string");
+      expect(net.isIP(String(address)), host).toBe(family);
+    }
+  });
+
+  it("lets a real dial reach a listener by name with node's automatic address-family selection off, which asks for one address", async () => {
+    const server = net.createServer();
+    servers.push(server);
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("listener has no TCP address");
+    }
+    const before = net.getDefaultAutoSelectFamily();
+    net.setDefaultAutoSelectFamily(false);
+    try {
+      const outcome = await doorDial(
+        { connect: (options) => net.connect(options), lookup, isIP: net.isIP },
+        { host: "localhost", port: address.port },
+        new SourcePortRange(RANGE_START, RANGE_END),
+      );
+      outcome.socket.destroy();
+      expect(outcome.error).toBeNull();
+    } finally {
+      net.setDefaultAutoSelectFamily(before);
+    }
+  });
+});
+
 describe("the provider probe on its worker thread", () => {
   it("reaches a listener on loopback by the name localhost, which a resolver is never asked about", async () => {
     const server = net.createServer();
@@ -329,7 +379,7 @@ describe("evaluating each embedded dial function from its source text alone", ()
         callback(null, ["192.0.2.99"]);
       },
     });
-    lookup("provider.example", {}, (_err, addresses) => {
+    lookup("provider.example", { all: true }, (_err, addresses) => {
       resolvedAddresses = addresses as readonly { readonly address: string; readonly family: number }[];
     });
     expect(resolvedAddresses).toEqual([{ address: "192.0.2.99", family: 4 }]);
@@ -346,7 +396,7 @@ describe("evaluating each embedded dial function from its source text alone", ()
     });
     for (const name of ["localhost", "LOCALHOST", "localhost.", "api.localhost", "a.b.Localhost."]) {
       let answered: unknown;
-      lookup(name, {}, (_err, addresses) => {
+      lookup(name, { all: true }, (_err, addresses) => {
         answered = addresses;
       });
       expect(answered, name).toEqual([{ address: "127.0.0.1", family: 4 }, { address: "::1", family: 6 }]);
