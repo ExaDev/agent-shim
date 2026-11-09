@@ -236,12 +236,26 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
       releasePlace();
       return;
     }
-    const heartbeat = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
-    const beats = new Int32Array(heartbeat);
-    const startedAt = clock.now();
+    // Everything that can throw between taking a place and the worker's first event is here: the shared buffer, the clock and the thread's creation. A throw is the flight's failure, named by the error's class and code only, and the place goes back, so no caller hangs and no equal request joins a flight that never started.
+    let heartbeat: SharedArrayBuffer;
+    let beats: Int32Array;
+    let startedAt: number;
+    let worker: DoorWorkerHandle;
+    try {
+      heartbeat = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+      beats = new Int32Array(heartbeat);
+      startedAt = clock.now();
+      worker = spawn(options.code, { doorWorker: { task: flight.task, input: flight.input, facts: options.facts, heartbeat } });
+    } catch (error) {
+      const { name, code } = identifiedFailure(error);
+      if (close(flight)) {
+        flight.outcome.reject(failure(flight.task, `its thread could not be started (${name}${code === undefined ? "" : `, ${code}`})`, "worker"));
+      }
+      releasePlace();
+      return;
+    }
     let lastBeat = Atomics.load(beats, 0);
     let lastBeatAt = startedAt;
-    const worker = spawn(options.code, { doorWorker: { task: flight.task, input: flight.input, facts: options.facts, heartbeat } });
     let stopWatchdog: () => void = () => undefined;
     let threadEnded = false;
     let terminating = false;
@@ -271,41 +285,47 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
         flight.outcome.reject(failure(flight.task, reason, kind));
       });
     };
-    stopWatchdog = clock.every(() => {
-      const now = clock.now();
-      const beat = Atomics.load(beats, 0);
-      if (beat !== lastBeat) {
-        lastBeat = beat;
-        lastBeatAt = now;
-      }
-      if (now - startedAt > options.deadlineMs[flight.task]) {
-        flight.cancel("it outlasted its deadline", "deadline");
-      } else if (now - lastBeatAt > stallLimitMs) {
-        flight.cancel("it stalled: nothing in it moved", "stalled");
-      }
-    }, DOOR_WORKER_WATCHDOG_INTERVAL_MS);
-    worker.on("message", (value) => {
-      if (!isDoorWorkerMessage(value)) {
-        flight.cancel("it answered with something other than a result", "worker");
-        return;
-      }
-      finish(() => {
-        if (value.kind === "done") {
-          flight.outcome.resolve(value.value);
-        } else {
-          flight.outcome.reject(failure(flight.task, `it ended with ${value.name}${value.code === undefined ? "" : ` (${value.code})`}`, "worker"));
+    // The thread exists from here: a throw while it is being watched ends it through the flight's own cancellation, which terminates it and returns the place when it has ended.
+    try {
+      stopWatchdog = clock.every(() => {
+        const now = clock.now();
+        const beat = Atomics.load(beats, 0);
+        if (beat !== lastBeat) {
+          lastBeat = beat;
+          lastBeatAt = now;
         }
+        if (now - startedAt > options.deadlineMs[flight.task]) {
+          flight.cancel("it outlasted its deadline", "deadline");
+        } else if (now - lastBeatAt > stallLimitMs) {
+          flight.cancel("it stalled: nothing in it moved", "stalled");
+        }
+      }, DOOR_WORKER_WATCHDOG_INTERVAL_MS);
+      worker.on("message", (value) => {
+        if (!isDoorWorkerMessage(value)) {
+          flight.cancel("it answered with something other than a result", "worker");
+          return;
+        }
+        finish(() => {
+          if (value.kind === "done") {
+            flight.outcome.resolve(value.value);
+          } else {
+            flight.outcome.reject(failure(flight.task, `it ended with ${value.name}${value.code === undefined ? "" : ` (${value.code})`}`, "worker"));
+          }
+        });
       });
-    });
-    worker.on("error", (error) => {
-      // An uncaught error in the thread: its class name and code only, as a posted failure carries, never its message, which can hold what a credential command printed.
+      worker.on("error", (error) => {
+        // An uncaught error in the thread: its class name and code only, as a posted failure carries, never its message, which can hold what a credential command printed.
+        const { name, code } = identifiedFailure(error);
+        flight.cancel(`it raised ${name}${code === undefined ? "" : ` (${code})`}`, "worker");
+      });
+      worker.on("exit", (code) => {
+        flight.cancel(`it ended with code ${String(code)} without an answer`, "worker");
+        threadHasEnded();
+      });
+    } catch (error) {
       const { name, code } = identifiedFailure(error);
-      flight.cancel(`it raised ${name}${code === undefined ? "" : ` (${code})`}`, "worker");
-    });
-    worker.on("exit", (code) => {
-      flight.cancel(`it ended with code ${String(code)} without an answer`, "worker");
-      threadHasEnded();
-    });
+      flight.cancel(`its thread could not be watched (${name}${code === undefined ? "" : `, ${code}`})`, "worker");
+    }
   };
 
   starter.launch = launch;
