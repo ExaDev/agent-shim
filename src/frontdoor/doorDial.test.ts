@@ -254,6 +254,38 @@ describe("evaluating each embedded dial function from its source text alone", ()
     expect(asked).toEqual(["notlocalhost", "localhost.example"]);
   });
 
+  it("says the door resolves through DNS A records only when a name does not resolve, keeping the error's code, evaluated in isolation", () => {
+    const isolatedCreateLookup = vm.runInNewContext(`(${createDoorLookup.toString()})`, { Error, Object }) as typeof createDoorLookup;
+    const failures: NodeJS.ErrnoException[] = [];
+    class NotFound extends Error {
+      public readonly code = "ENOTFOUND";
+    }
+    const notFound = new NotFound("queryA ENOTFOUND spark.local");
+    const answers: readonly (readonly string[] | Error)[] = [notFound, []];
+    for (const answer of answers) {
+      const lookup = isolatedCreateLookup({
+        isIP: () => 0,
+        resolve4: (_host, callback) => {
+          if (answer instanceof Error) {
+            callback(answer, []);
+          } else {
+            callback(null, answer);
+          }
+        },
+      });
+      lookup("spark.local", {}, (error) => {
+        if (error !== null) {
+          failures.push(error);
+        }
+      });
+    }
+    expect(failures.map((failure) => failure.message)).toEqual([
+      expect.stringMatching(/^queryA ENOTFOUND spark\.local \(the door resolves names through DNS A records only, never the hosts file or mDNS and not AAAA records/u) as unknown,
+      expect.stringMatching(/^no A record for spark\.local \(the door resolves names through DNS A records only/u) as unknown,
+    ]);
+    expect(failures[0]?.code).toBe("ENOTFOUND");
+  });
+
   it("dials a name through doorDial evaluated in isolation", async () => {
     const isolatedDoorDial = vm.runInNewContext(`(${doorDial.toString()})`, { Promise, Error }) as typeof doorDial;
     const socket = new SilentSocket();
