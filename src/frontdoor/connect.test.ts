@@ -38,6 +38,24 @@ describe("MITM proxy over real sockets", () => {
   }, KEYGEN_TIMEOUT_MS);
 
   it(
+    "terminates a CONNECT to the API host written with its trailing root dot, as it does the same host written without",
+    async () => {
+      const world = makeTlsWorld(ca, upstreamCa);
+      const { connectPort, close } = await world.start();
+      try {
+        const attempt = rawAttempt(connectPort, `CONNECT ${CONNECT_INTERCEPT_HOST}.:443 HTTP/1.1\r\nHost: ${CONNECT_INTERCEPT_HOST}.:443\r\n${proxyAuthorizationFor(TEST_CAPABILITY)}\r\n\r\n`);
+        expect(await attempt.answer).toContain(String(HTTP_OK));
+        // A blind tunnel dials its target as the CONNECT is answered; a terminated session dials nothing.
+        expect(world.dials).toEqual([]);
+        attempt.socket.destroy();
+      } finally {
+        await close();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
     "terminates api.anthropic.com TLS with the CA's leaf and serves /v1/ through the routed handler, streaming the body and passing Authorization through untouched",
     async () => {
       const world = makeTlsWorld(ca, upstreamCa);

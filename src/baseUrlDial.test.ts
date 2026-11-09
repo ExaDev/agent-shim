@@ -17,8 +17,8 @@ describe("parseDialAuthority", () => {
     expect(parseDialAuthority("[2001:DB8::7]:1", HTTPS_PORT)).toEqual({ host: "2001:db8::7", port: 1 });
   });
 
-  it("keeps a v4-mapped literal whole", () => {
-    expect(parseDialAuthority("[::ffff:127.0.0.1]:9", HTTPS_PORT)).toEqual({ host: "::ffff:127.0.0.1", port: 9 });
+  it("spells a v4-mapped literal as a URL does", () => {
+    expect(parseDialAuthority("[::ffff:127.0.0.1]:9", HTTPS_PORT)).toEqual({ host: "::ffff:7f00:1", port: 9 });
   });
 
   it("keeps a zone id's case and takes its RFC 6874 escaped percent sign", () => {
