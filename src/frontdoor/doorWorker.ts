@@ -4,6 +4,7 @@ import { Worker } from "node:worker_threads";
 
 import { DOOR_WORKER_CODE_ASSET } from "../../scripts/bundle-options.mts";
 import { CliError } from "../cliError";
+import { CATALOGUE_REFRESH_TIMEOUT_MS } from "../providerCatalogue";
 import { isDoorWorkerMessage, type DoorWorkerData, type DoorWorkerTaskName, type DoorWorkerTasks } from "./doorWorkerProtocol";
 
 /**
@@ -15,24 +16,34 @@ import { isDoorWorkerMessage, type DoorWorkerData, type DoorWorkerTaskName, type
 /**
  * The code text a door worker evaluates, read once by the door when it starts: the embedded asset of a single-executable build, otherwise the command line bundle at `bundlePath`. The text is held in memory, so removing or replacing the file afterwards changes nothing.
  */
-export function readDoorWorkerCode(bundlePath: string): string {
+function readDoorWorkerCode(bundlePath: string): string {
   return isSea() ? getAsset(DOOR_WORKER_CODE_ASSET, "utf8") : fs.readFileSync(bundlePath, "utf8");
 }
 
+/** The longest a check or doctor report runs in a worker: five minutes, the longest a person or a tool waits on one. */
+const DOOR_REPORT_DEADLINE_MS = 300_000;
+
 /** How many worker threads the door runs at once, each a whole isolate with the bundle loaded in it. */
-export const MAX_CONCURRENT_DOOR_WORKERS = 2;
+const MAX_CONCURRENT_DOOR_WORKERS = 2;
 
 /** How many tasks may wait for a worker beyond those running; a task past it is refused at once. */
-export const MAX_QUEUED_DOOR_WORKER_TASKS = 8;
+const MAX_QUEUED_DOOR_WORKER_TASKS = 8;
 
 /** The old-generation heap a door worker may grow to, in megabytes: a report of a very large configuration ends in a worker error and not in the door's memory. */
-export const DOOR_WORKER_MAX_OLD_GENERATION_MB = 512;
+const DOOR_WORKER_MAX_OLD_GENERATION_MB = 512;
+
+/** The longest a report or a catalogue refresh runs in a worker in all, whatever its heartbeat says: a report of a configuration with many providers probes each one's connect bound, and a catalogue refresh is bounded by its own timeout. */
+const DOOR_WORKER_DEADLINES: Readonly<Record<DoorWorkerTaskName, number>> = {
+  check: DOOR_REPORT_DEADLINE_MS,
+  doctor: DOOR_REPORT_DEADLINE_MS,
+  "refresh-catalogue": CATALOGUE_REFRESH_TIMEOUT_MS,
+};
 
 /** How often the watchdog looks at each running worker. */
 export const DOOR_WORKER_WATCHDOG_INTERVAL_MS = 1_000;
 
 /** The longest a single blocking step of a report runs without telling the heartbeat anything: the longest synchronous command timeout any report step uses (a Codex version check), doubled for a loaded machine. A report whose heartbeat does not move for this long is stalled. */
-export const DOOR_WORKER_STALL_LIMIT_MS = 60_000;
+const DOOR_WORKER_STALL_LIMIT_MS = 60_000;
 
 /** The input the host takes for a task, as `DoorWorkerTasks` declares it. */
 type InputOf<T extends DoorWorkerTaskName> = DoorWorkerTasks[T]["input"];
@@ -56,7 +67,7 @@ export class DoorWorkerFailedError extends CliError {
 }
 
 /** The part of a worker thread the host uses, so a test can stand a fake in. */
-export interface DoorWorkerHandle {
+interface DoorWorkerHandle {
   readonly on: ((event: "message", listener: (value: unknown) => void) => unknown) & ((event: "error", listener: (error: Error) => void) => unknown) & ((event: "exit", listener: (code: number) => void) => unknown);
   readonly terminate: () => Promise<number>;
 }
@@ -306,4 +317,9 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
       }
     },
   };
+}
+
+/** The host a real front door runs its worker tasks through: the code text is read now, once, from the embedded asset or the bundle at `bundlePath`, and every task has its deadline. */
+export function createRealDoorWorkerHost(bundlePath: string): DoorWorkerHost {
+  return createDoorWorkerHost({ code: readDoorWorkerCode(bundlePath), deadlineMs: DOOR_WORKER_DEADLINES });
 }

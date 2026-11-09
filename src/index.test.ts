@@ -60,9 +60,7 @@ describe("library surface", () => {
   it("exports the documented types, which the runtime list below cannot pin: this fails to compile when one is removed or renamed", () => {
     // A type has no runtime name, so each documented type is used here in a position that only compiles while it is exported.
     const plan: Pick<library.ClaudeLaunchPlan, "warnings"> = { warnings: [] };
-    const report: Pick<library.DoorReportUnavailableError, "name"> = new library.DoorReportUnavailableError("check");
     expect(plan.warnings).toEqual([]);
-    expect(report.name).toBe("DoorReportUnavailableError");
   });
 
   it("exposes exactly the documented entry points, so adding or removing one is a deliberate change to this list and to docs/library.md", () => {
@@ -148,7 +146,6 @@ describe("library surface", () => {
       "DoorEventSchema",
       "DoorEventSourceQuerySchema",
       "DoorHealthEventSchema",
-      "DoorReportUnavailableError",
       "DuplicateIdentityNameError",
       "EXIT_FAILURE",
       "EXIT_USAGE",

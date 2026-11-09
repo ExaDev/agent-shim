@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 
-import { doorReportPorts } from "./doorReportPorts";
+import { DoorWorkerBusyError } from "./doorWorker";
 import { checkReportToJson, runCheck, type CheckReport, type RunCheckParams } from "../checkReport";
 import type { Pool } from "../config/schema";
 import type { DoctorReport } from "../doctorReport";
@@ -132,13 +132,13 @@ const DEPS: ControlApiDeps = {
   usageSnapshotOf: (identity) => SNAPSHOTS.find((snapshot) => snapshot.identity === identity),
   now: () => NOW_MS,
   frontDoorStatus: () => STATUS,
-  checkReport: (target) => {
+  checkReport: async (target) => {
     if (target !== `${FAKE_HOME}/work`) {
       throw new Error(`the fixed check dep answers one directory only, not ${target}`);
     }
-    return CHECK;
+    return await Promise.resolve(checkReportToJson(CHECK));
   },
-  doctorReport: () => DOCTOR,
+  doctorReport: async () => await Promise.resolve(DOCTOR),
   poolPick: (pool, directory) => POOL_PICKS[pool] === undefined || directory !== `${FAKE_HOME}/work` ? undefined : POOL_PICKS[pool],
   poolNames: () => Object.keys(POOL_PICKS),
 };
@@ -300,19 +300,26 @@ describe("the door's control-plane API", () => {
     });
   });
 
-  describe("a report the door cannot collect", () => {
-    it("answers check.run and doctor.run as SERVICE_UNAVAILABLE naming what to run instead and where it is tracked, whatever was asked", async () => {
-      const unavailable = await mountClient({ ...DEPS, ...doorReportPorts }, CONTROL_TOKEN);
+  describe("a report the door's workers cannot take", () => {
+    it("answers check.run and doctor.run as a retryable SERVICE_UNAVAILABLE when every worker is busy", async () => {
+      const busy = await mountClient(
+        {
+          ...DEPS,
+          checkReport: async () => await Promise.reject(new DoorWorkerBusyError("check")),
+          doctorReport: async () => await Promise.reject(new DoorWorkerBusyError("doctor")),
+        },
+        CONTROL_TOKEN,
+      );
       try {
-        await expect(unavailable.client.check.run({ path: `${FAKE_HOME}/work` })).rejects.toMatchObject({ code: "SERVICE_UNAVAILABLE", message: expect.stringMatching(/Run `agent-shim check` from a shell.*agent-shim#769/) as unknown });
-        await expect(unavailable.client.doctor.run()).rejects.toMatchObject({ code: "SERVICE_UNAVAILABLE", message: expect.stringMatching(/Run `agent-shim doctor` from a shell.*agent-shim#769/) as unknown });
+        await expect(busy.client.check.run({ path: `${FAKE_HOME}/work` })).rejects.toMatchObject({ code: "SERVICE_UNAVAILABLE", message: expect.stringMatching(/busy/u) as unknown });
+        await expect(busy.client.doctor.run()).rejects.toMatchObject({ code: "SERVICE_UNAVAILABLE", message: expect.stringMatching(/busy/u) as unknown });
       } finally {
-        await unavailable.close();
+        await busy.close();
       }
     });
 
     it("leaves any other failure of a collector as the failure it is", async () => {
-      const broken = await mountClient({ ...DEPS, doctorReport: () => { throw new Error("disk gone"); } }, CONTROL_TOKEN);
+      const broken = await mountClient({ ...DEPS, doctorReport: async () => await Promise.reject(new Error("disk gone")) }, CONTROL_TOKEN);
       try {
         await expect(broken.client.doctor.run()).rejects.not.toMatchObject({ code: "SERVICE_UNAVAILABLE" });
       } finally {
@@ -334,9 +341,9 @@ describe("the door's control-plane API", () => {
       const spy = await mountClient(
         {
           ...DEPS,
-          checkReport: (target, identity) => {
+          checkReport: async (target, identity) => {
             seen = identity;
-            return DEPS.checkReport(target);
+            return await DEPS.checkReport(target, identity, new AbortController().signal);
           },
         },
         CONTROL_TOKEN,

@@ -6,6 +6,7 @@ import * as esbuild from "esbuild";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { cliBundleOptions } from "../../scripts/bundle-options.mts";
+import { CheckReportJsonSchema } from "../checkReportSchema";
 import { DoctorRunOutputSchema } from "./controlSchemas";
 import { createDoorWorkerHost } from "./doorWorker";
 import { enterProcessRole } from "../processRole";
@@ -31,7 +32,7 @@ describe("a door worker running the real bundle", () => {
   });
 
   it(
-    "collects the doctor report in a thread of the door while the door's role refuses to block, from code that no longer exists on disk, and leaves the event loop running",
+    "collects the doctor and check reports of a configuration with an http provider in threads of the door, whose role refuses to block, from code that no longer exists on disk, and leaves the event loop running",
     async () => {
       const leave = enterProcessRole("frontdoor-supervisor");
       const host = createDoorWorkerHost({ code, deadlineMs: { check: REAL_WORKER_TEST_BUDGET_MS, doctor: REAL_WORKER_TEST_BUDGET_MS, "refresh-catalogue": REAL_WORKER_TEST_BUDGET_MS } });
@@ -46,10 +47,14 @@ describe("a door worker running the real bundle", () => {
       spin();
       try {
         const root = path.join(dir, "home");
-        fs.mkdirSync(root);
-        const report = await host.run("doctor", { root }, (value) => DoctorRunOutputSchema.parse(value));
-        expect(Array.isArray(report.findings)).toBe(true);
-        // The door's own thread kept running while the report was collected.
+        fs.mkdirSync(path.join(root, "providers"), { recursive: true });
+        // A provider whose base URL nothing listens on: collecting its report runs the launcher's synchronous probe, which the door's own role refuses.
+        fs.writeFileSync(path.join(root, "providers", "closed.json"), JSON.stringify({ displayName: "Closed", baseUrl: "http://127.0.0.1:1", credential: { sources: [{ literal: "placeholder" }] } }));
+        const doctor = await host.run("doctor", { root }, (value) => DoctorRunOutputSchema.parse(value));
+        expect(doctor.findings.some((finding) => finding.section === "provider" && finding.message.includes("could not connect"))).toBe(true);
+        const check = await host.run("check", { root, path: dir }, (value) => CheckReportJsonSchema.parse(value));
+        expect(check.entries.length).toBeGreaterThan(0);
+        // The door's own thread kept running while the reports were collected.
         expect(ticks).toBeGreaterThan(1);
       } finally {
         running = false;
