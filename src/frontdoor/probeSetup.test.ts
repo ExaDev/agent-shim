@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { DOOR_SOURCE_PORT_END, DOOR_SOURCE_PORT_START, SourcePortRange } from "./connectEffects";
 import { createDoorLookup, doorDial, probeAccept, runAcceptProbe, type AcceptProbeDeps, type DialSocket } from "./doorDial";
-import { probeAddressesAcceptSync, probeListenerAcceptSync, type ProbeWorkers } from "./probe";
+import { MAX_CONCURRENT_PROBES, probeAddressesAcceptSync, probeListenerAcceptSync, type ProbeWorkers } from "./probe";
+import { growsLinearly } from "../test-helpers";
 
 const RANGE_START = 47_900;
 const RANGE_END = 47_902;
@@ -154,6 +155,80 @@ describe("a batch of provider probes", () => {
         portEnd: DOOR_SOURCE_PORT_END,
       });
     }
+  });
+});
+
+describe("a batch of provider probes at the size of a large configuration", () => {
+  const FIRST = 100;
+  const SECOND = 200;
+  const THIRD = 400;
+  const sizes = [FIRST, SECOND, THIRD] as const;
+
+  /** Workers that hold the source port their rotation hands them, as a dial holds it while it connects, until their verdict is read; a rotation that meets a held port takes the next, as the door's dial does. Records how many workers were alive at once, how many bind attempts were made and what was started. */
+  function holdingWorkers(): { readonly workers: ProbeWorkers; readonly peak: () => number; readonly attempts: () => number; readonly started: () => number } {
+    const held = new Set<number>();
+    let alive = 0;
+    let peakAlive = 0;
+    let bindAttempts = 0;
+    let startedCount = 0;
+    return {
+      peak: () => peakAlive,
+      attempts: () => bindAttempts,
+      started: () => startedCount,
+      workers: {
+        start: (_source, data) => {
+          startedCount += 1;
+          const ports = new SourcePortRange(Number(data.portStart), Number(data.portEnd), Number(data.portFirst));
+          let port = ports.take();
+          bindAttempts += 1;
+          while (held.has(port)) {
+            port = ports.take();
+            bindAttempts += 1;
+          }
+          held.add(port);
+          alive += 1;
+          peakAlive = Math.max(peakAlive, alive);
+          return {
+            verdict: () => {
+              held.delete(port);
+              alive -= 1;
+              return { ok: true };
+            },
+          };
+        },
+      },
+    };
+  }
+
+  const distinctTargets = (count: number) => Array.from({ length: count }, (_, index) => ({ host: `p${String(index)}.example`, port: PORT, timeoutMs: PROBE_BOUND_MS }));
+
+  it("runs no more workers at once than the bound, however many providers there are", () => {
+    for (const size of sizes) {
+      const run = holdingWorkers();
+      probeAddressesAcceptSync(distinctTargets(size), run.workers);
+      expect(run.peak(), `size ${String(size)}`).toBeLessThanOrEqual(MAX_CONCURRENT_PROBES);
+      expect(run.started()).toBe(size);
+    }
+  });
+
+  it("makes bind attempts that grow linearly with the providers, as each worker's rotation starts apart", () => {
+    const counts = sizes.map((size) => {
+      const run = holdingWorkers();
+      probeAddressesAcceptSync(distinctTargets(size), run.workers);
+      return run.attempts();
+    });
+    expect(growsLinearly(sizes, [counts[0] ?? 0, counts[1] ?? 0, counts[2] ?? 0]), `attempts ${counts.join(", ")}`).toBe(true);
+    // Each worker found its port at the first attempt, since no two started on the same one.
+    expect(counts).toEqual([...sizes]);
+  });
+
+  it("probes a host, port and bound once however many providers name them, and gives each provider the verdict", () => {
+    const run = holdingWorkers();
+    const same = Array.from({ length: THIRD }, () => ({ host: "shared.example", port: PORT, timeoutMs: PROBE_BOUND_MS }));
+    const other = { host: "shared.example", port: PORT, timeoutMs: PROBE_BOUND_MS * 2 };
+    const verdicts = probeAddressesAcceptSync([...same, other], run.workers);
+    expect(run.started()).toBe(2);
+    expect(verdicts).toHaveLength(THIRD + 1);
   });
 });
 

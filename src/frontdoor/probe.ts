@@ -2,7 +2,7 @@ import { withBlockingStep } from "../blockingSteps";
 import { refuseToBlockInRole } from "../processRole";
 import { Worker, type WorkerOptions } from "node:worker_threads";
 
-import { DOOR_SOURCE_PORT_END, DOOR_SOURCE_PORT_START, SourcePortRange } from "./connectEffects";
+import { DOOR_SOURCE_PORT_COUNT, DOOR_SOURCE_PORT_END, DOOR_SOURCE_PORT_START, SourcePortRange } from "./connectEffects";
 import { createDoorLookup, doorDial, probeAccept, runAcceptProbe } from "./doorDial";
 
 /** The outcome of authenticating the listener a front-door state file names. */
@@ -147,7 +147,7 @@ export function probeFrontDoorSync(port: number, caPem: string, timeoutMs: numbe
 const ACCEPT_PROBE_SOURCE = probeWorkerSource(`
 const net = require("node:net");
 const dns = require("node:dns");
-const { host, port, portStart, portEnd, timeoutMs, ok, failed } = workerData;
+const { host, port, portStart, portEnd, portFirst, timeoutMs, ok, failed } = workerData;
 const finish = finishProbe;
 const SourcePortRange = ${SourcePortRange.toString()};
 const createDoorLookup = ${createDoorLookup.toString()};
@@ -155,7 +155,7 @@ const doorDial = ${doorDial.toString()};
 const probeAccept = ${probeAccept.toString()};
 const runAcceptProbe = ${runAcceptProbe.toString()};
 const startTimer = (callback, ms) => { const timer = setTimeout(callback, ms); return () => { clearTimeout(timer); }; };
-runAcceptProbe({ net, dns, createDoorLookup, doorDial, probeAccept, SourcePortRange }, { host, port, portStart, portEnd, timeoutMs }, startTimer).then((verdict) => {
+runAcceptProbe({ net, dns, createDoorLookup, doorDial, probeAccept, SourcePortRange }, { host, port, portStart, portEnd, portFirst, timeoutMs }, startTimer).then((verdict) => {
   finish(verdict.ok ? ok : failed, verdict.ok ? "" : verdict.reason);
 });
 `);
@@ -169,12 +169,54 @@ export function probeListenerAcceptSync(port: number, timeoutMs: number = PROBE_
 }
 
 /**
- * Whether the door's own dial reaches each address within its bound: one connect each, closed again the moment it is accepted, so no request reaches a listener. Every probe's worker is started before any is waited on, so the probes run together and the whole takes about the longest bound, not their sum. Verdicts come back in the order the targets were given. What `doctor`, `check` and a launch ask of providers' base URLs.
+ * How many of the door's reserved source ports probes may hold at once, as a share of the range: a probe of a named host takes one, and the door's live dials draw on the same range, so the probes of a batch take at most this share of it between them and leave the rest to the door.
+ */
+const PROBE_PORT_SHARE_DENOMINATOR = 100;
+
+/** How many probe workers a batch runs at once: the probes' share of the reserved range, a worker holding one source port while it connects. Each worker is a thread with an isolate of its own, so the bound also keeps a batch's memory to a fixed number of them however many providers are configured. */
+export const MAX_CONCURRENT_PROBES = Math.max(1, Math.floor(DOOR_SOURCE_PORT_COUNT / PROBE_PORT_SHARE_DENOMINATOR));
+
+/** A probe target's identity: two providers on one host and port with one bound need one connection between them. */
+const targetKey = (target: { readonly host: string; readonly port: number; readonly timeoutMs: number }): string => `${target.host}\u0000${String(target.port)}\u0000${String(target.timeoutMs)}`;
+
+/**
+ * Whether the door's own dial reaches each address within its bound: one connect each, closed again the moment it is accepted, so no request reaches a listener. Targets that name the same host, port and bound are probed once and share the verdict. At most `MAX_CONCURRENT_PROBES` workers run at once, each started before the verdict of the one `MAX_CONCURRENT_PROBES` places ahead is waited on, so the probes run together up to that bound and the rest start as earlier ones answer. Each worker's source-port rotation starts at its own place in the reserved range, spread evenly over the probes of the batch, so the dials of a batch do not all bind the first port and walk up the range together. Verdicts are returned in the order of `targets`.
  */
 export function probeAddressesAcceptSync(targets: readonly { readonly host: string; readonly port: number; readonly timeoutMs: number }[], workers: ProbeWorkers = realProbeWorkers): readonly ListenerVerdict[] {
   refuseToBlockInRole("a synchronous probe of a provider's address");
-  const started = targets.map((target) => workers.start(ACCEPT_PROBE_SOURCE, { host: target.host, port: target.port, portStart: DOOR_SOURCE_PORT_START, portEnd: DOOR_SOURCE_PORT_END }, target.timeoutMs));
-  return started.map((probe) => probe.verdict());
+  const distinct = new Map<string, { readonly host: string; readonly port: number; readonly timeoutMs: number }>();
+  for (const target of targets) {
+    if (!distinct.has(targetKey(target))) {
+      distinct.set(targetKey(target), target);
+    }
+  }
+  const unique = Array.from(distinct.values());
+  const stride = Math.max(1, Math.floor(DOOR_SOURCE_PORT_COUNT / unique.length));
+  const verdicts = new Map<string, ListenerVerdict>();
+  const running: { readonly key: string; readonly verdict: () => ListenerVerdict }[] = [];
+  const settleOldest = (): void => {
+    const oldest = running.shift();
+    if (oldest !== undefined) {
+      verdicts.set(oldest.key, oldest.verdict());
+    }
+  };
+  unique.forEach((target, index) => {
+    if (running.length >= MAX_CONCURRENT_PROBES) {
+      settleOldest();
+    }
+    const portFirst = DOOR_SOURCE_PORT_START + ((index * stride) % DOOR_SOURCE_PORT_COUNT);
+    running.push({ key: targetKey(target), verdict: workers.start(ACCEPT_PROBE_SOURCE, { host: target.host, port: target.port, portStart: DOOR_SOURCE_PORT_START, portEnd: DOOR_SOURCE_PORT_END, portFirst }, target.timeoutMs).verdict });
+  });
+  while (running.length > 0) {
+    settleOldest();
+  }
+  return targets.map((target) => {
+    const verdict = verdicts.get(targetKey(target));
+    if (verdict === undefined) {
+      throw new Error("the batch probe settled no verdict for one of its targets");
+    }
+    return verdict;
+  });
 }
 
 /** The part of a worker thread this module uses, so a test can stand in a worker that reports an error. */

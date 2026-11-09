@@ -30,12 +30,14 @@ export class SourcePortRange {
   readonly count: number;
   private next: number;
 
+  /** `first` is the port the rotation hands out first, `start` unless a caller gives its own: several rotations that serve one purpose at once (the probes of a batch) start apart, so they do not all bind the first port of the range and walk up it together. */
   constructor(
     readonly start: number,
     readonly end: number,
+    first: number = start,
   ) {
     this.count = end - start + 1;
-    this.next = start;
+    this.next = first;
   }
 
   /** The next port in rotation, wrapping from the end back to the start. */
@@ -54,7 +56,7 @@ export const DOOR_SOURCE_PORT_START = 47900;
 /**
  * How many source ports the door reserves. A closed upstream connection keeps its local port out of use for the TCP TIME_WAIT interval (twice the maximum segment lifetime, 30 s on macOS), so a range sustains about its width divided by that interval in new connections per second; a Remote Control fleet of concurrent sessions each holding a read stream and posting receipts needs far more than a few dozen ports. The range ends at 48899, short of the ephemeral start.
  */
-const DOOR_SOURCE_PORT_COUNT = 1000;
+export const DOOR_SOURCE_PORT_COUNT = 1000;
 
 /** The last port of the door's reserved source range, inclusive. */
 export const DOOR_SOURCE_PORT_END = DOOR_SOURCE_PORT_START + DOOR_SOURCE_PORT_COUNT - 1;
