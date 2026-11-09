@@ -14,7 +14,7 @@ import { readProvider } from "./providersStore";
 import { realCredentialPort, realFarmFs, realFsPort } from "./realPorts";
 
 /** One real GET: the status and the parsed JSON body, which is `undefined` when the body is not JSON. */
-const realCatalogueFetch: CatalogueFetch = async (url, headers, timeoutMs) => {
+export const realCatalogueFetch: CatalogueFetch = async (url, headers, timeoutMs) => {
   const response = await fetch(url, { headers: { ...headers }, signal: AbortSignal.timeout(timeoutMs) });
   const text = await response.text();
   try {

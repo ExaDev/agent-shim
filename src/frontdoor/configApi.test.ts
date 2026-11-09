@@ -278,6 +278,15 @@ describe("config API: providers", () => {
     expect(readProvider(paths, "z")).toBeUndefined();
   });
 
+  it("reports a write's base URL without its userinfo or query", async () => {
+    const api = clientWith(TOKEN).config;
+    const created = await api.provider.add({ name: "z", displayName: "z.ai", baseUrl: "https://user:hunter2@api.z.ai/api/anthropic?key=abc123", credential: { sources: [{ env: "Z_API_TOKEN" }], target: "apiKey" } });
+    expect(created.value).toMatchObject({ baseUrl: "https://api.z.ai/api/anthropic" });
+    expect(readProvider(paths, "z")).toMatchObject({ baseUrl: "https://user:hunter2@api.z.ai/api/anthropic?key=abc123" });
+    const updated = await api.provider.set({ name: "z", displayName: "Z" });
+    expect(updated.value).toMatchObject({ baseUrl: "https://api.z.ai/api/anthropic" });
+  });
+
   it("creates a codex provider and refuses a base URL on it", async () => {
     const api = clientWith(TOKEN).config;
     const created = await api.provider.add({ name: "codex", kind: "codex", displayName: "Codex", credential: { sources: [{ literal: LITERAL_PLACEHOLDER }] }, codex: { effort: "medium" } });
