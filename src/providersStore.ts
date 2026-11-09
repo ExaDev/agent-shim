@@ -526,14 +526,14 @@ export type ProviderSelection =
 /** The inputs that decide which provider a launch names: the flag, the cascade and the identity's own declaration. */
 type ProviderNaming = Pick<ResolveProviderParams, "paths" | "port" | "cliProvider" | "cascade" | "identityProvider">;
 
-/**
- * The name of the provider a launch routes through, if any: the `--provider` flag first, then the cascade's `launch.provider` selection, then the launching identity's own `provider`, with a former name resolved to the provider it became. Returns undefined when nothing selected a provider at all. A name no provider file defines is returned as named, for the caller to refuse.
- */
-export function selectedProviderName(params: ProviderNaming): string | undefined {
+/** The name of the provider a launch routes through, asking the cascade (when it has one) for the provider its layers select; see `selectedProviderNameFrom`. */
+function selectedProviderName(params: ProviderNaming): string | undefined {
   return selectedProviderNameFrom({ ...params, cascadeProvider: params.cascade === undefined ? undefined : cascadeLaunchProvider(params.cascade) });
 }
 
-/** `selectedProviderName` for a caller that has already asked the cascade (`cascadeLaunchProvider`), so a launch over a cascade shared by many does not assemble it again. */
+/**
+ * The name of the provider a launch routes through, if any: the `--provider` flag first, then `cascadeProvider` (what the cascade's layers select, from `cascadeLaunchProvider`, asked once for a cascade shared by many launches), then the launching identity's own `provider`, with a former name resolved to the provider it became. Returns undefined when nothing selected a provider at all. A name no provider file defines is returned as named, for the caller to refuse.
+ */
 export function selectedProviderNameFrom(params: Omit<ProviderNaming, "cascade"> & { readonly cascadeProvider: string | undefined }): string | undefined {
   const cliName = params.cliProvider !== undefined && params.cliProvider !== "" ? params.cliProvider : undefined;
   const named = cliName ?? params.cascadeProvider ?? params.identityProvider;

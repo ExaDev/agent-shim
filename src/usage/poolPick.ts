@@ -70,7 +70,7 @@ export function loadPoolMembers(fs: PoolPickFs, paths: PoolPickPaths, identities
 /**
  * `loadPoolMembers` with the usage log read and grouped once, for a caller that loads members several times against one log (ranking a pool graph loads the direct members of each pool and the pick of each nested one). The returned function reads each member's snapshot and login metadata when called, never the log again.
  */
-export function poolMemberLoader(fs: PoolPickFs, paths: PoolPickPaths, nowMs: number, idOf: (name: string) => string | undefined, providerOf?: ProviderOf): (identities: readonly string[]) => readonly PoolMember[] {
+function poolMemberLoader(fs: PoolPickFs, paths: PoolPickPaths, nowMs: number, idOf: (name: string) => string | undefined, providerOf?: ProviderOf): (identities: readonly string[]) => readonly PoolMember[] {
   const windowStartMs = nowMs - FIVE_HOUR_WINDOW_MS;
   const log = readUsageLog(fs, paths.usageLogDir, { sinceMs: windowStartMs });
   // The log is read for the window already (`sinceMs`), so each record is in it. Grouped once by who it is for, each member takes its group instead of searching the whole log.
