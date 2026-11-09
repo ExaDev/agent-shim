@@ -16,6 +16,8 @@ import { createDoorReports } from "./doorReports";
 import { MAX_REPORT_CHILDREN } from "./reportLimits";
 
 /** The release the doors in these tests say they are. */
+/** How long a test of a spawn that fails may take: a request that never settles because nothing listened for the failure must fail the test, not wait for the suite's hang guard. */
+const SPAWN_FAILURE_TIMEOUT_MS = 5_000;
 const RELEASE = "12.0.0";
 const DOOR = { release: RELEASE, build: "door-build" };
 
@@ -345,6 +347,34 @@ describe("the bound on a report child", () => {
     await expect(seen.doctorReport(new AbortController().signal)).rejects.toThrow(reportProgressTarget(REPORT_PROGRESS_FD, process.pid, ownReleaseIdentity()));
     expect(ownReleaseIdentity().build).not.toBe("");
   });
+
+  /** What node reports when it cannot open a child's pipes. */
+  class OutOfDescriptors extends Error {
+    public readonly code = "EMFILE";
+  }
+
+  it("fails with the spawn error, and leaves no uncaught error or timer, when the door is out of descriptors", async () => {
+    vi.useFakeTimers();
+    const uncaught: unknown[] = [];
+    const record = (error: unknown): void => { uncaught.push(error); };
+    process.on("uncaughtException", record);
+    try {
+      // What node returns when it cannot open the pipes: a child with no pid and no stdio, whose `error` is queued for the next tick.
+      const spawnFailing = (() => {
+        const child = new EventEmitter();
+        process.nextTick(() => { child.emit("error", new OutOfDescriptors("spawn EMFILE")); });
+        return child;
+      }) as unknown as typeof spawn;
+      const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, door: DOOR, spawn: spawnFailing });
+      await expect(reports.doctorReport(undefined)).rejects.toThrow("spawn EMFILE");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(uncaught).toEqual([]);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      process.off("uncaughtException", record);
+      vi.useRealTimers();
+    }
+  }, SPAWN_FAILURE_TIMEOUT_MS);
 
   it("says the door should be restarted when the executable it runs is gone", async () => {
     const reports = createDoorReports({ selfInvocation: () => ({ command: path.join(os.tmpdir(), `no-such-agent-shim-${randomUUID()}`), args: [] }), env: {}, door: DOOR });

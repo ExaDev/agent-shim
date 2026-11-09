@@ -86,33 +86,45 @@ async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEn
       endChild(child);
       finish(() => { reject(error instanceof Error ? error : new Error(String(error))); });
     };
-    // The watchdog is re-armed by each announcement: inside a step for its bound and margin, between steps for the silence window (`reportSilenceWindowMs` of the quiet bound: a unit's allowance plus the interval its note may be dropped for).
-    let watchdog: NodeJS.Timeout;
-    const arm = (allowedMs: number): void => {
-      clearTimeout(watchdog);
-      watchdog = setTimeout(() => { fail(new Error(`${command} made no progress within ${String(allowedMs)}ms`)); }, timerDelay(allowedMs));
-    };
-    arm(limit.silenceMs);
-    cleanups.push(() => { clearTimeout(watchdog); });
-    const outPipe = readablePipe(child, 1);
-    const errPipe = readablePipe(child, 2);
-    const progress = readablePipe(child, REPORT_PROGRESS_FD);
-    progress.setEncoding("utf8");
-    progress.on("data", createReportProgressReader((event) => {
-      arm(event.kind === "begin" ? event.boundMs + PROBE_WAIT_MARGIN_MS : limit.silenceMs);
-    }));
-    const onAbort = (): void => { fail(limit.signal?.reason); };
-    limit.signal?.addEventListener("abort", onAbort, { once: true });
-    cleanups.push(() => { limit.signal?.removeEventListener("abort", onAbort); });
-    const output = createReportOutputReader((reason) => { fail(new Error(`${command} ${reason}`)); });
+    // The child's own events are listened to straight after it is spawned, before anything that can throw: a spawn that fails because the door is out of descriptors queues an `error` event and leaves the child without its stdio, and an `error` with no listener ends the whole door.
+    let output: ReturnType<typeof createReportOutputReader> | undefined;
     let err = "";
-    outPipe.on("data", (chunk: Buffer | string) => { output.push(chunk); });
-    errPipe.setEncoding("utf8");
-    errPipe.on("data", (chunk: string) => {
-      err = (err + chunk).slice(-STDERR_TAIL_CHARS);
-    });
     child.once("error", (error) => { finish(() => { reject(isMissingExecutable(error) ? new Error(`${command} could not be started: ${invocation.command} is gone, so a release replaced or removed the one this front door runs. Run \`agent-shim frontdoor restart\` to replace the door.`, { cause: error }) : error); }); });
-    child.once("close", (code, endedBy) => { finish(() => { resolve({ status: code, signal: endedBy, stdout: output.report(), stderr: err, shortRead: output.shortRead() }); }); });
+    child.once("close", (code, endedBy) => { finish(() => { resolve({ status: code, signal: endedBy, stdout: output?.report() ?? "", stderr: err, shortRead: output?.shortRead() }); }); });
+    try {
+      const outPipe = readablePipe(child, 1);
+      const errPipe = readablePipe(child, 2);
+      const progress = readablePipe(child, REPORT_PROGRESS_FD);
+      output = createReportOutputReader((reason) => { fail(new Error(`${command} ${reason}`)); });
+      const reader = output;
+      outPipe.on("data", (chunk: Buffer | string) => { reader.push(chunk); });
+      errPipe.setEncoding("utf8");
+      errPipe.on("data", (chunk: string) => {
+        err = (err + chunk).slice(-STDERR_TAIL_CHARS);
+      });
+      // The watchdog is re-armed by each announcement: inside a step for its bound and margin, between steps for the silence window (`reportSilenceWindowMs` of the quiet bound: a unit's allowance plus the interval its note may be dropped for). It is armed once the pipes are wired, so a failure before then leaves no timer behind.
+      let watchdog: NodeJS.Timeout;
+      const arm = (allowedMs: number): void => {
+        clearTimeout(watchdog);
+        watchdog = setTimeout(() => { fail(new Error(`${command} made no progress within ${String(allowedMs)}ms`)); }, timerDelay(allowedMs));
+      };
+      arm(limit.silenceMs);
+      cleanups.push(() => { clearTimeout(watchdog); });
+      progress.setEncoding("utf8");
+      progress.on("data", createReportProgressReader((event) => {
+        arm(event.kind === "begin" ? event.boundMs + PROBE_WAIT_MARGIN_MS : limit.silenceMs);
+      }));
+      const onAbort = (): void => { fail(limit.signal?.reason); };
+      limit.signal?.addEventListener("abort", onAbort, { once: true });
+      cleanups.push(() => { limit.signal?.removeEventListener("abort", onAbort); });
+    } catch (error) {
+      // A child that never started (no pid) has no pipes to wire; the `error` event it queued says why it did not start, and rejects with that. Anything else that threw is a fault of the wiring itself.
+      if (child.pid === undefined) {
+        finish(() => undefined);
+        return;
+      }
+      fail(error);
+    }
   });
   const diagnostics = stderr.trim();
   const ended = signal === null ? `exited ${String(status)}` : `was ended by ${signal}`;
