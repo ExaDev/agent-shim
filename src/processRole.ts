@@ -28,10 +28,27 @@ export function enterProcessRole(role: ProcessRole): () => void {
   };
 }
 
+/** Told each time a blocking primitive starts, or a long one passes a slice of its wait: a worker thread running a door task counts them as its heartbeat. */
+let blockingStepObserver: (() => void) | undefined;
+
+/** Registers the one observer of blocking steps in this thread, replacing any earlier one; returns what removes it. */
+export function observeBlockingSteps(observer: () => void): () => void {
+  blockingStepObserver = observer;
+  return () => {
+    blockingStepObserver = undefined;
+  };
+}
+
+/** Tells the observer, if there is one, that a blocking step is running. */
+export function noteBlockingStep(): void {
+  blockingStepObserver?.();
+}
+
 /**
  * Throws `BlockingInEventLoopError` when this process serves other processes. Called first by every primitive that blocks the calling thread (`Atomics.wait` sleeps and the synchronous probe), so a path that would stall the door fails loudly at its first step instead of freezing every session for the length of its wait.
  */
 export function refuseToBlockInRole(operation: string): void {
+  noteBlockingStep();
   if (currentRole !== undefined) {
     throw new BlockingInEventLoopError(operation, currentRole);
   }

@@ -1,4 +1,4 @@
-import { refuseToBlockInRole } from "../processRole";
+import { noteBlockingStep, refuseToBlockInRole } from "../processRole";
 import { Worker, type WorkerOptions } from "node:worker_threads";
 
 import { DOOR_SOURCE_PORT_COUNT, DOOR_SOURCE_PORT_END, DOOR_SOURCE_PORT_START, SourcePortRange } from "./connectEffects";
@@ -270,6 +270,27 @@ interface ProbeWorkerHandle {
 /** The blocking wait on a header slot: `Atomics.wait`, which a test replaces with one that records how each wait ended (woken, already changed, or out of time), so a test of a prompt wake asserts on that outcome and not on how long the host took. */
 export type ProbeWait = (header: Int32Array, index: number, value: number, timeoutMs: number) => "ok" | "not-equal" | "timed-out";
 
+/**
+ * How long one slice of a probe's blocking wait lasts: the wait ends early when the verdict arrives, and between slices it tells the observer of blocking steps (`noteBlockingStep`) that it is still alive, so a door worker running a report shows a heartbeat through a wait as long as a provider's connect bound.
+ */
+export const PROBE_WAIT_SLICE_MS = 1_000;
+
+/** `Atomics.wait` in slices of `PROBE_WAIT_SLICE_MS`, noting a blocking step before each, with the same answers as one wait of `timeoutMs`: the real wait of every probe. */
+export const slicedProbeWait: ProbeWait = (header, index, value, timeoutMs) => {
+  const end = performance.now() + timeoutMs;
+  for (;;) {
+    noteBlockingStep();
+    const left = end - performance.now();
+    if (left <= 0) {
+      return "timed-out";
+    }
+    const answer = Atomics.wait(header, index, value, Math.min(left, PROBE_WAIT_SLICE_MS));
+    if (answer !== "timed-out") {
+      return answer;
+    }
+  }
+};
+
 /** Starts a worker thread running `source`; the real one is `node:worker_threads`. */
 export type ProbeWorkerSpawn = (source: string, options: WorkerOptions) => ProbeWorkerHandle;
 
@@ -282,7 +303,7 @@ const spawnRealWorker: ProbeWorkerSpawn = (source, options) => new Worker(source
  *
  * The probe sources embed the source text of functions from this bundle (`Function.prototype.toString`), and the text must run on its own in the worker: it can reference nothing but its own parameters. A bundler option that rewrites function bodies (esbuild's `keepNames` injects calls to a `__name` helper that exists only in the bundle) makes the worker throw a ReferenceError. The check is deliberately narrow, on what is embedded and not on the whole bundle, since a bundled dependency compiled with `keepNames` is harmless: `probe.test.ts` builds this module with the release's own options (`scripts/bundle-options.mts`) and fails if the source handed to a worker contains a `__name` call or does not run in a worker.
  */
-export function startProbeWorker(source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number, spawn: ProbeWorkerSpawn = spawnRealWorker, startLimitMs: number = PROBE_WORKER_START_LIMIT_MS, wait: ProbeWait = Atomics.wait): StartedProbe {
+export function startProbeWorker(source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number, spawn: ProbeWorkerSpawn = spawnRealWorker, startLimitMs: number = PROBE_WORKER_START_LIMIT_MS, wait: ProbeWait = slicedProbeWait): StartedProbe {
   const startLimit = performance.now() + startLimitMs;
   const shared = new SharedArrayBuffer(HEADER_SLOTS * INT32_BYTES + REASON_BYTES);
   const header = new Int32Array(shared, 0, HEADER_SLOTS);

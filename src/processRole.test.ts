@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { probeFrontDoorSync } from "./frontdoor/probe";
-import { BlockingInEventLoopError, enterProcessRole, refuseToBlockInRole } from "./processRole";
+import { BlockingInEventLoopError, enterProcessRole, noteBlockingStep, observeBlockingSteps, refuseToBlockInRole } from "./processRole";
 import { realIsProcessRunning, realRunningAmong, realSleepSync } from "./realPorts";
 
 /** What puts the process back to no role after a test that entered one. */
@@ -54,5 +54,20 @@ describe("process role", () => {
     expect(() => {
       realSleepSync(0);
     }).not.toThrow();
+  });
+});
+
+describe("blocking step observation", () => {
+  it("tells the observer about each blocking primitive that starts and about each noted slice, until it is removed", () => {
+    let steps = 0;
+    const remove = observeBlockingSteps(() => {
+      steps += 1;
+    });
+    realSleepSync(0);
+    noteBlockingStep();
+    expect(steps).toBe(2);
+    remove();
+    noteBlockingStep();
+    expect(steps).toBe(2);
   });
 });
