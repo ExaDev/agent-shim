@@ -27,15 +27,16 @@ function isSuccessful(status: number): boolean {
  * A range of local source ports the door's own upstream sockets bind, handed out in rotation because node binds one port per socket with no range option. The width is also the dial's retry bound: one attempt per port, so a fully-held range surfaces its last bind error instead of spinning. Injectable so the exhaustion tests hold a private range instead of racing every other worker for the door's real one.
  */
 export class SourcePortRange {
-  readonly count: number;
-  private next: number;
+  // Declared with `declare`, which emits no field: the probe worker embeds this class as source text, and a compiler targeting a syntax below ES2022 rewrites a class field into a call to a helper that the worker lacks (`probe.test.ts` bundles the probe at es2015 to prove none is left).
+  declare readonly start: number;
+  declare readonly end: number;
+  declare readonly count: number;
+  declare private next: number;
 
   /** `first` is the port the rotation hands out first, `start` unless a caller gives its own: several rotations that serve one purpose at once (the probes of a batch) start apart, so they do not all bind the first port of the range and walk up it together. */
-  constructor(
-    readonly start: number,
-    readonly end: number,
-    first: number = start,
-  ) {
+  constructor(start: number, end: number, first: number = start) {
+    this.start = start;
+    this.end = end;
     this.count = end - start + 1;
     this.next = first;
   }

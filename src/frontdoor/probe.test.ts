@@ -443,6 +443,15 @@ describe("the probe sources in the release bundle", () => {
     expect(bundled.probeListenerAcceptSync(await listenerThread(undefined), READ_VERDICT_TIMEOUT_MS)).toEqual({ ok: true });
   });
 
+  it("run in a worker when a consumer bundles them down to the oldest syntax their compiler targets, which gives the embedded functions no helper", async () => {
+    // Any construct the target has no syntax for (async functions, object spread, optional chaining, class fields) is rewritten into a call to a helper that lives in the bundle's own scope, which the worker does not have.
+    const bundled = await bundledProbe({ target: "es2015" });
+    expect(acceptProbeSourceOf(bundled).match(/.{40}\b__[A-Za-z]+\(.{20}/gu)).toBeNull();
+    const refused = bundled.probeListenerAcceptSync(await closedPort(), READ_VERDICT_TIMEOUT_MS);
+    expect(refused.ok ? "" : refused.reason).toMatch(/ECONNREFUSED/);
+    expect(bundled.probeListenerAcceptSync(await listenerThread(undefined), READ_VERDICT_TIMEOUT_MS)).toEqual({ ok: true });
+  });
+
   it("fail when the bundle names its functions, which is why the build sets no keepNames", async () => {
     const bundled = await bundledProbe({ keepNames: true });
     expect(acceptProbeSourceOf(bundled)).toContain("__name(");

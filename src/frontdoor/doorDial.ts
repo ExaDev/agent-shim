@@ -1,6 +1,8 @@
 import type { LookupFunction } from "node:net";
 
 /*
+ * The functions below contain no `async` or `await`, so a compiler that targets a syntax older than ES2017 (a consumer bundling the library for an old runtime, or a build that instruments for coverage) has no async function to rewrite into a helper from its own scope, which the worker lacks.
+ *
  * The door's own upstream dial, as functions that reference nothing but their parameters: the provider probe runs on a worker thread, which cannot load this bundle, so it embeds their source text (`Function.prototype.toString`) and calls them with the worker's own `net` and `dns`. A reference to anything outside a function's own parameters would be undefined in the worker; `doorDial.test.ts` runs each function from its source text alone to keep that true.
  */
 
@@ -77,9 +79,9 @@ export interface PortRotation {
 /**
  * One of the door's own upstream dials, settled once its outcome is certain. An address literal is dialled as node's own agents would, from an ephemeral port, since nothing can be resolved or redirected about it. A name is resolved through the door's lookup and bound into the reserved source-port range (the pf exemption an interception deployment loads, keeping a redirected address's traffic from looping into the door's own transparent surface); a reserved port a long-lived sibling already holds (EADDRINUSE, or the EADDRNOTAVAIL a port held at connect time produces) is retried on the next port of the rotation, one attempt per port, so a fully-held range surfaces the last bind error instead of spinning. Every other failure settles as a bare dial's would.
  */
-export async function doorDial<S extends DialSocket>(io: DoorDialIo<S>, target: { readonly host: string; readonly port: number }, ports: PortRotation): Promise<DialOutcome<S>> {
-  const dialOnce = async (options: Parameters<DoorDialIo<S>["connect"]>[0]): Promise<DialOutcome<S>> =>
-    await new Promise((resolve) => {
+export function doorDial<S extends DialSocket>(io: DoorDialIo<S>, target: { readonly host: string; readonly port: number }, ports: PortRotation): Promise<DialOutcome<S>> {
+  const dialOnce = (options: Parameters<DoorDialIo<S>["connect"]>[0]): Promise<DialOutcome<S>> =>
+    new Promise((resolve) => {
       const socket = io.connect(options);
       socket.once("connect", () => {
         resolve({ error: null, socket });
@@ -105,19 +107,21 @@ export async function doorDial<S extends DialSocket>(io: DoorDialIo<S>, target: 
       });
     });
   if (io.isIP(target.host) !== 0) {
-    return await dialOnce({ host: target.host, port: target.port });
+    return dialOnce({ host: target.host, port: target.port });
   }
   // The rotation advances one full cycle over exactly the range's width of calls, so one attempt per port bounds the retry.
-  for (let attempt = 0; ; attempt += 1) {
-    const outcome = await dialOnce({ host: target.host, port: target.port, localPort: ports.take(), lookup: io.lookup });
-    if (outcome.error === null) {
-      return outcome;
-    }
-    const held = outcome.error.code === "EADDRINUSE" || outcome.error.code === "EADDRNOTAVAIL";
-    if (!held || attempt === ports.count - 1) {
-      return outcome;
-    }
-  }
+  const attemptFrom = (attempt: number): Promise<DialOutcome<S>> =>
+    dialOnce({ host: target.host, port: target.port, localPort: ports.take(), lookup: io.lookup }).then((outcome) => {
+      if (outcome.error === null) {
+        return outcome;
+      }
+      const held = outcome.error.code === "EADDRINUSE" || outcome.error.code === "EADDRNOTAVAIL";
+      if (!held || attempt === ports.count - 1) {
+        return outcome;
+      }
+      return attemptFrom(attempt + 1);
+    });
+  return attemptFrom(0);
 }
 
 /** Starts a timer and returns what cancels it: the clock the probe's bound runs on, injected so a test can fire it. */
@@ -129,8 +133,8 @@ export type AcceptVerdict = { readonly ok: true } | { readonly ok: false; readon
 /**
  * Whether the door's dial (`dial`, `doorDial` over the real `net`) reaches `target` within `timeoutMs`. Nothing is written to the socket: it is closed the moment it connects, so the listener sees a connection open and close and no request. A dial still pending when the bound expires fails the probe, and its socket is closed whenever it settles.
  */
-export async function probeAccept<S extends DialSocket>(dial: () => Promise<DialOutcome<S>>, timeoutMs: number, startTimer: StartTimer): Promise<AcceptVerdict> {
-  return await new Promise((resolve) => {
+export function probeAccept<S extends DialSocket>(dial: () => Promise<DialOutcome<S>>, timeoutMs: number, startTimer: StartTimer): Promise<AcceptVerdict> {
+  return new Promise((resolve) => {
     let settled = false;
     const cancel = startTimer(() => {
       settled = true;
@@ -172,8 +176,8 @@ export interface AcceptProbeDeps {
 /**
  * The accept probe's whole setup, as the worker runs it: the door's lookup over `dns.resolve4` (never the hosts file) and the door's reserved source-port range, handed to the door's own dial. It is the one place the probe's dial is assembled, so a test of it with fake modules pins that the probe dials as the door does.
  */
-export async function runAcceptProbe(deps: AcceptProbeDeps, data: { readonly host: string; readonly port: number; readonly portStart: number; readonly portEnd: number; readonly portFirst?: number; readonly timeoutMs: number }, startTimer: StartTimer): Promise<AcceptVerdict> {
+export function runAcceptProbe(deps: AcceptProbeDeps, data: { readonly host: string; readonly port: number; readonly portStart: number; readonly portEnd: number; readonly portFirst?: number; readonly timeoutMs: number }, startTimer: StartTimer): Promise<AcceptVerdict> {
   const lookup = deps.createDoorLookup({ isIP: deps.net.isIP, resolve4: (name, callback) => { deps.dns.resolve4(name, callback); } });
   const io = { connect: (options: Parameters<DoorDialIo<DialSocket>["connect"]>[0]) => deps.net.connect(options), lookup, isIP: deps.net.isIP };
-  return await deps.probeAccept(async () => await deps.doorDial(io, { host: data.host, port: data.port }, new deps.SourcePortRange(data.portStart, data.portEnd, data.portFirst)), data.timeoutMs, startTimer);
+  return deps.probeAccept(() => deps.doorDial(io, { host: data.host, port: data.port }, new deps.SourcePortRange(data.portStart, data.portEnd, data.portFirst)), data.timeoutMs, startTimer);
 }
