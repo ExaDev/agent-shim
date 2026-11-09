@@ -2,7 +2,7 @@ import nodeFs from "node:fs";
 import path from "node:path";
 
 import { CliError } from "./cliError";
-import { sameDirectory } from "./sameDirectory";
+import { directoryKey } from "./sameDirectory";
 import { MAX_NAME_BYTES, isStoredName } from "./config/names";
 
 /**
@@ -21,8 +21,8 @@ export type IdentityNameRead = { readonly name: string } | "absent" | "unreadabl
 export interface IdentityRecordsPort {
   readonly readdir: (directory: string) => readonly string[];
   readonly readName: (identityJson: string) => IdentityNameRead;
-  /** Whether two entries are one directory on disk, which a symlink beside an identity's directory makes them. */
-  readonly sameDirectory: (first: string, second: string) => boolean;
+  /** What identifies the directory an entry is on disk, equal for two entries that are one directory (which a symlink beside an identity's directory makes them), or undefined when it cannot be reached and so is no other entry's twin. Read once for each record. */
+  readonly directoryKey: (entry: string) => string | undefined;
   /** Whether an entry is itself a symlink, read without following it: of two entries that are one directory, the one that is not is the identity's own. */
   readonly isSymlink: (entry: string) => boolean;
 }
@@ -77,18 +77,26 @@ export function readIdentityRecords(port: IdentityRecordsPort, identitiesDir: st
     }
   }
   const sorted = [...records].map(([id, name]) => ({ id, name })).sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
-  // Two entries that are one directory (a symlink beside an identity's directory) read one identity.json, so they are one identity, whether or not its name can be read: the entry that is the directory itself is kept, else the first by id.
-  const byName = new Map<string | undefined, IdentityRecord[]>();
+  // Two entries that are one directory (a symlink beside an identity's directory) read one identity.json, so they are one identity, whether or not its name can be read: the entry that is the directory itself is kept, else the first by id. Records are grouped by the name and the directory they share, each directory read once, so the work is linear in the records however many have no readable name.
+  const groups = new Map<string, IdentityRecord[]>();
+  const keyOf = new Map<string, string>();
   for (const record of sorted) {
-    const group = byName.get(record.name);
+    const directory = port.directoryKey(path.join(identitiesDir, record.id));
+    if (directory === undefined) {
+      continue;
+    }
+    const key = `${record.name === undefined ? "?" : `=${record.name}`}\u0000${directory}`;
+    keyOf.set(record.id, key);
+    const group = groups.get(key);
     if (group === undefined) {
-      byName.set(record.name, [record]);
+      groups.set(key, [record]);
     } else {
       group.push(record);
     }
   }
   return sorted.filter((record) => {
-    const twins = (byName.get(record.name) ?? []).filter((other) => port.sameDirectory(path.join(identitiesDir, other.id), path.join(identitiesDir, record.id)));
+    const key = keyOf.get(record.id);
+    const twins = key === undefined ? [] : (groups.get(key) ?? []);
     const kept = twins.find((twin) => !port.isSymlink(path.join(identitiesDir, twin.id))) ?? twins[0];
     return kept === undefined || kept.id === record.id;
   });
@@ -199,7 +207,7 @@ export function guardedNameRead(read: () => IdentityNameRead): IdentityNameRead 
 export function textRecordsPort(fs: { readonly readdir: (directory: string) => readonly string[]; readonly readFileUtf8: (file: string) => string | undefined }): IdentityRecordsPort {
   return {
     readdir: fs.readdir,
-    sameDirectory,
+    directoryKey,
     isSymlink: isSymlinkEntry,
     readName: (file) => guardedNameRead(() => nameOfText(fs.readFileUtf8(file))),
   };

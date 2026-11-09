@@ -4,7 +4,7 @@ import { ConfigFileNotJsonError, loadConfigFile, type LoadedFile } from "../conf
 import { FILE_NAME_RULE, isFileName, UnsafeNameError } from "../config/names";
 import { IdentitySchema, IdentitySelectorSchema, POOL_SELECTOR_PREFIX, type Identity } from "../config/schema";
 import { guardedNameRead, IDENTITY_FILE, identityIdIn, isSymlinkEntry, nameOfParsed, readIdentityRecords, type IdentityRecordsPort } from "../identityRecords";
-import { sameDirectory } from "../sameDirectory";
+import { directoryKey } from "../sameDirectory";
 import type { FsPort } from "./ports";
 
 /** Which precedence rule produced an identity decision. */
@@ -180,7 +180,7 @@ export function decideConfigProfile(params: DecideConfigProfileParams): ConfigPr
 function configRecordsPort(fs: Pick<FsPort, "readdir" | "readConfigFile">): IdentityRecordsPort {
   return {
     readdir: fs.readdir,
-    sameDirectory,
+    directoryKey,
     isSymlink: isSymlinkEntry,
     readName: (file) =>
       guardedNameRead(() => {

@@ -22,6 +22,12 @@ function reachableStat(target: string): fs.Stats | undefined {
   }
 }
 
+/** What identifies the directory `target` is on disk, its device and inode, so that two paths are one directory exactly when their keys are equal; undefined when it does not exist or cannot be reached (`UNREACHABLE_CODES`). Read once for each path, so grouping n paths by their directory takes n reads, where comparing every pair takes n squared. */
+export function directoryKey(target: string): string | undefined {
+  const stat = reachableStat(target);
+  return stat === undefined ? undefined : `${String(stat.dev)}:${String(stat.ino)}`;
+}
+
 /** Whether two paths are one directory on disk, by device and inode: true for a name that differs only in case on a filesystem that ignores case, and for a symlink to the directory. False when either does not exist or cannot be reached (a cycle of links, a directory that cannot be searched, a path through a file), since neither can then be shown to be the other. */
 export function sameDirectory(first: string, second: string): boolean {
   const a = reachableStat(first);

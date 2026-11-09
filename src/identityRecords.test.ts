@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { renameIdentity } from "./identityRename";
 import { addIdentity, identityIdOf } from "./identityStore";
 import { resolveIdentityId } from "./launcher/identity";
@@ -25,7 +25,7 @@ const SUFFIX = "4242.0f8fad5b-d9cb-469f-a165-70867728950e";
 function port(entries: readonly string[], names: Readonly<Record<string, IdentityNameRead>>, links: Readonly<Record<string, string>> = {}) {
   // `links` maps an entry to the entry it is a symlink to.
   const real = (file: string): string => links[file.slice(DIR.length + 1)] ?? file.slice(DIR.length + 1);
-  return { readdir: () => entries, readName: (file: string) => names[file] ?? "absent", sameDirectory: (first: string, second: string) => real(first) === real(second), isSymlink: (entry: string) => entry.slice(DIR.length + 1) in links };
+  return { readdir: () => entries, readName: (file: string) => names[file] ?? "absent", directoryKey: (file: string) => real(file), isSymlink: (entry: string) => entry.slice(DIR.length + 1) in links };
 }
 
 describe("readIdentityRecords", () => {
@@ -173,37 +173,48 @@ describe("textRecordsPort", () => {
 });
 
 describe("readIdentityRecords at the size of a large farm", () => {
-  const IDENTITIES = 300;
   const ID_DIGITS = 5;
-  /** The most passes over the identities the reading makes: the entries, the ones that name an identity, and the twin search. */
-  const PASSES_ALLOWED = 5;
   const names = (count: number): string[] => Array.from({ length: count }, (_, index) => `id${String(index).padStart(ID_DIGITS, "0")}`);
+  const SMALL = 10;
+  const LARGE = 100;
+  const LARGER = 200;
 
-  it("does a number of callback visits that grows linearly with the identities, not with their square", () => {
-    const entries = names(IDENTITIES);
-    const files = Object.fromEntries(entries.map((entry) => [`${DIR}/${entry}/identity.json`, { name: `name-${entry}` }]));
-    const original = Array.prototype.filter;
-    let visits = 0;
-    Array.prototype.filter = function (this: readonly unknown[], callback: (value: unknown, index: number, array: readonly unknown[]) => unknown, thisArg?: unknown): unknown[] {
-      return original.call(this, (value: unknown, index: number, array: readonly unknown[]) => { visits += 1; return callback.call(thisArg, value, index, array); });
-    } as typeof Array.prototype.filter;
-    let records: readonly unknown[];
-    try {
-      records = readIdentityRecords(port(entries, files), DIR);
-    } finally {
-      Array.prototype.filter = original;
-    }
-    expect(records).toHaveLength(IDENTITIES);
-    // A few passes over the identities, each visiting a record once; a pass for every record would visit IDENTITIES squared.
-    expect(visits).toBeLessThan(IDENTITIES * PASSES_ALLOWED);
+  it.each([
+    ["identities with a readable name each", (index: number) => JSON.stringify({ name: `n${String(index)}` })],
+    ["identities whose identity.json is not JSON, none of which has a name", () => "{ not json"],
+    ["identities that all claim one name", () => JSON.stringify({ name: "same" })],
+  ])("makes a number of directory reads that grows linearly with %s, not with their square", (_label, contentsOf) => {
+    // `contentsOf` gives each identity's file; a fixed text is the same for all.
+    const statsFor = (count: number): number => {
+      let index = 0;
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "records-linear-"));
+      try {
+        for (const name of names(count)) {
+          fs.mkdirSync(path.join(root, name));
+          fs.writeFileSync(path.join(root, name, "identity.json"), contentsOf(index));
+          index += 1;
+        }
+        const spy = vi.spyOn(fs, "statSync");
+        try {
+          readIdentityRecords(textRecordsPort({ readdir: (directory) => fs.readdirSync(directory), readFileUtf8: (file) => fs.readFileSync(file, "utf8") }), root);
+          return spy.mock.calls.length;
+        } finally {
+          spy.mockRestore();
+        }
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    };
+    const perRecord = statsFor(SMALL) / SMALL;
+    expect(statsFor(LARGE)).toBeLessThanOrEqual(perRecord * LARGE);
+    expect(statsFor(LARGER)).toBeLessThanOrEqual(perRecord * LARGER);
   });
 
-  it("still compares the records that share a name, so a symlink twin is one identity", () => {
-    const entries = ["work", "work-link", ...names(IDENTITIES)];
-    const files = Object.fromEntries(entries.map((entry) => [`${DIR}/${entry}/identity.json`, { name: entry === "work-link" ? "work" : `name-${entry}` }]));
-    files[`${DIR}/work/identity.json`] = { name: "work" };
-    const records = readIdentityRecords(port(entries, files, { "work-link": "work" }), DIR);
-    expect(records.filter((record) => record.name === "work")).toEqual([{ id: "work", name: "work" }]);
-    expect(records).toHaveLength(IDENTITIES + 1);
+  it("still takes a symlink twin for one identity, with or without a readable name", () => {
+    const entries = ["work", "work-link", "other"];
+    const files = { [`${DIR}/work/identity.json`]: { name: "work" }, [`${DIR}/work-link/identity.json`]: { name: "work" }, [`${DIR}/other/identity.json`]: { name: "other" } } as const;
+    expect(readIdentityRecords(port(entries, files, { "work-link": "work" }), DIR).map((record) => record.id)).toEqual(["other", "work"]);
+    const nameless: Record<string, IdentityNameRead> = { [`${DIR}/a/identity.json`]: "unreadable", [`${DIR}/a-link/identity.json`]: "unreadable", [`${DIR}/b/identity.json`]: "unreadable" };
+    expect(readIdentityRecords(port(["a", "a-link", "b"], nameless, { "a-link": "a" }), DIR).map((record) => record.id)).toEqual(["a", "b"]);
   });
 });
