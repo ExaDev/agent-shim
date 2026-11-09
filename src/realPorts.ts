@@ -742,10 +742,10 @@ export const realProcPort: ProcPort = {
   exit: (code: number): never => process.exit(code),
 };
 
-/** The real `LogPort`: information to stdout, warnings and errors to stderr, with the colour `createLogPort` applies where the stream takes it. */
+/** The real `LogPort`, used by the launch: every line it writes goes to standard error, with the colour `createLogPort` applies where that stream takes it, because standard output belongs to the child (a caller piping `claude --print` receives only the session's own output). */
 export const realLogPort: LogPort = createLogPort(
-  { out: (line) => { console.log(line); }, warn: (line) => { console.warn(line); }, err: (line) => { console.error(line); } },
-  { out: styleTextFor(process.stdout), err: styleTextFor(process.stderr) },
+  { out: (line) => { console.error(line); }, warn: (line) => { console.error(line); }, err: (line) => { console.error(line); } },
+  { out: styleTextFor(process.stderr), err: styleTextFor(process.stderr) },
 );
 
 // The owner/group/other execute bits (0b001 repeated in each of the three permission triads) -- a nonzero result means at least one of the three "may execute" bits is set.

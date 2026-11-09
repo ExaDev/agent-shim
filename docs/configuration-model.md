@@ -641,6 +641,8 @@ By default a launch runs the highest Claude Code version in `~/.local/share/clau
 
 ### Reading the launcher's output before claude starts
 
+Everything the launcher prints for itself (the report block, the pause notices, warnings and refusals) goes to standard error, so standard output carries only the session's own output and `claude --print ... | jq` receives nothing else.
+
 Claude Code takes the whole terminal the moment it starts, so everything the launcher printed (the decision line, warnings, the farm and routing lines) is gone before it can be read. `launch.delay` holds the launch for a time after the launcher's last line (`5s`, `500ms`), and `launch.pause` holds it until a key is pressed, with Ctrl-C cancelling the launch (exit status 130) without starting claude. Both resolve like every launch setting: the one-off `--delay <duration>` and `--[no-]pause` flags outright, then `AGENT_SHIM_DELAY` and `AGENT_SHIM_PAUSE`, then the cascade, so `"launch": { "delay": "3s" }` in `~/.agent-shim/config.json` applies to every launch and a profile, a directory rule or a committed `.agent-shim.json` can narrow it. A pause takes the place of a delay when both are set. Neither holds a launch nobody is watching: with standard input or output not a terminal (a pipe, a script, a scheduled run) the launch goes at once, so a global setting never slows automation. A supervised pool launch holds before its first child only, never before a relaunch under another member.
 
 ### Choosing the identity at launch: the picker
