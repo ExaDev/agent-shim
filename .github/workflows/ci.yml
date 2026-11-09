@@ -923,10 +923,13 @@ jobs:
     env:
       RELEASE_TAG: ${{ needs.semantic-release.outputs.tag }}
     steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/actions
       - name: Tap and install
-        run: |
-          brew tap ExaDev/agent-shim
-          brew install ExaDev/agent-shim/agent-shim
+        uses: ./.github/actions/brew-install
+        with:
+          tag: ${{ needs.semantic-release.outputs.tag }}
       - name: Check installed version matches the tag
         run: |
           agent-shim --version
@@ -972,10 +975,13 @@ jobs:
     env:
       RELEASE_TAG: ${{ needs.semantic-release.outputs.tag }}
     steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/actions
       - name: Tap and install
-        run: |
-          brew tap ExaDev/agent-shim
-          brew install ExaDev/agent-shim/agent-shim
+        uses: ./.github/actions/brew-install
+        with:
+          tag: ${{ needs.semantic-release.outputs.tag }}
       - name: Check installed version matches the tag
         run: |
           agent-shim --version
@@ -1030,12 +1036,13 @@ jobs:
             /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" </dev/null
           fi
           echo "/home/linuxbrew/.linuxbrew/bin" >> "$GITHUB_PATH"
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/actions
       - name: Tap and install
-        run: |
-          # brew tap's verbose output can SIGPIPE (exit 141) on Linux when it overflows the runner's stdout pipe; the tap itself still succeeds, so check the directory rather than the exit code.
-          brew tap ExaDev/agent-shim >/dev/null || true
-          test -d /home/linuxbrew/.linuxbrew/Homebrew/Library/Taps/exadev/homebrew-agent-shim
-          brew install ExaDev/agent-shim/agent-shim
+        uses: ./.github/actions/brew-install
+        with:
+          tag: ${{ needs.semantic-release.outputs.tag }}
       - name: Check installed version matches the tag
         run: |
           agent-shim --version
