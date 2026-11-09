@@ -6,9 +6,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import type { CheckReport } from "../checkReport";
 import { HTTP_STATUS } from "../codex/http";
-import type { DoctorReport } from "../doctorReport";
 import { createDoorApiNodeHandler } from "../frontdoor/controlApi";
 import { LIFECYCLE_AND_CODEX_TEST_DEPS } from "../frontdoor/lifecycleCodexTestDeps";
 import { buildLayoutPaths } from "../paths";
@@ -104,11 +102,11 @@ describe("the MCP server over a real door handler", () => {
       latestRateLimit: () => undefined,
       now: () => 0,
       frontDoorStatus: () => FRONTDOOR_STATUS,
-      checkReport: (): CheckReport => {
-        throw new Error("no MCP test drives check.run");
+      checkReport: async (): Promise<never> => {
+        return await Promise.reject(new Error("no MCP test drives check.run"));
       },
-      doctorReport: (): DoctorReport => {
-        throw new Error("no MCP test drives doctor.run");
+      doctorReport: async (): Promise<never> => {
+        return await Promise.reject(new Error("no MCP test drives doctor.run"));
       },
       poolPick: (): never => {
         throw new Error("no MCP test drives pool.pick");

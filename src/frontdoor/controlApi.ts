@@ -1,10 +1,9 @@
 import { createORPCClient, ORPCError } from "@orpc/client";
 import { openapi } from "@orpc/openapi";
 import type { RouterClient } from "@orpc/server";
+import type { z } from "zod";
 
-import { type CheckReport, checkReportToJson } from "../checkReport";
-import { CheckReportJsonSchema } from "../checkReportSchema";
-import type { DoctorReport } from "../doctorReport";
+import { CheckReportJsonSchema, type CheckReportJson } from "../checkReportSchema";
 import { ANTHROPIC_PROVIDER } from "../usage/middleware";
 import { effectiveWindow } from "../usage/preflight";
 import { collectResets } from "../usage/resets";
@@ -22,7 +21,11 @@ import {
   UsageWindowsInputSchema,
   UsageWindowsOutputSchema,
 } from "./controlSchemas";
+
+/** The doctor report as the control API returns it. */
+type DoctorRunOutput = z.output<typeof DoctorRunOutputSchema>;
 import { createCodexApiRouter, type CodexApiDeps } from "./codexApi";
+import { DoorWorkerBusyError } from "./doorWorker";
 import { createConfigApiRouter, type ConfigApiDeps } from "./configApi";
 import { createEventsApiRouter, type DoorEventsApiDeps } from "./eventsApi";
 import { createLifecycleApiRouter, type LifecycleApiDeps } from "./lifecycleApi";
@@ -47,22 +50,12 @@ import type { PrePipelineApi } from "./server";
  * This router is reads only; the door's writes live in routers of their own so each is a decision of its own (`lifecycleApi.ts` for the restart and the update check, `codexApi.ts` for the Codex sign-in, `configApi.ts` for identity, configuration-profile, provider, pool and directory-rule management). `createDoorApiNodeHandler` mounts these routers and the door-wide `events.subscribe` router beside the Remote Control router on the one prefix the provider listener already serves, so a consumer dials one address with one token for the whole door.
  */
 
-/**
- * Thrown by a `checkReport` or `doctorReport` dependency that cannot collect its report where it runs. `check.run` and `doctor.run` answer it as `SERVICE_UNAVAILABLE` with its message, so a caller is told what to do instead of reading a fault of the door.
- */
-export class DoorReportUnavailableError extends Error {
-  constructor(report: "check" | "doctor") {
-    super(`${report}.run is not available from the front door: collecting the report runs blocking steps (a git lookup, the keychain, the process table) that the door's event loop refuses, whatever the configuration. Run \`agent-shim ${report}\` from a shell. Collecting it in the door is tracked in agent-shim#769.`);
-    this.name = "DoorReportUnavailableError";
-  }
-}
-
-/** Runs `collect`, answering a `DoorReportUnavailableError` as the `SERVICE_UNAVAILABLE` it stands for. */
-function orUnavailable<T>(collect: () => T): T {
+/** Runs `collect`, answering a door whose workers are all busy as the retryable `SERVICE_UNAVAILABLE` it stands for. */
+async function orBusy<T>(collect: () => Promise<T>): Promise<T> {
   try {
-    return collect();
+    return await collect();
   } catch (error) {
-    if (error instanceof DoorReportUnavailableError) {
+    if (error instanceof DoorWorkerBusyError) {
       throw new ORPCError("SERVICE_UNAVAILABLE", { message: error.message, cause: error });
     }
     throw error;
@@ -87,10 +80,10 @@ export interface ControlApiDeps {
   readonly now: () => number;
   /** The door's read-only status, as `collectFrontDoorStatus` collects it. */
   readonly frontDoorStatus: () => FrontDoorStatus;
-  /** The check report for one directory, as `collectCheckReport` collects it. */
-  readonly checkReport: (path: string, identity?: string) => CheckReport;
-  /** The doctor report, as `collectDoctorReport` collects it. */
-  readonly doctorReport: () => DoctorReport;
+  /** The check report for one directory as `check --json` prints it, collected off the door's event loop; `signal` aborts when the caller goes away. */
+  readonly checkReport: (path: string, identity: string | undefined, signal: AbortSignal) => Promise<CheckReportJson>;
+  /** The doctor report, collected off the door's event loop; `signal` aborts when the caller goes away. */
+  readonly doctorReport: (signal: AbortSignal) => Promise<DoctorRunOutput>;
   /** The ranked pick for one pool as a launch from one absolute directory would make it right now, exactly `pool pick`'s own product; undefined when the pool table names no such pool. */
   readonly poolPick: (pool: string, directory: string) => PoolPickReport | undefined;
   /** The pool table's live names, so an unknown pool is refused naming the real ones rather than answered as an empty ranking. */
@@ -169,16 +162,16 @@ export function createControlApiRouter(deps: ControlApiDeps) {
     check: {
       // The report's own JSON shape is the contract (the same one `check --json` prints and `checkReportSchema.ts` defines), so the procedure returns exactly that conversion.
       run: authed
-        .meta(openapi({ method: "GET", path: "/rest/check", summary: "Run the check report for one directory (the command line's own door answers SERVICE_UNAVAILABLE: see agent-shim#769)", tags: [CHECK_API_TAG] }))
+        .meta(openapi({ method: "GET", path: "/rest/check", summary: "Run the check report for one directory", tags: [CHECK_API_TAG] }))
         .input(CheckRunInputSchema)
         .output(CheckReportJsonSchema)
-        .handler(({ input }) => orUnavailable(() => checkReportToJson(deps.checkReport(input.path, input.identity)))),
+        .handler(async ({ input, signal }) => await orBusy(async () => await deps.checkReport(input.path, input.identity, signal ?? new AbortController().signal))),
     },
     doctor: {
       run: authed
-        .meta(openapi({ method: "GET", path: "/rest/doctor", summary: "Run the doctor report (the command line's own door answers SERVICE_UNAVAILABLE: see agent-shim#769)", tags: [DOCTOR_API_TAG] }))
+        .meta(openapi({ method: "GET", path: "/rest/doctor", summary: "Run the doctor report", tags: [DOCTOR_API_TAG] }))
         .output(DoctorRunOutputSchema)
-        .handler(() => orUnavailable(() => deps.doctorReport())),
+        .handler(async ({ signal }) => await orBusy(async () => await deps.doctorReport(signal ?? new AbortController().signal))),
     },
     pool: {
       pick: authed

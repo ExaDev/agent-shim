@@ -15,7 +15,7 @@ import type { LayoutPaths } from "../paths";
 import { realSessionFs } from "../agents/realFs";
 import { collectSessionList, showSession } from "../agents/sessions";
 import { identityDirectoryOfName, listIdentities } from "../identityStore";
-import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessAlive, realIsProcessRunning, realRunningAmong, realAsyncCredentialPort, realOwnExecutablePath, selfInvocation, spawnDetachedSupervisor, spawnSelfDetached } from "../realPorts";
+import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessAlive, realIsProcessRunning, realRunningAmong, realAsyncCredentialPort, realContentSourcePath, realOwnExecutablePath, selfInvocation, spawnDetachedSupervisor, spawnSelfDetached } from "../realPorts";
 import { createHeadroomKeeper } from "../headroom/keeper";
 import { HEADROOM_POLL_MS } from "../headroom/supervisor";
 import { requestAccountMove } from "../supervise/registry";
@@ -30,7 +30,7 @@ import { createRealAnthropicUsageRefresher } from "../usage/realAnthropicUsagePr
 import { runChild } from "../usage/childRun";
 import { createCatalogueKeeper } from "../catalogueKeeper";
 import { pruneAbandonedCatalogueGenerations } from "./catalogueCleanup";
-import { CATALOGUE_REFRESH_TIMEOUT_MS, catalogueCachePath } from "../providerCatalogue";
+import { catalogueCachePath } from "../providerCatalogue";
 import { createProviderCanonicaliser, loadProviderAliases } from "../providerAliases";
 import { listProviders, providerFileDefined } from "../providersStore";
 import { WINDOW_OPEN_TIMEOUT_MS } from "../usage/realWindowOpener";
@@ -50,6 +50,7 @@ import { CONNECT_INTERCEPT_HOST, CONNECT_INTERCEPT_HOSTS, CONNECT_LIMITS, CONNEC
 import { lateRcEventDial, lateRcStreamDial, realConnectEffects, realRcEventDial, realRcStreamDial, type RcDialTarget } from "./connectEffects";
 import { createCredentialCustody } from "./custody";
 import { doorReportPorts } from "./doorReportPorts";
+import { createRealDoorWorkerHost } from "./doorWorker";
 import { collectPoolPick } from "../poolPickReport";
 import { realMemberProviderResolver } from "../poolProviderWiring";
 import { resolveClaudeLaunchAsync } from "../launchWiring";
@@ -352,6 +353,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
   const anthropicRefresher = createRealAnthropicUsageRefresher({ paths, store: usageStore, cwd: process.cwd(), spawnDaemon: spawnDetachedSupervisor, log });
   /** The timers of the work the door runs on its own account, so a drain can stop them. */
   const keeperTimers: NodeJS.Timeout[] = [];
+  const doorWorkers = createRealDoorWorkerHost(realContentSourcePath()); // reads the code its workers evaluate once, now
   const everyFreshnessInterval = (tick: () => void): void => {
     const timer = setInterval(tick, ANTHROPIC_USAGE_FRESHNESS_MS);
     timer.unref();
@@ -444,16 +446,14 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       log(`job keeper failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   });
-  // A provider that opted into a model catalogue is fetched in a child process, never in the door, for the same reason the window opener is: the door's event loop answers every session. The first tick runs at start, so a new catalogue does not wait a period, and a fresh cache costs no request.
+  // A provider that opted into a model catalogue is fetched in a worker thread of the door (`doorWorker.ts`), never on its event loop, which answers every session. The first tick runs at start, so a new catalogue does not wait a period, and a fresh cache costs no request.
   const catalogueKeeper = createCatalogueKeeper({
     supervisorPid: process.pid,
     publishStatus: (name, status, fingerprint) => { writeCatalogueStatus(realFarmFs, paths, process.pid, catalogueGeneration, name, status, fingerprint, Date.now()); },
     providers: () => listProviders(paths, (name, message) => { log(`catalogue keeper skipped provider ${name}: ${message}`); }).map((entry) => [entry.name, entry.provider] as const),
     readCache: (name, provider) => realFsPort.readFileUtf8(provider.kind === "codex" ? catalogueCachePath(paths, name, process.pid, catalogueGeneration) : catalogueCachePath(paths, name)),
     credentialFingerprint: (provider) => provider.kind === "codex" ? savedCatalogueFingerprint(provider, paths, process.env, os.homedir(), realFsPort.readFileUtf8) : undefined,
-    refresh: async (name) => {
-      await runChild({ paths, args: ["__refresh-catalogue", name, String(process.pid), catalogueGeneration], timeoutMs: CATALOGUE_REFRESH_TIMEOUT_MS });
-    },
+    refresh: async (name) => { await doorWorkers.run("refresh-catalogue", { root: paths.root, name, supervisorPid: process.pid, generation: catalogueGeneration }, () => undefined); },
     nowMs: () => Date.now(),
     log,
   });
@@ -579,7 +579,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         },
         now: () => Date.now(),
         frontDoorStatus: () => collectFrontDoorStatus(realFarmFs, realHeadroomSocketTrust, paths, realIsProcessRunning),
-        ...doorReportPorts,
+        ...doorReportPorts(doorWorkers, paths.root),
         // The pool table is read per call, not captured here, so a pool created or removed after the door started is ranked or refused by its live name the same moment the CLI would see it. The door's own environment is never a substitute for a caller's, so each member's provider is resolved from the directory's configuration and the member's own declaration alone.
         poolPick: (pool: string, directory: string) => {
           const pools = readPools(paths);
@@ -796,6 +796,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       for (const timer of keeperTimers) {
         clearInterval(timer);
       }
+      doorWorkers.stop();
     },
     checkQuotaExpiry: quotaExpiring.check,
     log: (line) => {

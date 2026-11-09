@@ -1,13 +1,14 @@
-import { DoorReportUnavailableError, type ControlApiDeps } from "./controlApi";
+import { CheckReportJsonSchema } from "../checkReportSchema";
+import { DoctorRunOutputSchema } from "./controlSchemas";
+import type { ControlApiDeps } from "./controlApi";
+import type { DoorWorkerHost } from "./doorWorker";
 
 /**
- * The `check.run` and `doctor.run` dependencies of the command line's own front door. The reports run external commands, read the keychain and probe providers, every one of which blocks the calling thread, which the door's event loop refuses (`BlockingInEventLoopError`) from the first step on any configuration; the procedures say so with a typed `DoorReportUnavailableError` instead. Collecting them off the door's event loop is tracked in agent-shim#769.
+ * The `check.run` and `doctor.run` dependencies of the front door: each report is collected by a worker thread of the door (`doorWorker.ts`), off the event loop that answers every session, and the worker's answer is validated against the report's schema before it is returned. `root` is the state root the door serves, handed to the worker so it reads the same configuration.
  */
-export const doorReportPorts: Pick<ControlApiDeps, "checkReport" | "doctorReport"> = {
-  checkReport: () => {
-    throw new DoorReportUnavailableError("check");
-  },
-  doctorReport: () => {
-    throw new DoorReportUnavailableError("doctor");
-  },
-};
+export function doorReportPorts(host: DoorWorkerHost, root: string): Pick<ControlApiDeps, "checkReport" | "doctorReport"> {
+  return {
+    checkReport: async (path, identity, signal) => await host.run("check", { root, path, ...(identity === undefined ? {} : { identity }) }, (value) => CheckReportJsonSchema.parse(value), signal),
+    doctorReport: async (signal) => await host.run("doctor", { root }, (value) => DoctorRunOutputSchema.parse(value), signal),
+  };
+}

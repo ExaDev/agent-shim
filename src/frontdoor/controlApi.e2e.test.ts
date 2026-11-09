@@ -154,13 +154,13 @@ describe("the door's typed API with the control plane mounted beside Remote Cont
       usageSnapshotOf: (identity) => (identity === SNAPSHOT.identity ? SNAPSHOT : undefined),
       now: () => NOW_MS,
       frontDoorStatus: () => STATUS,
-      checkReport: (target) => {
+      checkReport: async (target) => {
         if (target !== `${FAKE_HOME}/work`) {
           throw new Error(`the fixed check dep answers one directory only, not ${target}`);
         }
-        return CHECK;
+        return await Promise.resolve(checkReportToJson(CHECK));
       },
-      doctorReport: () => DOCTOR,
+      doctorReport: async () => await Promise.resolve(DOCTOR),
       poolPick: (): undefined => undefined,
       poolNames: () => [],
       ...LIFECYCLE_AND_CODEX_TEST_DEPS,
