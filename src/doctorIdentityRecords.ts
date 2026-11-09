@@ -23,6 +23,8 @@ export function identityRecordFindings(
   nameRenames: readonly { readonly from: string; readonly description: string }[],
   strayNameRenameFiles: readonly string[],
 ): readonly IdentityRecordFinding[] {
+  // The names the records claim, read once: each displaced record asks whether its id is one, and a search through the records for each would grow with the displaced records times the records.
+  const recordNames = new Set(records.map((record) => record.name));
   return [
     ...strayNameRenameFiles.map((file): IdentityRecordFinding => ({
       severity: "warn",
@@ -37,7 +39,7 @@ export function identityRecordFindings(
     })),
     ...displaced.map(({ id, name, directoryPresent }): IdentityRecordFinding => ({
       severity: "warn",
-      message: `${name === undefined ? `The identity stored under identities/${id}` : `Identity "${name}"`} has no identity.json in identities/${id}, which ${directoryPresent ? "holds none yet" : "is missing"}: its identity.json is in a superseded farm a resync left when it was interrupted. ${name === undefined ? `Its identity.json gives no name that can be read, ${records.some((record) => record.name === id) ? `and its id is the name of another identity, so a launch by its id reaches that one: repair the file in the superseded farm and launch it by the name the file gives, or rename the identity named "${id}" first and then launch this one by its id (\`agent-shim run @${id}\`) to put it back.` : `so launch it by its id (\`agent-shim run @${id}\`) to put it back, then repair the file.`}` : `The next launch of "${name}" puts it back.`}`,
+      message: `${name === undefined ? `The identity stored under identities/${id}` : `Identity "${name}"`} has no identity.json in identities/${id}, which ${directoryPresent ? "holds none yet" : "is missing"}: its identity.json is in a superseded farm a resync left when it was interrupted. ${name === undefined ? `Its identity.json gives no name that can be read, ${recordNames.has(id) ? `and its id is the name of another identity, so a launch by its id reaches that one: repair the file in the superseded farm and launch it by the name the file gives, or rename the identity named "${id}" first and then launch this one by its id (\`agent-shim run @${id}\`) to put it back.` : `so launch it by its id (\`agent-shim run @${id}\`) to put it back, then repair the file.`}` : `The next launch of "${name}" puts it back.`}`,
       subject: name ?? id,
     })),
   ];

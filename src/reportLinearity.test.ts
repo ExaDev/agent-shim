@@ -11,7 +11,7 @@ import { buildLayoutPaths } from "./paths";
 import { growsLinearly, startStepMeter } from "./test-helpers";
 
 /**
- * Each report is run against a farm in which every collection the user sizes is large and degenerate at once: identities with a readable name, with none (a file that is not JSON), all claiming one name, and symlinks to one directory, a pool of many members and many configuration profiles. The array steps a report makes (`countSteps`) must grow exactly linearly with the farm (`growsLinearly`: counts are deterministic, so the slope may not grow), and so must the most steps it makes between two file system notes, which is what the door's silence window sees as a stall.
+ * Each report is run against a farm in which every collection the user sizes is large and degenerate at once: identities with a readable name, with none (a file that is not JSON), all claiming one name, symlinks to one directory and displaced ones (an interrupted resync left their identity.json only in a superseded farm), a pool of many members and many configuration profiles. The array steps a report makes (`countSteps`) must grow exactly linearly with the farm (`growsLinearly`: counts are deterministic, so the slope may not grow), and so must the most steps it makes between two file system notes, which is what the door's silence window sees as a stall.
  *
  * What this can catch: a pass over a collection nested inside a pass over it that runs through the counted array operations, over the whole farm. What it cannot see: a quadratic cost that does not run through them (a `Set` or `Map` iteration, an indexed `for` loop, a sort comparator, a copy by `slice`, `concat` or `JSON.stringify`, string building), one in native code, one over a collection this farm does not hold (registered sessions, many providers), and a cost that grows with something other than the farm's size.
  */
@@ -21,6 +21,7 @@ const DOUBLE = 2;
 const QUADRUPLE = 4;
 const REPORT_SIZES = [FIRST_FARM, FIRST_FARM * DOUBLE, FIRST_FARM * QUADRUPLE] as const;
 const GROUPS = 4;
+const UUID_TAIL_DIGITS = 12;
 
 let home: string;
 let previousHome: string | undefined;
@@ -46,7 +47,7 @@ afterEach(() => {
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-/** A farm of `size` identities in four equal degenerate groups, with a pool of the readable ones and a profile for each. Returns the layout paths. */
+/** A farm of `size` identities in four equal degenerate groups plus as many displaced records, with a pool of the readable ones and a profile for each. Returns the layout paths. */
 function buildFarm(size: number) {
   const paths = buildLayoutPaths(path.join(home, ".agent-shim"));
   const each = size / GROUPS;
@@ -60,6 +61,12 @@ function buildFarm(size: number) {
     members.push(`readable${String(index)}`);
     write(`nameless${String(index)}`, "{ not json");
     write(`dup${String(index)}`, JSON.stringify({ name: "dup" }));
+  }
+  // Displaced identities: an interrupted resync left each one's identity.json only in a superseded farm, and it names nothing.
+  for (let index = 0; index < each; index += 1) {
+    const uuid = `00000000-0000-4000-8000-${String(index).padStart(UUID_TAIL_DIGITS, "0")}`;
+    fs.mkdirSync(path.join(paths.identitiesDir, `.lost${String(index)}.previous.4242.${uuid}`), { recursive: true });
+    fs.writeFileSync(path.join(paths.identitiesDir, `.lost${String(index)}.previous.4242.${uuid}`, "identity.json"), "{ not json");
   }
   const real = path.join(home, "shared-real");
   fs.mkdirSync(real, { recursive: true });
