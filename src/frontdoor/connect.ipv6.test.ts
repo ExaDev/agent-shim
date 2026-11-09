@@ -87,7 +87,9 @@ describe("a CONNECT to an IPv6 literal through the front door", () => {
     const door = await startDoor();
     try {
       const attempt = rawAttempt(door.port, headFor(authority));
-      expect(await attempt.answer).toContain("400 Bad Request");
+      const answer = await attempt.answer;
+      expect(answer).toContain("400 Bad Request");
+      expect(answer.toLowerCase()).toContain("x-agent-shim-refusal: ");
       await attempt.closed;
     } finally {
       await door.close();
