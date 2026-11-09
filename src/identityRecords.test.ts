@@ -9,7 +9,8 @@ import { buildLayoutPaths } from "./paths";
 import { realIdentityRenamePorts } from "./realIdentityRename";
 import { realFsPort } from "./realPorts";
 import { MAX_NAME_BYTES } from "./config/names";
-import { DuplicateIdentityNameError, duplicateIdentityNames, freeIdentityId, identityIdIn, identityNameIn, readIdentityRecords, textRecordsPort, type IdentityNameRead } from "./identityRecords";
+import { countSteps, growsLinearly } from "./test-helpers";
+import { DuplicateIdentityNameError, duplicateIdentityNames, identityIdLookup, freeIdentityId, identityIdIn, identityNameIn, readIdentityRecords, textRecordsPort, type IdentityRecord, type IdentityNameRead } from "./identityRecords";
 
 const DIR = "/root/identities";
 
@@ -216,5 +217,80 @@ describe("readIdentityRecords at the size of a large farm", () => {
     expect(readIdentityRecords(port(entries, files, { "work-link": "work" }), DIR).map((record) => record.id)).toEqual(["other", "work"]);
     const nameless: Record<string, IdentityNameRead> = { [`${DIR}/a/identity.json`]: "unreadable", [`${DIR}/a-link/identity.json`]: "unreadable", [`${DIR}/b/identity.json`]: "unreadable" };
     expect(readIdentityRecords(port(["a", "a-link", "b"], nameless, { "a-link": "a" }), DIR).map((record) => record.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("symlink twins at the size of a large farm", () => {
+  const SMALL_TWINS = 10;
+  const MEDIUM_TWINS = 100;
+  const LARGE_TWINS = 200;
+  const SIZES = [SMALL_TWINS, MEDIUM_TWINS, LARGE_TWINS] as const;
+  const TOLERANCE = 1.5;
+  const INDEX_DIGITS = 5;
+
+  /** The `lstatSync` calls reading an identities directory holding `count` symlinks to one real directory, which sorts last in the directory or lies outside it. */
+  function lstatsReading(count: number, layout: "real-sorts-last" | "real-outside"): number {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "records-twins-"));
+    try {
+      const identities = path.join(root, "identities");
+      const real = layout === "real-outside" ? path.join(root, "elsewhere") : path.join(identities, "zzz");
+      fs.mkdirSync(identities, { recursive: true });
+      fs.mkdirSync(real, { recursive: true });
+      fs.writeFileSync(path.join(real, "identity.json"), JSON.stringify({ name: "shared" }));
+      for (let index = 0; index < count; index += 1) {
+        fs.symlinkSync(real, path.join(identities, `a${String(index).padStart(INDEX_DIGITS, "0")}`));
+      }
+      const spy = vi.spyOn(fs, "lstatSync");
+      try {
+        const records = readIdentityRecords(textRecordsPort({ readdir: (directory) => fs.readdirSync(directory), readFileUtf8: (file) => fs.readFileSync(file, "utf8") }), identities);
+        expect(records.filter((record) => record.name === "shared")).toHaveLength(1);
+        return spy.mock.calls.length;
+      } finally {
+        spy.mockRestore();
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  it.each(["real-sorts-last", "real-outside"] as const)("makes a number of symlink checks that grows linearly with the twins when the real directory is %s", (layout) => {
+    const counts = SIZES.map((size) => lstatsReading(size, layout));
+    expect(growsLinearly(SIZES, [counts[0] ?? 0, counts[1] ?? 0, counts[2] ?? 0], TOLERANCE), `lstat counts ${counts.join(", ")}`).toBe(true);
+  });
+});
+
+describe("duplicateIdentityNames and identityIdLookup at the size of a large farm", () => {
+  const FIRST_SIZE = 100;
+  const SECOND_SIZE = 200;
+  const THIRD_SIZE = 400;
+  const SIZES = [FIRST_SIZE, SECOND_SIZE, THIRD_SIZE] as const;
+  const TOLERANCE = 1.5;
+  const sameNamed = (count: number): IdentityRecord[] => Array.from({ length: count }, (_, index) => ({ id: `id${String(index)}`, name: "same" }));
+
+  it("finds the names several records claim in steps that grow linearly with the records", () => {
+    const counts = SIZES.map((size) => countSteps(() => { expect(duplicateIdentityNames(sameNamed(size))).toHaveLength(1); }));
+    expect(growsLinearly(SIZES, [counts[0] ?? 0, counts[1] ?? 0, counts[2] ?? 0], TOLERANCE), `steps ${counts.join(", ")}`).toBe(true);
+  });
+
+  it("answers a lookup for each of many names in steps that grow linearly with the identities", () => {
+    const distinct = (count: number): IdentityRecord[] => Array.from({ length: count }, (_, index) => ({ id: `id${String(index)}`, name: `n${String(index)}` }));
+    const counts = SIZES.map((size) => countSteps(() => {
+      const records = distinct(size);
+      const lookup = identityIdLookup(records);
+      for (const record of records) {
+        expect(lookup(record.name ?? "")).toBe(record.id);
+      }
+    }));
+    expect(growsLinearly(SIZES, [counts[0] ?? 0, counts[1] ?? 0, counts[2] ?? 0], TOLERANCE), `steps ${counts.join(", ")}`).toBe(true);
+  });
+
+  it("applies the same rules as identityIdIn: a duplicated name throws, a nameless record is reached by its id", () => {
+    const records: IdentityRecord[] = [{ id: "a", name: "dup" }, { id: "b", name: "dup" }, { id: "c", name: undefined }, { id: "d", name: "solo" }];
+    const lookup = identityIdLookup(records);
+    expect(() => lookup("dup")).toThrow(DuplicateIdentityNameError);
+    expect(lookup("c")).toBe("c");
+    expect(lookup("solo")).toBe("d");
+    expect(lookup("missing")).toBeUndefined();
+    expect(identityIdIn(records, "solo")).toBe("d");
   });
 });

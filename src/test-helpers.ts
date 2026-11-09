@@ -734,3 +734,67 @@ export function fakeSocketTrust(
     },
   };
 }
+
+const CALLBACK_METHODS = ["filter", "some", "find", "findIndex", "findLast", "every", "map", "forEach", "reduce", "flatMap"];
+const SCAN_METHODS = ["includes", "indexOf", "lastIndexOf"];
+
+/**
+ * Runs `run` with the array operations counted and returns the number of elements they visited: each call of a callback method (`filter`, `some`, `find`, `map` and the like), every element a scan method (`includes`, `indexOf`) may look at, and each step of an array iteration (so a spread or `for...of` that copies an array counts its length). A pass over a collection inside a pass over it, however it is written, makes the count grow with the square of the collection; a linear pass makes it grow with the collection. The arrays are restored however `run` ends.
+ */
+export function countSteps(run: () => void): number {
+  let steps = 0;
+  const originals = new Map<PropertyKey, unknown>();
+  const patch = (key: PropertyKey, make: (original: (self: unknown, args: readonly unknown[]) => unknown) => (this: unknown, ...args: readonly unknown[]) => unknown): void => {
+    const original: unknown = Reflect.get(Array.prototype, key);
+    if (typeof original !== "function") {
+      return;
+    }
+    originals.set(key, original);
+    Reflect.defineProperty(Array.prototype, key, { value: make((self, args): unknown => {
+      const result: unknown = Reflect.apply(original, self, args);
+      return result;
+    }), writable: true, configurable: true, enumerable: false });
+  };
+  const lengthOf = (self: unknown): number => (Array.isArray(self) ? self.length : 0);
+  for (const name of CALLBACK_METHODS) {
+    patch(name, (original) => function (this: unknown, callback: unknown, ...rest: readonly unknown[]) {
+      const counted = typeof callback === "function" ? (...args: readonly unknown[]): unknown => { steps += 1; return Reflect.apply(callback, undefined, args); } : callback;
+      return original(this, [counted, ...rest]);
+    });
+  }
+  for (const name of SCAN_METHODS) {
+    patch(name, (original) => function (this: unknown, ...args: readonly unknown[]) {
+      steps += lengthOf(this);
+      return original(this, args);
+    });
+  }
+  patch(Symbol.iterator, (original) => function (this: unknown) {
+    const inner: unknown = original(this, []);
+    const next: unknown = Reflect.get(Object(inner), "next");
+    return {
+      next: (): unknown => {
+        steps += 1;
+        const result: unknown = typeof next === "function" ? Reflect.apply(next, inner, []) : { done: true, value: undefined };
+        return result;
+      },
+      [Symbol.iterator]() { return this; },
+    };
+  });
+  try {
+    run();
+  } finally {
+    for (const [key, value] of originals) {
+      Reflect.defineProperty(Array.prototype, key, { value, writable: true, configurable: true, enumerable: false });
+    }
+  }
+  return steps;
+}
+
+/**
+ * Whether a count that was measured at three sizes grows at most linearly: the cost of each added element at the larger size is no more than `tolerance` times its cost at the smaller (the slope between the two larger sizes against the slope between the two smaller), which holds for a linear count whatever its fixed overhead and fails for a quadratic one, whose slope grows with the size.
+ */
+export function growsLinearly(sizes: readonly [number, number, number], counts: readonly [number, number, number], tolerance: number): boolean {
+  const first = (counts[1] - counts[0]) / (sizes[1] - sizes[0]);
+  const second = (counts[2] - counts[1]) / (sizes[2] - sizes[1]);
+  return second <= first * tolerance;
+}

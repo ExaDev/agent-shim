@@ -1,8 +1,10 @@
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { ConfigValidationError } from "../config/load";
 import { UnsafeNameError } from "../config/names";
-import { decideConfigProfile, decideIdentity, loadIdentity, resolveIdentityId } from "./identity";
+import { countSteps, growsLinearly } from "../test-helpers";
+import { decideConfigProfile, decideIdentity, identityIdResolver, loadIdentity, resolveIdentityId } from "./identity";
 import type { FsPort } from "./ports";
 
 function fakeFs(overrides: Partial<FsPort> = {}): FsPort {
@@ -220,5 +222,27 @@ describe("loadIdentity", () => {
     // A name no file could have makes the record claim its directory's, so loading by that name reports the file.
     const fs = fakeFs({ readdir: () => ["work"], readConfigFile: () => ({ name: "" }) });
     expect(() => loadIdentity("/home/testuser/.agent-shim/identities", "work", fs)).toThrow(ConfigValidationError);
+  });
+});
+
+describe("identityIdResolver at the size of a large farm", () => {
+  const FIRST_SIZE = 100;
+  const SECOND_SIZE = 200;
+  const THIRD_SIZE = 400;
+  const SIZES = [FIRST_SIZE, SECOND_SIZE, THIRD_SIZE] as const;
+  const TOLERANCE = 1.5;
+
+  it("answers each of as many lookups as there are identities in steps that grow linearly with the identities", () => {
+    const counts = SIZES.map((size) => {
+      const ids = Array.from({ length: size }, (_, index) => `id${String(index)}`);
+      const fs = fakeFs({ readdir: () => ids, readConfigFile: (file) => ({ name: `name-${path.basename(path.dirname(file))}` }) });
+      return countSteps(() => {
+        const resolve = identityIdResolver("/identities", fs);
+        for (const id of ids) {
+          expect(resolve(`name-${id}`)).toBe(id);
+        }
+      });
+    });
+    expect(growsLinearly(SIZES, [counts[0] ?? 0, counts[1] ?? 0, counts[2] ?? 0], TOLERANCE), `steps ${counts.join(", ")}`).toBe(true);
   });
 });

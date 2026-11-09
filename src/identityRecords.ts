@@ -94,11 +94,17 @@ export function readIdentityRecords(port: IdentityRecordsPort, identitiesDir: st
       group.push(record);
     }
   }
+  // The record each group keeps is decided once for the group (one symlink check for each of its records), so a group of many symlinks to one directory costs the group's size, not its square.
+  const keptOf = new Map<string, string>();
+  for (const [key, twins] of groups) {
+    const kept = twins.find((twin) => !port.isSymlink(path.join(identitiesDir, twin.id))) ?? twins[0];
+    if (kept !== undefined) {
+      keptOf.set(key, kept.id);
+    }
+  }
   return sorted.filter((record) => {
     const key = keyOf.get(record.id);
-    const twins = key === undefined ? [] : (groups.get(key) ?? []);
-    const kept = twins.find((twin) => !port.isSymlink(path.join(identitiesDir, twin.id))) ?? twins[0];
-    return kept === undefined || kept.id === record.id;
+    return key === undefined || keptOf.get(key) === record.id;
   });
 }
 
@@ -117,8 +123,14 @@ export class DuplicateIdentityNameError extends CliError {
 export function duplicateIdentityNames(records: readonly IdentityRecord[]): readonly { readonly name: string; readonly ids: readonly string[] }[] {
   const byName = new Map<string, string[]>();
   for (const record of records) {
-    if (record.name !== undefined) {
-      byName.set(record.name, [...(byName.get(record.name) ?? []), record.id]);
+    if (record.name === undefined) {
+      continue;
+    }
+    const ids = byName.get(record.name);
+    if (ids === undefined) {
+      byName.set(record.name, [record.id]);
+    } else {
+      ids.push(record.id);
     }
   }
   return [...byName].filter(([, ids]) => ids.length > 1).map(([name, ids]) => ({ name, ids }));
@@ -128,11 +140,32 @@ export function duplicateIdentityNames(records: readonly IdentityRecord[]): read
  * The id of the identity named `name`, or undefined when no record claims it. A record whose name cannot be read claims none, and is reached only by its own id, and only when no record claims that as a name: then `name` resolves to it, so that loading it reports why its `identity.json` cannot be read rather than the identity seeming not to exist, and a healthy identity that holds the name is never blocked by it. Throws `DuplicateIdentityNameError` when more than one record claims `name`.
  */
 export function identityIdIn(records: readonly IdentityRecord[], name: string): string | undefined {
-  const matches = records.filter((record) => record.name === name);
-  if (matches.length > 1) {
-    throw new DuplicateIdentityNameError(name, matches.map((record) => record.id));
+  return identityIdLookup(records)(name);
+}
+
+/** `identityIdIn` over records indexed once, so many lookups cost the records plus one step each, not the records for each lookup. The same rules apply: a name two records claim throws `DuplicateIdentityNameError`, and a record with no readable name is reached by its own id when no record claims that as a name. */
+export function identityIdLookup(records: readonly IdentityRecord[]): (name: string) => string | undefined {
+  const byName = new Map<string, string[]>();
+  const nameless = new Set<string>();
+  for (const record of records) {
+    if (record.name === undefined) {
+      nameless.add(record.id);
+      continue;
+    }
+    const ids = byName.get(record.name);
+    if (ids === undefined) {
+      byName.set(record.name, [record.id]);
+    } else {
+      ids.push(record.id);
+    }
   }
-  return matches[0]?.id ?? records.find((record) => record.name === undefined && record.id === name)?.id;
+  return (name) => {
+    const matches = byName.get(name) ?? [];
+    if (matches.length > 1) {
+      throw new DuplicateIdentityNameError(name, matches);
+    }
+    return matches[0] ?? (nameless.has(name) ? name : undefined);
+  };
 }
 
 /** The name of the identity whose id is `id`, or undefined when no record has that id. */

@@ -3,7 +3,7 @@ import path from "node:path";
 import { ConfigFileNotJsonError, loadConfigFile, type LoadedFile } from "../config/load";
 import { FILE_NAME_RULE, isFileName, UnsafeNameError } from "../config/names";
 import { IdentitySchema, IdentitySelectorSchema, POOL_SELECTOR_PREFIX, type Identity } from "../config/schema";
-import { guardedNameRead, IDENTITY_FILE, identityIdIn, isSymlinkEntry, nameOfParsed, readIdentityRecords, type IdentityRecordsPort } from "../identityRecords";
+import { guardedNameRead, IDENTITY_FILE, identityIdIn, identityIdLookup, isSymlinkEntry, nameOfParsed, readIdentityRecords, type IdentityRecordsPort } from "../identityRecords";
 import { directoryKey } from "../sameDirectory";
 import type { FsPort } from "./ports";
 
@@ -205,10 +205,10 @@ export function resolveIdentityId(identitiesDir: string, name: string, fs: Pick<
 
 /** What resolves many names to ids from one read of the identity records, as `resolveIdentityId` resolves one: the records are read on the first call and every later call answers from them, so ranking a pool reads each `identity.json` once however many members it names. Use one per decision, since it does not see a rename made after its first call. */
 export function identityIdResolver(identitiesDir: string, fs: Pick<FsPort, "readdir" | "readConfigFile">): (name: string) => string | undefined {
-  let records: ReturnType<typeof readIdentityRecords> | undefined;
+  let lookup: ((name: string) => string | undefined) | undefined;
   return (name) => {
-    records ??= readIdentityRecords(configRecordsPort(fs), identitiesDir);
-    return identityIdIn(records, name);
+    lookup ??= identityIdLookup(readIdentityRecords(configRecordsPort(fs), identitiesDir));
+    return lookup(name);
   };
 }
 
