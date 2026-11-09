@@ -10,6 +10,9 @@ import { SourcePortRange } from "./connectEffects";
 /** A bound short enough that a test waiting it out stays quick. */
 const SHORT_BOUND_MS = 200;
 
+/** The bound a test gives a probe that dials a real loopback listener and must be accepted. It applies once the probe's worker has started, a healthy accept takes a few milliseconds, and a loaded machine can delay the connect by far more than `SHORT_BOUND_MS`, so it is far above a healthy accept and the test asserts the outcome, not a time. */
+const REAL_LISTENER_BOUND_MS = 5_000;
+
 /** A reserved range of three ports: enough for one held port to be skipped and the next tried. */
 const RANGE_START = 1;
 const RANGE_END = 3;
@@ -279,7 +282,7 @@ describe("the provider probe on its worker thread", () => {
     if (address === null || typeof address === "string") {
       throw new Error("listener has no TCP address");
     }
-    expect(probeAddressesAcceptSync([{ host: "localhost", port: address.port, timeoutMs: SHORT_BOUND_MS }])).toEqual([{ ok: true }]);
+    expect(probeAddressesAcceptSync([{ host: "localhost", port: address.port, timeoutMs: REAL_LISTENER_BOUND_MS }])).toEqual([{ ok: true }]);
   });
 
   it("connects to a loopback listener and sends it nothing", async () => {
@@ -301,7 +304,7 @@ describe("the provider probe on its worker thread", () => {
     if (address === null || typeof address === "string") {
       throw new Error("listener has no TCP address");
     }
-    expect(probeAddressesAcceptSync([{ host: "127.0.0.1", port: address.port, timeoutMs: SHORT_BOUND_MS }])).toEqual([{ ok: true }]);
+    expect(probeAddressesAcceptSync([{ host: "127.0.0.1", port: address.port, timeoutMs: REAL_LISTENER_BOUND_MS }])).toEqual([{ ok: true }]);
     await new Promise<void>((resolve) => {
       const wait = (): void => {
         if (closed) {
