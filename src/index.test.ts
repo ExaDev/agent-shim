@@ -329,6 +329,7 @@ describe("library surface", () => {
       "ensureHeadroom",
       "evaluateAmbientCredentialGuard",
       "evaluateWhen",
+      "executableFingerprint",
       "fetchThroughWebProxy",
       "followRcSessionEvents",
       "formatAmbientCredentialGuardMessage",
