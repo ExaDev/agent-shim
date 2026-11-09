@@ -13,7 +13,6 @@ import { buildRcMarkReadBody } from "./rcWrites";
 import type { RcStreamDial } from "./rcStream";
 import { upstreamChunks } from "./server";
 import { createDoorLookup, doorDial, type DialOutcome as DoorDialOutcome, type DoorDialIo } from "./doorDial";
-import { errorReason } from "./errorReason";
 
 /** The exclusive ceiling of the 2xx success class, whose bounds are fixed hundreds (RFC 9110 section 15); named once so a range check never carries a bare literal. */
 const SUCCESS_STATUS_MAX_EXCLUSIVE = 300;
@@ -544,12 +543,12 @@ export function realConnectEffects(ports: SourcePortRange = DOOR_SOURCE_PORTS): 
       };
       // Branching rather than selecting the namespace, because a union of the two module objects types `request` as `any` and loses every check on it.
       const upstream = target.tls ? https.request(options, onUpstreamResponse) : http.request(options, onUpstreamResponse);
-      upstream.on("error", (error: NodeJS.ErrnoException) => {
+      upstream.on("error", (error: Error) => {
         if (response.headersSent) {
           response.destroy(error);
           return;
         }
-        const body = `agent-shim headroom: upstream unreachable (${errorReason(error)})`;
+        const body = `agent-shim headroom: upstream unreachable (${error.message})`;
         response.writeHead(HTTP_BAD_GATEWAY, { "content-type": "text/plain", "content-length": String(body.length) });
         response.end(body);
       });

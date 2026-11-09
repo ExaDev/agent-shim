@@ -104,6 +104,11 @@ describe("probeAccept", () => {
     expect(timer.cancelled()).toBe(true);
   }, REJECTION_TEST_BUDGET_MS);
 
+  it("never answers with an empty reason when a dial rejects with nothing to say", async () => {
+    const verdict = await probeAccept<SilentSocket>(async () => await Promise.reject(new Error("")), SHORT_BOUND_MS, manualTimer().start);
+    expect(verdict).toEqual({ ok: false, reason: "the dial failed with no reason given" });
+  });
+
   it("flattens the AggregateError node emits when every address of a name refuses, so the reason names each attempt", async () => {
     class Refused extends Error {
       public readonly code = "ECONNREFUSED";
