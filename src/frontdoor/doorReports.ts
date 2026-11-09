@@ -169,16 +169,22 @@ interface InFlight {
 }
 
 /**
- * Shares one collection among requests for the same report made while it runs, each with its own abort signal: the collection is ended only when every request waiting on it has aborted, and a request that aborts stops waiting at once. Without it a burst of identical requests would start a child for each.
+ * Shares one collection among requests for the same report made while it runs, each with its own abort signal: the collection is ended only when every request waiting on it has aborted, and a request that aborts stops waiting at once, and a collection every request has abandoned is no longer joined by later requests. Without it a burst of identical requests would start a child for each.
  */
 function createCoalescer(): (key: string, collect: (signal: AbortSignal) => Promise<unknown>, signal: AbortSignal | undefined) => Promise<unknown> {
   const inFlight = new Map<string, InFlight>();
+  // An entry is forgotten only while it is still the one held for its key: a request that came after it was ended may have started a collection of its own under the same key.
+  const forget = (key: string, entry: InFlight): void => {
+    if (inFlight.get(key) === entry) {
+      inFlight.delete(key);
+    }
+  };
   return async (key, collect, signal) => {
     signal?.throwIfAborted();
     let entry = inFlight.get(key);
     if (entry === undefined) {
       const ended = new AbortController();
-      const started: InFlight = { result: collect(ended.signal).finally(() => { inFlight.delete(key); }), ended, waiters: 0 };
+      const started: InFlight = { result: collect(ended.signal).finally(() => { forget(key, started); }), ended, waiters: 0 };
       inFlight.set(key, started);
       entry = started;
     }
@@ -190,6 +196,8 @@ function createCoalescer(): (key: string, collect: (signal: AbortSignal) => Prom
       const onAbort = (): void => {
         shared.waiters -= 1;
         if (shared.waiters === 0) {
+          // Ended at once, not when its collection settles (which may be a long way off, behind the gate): a request that arrives from now on starts a collection of its own and does not join one that is already cancelled.
+          forget(key, shared);
           shared.ended.abort(signal?.reason);
         }
         reject(signal?.reason instanceof Error ? signal.reason : new Error("the report request was aborted"));

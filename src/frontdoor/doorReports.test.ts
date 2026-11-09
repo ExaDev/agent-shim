@@ -151,6 +151,38 @@ describe("reports requested together", () => {
     }
   });
 
+  it("do not join a collection every request for it has abandoned, even while it still waits for a child slot", async () => {
+    const children = controllableChildren();
+    const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, release: RELEASE, spawn: children.spawn });
+    // Both slots are busy, so a third report waits its turn.
+    const busy = Array.from({ length: MAX_REPORT_CHILDREN }, async (_, index) => reports.checkReport(`/busy/${String(index)}`, undefined, undefined).catch(() => undefined));
+    await settle();
+    expect(children.running()).toBe(MAX_REPORT_CHILDREN);
+    const first = new AbortController();
+    const abandoned = reports.checkReport("/wanted", undefined, first.signal).catch((error: unknown) => error);
+    await settle();
+    first.abort(new Error("the first client went away"));
+    expect(await abandoned).toEqual(new Error("the first client went away"));
+    // A second client asks for the same report with no abort of its own: its own child's outcome answers it (an empty report is refused by the schema), never the first client's reason.
+    const second = reports.checkReport("/wanted", undefined, undefined).catch((error: unknown) => error);
+    await settle();
+    // The abandoned collection settles when a slot reaches it, which must not forget the collection the second client started: a third client still joins that one.
+    children.finish("{}");
+    await settle();
+    const third = reports.checkReport("/wanted", undefined, undefined).catch((error: unknown) => error);
+    await settle();
+    for (let finished = 1; finished < MAX_REPORT_CHILDREN + 1; finished += 1) {
+      children.finish("{}");
+      await settle();
+    }
+    expect(await third).toBeInstanceOf(Error);
+    const outcome = await second;
+    expect(outcome).toBeInstanceOf(Error);
+    expect(outcome).not.toEqual(new Error("the first client went away"));
+    await Promise.all(busy);
+    expect(children.started()).toBe(MAX_REPORT_CHILDREN + 1);
+  });
+
   it("end the child only when every request waiting on it has aborted", async () => {
     const children = controllableChildren();
     const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, release: RELEASE, spawn: children.spawn });
