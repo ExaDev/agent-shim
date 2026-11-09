@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { CONNECT_LIMITS, startConnectServer } from "./connect";
 import { realConnectEffects } from "./connectEffects";
+import { MALFORMED_WITH_MARKER, MARKER } from "../dialAuthorityTestWorld";
 import { TEST_CAPABILITY, proxyAuthorizationFor, rawAttempt } from "./connectTestWorld";
 
 /** Binds an echo server on the IPv6 loopback, or resolves undefined where this machine has no `::1` to bind. */
@@ -33,35 +34,35 @@ function portOf(server: net.Server): number {
   return address.port;
 }
 
-describe("a CONNECT to an IPv6 literal through the front door", () => {
-  async function startDoor() {
-    return await startConnectServer(
-      {
-        interceptHosts: [],
-        tapHosts: [],
-        routedHost: "unused.invalid",
-        serveRouted: () => undefined,
-        leafFor: () => {
-          throw new Error("no host is intercepted, so no leaf is minted");
-        },
-        upstreamFor: () => {
-          throw new Error("no host is intercepted, so no upstream is chosen");
-        },
-        isLiveCapability: (token) => token === TEST_CAPABILITY,
-        limits: CONNECT_LIMITS,
+async function startConnectDoor() {
+  return await startConnectServer(
+    {
+      interceptHosts: [],
+      tapHosts: [],
+      routedHost: "unused.invalid",
+      serveRouted: () => undefined,
+      leafFor: () => {
+        throw new Error("no host is intercepted, so no leaf is minted");
       },
-      realConnectEffects(),
-      { preferredPort: undefined },
-    );
-  }
+      upstreamFor: () => {
+        throw new Error("no host is intercepted, so no upstream is chosen");
+      },
+      isLiveCapability: (token) => token === TEST_CAPABILITY,
+      limits: CONNECT_LIMITS,
+    },
+    realConnectEffects(),
+    { preferredPort: undefined },
+  );
+}
 
+describe("a CONNECT to an IPv6 literal through the front door", () => {
   it("reaches a listener on ::1 with the brackets taken off the dial", async (ctx) => {
     const echo = await echoOnLoopbackV6();
     if (echo === undefined) {
       ctx.skip();
       return;
     }
-    const door = await startDoor();
+    const door = await startConnectDoor();
     try {
       const attempt = rawAttempt(door.port, headFor(`[::1]:${String(portOf(echo))}`));
       expect(await attempt.answer).toContain("200 Connection Established");
@@ -84,12 +85,27 @@ describe("a CONNECT to an IPv6 literal through the front door", () => {
   });
 
   it.each(["[::1", "[::1]x", "[]:443", "::1", "host:65536", "user@host:443"])("answers 400 to the malformed authority %j before dialling anything", async (authority) => {
-    const door = await startDoor();
+    const door = await startConnectDoor();
     try {
       const attempt = rawAttempt(door.port, headFor(authority));
       const answer = await attempt.answer;
       expect(answer).toContain("400 Bad Request");
       expect(answer.toLowerCase()).toContain("x-agent-shim-refusal: ");
+      await attempt.closed;
+    } finally {
+      await door.close();
+    }
+  });
+});
+
+describe("the answer to a malformed CONNECT authority", () => {
+  it.each(MALFORMED_WITH_MARKER.filter((authority) => !/[\p{Cc}\s]/u.test(authority)).map((authority) => [JSON.stringify(authority), authority] as const))("repeats nothing of %s", async (_name, authority) => {
+    const door = await startConnectDoor();
+    try {
+      const attempt = rawAttempt(door.port, headFor(authority));
+      const answer = await attempt.answer;
+      expect(answer).toContain("400 Bad Request");
+      expect(answer.toLowerCase()).not.toContain(MARKER);
       await attempt.closed;
     } finally {
       await door.close();

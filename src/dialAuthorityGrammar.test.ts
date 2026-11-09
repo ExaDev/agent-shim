@@ -2,6 +2,7 @@ import * as net from "node:net";
 import { describe, expect, it } from "vitest";
 
 import { MAX_LABEL_LENGTH, MAX_NAME_LENGTH, parseDialAuthority } from "./baseUrlDial";
+import { MALFORMED_WITH_MARKER, MARKER } from "./dialAuthorityTestWorld";
 
 const DEFAULT_PORT = 443;
 const ASCII_END = 0x80;
@@ -129,5 +130,16 @@ describe("what the parser accepts, whatever it is given", () => {
     }
     // The generator must reach the accept path, or the loop above proves nothing.
     expect(accepted).toBeGreaterThan(0);
+  });
+});
+
+describe("a refusal never repeats what the client sent", () => {
+  it.each(MALFORMED_WITH_MARKER.map((authority) => [JSON.stringify(authority), authority] as const))("names the problem with %s without quoting it", (_name, authority) => {
+    const parsed = parseDialAuthority(authority, DEFAULT_PORT);
+    expect(parsed).toHaveProperty("refusal");
+    if ("refusal" in parsed) {
+      expect(parsed.refusal.toLowerCase()).not.toContain(MARKER);
+      expect(parsed.refusal).not.toMatch(/\p{Cc}/u);
+    }
   });
 });
