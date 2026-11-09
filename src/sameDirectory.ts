@@ -12,7 +12,7 @@ export function systemErrorCode(error: unknown): string | undefined {
 }
 
 /** What `target` resolves to, read as bigints (`fileIdentity.ts`), or undefined when it does not exist or cannot be reached (`UNREACHABLE_CODES`); any other fault is thrown. */
-export function reachableStat(target: string): fs.BigIntStats | undefined {
+function reachableStat(target: string): fs.BigIntStats | undefined {
   try {
     return fs.statSync(target, { bigint: true, throwIfNoEntry: false });
   } catch (error) {
