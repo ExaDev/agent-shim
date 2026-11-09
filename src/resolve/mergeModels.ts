@@ -60,19 +60,15 @@ export class ModelsMerge {
       this.show = layer.show;
     }
     // Identity assertions accumulate: a statement made at any depth that two refs are one model, or two models, stands unless a deeper layer states the opposite of the same pair, which would be a contradiction the doctor reports rather than a merge rule. A group a shallower layer already made is not added again; one repeated inside this layer is.
-    const knownSame = new Set(this.sameKeys);
-    for (const group of layer.same ?? []) {
-      if (!knownSame.has(keyOfRefs(group))) {
-        this.same.push(group);
-        this.sameKeys.add(keyOfRefs(group));
-      }
+    const newGroups = (layer.same ?? []).filter((group) => !this.sameKeys.has(keyOfRefs(group)));
+    for (const group of newGroups) {
+      this.same.push(group);
+      this.sameKeys.add(keyOfRefs(group));
     }
-    const knownDistinct = new Set(this.distinctKeys);
-    for (const [left, right] of layer.distinct ?? []) {
-      if (!knownDistinct.has(keyOfRefs([left, right]))) {
-        this.distinct.push([left, right]);
-        this.distinctKeys.add(keyOfRefs([left, right]));
-      }
+    const newPairs = (layer.distinct ?? []).filter(([left, right]) => !this.distinctKeys.has(keyOfRefs([left, right])));
+    for (const [left, right] of newPairs) {
+      this.distinct.push([left, right]);
+      this.distinctKeys.add(keyOfRefs([left, right]));
     }
     for (const [key, settings] of Object.entries(layer.families ?? {})) {
       this.families.delete(key);
