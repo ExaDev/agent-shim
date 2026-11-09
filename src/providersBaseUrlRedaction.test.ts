@@ -109,6 +109,19 @@ describe("a provider's base URL in the JSON views and the catalogue report", () 
     expect(output).not.toContain("abc123");
   });
 
+  it("redacts it in the JSON a write prints, provider add --json and provider set --json", async () => {
+    const added = await run("add", "local", "--display-name", "Local", "--base-url", SECRET_BASE_URL, "--credential", "literal:dummy", "--json");
+    expect(added).not.toContain("hunter2");
+    expect(added).not.toContain("abc123");
+    expect(JSON.parse(added)).toMatchObject({ action: "created", value: { baseUrl: NAMED_BASE_URL } });
+    const updated = await run("set", "local", "--display-name", "Renamed", "--json");
+    expect(updated).not.toContain("hunter2");
+    expect(updated).not.toContain("abc123");
+    expect(JSON.parse(updated)).toMatchObject({ action: "updated", value: { baseUrl: NAMED_BASE_URL } });
+    // The file keeps the value it was given.
+    expect(readProvider(paths, "local")).toMatchObject({ baseUrl: SECRET_BASE_URL });
+  });
+
   it("gives it whole in provider show --json, which prints the file's own fields so the value round-trips", async () => {
     await run("add", "local", "--display-name", "Local", "--base-url", SECRET_BASE_URL, "--credential", "literal:dummy");
     expect(JSON.parse(await run("show", "local", "--json"))).toMatchObject({ baseUrl: SECRET_BASE_URL });
