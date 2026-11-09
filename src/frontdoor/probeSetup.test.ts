@@ -242,6 +242,27 @@ describe("a batch of provider probes at the size of a large configuration", () =
     expect(run.attempts()).toBe(LARGE);
   });
 
+  it("settles the workers already running, and reports the one that could not start, when a later worker cannot be created", () => {
+    const settled: string[] = [];
+    const FAILING_START = 3;
+    const TARGET_COUNT = 4;
+    let started = 0;
+    const workers: ProbeWorkers = {
+      start: (_source, data) => {
+        started += 1;
+        if (started === FAILING_START) {
+          throw new Error("ERR_WORKER_INIT_FAILED");
+        }
+        const host = String(data.host);
+        return { verdict: () => { settled.push(host); return { ok: true }; } };
+      },
+    };
+    const verdicts = probeAddressesAcceptSync(distinctTargets(TARGET_COUNT), workers, 0);
+    expect(settled).toEqual(["p0.example", "p1.example", "p3.example"]);
+    expect(verdicts.map((verdict) => verdict.ok)).toEqual([true, true, false, true]);
+    expect(verdicts[2]).toMatchObject({ reason: expect.stringContaining("ERR_WORKER_INIT_FAILED") as unknown });
+  });
+
   it("starts the batches of different base offsets apart, so batches running together do not begin at one port", () => {
     const firsts: number[] = [];
     const workers: ProbeWorkers = { start: (_source, data) => { firsts.push(Number(data.portFirst)); return { verdict: () => ({ ok: true }) }; } };

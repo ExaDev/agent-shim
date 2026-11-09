@@ -244,6 +244,23 @@ describe("a probe worker that fails", () => {
     expectFailureVerdict(`${WORKER_DATA_SOURCE}\n${STARTED_SIGNAL_SOURCE}\nthrow new Error(${JSON.stringify(FAILURE_MESSAGE)});`);
   });
 
+  it("fails the probe, naming the exit code, when its source ends the worker with no verdict, however long the probe's own bound", () => {
+    // The bound is far past what the worker needs to say it exited, so a worker whose exit went unsaid would leave the wait to run out the bound and answer its timeout reason instead.
+    const verdict = startProbeWorker(`${WORKER_DATA_SOURCE}\n${STARTED_SIGNAL_SOURCE}\nprocess.exit(3);`, {}, LOST_WAKE_BOUND_MS).verdict();
+    expect(verdict).toEqual({ ok: false, reason: `${PROBE_WORKER_FAILURE_PREFIX}the worker exited without a verdict (exit code 3)` });
+  }, LOST_WAKE_BOUND_MS);
+
+  it("keeps a verdict published before the worker exits", () => {
+    expect(startProbeWorker(`${WORKER_DATA_SOURCE}\n${STARTED_SIGNAL_SOURCE}\nfinishProbe(workerData.ok, ""); process.exit(0);`, {}, STARTUP_PROBE_BOUND_MS).verdict()).toEqual({ ok: true });
+  });
+
+  it("fails the probe, naming the cause, when the thread cannot be created, and does not throw", () => {
+    const refusing = (): never => {
+      throw new Error("ERR_WORKER_INIT_FAILED: out of memory");
+    };
+    expect(startProbeWorker("", {}, STARTUP_PROBE_BOUND_MS, refusing).verdict()).toEqual({ ok: false, reason: `${PROBE_WORKER_FAILURE_PREFIX}the worker could not be started: ERR_WORKER_INIT_FAILED: out of memory` });
+  });
+
   it("fails the probe, naming the error, when its source throws before it signals that it started", () => {
     expectFailureVerdict(`${WORKER_DATA_SOURCE}\nthrow new Error(${JSON.stringify(FAILURE_MESSAGE)});\n${STARTED_SIGNAL_SOURCE}`);
   });

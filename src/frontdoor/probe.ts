@@ -75,6 +75,10 @@ const WORKER_PRELUDE_SOURCE = `
   };
   process.on("uncaughtException", fail);
   process.on("unhandledRejection", fail);
+  // A worker that ends itself (process.exit in a probe source or a library it calls) runs this in its own thread before it goes: the waiting thread cannot hear the exit event of a worker, since its event loop is blocked on the verdict, so the worker says so itself. A verdict already published is not replaced (the writer takes the claim once).
+  process.on("exit", (code) => {
+    globalThis.finishProbe(workerData.failed, workerData.failurePrefix + "the worker exited without a verdict (exit code " + String(code) + ")");
+  });
 })();
 `;
 
@@ -209,7 +213,13 @@ export function probeAddressesAcceptSync(targets: readonly { readonly host: stri
       settleOldest();
     }
     const portFirst = DOOR_SOURCE_PORT_START + ((base + index * stride) % DOOR_SOURCE_PORT_COUNT);
-    running.push({ key: targetKey(target), verdict: workers.start(ACCEPT_PROBE_SOURCE, { host: target.host, port: target.port, portStart: DOOR_SOURCE_PORT_START, portEnd: DOOR_SOURCE_PORT_END, portFirst }, target.timeoutMs).verdict });
+    // A worker that cannot be started is that target's failed verdict, and the workers already running are still settled, so their threads are ended and the launch or doctor run goes on to say what it found.
+    try {
+      running.push({ key: targetKey(target), verdict: workers.start(ACCEPT_PROBE_SOURCE, { host: target.host, port: target.port, portStart: DOOR_SOURCE_PORT_START, portEnd: DOOR_SOURCE_PORT_END, portFirst }, target.timeoutMs).verdict });
+    } catch (error) {
+      const reason = `${PROBE_WORKER_FAILURE_PREFIX}the worker could not be started: ${error instanceof Error ? error.message : String(error)}`;
+      running.push({ key: targetKey(target), verdict: () => ({ ok: false, reason }) });
+    }
   });
   while (running.length > 0) {
     settleOldest();
@@ -246,10 +256,17 @@ export function startProbeWorker(source: string, data: Readonly<Record<string, u
   const startLimit = performance.now() + startLimitMs;
   const shared = new SharedArrayBuffer(HEADER_SLOTS * INT32_BYTES + REASON_BYTES);
   const header = new Int32Array(shared, 0, HEADER_SLOTS);
-  const worker = spawn(`${WORKER_PRELUDE_SOURCE}\nnew Function("require", ${JSON.stringify(source)})(require);`, {
-    eval: true,
-    workerData: { ...data, timeoutMs, shared, ok: VERDICT_OK, failed: VERDICT_FAILED, headerSlots: HEADER_SLOTS, startedSlot: STARTED_SLOT, failurePrefix: PROBE_WORKER_FAILURE_PREFIX, claimSlot: CLAIM_SLOT },
-  });
+  let worker: ProbeWorkerHandle;
+  try {
+    worker = spawn(`${WORKER_PRELUDE_SOURCE}\nnew Function("require", ${JSON.stringify(source)})(require);`, {
+      eval: true,
+      workerData: { ...data, timeoutMs, shared, ok: VERDICT_OK, failed: VERDICT_FAILED, headerSlots: HEADER_SLOTS, startedSlot: STARTED_SLOT, failurePrefix: PROBE_WORKER_FAILURE_PREFIX, claimSlot: CLAIM_SLOT },
+    });
+  } catch (error) {
+    // A thread that cannot be created (out of memory, out of descriptors) is a failed probe, never a throw out of a launch or a batch whose other workers are already running.
+    const reason = `${PROBE_WORKER_FAILURE_PREFIX}the worker could not be started: ${error instanceof Error ? error.message : String(error)}`;
+    return { verdict: () => ({ ok: false, reason }) };
+  }
   worker.on("error", (error: Error) => {
     if (Atomics.compareExchange(header, CLAIM_SLOT, 0, 1) !== 0) {
       return;
