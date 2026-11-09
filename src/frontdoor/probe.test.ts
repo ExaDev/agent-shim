@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 import * as esbuild from "esbuild";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { cliBundleOptions } from "../../scripts/bundle-options.mts";
 import { LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial, type LeafCert } from "./connect";
@@ -16,8 +16,11 @@ import * as probe from "./probe";
 /** Enough time for the pure-JS 2048-bit keypairs this file generates. */
 const KEYGEN_TIMEOUT_MS = 120_000;
 
-/** The bound given to a probe whose verdict a test reads: a probe starts a worker thread, and on a machine whose run queue is several times its cores that start alone can outlast the production bound, so the verdict would be the probe's own timeout. The tests of the bound itself give the production one or their own. */
-const READ_VERDICT_TIMEOUT_MS = 60_000;
+/** The bound given to a probe whose verdict a test reads. It applies once the worker has started (the start has its own limit, `PROBE_WORKER_START_LIMIT_MS`, which a loaded machine's slow start is measured against), and a local probe answers in a few milliseconds, so this is far above a healthy answer and far below the production bound: a wake that is lost makes the waiter run out this bound, which `Atomics.wait` cannot be interrupted from, so the bound is what decides how long a regression stalls the suite. */
+const READ_VERDICT_TIMEOUT_MS = 5_000;
+
+/** The bound a test gives a probe whose waiter only the worker's own failure handler can wake: a healthy run takes the worker's start (seconds on a loaded machine) and a few milliseconds, and the assertions require less than half the bound, so a lost wake stalls the test for this long and no longer. */
+const LOST_WAKE_BOUND_MS = 12_000;
 
 /** A bound short enough for a test of the bound to wait out, and distinct from the production one, so a verdict naming it shows the bound given was the bound used. */
 const SHORT_PROBE_TIMEOUT_MS = 500;
@@ -49,6 +52,24 @@ const workers: Worker[] = [];
 
 afterEach(async () => {
   await Promise.all(workers.splice(0).map(async (worker) => await worker.terminate()));
+});
+
+/**
+ * A probe that waits for a verdict blocks its thread, so a test timeout cannot end it, and a regression that loses the waiter's wake makes every test after it wait out its whole bound too. A test that took longer than the longest bound a healthy one is given means a wake was lost: every later test of the file fails at once, naming it, instead of each waiting its own bound.
+ */
+const LONGEST_HEALTHY_TEST_MS = 2 * LOST_WAKE_BOUND_MS;
+let wakeLostIn: string | undefined;
+let testStartedAt = 0;
+beforeEach(() => {
+  if (wakeLostIn !== undefined) {
+    throw new Error(`not run: a verdict wait outlasted ${String(LONGEST_HEALTHY_TEST_MS)}ms in "${wakeLostIn}", so a wake of the waiting thread was lost`);
+  }
+  testStartedAt = performance.now();
+});
+afterEach((context) => {
+  if (performance.now() - testStartedAt > LONGEST_HEALTHY_TEST_MS) {
+    wakeLostIn = context.task.name;
+  }
 });
 
 /** Starts a health-answering listener on a worker thread: HTTPS with `leaf`, or plain HTTP without one. */
@@ -224,9 +245,6 @@ describe("a probe worker that fails", () => {
 
   /** How many times shorter than the start limit a prompt wake must be: a wake that did not happen waits out the whole limit, and a loaded machine's start-up and scheduling stay well inside half of it. */
   const PROMPT_WAKE_DIVISOR = 2;
-  /** How many start limits the probe bound of a test is whose waiter must be woken by the failure handler alone. */
-  const LOST_WAKE_START_LIMITS = 6;
-  const LOST_WAKE_BOUND_MS = PROBE_WORKER_START_LIMIT_MS * LOST_WAKE_START_LIMITS;
 
   function failureReason(source: string): string {
     const verdict = startProbeWorker(source, {}, STARTUP_PROBE_BOUND_MS).verdict();
