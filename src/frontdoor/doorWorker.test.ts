@@ -8,12 +8,34 @@ import type { DoorWorkerData } from "./doorWorkerProtocol";
 /** A worker that runs nothing: the test answers, fails or stalls it by hand. */
 class FakeWorker extends EventEmitter {
   public terminations = 0;
-  public constructor(public readonly data: DoorWorkerData) {
+  /** Whether the thread has ended: set when `exit` has been emitted. */
+  public ended = false;
+  /** Holds `terminate` unresolved until `release`: a thread stuck in a blocking call, which a real `terminate` waits for. */
+  private releaseTermination: (() => void) | undefined;
+  public constructor(public readonly data: DoorWorkerData, private readonly stuck = false) {
     super();
   }
   public async terminate(): Promise<number> {
     this.terminations += 1;
-    return await Promise.resolve(0);
+    if (this.stuck) {
+      await new Promise<void>((resolve) => {
+        this.releaseTermination = resolve;
+      });
+    }
+    // A real worker emits `exit` when it has stopped, then `terminate` resolves.
+    this.end();
+    return 0;
+  }
+  /** The thread ends of its own accord, or after being told to. */
+  public end(): void {
+    if (!this.ended) {
+      this.ended = true;
+      this.emit("exit", 1);
+    }
+  }
+  /** Lets a stuck thread's termination finish. */
+  public release(): void {
+    this.releaseTermination?.();
   }
   public answer(value: unknown): void {
     this.emit("message", { kind: "done", value });
@@ -55,15 +77,15 @@ const STALL_MS = 10_000;
 const identity = (value: unknown): never => value as never;
 
 /** A host over fake workers, with the ones it started listed in order. */
-function hostOver(options: { readonly maxConcurrent?: number; readonly maxQueued?: number } = {}) {
+function hostOver(options: { readonly maxConcurrent?: number; readonly maxQueued?: number; readonly stuck?: boolean } = {}) {
   const started: FakeWorker[] = [];
   const spawn: DoorWorkerSpawn = (_code, data) => {
-    const worker = new FakeWorker(data);
+    const worker = new FakeWorker(data, options.stuck);
     started.push(worker);
     return worker;
   };
   const clock = manualClock();
-  const host = createDoorWorkerHost({ code: "code", spawn, clock, stallLimitMs: STALL_MS, deadlineMs: DEADLINES, ...options });
+  const host = createDoorWorkerHost({ code: "code", spawn, clock, stallLimitMs: STALL_MS, deadlineMs: DEADLINES, ...(options.maxConcurrent === undefined ? {} : { maxConcurrent: options.maxConcurrent }), ...(options.maxQueued === undefined ? {} : { maxQueued: options.maxQueued }) });
   return { host, started, clock };
 }
 
@@ -187,5 +209,166 @@ describe("the door worker host", () => {
     await settle();
     started[0]?.emit("message", "hello");
     await expect(running).rejects.toThrow("something other than a result");
+  });
+
+  it("takes a cancelled queued request out of the queue at once, freeing its place, and starts an equal request after the cancel fresh", async () => {
+    const { host, started } = hostOver({ maxConcurrent: 1, maxQueued: 1 });
+    const running = host.run("doctor", { root: "/a" }, identity);
+    const abort = new AbortController();
+    const queued = host.run("doctor", { root: "/b" }, identity, abort.signal);
+    await settle();
+    // The queue is full: a third request is refused.
+    await expect(host.run("doctor", { root: "/c" }, identity)).rejects.toBeInstanceOf(DoorWorkerBusyError);
+    abort.abort();
+    await expect(queued).rejects.toThrow("cancelled");
+    // Its place in the queue is free again, in the same turn.
+    const third = host.run("doctor", { root: "/c" }, identity);
+    // And an equal request after the cancel is a flight of its own.
+    const again = host.run("doctor", { root: "/b" }, identity);
+    await expect(again).rejects.toBeInstanceOf(DoorWorkerBusyError);
+    started[0]?.answer("a");
+    await running;
+    await settle();
+    started[1]?.answer("c");
+    await expect(third).resolves.toBe("c");
+    expect(started).toHaveLength(2);
+    const FLIGHTS_STARTED_BY_NOW = 3;
+    const fresh = host.run("doctor", { root: "/b" }, identity);
+    await settle();
+    expect(started).toHaveLength(started.length);
+    expect(started.length).toBe(FLIGHTS_STARTED_BY_NOW);
+    started[2]?.answer("b");
+    await expect(fresh).resolves.toBe("b");
+  });
+
+  it("refuses a request whose signal has already aborted, without starting anything", async () => {
+    const { host, started } = hostOver();
+    const abort = new AbortController();
+    abort.abort();
+    await expect(host.run("doctor", { root: "/a" }, identity, abort.signal)).rejects.toThrow("cancelled");
+    await settle();
+    expect(started).toHaveLength(0);
+  });
+
+  it("never spawns a worker for a request made in the turn the door is stopped", async () => {
+    const { host, started } = hostOver();
+    const running = host.run("doctor", { root: "/a" }, identity);
+    host.stop();
+    await expect(running).rejects.toThrow("ending");
+    await settle();
+    expect(started).toHaveLength(0);
+  });
+
+  it("never spawns a worker for a queued request that is handed a place after the door is stopped", async () => {
+    const { host, started } = hostOver({ maxConcurrent: 1 });
+    const running = host.run("doctor", { root: "/a" }, identity);
+    const queued = host.run("doctor", { root: "/b" }, identity);
+    await settle();
+    host.stop();
+    await expect(running).rejects.toThrow("ending");
+    await expect(queued).rejects.toThrow("ending");
+    await settle();
+    expect(started).toHaveLength(1);
+  });
+
+  it("keeps a place until the thread has ended, so a worker stuck in a blocking call cannot let live threads pass the bound", async () => {
+    const { host, started } = hostOver({ maxConcurrent: 1, stuck: true });
+    const first = host.run("doctor", { root: "/a" }, identity);
+    const second = host.run("doctor", { root: "/b" }, identity);
+    await settle();
+    started[0]?.answer("a");
+    await first;
+    await settle();
+    // The first thread was told to end but has not: the second request has no place yet.
+    expect(started).toHaveLength(1);
+    started[0]?.release();
+    await settle();
+    expect(started).toHaveLength(2);
+    started[1]?.answer("b");
+    await expect(second).resolves.toBe("b");
+  });
+
+  it("terminates a worker once, however many ways its flight ends", async () => {
+    const { host, started } = hostOver();
+    const abort = new AbortController();
+    const running = host.run("doctor", { root: "/a" }, identity, abort.signal);
+    await settle();
+    abort.abort();
+    started[0]?.emit("message", { kind: "done", value: "late" });
+    started[0]?.emit("error", new Error("late error"));
+    host.stop();
+    await expect(running).rejects.toThrow("cancelled");
+    await settle();
+    expect(started[0]?.terminations).toBe(1);
+  });
+
+  it("keeps the bound, the queue and the books through any interleaving of requests, cancels, answers, exits and stops", async () => {
+    const MAX = 2;
+    const QUEUE = 3;
+    const RUNS = 60;
+    const OPERATIONS = 40;
+    /** The linear congruential generator's parameters (the classic ones), so a seed replays the same interleaving. */
+    const LCG_SEED_SCALE = 2_654_435_761;
+    const LCG_MULTIPLIER = 1_103_515_245;
+    const LCG_INCREMENT = 12_345;
+    /** The operations an interleaving draws from (requests twice as likely as the rest), and how many distinct requests it makes (few, so equal requests meet). */
+    const OPERATION_KINDS = ["run", "run", "run", "abort", "answer", "end", "stop"] as const;
+    const DISTINCT_REQUESTS = 5;
+    const STOP_ONE_IN = 4;
+    for (let seed = 1; seed <= RUNS; seed += 1) {
+      // A small deterministic generator, so a failing seed replays.
+      let state = seed * LCG_SEED_SCALE;
+      const next = (limit: number): number => {
+        state = (Math.imul(state, LCG_MULTIPLIER) + LCG_INCREMENT) >>> 0;
+        return state % limit;
+      };
+      const { host, started } = hostOver({ maxConcurrent: MAX, maxQueued: QUEUE, stuck: next(2) === 0 });
+      const aborts: AbortController[] = [];
+      const outcomes: Promise<unknown>[] = [];
+      let stopped = false;
+      let spawnedAfterStop = 0;
+      for (let step = 0; step < OPERATIONS; step += 1) {
+        const before = started.length;
+        const operation = OPERATION_KINDS[next(OPERATION_KINDS.length)] ?? "run";
+        switch (operation) {
+          case "run": {
+            const abort = new AbortController();
+            aborts.push(abort);
+            outcomes.push(host.run("doctor", { root: `/r${String(next(DISTINCT_REQUESTS))}` }, identity, abort.signal).catch(() => undefined));
+            break;
+          }
+          case "abort":
+            aborts[next(Math.max(1, aborts.length))]?.abort();
+            break;
+          case "answer":
+            started[next(Math.max(1, started.length))]?.answer("ok");
+            break;
+          case "end":
+            started[next(Math.max(1, started.length))]?.end();
+            started[next(Math.max(1, started.length))]?.release();
+            break;
+          case "stop":
+            if (next(STOP_ONE_IN) === 0) {
+              host.stop();
+              stopped = true;
+            }
+        }
+        await settle();
+        if (stopped) {
+          spawnedAfterStop += started.length - before;
+        }
+        const live = started.filter((worker) => !worker.ended).length;
+        expect(live, `seed ${String(seed)} step ${String(step)}`).toBeLessThanOrEqual(MAX);
+      }
+      host.stop();
+      for (const worker of started) {
+        worker.release();
+      }
+      await settle();
+      await Promise.all(outcomes);
+      expect(spawnedAfterStop, `seed ${String(seed)}`).toBe(0);
+      expect(started.every((worker) => worker.terminations <= 1), `seed ${String(seed)}`).toBe(true);
+      expect(started.every((worker) => worker.ended), `seed ${String(seed)}`).toBe(true);
+    }
   });
 });

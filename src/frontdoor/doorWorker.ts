@@ -119,16 +119,22 @@ export interface DoorWorkerHost {
   readonly stop: () => void;
 }
 
+/** Where a flight is in its life: waiting for a place, holding one (a worker is starting or running), or over. */
+type FlightState = "queued" | "running" | "ended";
+
 /** One task in flight or waiting: its callers share it. */
 interface Flight {
+  readonly key: string;
   readonly task: DoorWorkerTaskName;
   readonly input: unknown;
+  readonly outcome: { readonly promise: Promise<unknown>; readonly resolve: (value: unknown) => void; readonly reject: (error: Error) => void };
   callers: number;
-  readonly promise: Promise<unknown>;
-  readonly cancel: (reason: string) => void;
+  state: FlightState;
+  /** Ends the flight with `reason` for every caller and stops its worker, if it has one. */
+  cancel: (reason: string) => void;
 }
 
-/** A promise with its settlers, for the gate and the flights. */
+/** A promise with its settlers, for the flights. */
 function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value: T) => void; readonly reject: (error: Error) => void } {
   let resolve!: (value: T) => void;
   let reject!: (error: Error) => void;
@@ -146,37 +152,99 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
   const stallLimitMs = options.stallLimitMs ?? DOOR_WORKER_STALL_LIMIT_MS;
   const maxConcurrent = options.maxConcurrent ?? MAX_CONCURRENT_DOOR_WORKERS;
   const maxQueued = options.maxQueued ?? MAX_QUEUED_DOOR_WORKER_TASKS;
+  /** The flights not yet over, by request: an equal request joins one of these. */
   const inFlight = new Map<string, Flight>();
-  const waiting: { readonly start: () => void; readonly refuse: (reason: string) => void }[] = [];
-  const running = new Set<{ readonly cancel: (reason: string) => void }>();
-  /** The places taken in the gate: a task holds one from the moment it is admitted until its worker has ended, so two tasks asked in the same turn cannot both pass a full gate. */
-  let placesTaken = 0;
+  /** The flights waiting for a place, oldest first. */
+  const queue: Flight[] = [];
+  /** The places in use: one for each live thread, from the moment its flight is given the place until the thread has ended (`terminate` settled or its `exit` seen), so a worker stuck in a blocking call keeps its place and the live threads never exceed `maxConcurrent`. */
+  let places = 0;
   let stopped = false;
 
-  /** Runs one worker to its answer, with its watchdog; releases its place in the gate when it ends. */
-  const execute = async (flight: { readonly task: DoorWorkerTaskName; readonly input: unknown }, register: (cancel: (reason: string) => void) => void): Promise<unknown> => {
+  /** Takes the flight out of the books, whatever state it is in; true when it was not already over. */
+  const close = (flight: Flight): boolean => {
+    if (flight.state === "ended") {
+      return false;
+    }
+    if (flight.state === "queued") {
+      const at = queue.indexOf(flight);
+      if (at !== -1) {
+        queue.splice(at, 1);
+      }
+    }
+    flight.state = "ended";
+    // A request equal to this one that came after it ended has started a flight of its own under the same key.
+    if (inFlight.get(flight.key) === flight) {
+      inFlight.delete(flight.key);
+    }
+    return true;
+  };
+
+  /** Starts the worker of a flight that holds a place; assigned below, since starting a worker and handing out places call each other. */
+  const starter: { launch: (flight: Flight) => void } = { launch: () => undefined };
+
+  /** Hands free places to the flights waiting for them. */
+  const drain = (): void => {
+    while (places < maxConcurrent) {
+      const next = queue.shift();
+      if (next === undefined) {
+        return;
+      }
+      places += 1;
+      next.state = "running";
+      starter.launch(next);
+    }
+  };
+
+  /** Gives the place its flight held back, once the thread that held it has ended. */
+  const releasePlace = (): void => {
+    places -= 1;
+    drain();
+  };
+
+  /** Starts the worker of a flight that holds a place, with its watchdog; the place goes back when the thread has ended. */
+  const launch = (flight: Flight): void => {
+    if (stopped || flight.state === "ended") {
+      // Nothing was spawned: the door is ending, or the flight was cancelled between being given the place and this turn.
+      close(flight);
+      flight.outcome.reject(new DoorWorkerFailedError(flight.task, stopped ? "the front door is ending" : "it was cancelled"));
+      releasePlace();
+      return;
+    }
     const heartbeat = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
     const beats = new Int32Array(heartbeat);
-    const outcome = deferred<unknown>();
     const startedAt = clock.now();
     let lastBeat = Atomics.load(beats, 0);
     let lastBeatAt = startedAt;
     const worker = spawn(options.code, { doorWorker: { task: flight.task, input: flight.input, heartbeat } });
-    const entry: { cancel: (reason: string) => void } = { cancel: () => undefined };
     let stopWatchdog: () => void = () => undefined;
-    const settle = (apply: () => void): void => {
-      stopWatchdog();
-      running.delete(entry);
-      void worker.terminate();
-      apply();
+    let threadEnded = false;
+    let terminating = false;
+    const threadHasEnded = (): void => {
+      if (!threadEnded) {
+        threadEnded = true;
+        releasePlace();
+      }
     };
-    entry.cancel = (reason) => {
-      settle(() => {
-        outcome.reject(new DoorWorkerFailedError(flight.task, reason));
+    /** Ends the thread, once: the place is released when `terminate` settles or the thread's `exit` arrives, whichever is first. */
+    const terminate = (): void => {
+      stopWatchdog();
+      if (terminating) {
+        return;
+      }
+      terminating = true;
+      worker.terminate().then(threadHasEnded, threadHasEnded);
+    };
+    const finish = (apply: () => void): void => {
+      if (close(flight)) {
+        apply();
+      }
+      terminate();
+    };
+    flight.cancel = (reason) => {
+      finish(() => {
+        flight.outcome.reject(new DoorWorkerFailedError(flight.task, reason));
       });
     };
-    running.add(entry);
-    register(entry.cancel);
     stopWatchdog = clock.every(() => {
       const now = clock.now();
       const beat = Atomics.load(beats, 0);
@@ -185,135 +253,100 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
         lastBeatAt = now;
       }
       if (now - startedAt > options.deadlineMs[flight.task]) {
-        entry.cancel("it outlasted its deadline");
+        flight.cancel("it outlasted its deadline");
       } else if (now - lastBeatAt > stallLimitMs) {
-        entry.cancel("it stalled: nothing in it moved");
+        flight.cancel("it stalled: nothing in it moved");
       }
     }, DOOR_WORKER_WATCHDOG_INTERVAL_MS);
     worker.on("message", (value) => {
       if (!isDoorWorkerMessage(value)) {
-        entry.cancel("it answered with something other than a result");
+        flight.cancel("it answered with something other than a result");
         return;
       }
-      settle(() => {
+      finish(() => {
         if (value.kind === "done") {
-          outcome.resolve(value.value);
+          flight.outcome.resolve(value.value);
         } else {
-          outcome.reject(new DoorWorkerFailedError(flight.task, `${value.name}: ${value.message}`));
+          flight.outcome.reject(new DoorWorkerFailedError(flight.task, `${value.name}: ${value.message}`));
         }
       });
     });
     worker.on("error", (error) => {
-      entry.cancel(error.message);
+      flight.cancel(error.message);
     });
     worker.on("exit", (code) => {
-      entry.cancel(`it ended with code ${String(code)} without an answer`);
+      flight.cancel(`it ended with code ${String(code)} without an answer`);
+      threadHasEnded();
     });
-    return await outcome.promise;
   };
 
-  /** Waits for a place among the running workers, or is refused. */
-  const admit = async (task: DoorWorkerTaskName): Promise<void> => {
+  starter.launch = launch;
+
+  /** Creates the flight for a request and gives it a place, or queues it, or refuses it when the queue is full. */
+  const begin = (key: string, task: DoorWorkerTaskName, input: unknown): Flight => {
     if (stopped) {
       throw new DoorWorkerFailedError(task, "the front door is ending");
     }
-    if (placesTaken < maxConcurrent && waiting.length === 0) {
-      placesTaken += 1;
-      return;
-    }
-    if (waiting.length >= maxQueued) {
-      throw new DoorWorkerBusyError(task);
-    }
-    const place = deferred<undefined>();
-    waiting.push({ start: () => { place.resolve(undefined); }, refuse: (reason) => { place.reject(new DoorWorkerFailedError(task, reason)); } });
-    await place.promise;
-  };
-
-  /** Starts the next waiting task, if a place is free. */
-  const drain = (): void => {
-    placesTaken -= 1;
-    while (placesTaken < maxConcurrent) {
-      const next = waiting.shift();
-      if (next === undefined) {
-        return;
-      }
-      placesTaken += 1;
-      next.start();
-    }
-  };
-
-  const start = (task: DoorWorkerTaskName, input: unknown): Flight => {
-    let cancelWorker: ((reason: string) => void) | undefined;
-    let cancelledBeforeStart: string | undefined;
-    const promise = (async () => {
-      await admit(task);
-      try {
-        if (cancelledBeforeStart !== undefined) {
-          throw new DoorWorkerFailedError(task, cancelledBeforeStart);
-        }
-        return await execute({ task, input }, (cancel) => {
-          cancelWorker = cancel;
-        });
-      } finally {
-        drain();
-      }
-    })();
-    return {
+    const flight: Flight = {
+      key,
       task,
       input,
+      outcome: deferred<unknown>(),
       callers: 0,
-      promise,
+      state: "queued",
       cancel: (reason) => {
-        if (cancelWorker === undefined) {
-          cancelledBeforeStart = reason;
-        } else {
-          cancelWorker(reason);
+        // Before it has a worker: it leaves the books at once, freeing its place in the queue.
+        if (close(flight)) {
+          flight.outcome.reject(new DoorWorkerFailedError(task, reason));
         }
       },
     };
+    if (places < maxConcurrent && queue.length === 0) {
+      places += 1;
+      flight.state = "running";
+      // The worker starts a turn later, so a door told to stop in the turn it was asked never spawns one.
+      queueMicrotask(() => {
+        launch(flight);
+      });
+    } else if (queue.length >= maxQueued) {
+      throw new DoorWorkerBusyError(task);
+    } else {
+      queue.push(flight);
+    }
+    inFlight.set(key, flight);
+    // The outcome of a flight nobody is waiting on any more is not an unhandled rejection.
+    flight.outcome.promise.catch(() => undefined);
+    return flight;
   };
 
   return {
     run: async <T extends DoorWorkerTaskName>(task: T, input: InputOf<T>, parse: (value: unknown) => OutputOf<T>, signal?: AbortSignal): Promise<OutputOf<T>> => {
-      const key = JSON.stringify([task, input]);
-      let flight = inFlight.get(key);
-      if (flight === undefined) {
-        const created = start(task, input);
-        flight = created;
-        inFlight.set(key, created);
-        void created.promise.then(
-          () => { inFlight.delete(key); },
-          () => { inFlight.delete(key); },
-        );
+      if (signal?.aborted === true) {
+        throw new DoorWorkerFailedError(task, "it was cancelled");
       }
-      const shared = flight;
-      shared.callers += 1;
+      const key = JSON.stringify([task, input]);
+      const flight = inFlight.get(key) ?? begin(key, task, input);
+      flight.callers += 1;
       const released = deferred<never>();
+      released.promise.catch(() => undefined);
       const onAbort = (): void => {
-        shared.callers -= 1;
-        if (shared.callers === 0) {
-          shared.cancel("it was cancelled");
+        flight.callers -= 1;
+        if (flight.callers === 0) {
+          flight.cancel("it was cancelled");
         }
         released.reject(new DoorWorkerFailedError(task, "it was cancelled"));
       };
-      if (signal?.aborted === true) {
-        onAbort();
-      } else {
-        signal?.addEventListener("abort", onAbort, { once: true });
-      }
+      signal?.addEventListener("abort", onAbort, { once: true });
       try {
-        return parse(await Promise.race([shared.promise, released.promise]));
+        return parse(await Promise.race([flight.outcome.promise, released.promise]));
       } finally {
         signal?.removeEventListener("abort", onAbort);
       }
     },
     stop: () => {
       stopped = true;
-      for (const refuse of waiting.splice(0)) {
-        refuse.refuse("the front door is ending");
-      }
-      for (const entry of [...running]) {
-        entry.cancel("the front door is ending");
+      for (const flight of [...inFlight.values()]) {
+        flight.cancel("the front door is ending");
       }
     },
   };
