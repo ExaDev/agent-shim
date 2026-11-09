@@ -117,6 +117,20 @@ describe("buildFamilies, with many assertions sharing a model name", () => {
   });
 });
 
+describe("buildFamilies, with targets in several `same` groups", () => {
+  it("gives the families the comparison against every group gives when groups overlap", () => {
+    const refs = ["a/glm-5.1", "b/glm-5.1", "c/hf:zai-org/GLM-5.1", "d/glm-5.3", "e/other", "f/other"];
+    const overlapping: ModelsConfig[] = [
+      { same: [["a/glm-5.1", "d/glm-5.3"], ["d/glm-5.3", "e/other"], ["e/other", "f/other"]] },
+      { same: [["b/glm-5.1", "e/other"], ["a/glm-5.1", "b/glm-5.1"], ["c/hf:zai-org/GLM-5.1", "a/glm-5.1"]] },
+      { same: [["a/glm-5.1", "b/glm-5.1", "c/hf:zai-org/GLM-5.1"], ["b/glm-5.1", "d/glm-5.3"]], distinct: [["a/glm-5.1", "c/hf:zai-org/GLM-5.1"]] },
+    ];
+    for (const models of overlapping) {
+      expect(buildFamilies(refs, models).map((family) => ({ key: family.key, refs: family.refs }))).toEqual(naiveFamilies(refs, models));
+    }
+  });
+});
+
 describe("modelsFindings, with each identity worked out once", () => {
   const SEEDS = 80;
   const MEMBERS = 14;

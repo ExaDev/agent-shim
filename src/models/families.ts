@@ -34,11 +34,10 @@ function assertionsOf(models: ModelsConfig | undefined): IdentityAssertions {
   return { same: models?.same ?? [], distinct: models?.distinct ?? [] };
 }
 
-/** The user's assertions indexed for the questions `sameModel` asks of every pair, so each answer is a lookup and not a search through the assertions: the `distinct` pairs as keys in both orders, each ref's first `same` group, every `same` group a ref is in, and each `same` group's members as a set. */
+/** The user's assertions indexed for the questions `sameModel` asks of every pair, so each answer is a lookup and not a search through the assertions: the `distinct` pairs as keys in both orders, each ref's first `same` group, and each `same` group's members as a set. */
 interface IndexedAssertions {
   readonly distinct: ReadonlySet<string>;
   readonly sameGroupOf: ReadonlyMap<string, readonly string[]>;
-  readonly groupsContaining: ReadonlyMap<string, readonly (readonly string[])[]>;
   readonly membersOf: ReadonlyMap<readonly string[], ReadonlySet<string>>;
 }
 
@@ -51,23 +50,16 @@ function indexAssertions(assertions: Readonly<IdentityAssertions>): IndexedAsser
     distinct.add(`${b}${PAIR_SEPARATOR}${a}`);
   }
   const sameGroupOf = new Map<string, readonly string[]>();
-  const groupsContaining = new Map<string, (readonly string[])[]>();
   const membersOf = new Map<readonly string[], ReadonlySet<string>>();
   for (const group of assertions.same) {
     membersOf.set(group, new Set(group));
-    for (const ref of membersOf.get(group) ?? []) {
+    for (const ref of group) {
       if (!sameGroupOf.has(ref)) {
         sameGroupOf.set(ref, group);
       }
-      const held = groupsContaining.get(ref);
-      if (held === undefined) {
-        groupsContaining.set(ref, [group]);
-      } else {
-        held.push(group);
-      }
     }
   }
-  return { distinct, sameGroupOf, groupsContaining, membersOf };
+  return { distinct, sameGroupOf, membersOf };
 }
 
 /** A target with what deciding whether two are one model reads of it, worked out once: its model name's identity bucket (the family and version, then the variant: two names the automatic rule calls the same share it). */
@@ -166,8 +158,9 @@ export function buildFamilies(refs: readonly string[], models: ModelsConfig | un
     if (assertion === undefined) {
       addTo(groupsOfUnassertedInBucket, facts.bucket, at);
     }
-    for (const held of assertions.groupsContaining.get(ref) ?? []) {
-      addTo(groupsHoldingMemberOf, held, at);
+    // Two asserted targets are the same model by name only when each is in the other's first group, and then the first groups are one group (the first group of a target is the earliest holding it, so each is the earliest holding the other), so only the first group of a target needs indexing.
+    if (assertion !== undefined) {
+      addTo(groupsHoldingMemberOf, assertion, at);
     }
   }
   return groups.map((group) => ({ key: group.key, refs: group.refs, settings: settingsByKey[group.key] ?? {} }));
