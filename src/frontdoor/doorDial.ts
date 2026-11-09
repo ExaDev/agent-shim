@@ -32,6 +32,11 @@ export function createDoorLookup(io: DoorLookupIo): LookupFunction {
       // What the failure of a name means for this lookup, said where the failure is read: the door asks DNS for A records and nothing else, so a name only /etc/hosts or mDNS knows (an alias, a `.local` name) and a host that has only AAAA records are unreachable for the door as they are for the probe, which is no fault of the provider.
       const hint = " (the door resolves names through DNS A records only, never the hosts file or mDNS and not AAAA records: give an IPv4 address for a host DNS does not list)";
       if (error !== null) {
+        // Only an absence (the name or its A records are not there) is explained by the hint; a timeout, a refusal or a server failure says nothing about which records exist, so it is reported as it is.
+        if (error.code !== "ENOTFOUND" && error.code !== "ENODATA") {
+          callback(error, [{ address: "", family: 4 }]);
+          return;
+        }
         const described = new Error(error.message + hint);
         Object.defineProperty(described, "code", { value: error.code, enumerable: true });
         callback(described, [{ address: "", family: 4 }]);

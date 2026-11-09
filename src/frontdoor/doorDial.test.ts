@@ -300,9 +300,11 @@ describe("evaluating each embedded dial function from its source text alone", ()
       expect(answered, name).toEqual([{ address: "127.0.0.1", family: 4 }, { address: "::1", family: 6 }]);
     }
     // A name that only ends in the letters is a different name, and goes to the resolver.
-    lookup("notlocalhost", {}, () => undefined);
-    lookup("localhost.example", {}, () => undefined);
-    expect(asked).toEqual(["notlocalhost", "localhost.example"]);
+    const lookalikes = ["notlocalhost", "localhost.example", "localhost.evil.com", "evil-localhost", "foolocalhost"];
+    for (const lookalike of lookalikes) {
+      lookup(lookalike, {}, () => undefined);
+    }
+    expect(asked).toEqual(lookalikes);
   });
 
   it("says the door resolves through DNS A records only when a name does not resolve, keeping the error's code, evaluated in isolation", () => {
@@ -335,6 +337,25 @@ describe("evaluating each embedded dial function from its source text alone", ()
       expect.stringMatching(/^no A record for spark\.local \(the door resolves names through DNS A records only/u) as unknown,
     ]);
     expect(failures[0]?.code).toBe("ENOTFOUND");
+  });
+
+  it("gives the A-records hint only to a name that is absent, never to a resolver failure", () => {
+    const isolatedCreateLookup = vm.runInNewContext(`(${createDoorLookup.toString()})`, { Error, Object }) as typeof createDoorLookup;
+    const outcomes = new Map<string, { readonly message: string; readonly code: string | undefined }>();
+    for (const code of ["ENOTFOUND", "ENODATA", "ETIMEOUT", "ESERVFAIL", "ECONNREFUSED", "EREFUSED"]) {
+      const failure: NodeJS.ErrnoException = new Error(`queryA ${code} spark.example`);
+      failure.code = code;
+      const lookup = isolatedCreateLookup({ isIP: () => 0, resolve4: (_host, callback) => { callback(failure, []); } });
+      lookup("spark.example", {}, (error) => {
+        if (error !== null) {
+          outcomes.set(code, { message: error.message, code: error.code });
+        }
+      });
+    }
+    const hinted = [...outcomes].filter(([, outcome]) => outcome.message.includes("DNS A records only")).map(([code]) => code);
+    expect(hinted).toEqual(["ENOTFOUND", "ENODATA"]);
+    expect([...outcomes].map(([code, outcome]) => [code, outcome.code])).toEqual([...outcomes.keys()].map((code) => [code, code]));
+    expect(outcomes.get("ETIMEOUT")?.message).toBe("queryA ETIMEOUT spark.example");
   });
 
   it("dials a name through doorDial evaluated in isolation", async () => {
