@@ -57,7 +57,7 @@ export function identifiedFailure(error: unknown): { readonly name: string; read
 }
 
 /** Whether `value` is a short identifier. */
-export function isIdentifier(value: unknown): value is string {
+function isIdentifier(value: unknown): value is string {
   return typeof value === "string" && IDENTIFIER.test(value);
 }
 
