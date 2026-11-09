@@ -27,3 +27,15 @@ describe("ci.yml required-checks", () => {
     expect([...needs].sort()).toEqual(Object.keys(workflow.jobs).filter((id) => id !== AGGREGATE).sort());
   });
 });
+
+describe("ci.yml Homebrew verification", () => {
+  const raw = fs.readFileSync(path.join(__dirname, "..", ".github", "workflows", "ci.yml"), "utf8");
+
+  /** The jobs that verify the formula: macOS, macOS on Intel, and Linux on both architectures (one job with a matrix). */
+  const VERIFY_JOBS = ["verify-tap-macos", "verify-tap-macos-x64", "verify-tap-linux"];
+
+  it("installs the formula through the one shared step, in every job that verifies it, and nowhere calls brew install or tap itself", () => {
+    expect(raw).not.toMatch(/^\s*(?:-\s+)?(?:run:\s*)?brew (?:install|tap)\b/mu);
+    expect(raw.match(/uses: \.\/\.github\/actions\/brew-install/gu)).toHaveLength(VERIFY_JOBS.length);
+  });
+});
