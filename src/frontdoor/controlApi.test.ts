@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 
+import { doorReportPorts } from "./doorReportPorts";
 import { checkReportToJson, runCheck, type CheckReport, type RunCheckParams } from "../checkReport";
 import type { Pool } from "../config/schema";
 import type { DoctorReport } from "../doctorReport";
@@ -296,6 +297,27 @@ describe("the door's control-plane API", () => {
 
     it("refuses a caller without this generation's control token", async () => {
       await expect(refused.frontdoor.status()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    });
+  });
+
+  describe("a report the door cannot collect", () => {
+    it("answers check.run and doctor.run as SERVICE_UNAVAILABLE naming what to run instead and where it is tracked, whatever was asked", async () => {
+      const unavailable = await mountClient({ ...DEPS, ...doorReportPorts }, CONTROL_TOKEN);
+      try {
+        await expect(unavailable.client.check.run({ path: `${FAKE_HOME}/work` })).rejects.toMatchObject({ code: "SERVICE_UNAVAILABLE", message: expect.stringMatching(/Run `agent-shim check` from a shell.*agent-shim#769/) as unknown });
+        await expect(unavailable.client.doctor.run()).rejects.toMatchObject({ code: "SERVICE_UNAVAILABLE", message: expect.stringMatching(/Run `agent-shim doctor` from a shell.*agent-shim#769/) as unknown });
+      } finally {
+        await unavailable.close();
+      }
+    });
+
+    it("leaves any other failure of a collector as the failure it is", async () => {
+      const broken = await mountClient({ ...DEPS, doctorReport: () => { throw new Error("disk gone"); } }, CONTROL_TOKEN);
+      try {
+        await expect(broken.client.doctor.run()).rejects.not.toMatchObject({ code: "SERVICE_UNAVAILABLE" });
+      } finally {
+        await broken.close();
+      }
     });
   });
 

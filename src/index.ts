@@ -179,6 +179,7 @@ export { realCodexAppServerPort } from "./codex/realAppServer";
 export { FrontDoorControlMaterialError, FrontDoorNotServingError, frontDoorApiFromState, readFrontDoorControlMaterial, type FrontDoorControlMaterial } from "./frontdoor/doorClient";
 export {
   createControlApiRouter,
+  DoorReportUnavailableError,
   createDoorApiNodeHandler,
   createDoorApiRouter,
   frontDoorApiClient,
