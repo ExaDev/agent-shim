@@ -16,7 +16,16 @@ export interface DoorLookupIo {
  * The door's lookup for its own upstream dials: an address literal as it is, `localhost` and the names under it as the loopback addresses (RFC 6761) without asking a resolver, and any other name through `dns.resolve4`, which asks the resolver directly and never reads the hosts file, because a transparent-interception deployment points the intercept hosts' names at this machine in /etc/hosts and `getaddrinfo` (Node's default lookup) would send the door's own upstream connections straight back into the intercept port. The first A record is the address dialled.
  */
 export function createDoorLookup(io: DoorLookupIo): LookupFunction {
-  return (host, _options, callback) => {
+  return (host, options, reply) => {
+    // Node asks for one address, `(error, address, family)`, unless `options.all` is set (autoSelectFamily on, no local address), and a callback given the wrong shape fails the dial with ERR_INVALID_IP_ADDRESS, so every answer goes through here.
+    const callback = (error: Error | null, addresses: readonly { readonly address: string; readonly family: number }[]): void => {
+      const first = addresses[0];
+      if (error !== null || options.all === true || first === undefined) {
+        reply(error, addresses.slice());
+        return;
+      }
+      reply(null, first.address, first.family);
+    };
     // An address literal is not a name to resolve; resolve4 would query DNS for it as a hostname and fail.
     const family = io.isIP(host);
     if (family !== 0) {
