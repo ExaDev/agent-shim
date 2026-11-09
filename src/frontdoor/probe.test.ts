@@ -19,7 +19,7 @@ const KEYGEN_TIMEOUT_MS = 120_000;
 /** The bound given to a probe whose verdict a test reads. It applies once the worker has started (the start has its own limit, `PROBE_WORKER_START_LIMIT_MS`, which a loaded machine's slow start is measured against), and a local probe answers in a few milliseconds, so this is far above a healthy answer and far below the production bound: a wake that is lost makes the waiter run out this bound, which `Atomics.wait` cannot be interrupted from, so the bound is what decides how long a regression stalls the suite. */
 const READ_VERDICT_TIMEOUT_MS = 5_000;
 
-/** The bound a test gives a probe whose waiter only the worker's own failure handler can wake: a healthy run takes the worker's start (seconds on a loaded machine) and a few milliseconds, and the assertions require less than half the bound, so a lost wake stalls the test for this long and no longer. */
+/** The bound a test gives a probe whose waiter only the worker's own failure handler can wake: a healthy run takes the worker's start (seconds on a loaded machine) and a few milliseconds, and its assertions record how each wait ended and require that none ran out of time, so a lost wake stalls the test for this long and no longer. */
 const LOST_WAKE_BOUND_MS = 12_000;
 
 /** A bound short enough for a test of the bound to wait out, and distinct from the production one, so a verdict naming it shows the bound given was the bound used. */
@@ -258,7 +258,6 @@ describe("a probe worker that fails", () => {
 
   /** What every probe source declares before it uses `STARTED_SIGNAL_SOURCE`. */
   const WORKER_DATA_SOURCE = `const { workerData } = require("node:worker_threads");`;
-
 
   function failureReason(source: string): string {
     const verdict = startProbeWorker(source, {}, STARTUP_PROBE_BOUND_MS).verdict();
