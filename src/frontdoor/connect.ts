@@ -4,13 +4,13 @@ import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:
 import type * as net from "node:net";
 import type { Duplex } from "node:stream";
 
+import { parseDialAuthority, type DialAuthorityRefusal } from "../baseUrlDial";
 import { issueCaCertificate, issueLeafCertificate } from "./x509";
 import type { ConnectCapture, PassthroughObserver } from "./capture";
 import { pumpTapSession } from "./tap";
 import { CONNECT_PROXY_REALM, capabilityFromProxyAuthorization } from "./capability";
 import type { ListenSource } from "./handover";
 import { AUTH_HEADER } from "./route";
-import { MAX_TCP_PORT } from "./state";
 import { FRONTDOOR_POLL_MS } from "./supervisor";
 
 /**
@@ -58,6 +58,9 @@ export const MAX_CONNECT_HEAD_BYTES = 8192;
 
 /** The response line every CONNECT proxy sends before the tunnel starts; the body is empty by definition. */
 const CONNECT_ESTABLISHED = "HTTP/1.1 200 Connection Established\r\n\r\n";
+
+/** The response header naming why a CONNECT authority was refused, so a client sees the problem and not only a bare 400. The reason is fixed text, never the client's own bytes. */
+const REFUSAL_HEADER = "x-agent-shim-refusal";
 
 /** The status lines the surface refuses a connection with, each closing it once written. */
 const REFUSAL = {
@@ -121,19 +124,9 @@ export interface ConnectTarget {
   readonly port: number;
 }
 
-/** Parses a CONNECT authority (`host:port`, or a bare `host` meaning 443), or undefined when it names no host or a non-numeric port. */
-export function parseConnectTarget(authority: string): ConnectTarget | undefined {
-  const colon = authority.lastIndexOf(":");
-  if (colon === -1) {
-    const host = authority.trim().toLowerCase();
-    return host === "" ? undefined : { host, port: HTTPS_PORT };
-  }
-  const host = authority.slice(0, colon).trim().toLowerCase();
-  const port = Number.parseInt(authority.slice(colon + 1), 10);
-  if (host === "" || !Number.isInteger(port) || port <= 0 || port > MAX_TCP_PORT) {
-    return undefined;
-  }
-  return { host, port };
+/** Parses a CONNECT authority (`host`, `host:port`, `[v6]` or `[v6]:port`; a bare host means 443) through the rule every dial target takes (`parseDialAuthority`), or the refusal naming what is wrong with it. */
+export function parseConnectTarget(authority: string): ConnectTarget | DialAuthorityRefusal {
+  return parseDialAuthority(authority, HTTPS_PORT);
 }
 
 /** Whether a CONNECT target's host (port already stripped) is one whose TLS this proxy terminates. */
@@ -745,8 +738,8 @@ function routeConnect(socket: net.Socket, head: string, context: ConnectionConte
   const parts = requestLine.split(" ");
   const authority = parts.length === CONNECT_LINE_TOKENS && parts[0]?.toUpperCase() === "CONNECT" ? (parts[1] ?? "") : undefined;
   const target = authority === undefined ? undefined : parseConnectTarget(authority);
-  if (target === undefined) {
-    refuse(socket, REFUSAL.badRequest);
+  if (target === undefined || "refusal" in target) {
+    refuse(socket, REFUSAL.badRequest, target === undefined ? [] : [`${REFUSAL_HEADER}: ${target.refusal}`]);
     return;
   }
   const session = sessions.find((entry) => entry.host === target.host);

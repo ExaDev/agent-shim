@@ -7,7 +7,8 @@ import { createLiveSessionRegistry } from "./liveSessionRegistry";
 import * as state from "./state";
 import path from "node:path";
 import { catalogueCachePath } from "../providerCatalogue";
-import { recordOf, listFrontDoorDirectRecords, listFrontDoorSessions, MAX_TCP_PORT, pruneMalformedFrontDoorDirectFiles, pruneDeadFrontDoorSessions, readFrontDoorCodexHome, readFrontDoorCodexRecord, readFrontDoorState, removeFrontDoorSession, writeFrontDoorCodexHome, writeFrontDoorSession, writeFrontDoorState } from "./state";
+import { MAX_TCP_PORT } from "../baseUrlDial";
+import { recordOf, listFrontDoorDirectRecords, listFrontDoorSessions, pruneMalformedFrontDoorDirectFiles, pruneDeadFrontDoorSessions, readFrontDoorCodexHome, readFrontDoorCodexRecord, readFrontDoorState, removeFrontDoorSession, writeFrontDoorCodexHome, writeFrontDoorSession, writeFrontDoorState } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 
