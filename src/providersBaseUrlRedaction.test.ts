@@ -148,6 +148,15 @@ describe("a provider's base URL in the JSON views and the catalogue report", () 
     }
   });
 
+  it("refuses, on add and on set, a base URL with a scheme nothing dials or a port 0, saying what to give instead", async () => {
+    await expect(run("add", "ftpp", "--display-name", "F", "--base-url", "ftp://example.com/", "--credential", "literal:x")).rejects.toThrow(/must be an http or https URL, not ftp/u);
+    await expect(run("add", "zero", "--display-name", "Z", "--base-url", "http://localhost:0/", "--credential", "literal:x")).rejects.toThrow(/must not name port 0/u);
+    await run("add", "fine", "--display-name", "Fine", "--base-url", "http://localhost:4000/", "--credential", "literal:x");
+    await expect(run("set", "fine", "--base-url", "http://localhost:0/")).rejects.toThrow(/must not name port 0/u);
+    expect(readProvider(paths, "fine")).toMatchObject({ baseUrl: "http://localhost:4000/" });
+    expect(readProvider(paths, "zero")).toBeUndefined();
+  });
+
   it("gives it whole in provider show --json, which prints the file's own fields so the value round-trips", async () => {
     await run("add", "local", "--display-name", "Local", "--base-url", SECRET_BASE_URL, "--credential", "literal:dummy");
     expect(JSON.parse(await run("show", "local", "--json"))).toMatchObject({ baseUrl: SECRET_BASE_URL });

@@ -280,7 +280,7 @@ A provider is a named API endpoint a session can be routed through instead of `a
 
 One Claude Code behaviour is worth knowing on a provider: deferred MCP tool loading. A provider session keeps the OAuth launch's shape (its base URL stays Claude Code's own API, per below), so Claude Code treats the session as first party and defers MCP tool loading; the `tool_reference` payloads that follow ride the door untouched to the provider, whose backend must understand them (the door pipes requests, so backend support is what gates it). On a provider whose backend does not, setting `ENABLE_TOOL_SEARCH=false` in the provider's `env` restores the upfront tool loading the old provider-scoped base URL used to force; the same variable set to `true` (or `auto:N`) is also what re-enables the deferred behaviour on a base URL Claude Code does not consider first party (`doctor` names this note for every provider without the variable set).
 
-Each provider lives in its own file at `~/.agent-shim/providers/<name>.json`:
+Each provider lives in its own file at `~/.agent-shim/providers/<name>.json`. An `http` provider's `baseUrl` must be an http or https URL that names no port 0: `provider add` and `provider set` refuse anything else, and `doctor` fails a stored file that holds one, naming the field. (Port 0 is refused because Node's `http.request` takes it for "no port" and connects to the scheme's default port, while a connect to port 0 itself is refused, so the door and the probe would disagree about where the provider is.)
 
 ```json
 {

@@ -410,11 +410,27 @@ export type ProviderCatalogue = z.infer<typeof ProviderCatalogueSchema>;
 /** The longest delay a Node timer holds: `setTimeout` takes a signed 32-bit millisecond count (2^31 - 1 at most) and runs anything longer after 1 ms instead, so a bound past it would fire at once. */
 export const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
+/**
+ * An `http` provider's base URL: an http or https URL that names a port a listener can have. Any other scheme is dialled by nothing, and port 0 is dialled by nothing either: the door hands it to Node's `http.request`, which takes 0 for "no port" and connects to the scheme's default port instead, while a connect to port 0 itself is refused, so the two would disagree about where the provider is.
+ */
+const HttpBaseUrlSchema = z.url().superRefine((value, ctx) => {
+  // A string that is not a URL has already failed `z.url()`; refinements still run after it.
+  if (!URL.canParse(value)) {
+    return;
+  }
+  const url = new URL(value);
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    ctx.addIssue({ code: "custom", message: `a provider's base URL must be an http or https URL, not ${url.protocol.replace(/:$/u, "")}` });
+  } else if (url.port === "0") {
+    ctx.addIssue({ code: "custom", message: "a provider's base URL must not name port 0, which nothing listens on: give the port the endpoint serves" });
+  }
+});
+
 const HttpProviderSchema = z.strictObject({
   $schema: z.string().optional(),
   kind: z.literal("http").optional(),
   displayName: z.string().min(1),
-  baseUrl: z.url(),
+  baseUrl: HttpBaseUrlSchema,
   /** How long opening a TCP connection to `baseUrl` may take before the provider counts as unreachable: the door's forwarding gives up and answers naming the provider, and `doctor`, `check` and a launch's probe are bounded by it. Defaults to `DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS`. Bounds the connect only, never the wait for the answer. */
   connectTimeoutMs: z.int().positive().max(MAX_TIMER_DELAY_MS).optional(),
   credential: ProviderCredentialSchema,
