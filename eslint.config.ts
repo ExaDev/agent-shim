@@ -58,6 +58,20 @@ export default defineConfig([
     },
   },
   {
+    files: ["src/**/*.ts"],
+    ignores: ["src/**/*.test.ts"],
+    rules: {
+      // A signal a caller did not give is absent, and stays `AbortSignal | undefined` end to end: a fresh `new AbortController().signal` in its place is a signal nothing can abort, which looks like cancellation support and gives none.
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "LogicalExpression[operator='??'] > MemberExpression.right[property.name='signal'] > NewExpression.object[callee.name='AbortController']",
+          message: "Keep an absent AbortSignal absent (AbortSignal | undefined) rather than substituting one nothing can abort.",
+        },
+      ],
+    },
+  },
+  {
     rules: {
       // exadev's own consistent-type-imports leaves fixStyle at the rule's default (separate-type-imports); this repo prefers the type keyword inline on the same import statement instead.
       "@typescript-eslint/consistent-type-imports": ["error", { fixStyle: "inline-type-imports" }],
