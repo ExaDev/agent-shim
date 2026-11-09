@@ -225,7 +225,24 @@ export function identityExists(paths: LayoutPaths, name: string): boolean {
 
 /** Whether the directory of id `id`, spelled exactly so, holds an `identity.json`, whatever name it gives. The entry is found by listing the identities directory, so on a filesystem that ignores case another identity's directory spelled differently is not taken for it. The physical rename (`identity rename --move`) reasons about directories, which this answers for. */
 export function identityIdExists(paths: LayoutPaths, id: string): boolean {
-  return fs.existsSync(paths.identitiesDir) && fs.readdirSync(paths.identitiesDir).includes(id) && fs.existsSync(identityJsonPath(paths, id));
+  return identityIdExistsIn(paths, identityEntries(paths), id);
+}
+
+/** The entries directly under the identities directory, as a set; empty when there is no such directory. A caller asking about many ids reads it once and asks `identityIdExistsIn`, since listing the directory for every id grows with the square of the identities. */
+function identityEntries(paths: LayoutPaths): ReadonlySet<string> {
+  return new Set(fs.existsSync(paths.identitiesDir) ? fs.readdirSync(paths.identitiesDir) : []);
+}
+
+/** What a report over every identity asks of the records: the ones whose entry holds no `identity.json` and is not one of `unreachable` (read from a superseded farm a resync left, so reported as displaced), their ids, and each record's name by id. Built from one listing of the identities directory and in time linear in the records, since `identityIdExists` per record lists the directory each time and a search through the records per id grows with the square of the identities. */
+export function indexIdentityRecords(paths: LayoutPaths, records: readonly IdentityRecord[], unreachable: ReadonlySet<string>): { readonly displaced: readonly IdentityRecord[]; readonly displacedIds: ReadonlySet<string>; readonly names: ReadonlyMap<string, string | undefined> } {
+  const entries = identityEntries(paths);
+  const displaced = records.filter((record) => !identityIdExistsIn(paths, entries, record.id) && !unreachable.has(record.id));
+  return { displaced, displacedIds: new Set(displaced.map((record) => record.id)), names: new Map(records.map((record) => [record.id, record.name])) };
+}
+
+/** `identityIdExists` over entries already listed (`identityEntries`). */
+function identityIdExistsIn(paths: LayoutPaths, entries: ReadonlySet<string>, id: string): boolean {
+  return entries.has(id) && fs.existsSync(identityJsonPath(paths, id));
 }
 
 /** Reads and validates the `identity.json` of the identity named `name`, or undefined when there is none. */
@@ -596,7 +613,7 @@ export function listIdentities(paths: LayoutPaths): readonly IdentityListing[] {
   }
   // An identity whose identity.json is only in a superseded farm an interrupted resync left is still an identity, found by its name (see `readIdentityRecords`), and is listed with what puts it back.
   const unreachable = new Set(listIdentityDirectories(paths).unreachable.map((entry) => entry.name));
-  for (const record of identityRecords(paths).filter((candidate) => !identityIdExists(paths, candidate.id) && !unreachable.has(candidate.id))) {
+  for (const record of indexIdentityRecords(paths, identityRecords(paths), unreachable).displaced) {
     const name = record.name ?? record.id;
     result.push({ name, id: record.id, isActive: name === active, problem: DISPLACED_PROBLEM, displaced: true });
   }

@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigFileNotJsonError } from "./config/load";
 import { DuplicateIdentityNameError } from "./identityRecords";
-import { addIdentity, createIdentityNameReader, IdentityAlreadyExistsError, identityExists, identityIdOf, identityNameOf, listIdentities, readIdentity, removeIdentity, setIdentityLabel, useIdentity } from "./identityStore";
+import { identityRecords, indexIdentityRecords, addIdentity, createIdentityNameReader, IdentityAlreadyExistsError, identityExists, identityIdOf, identityNameOf, listIdentities, readIdentity, removeIdentity, setIdentityLabel, useIdentity } from "./identityStore";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 
 describe("identities stored under an id that is not their name", () => {
@@ -211,5 +211,41 @@ describe("createIdentityNameReader", () => {
     expect(fs.statSync(file)).toMatchObject({ ino: before.ino, mtimeMs: before.mtimeMs });
     expect(reader.nameOf("work")).toBe("a-longer-client");
     expect(reader.reads()).toBe(2);
+  });
+});
+
+describe("indexIdentityRecords", () => {
+  let root: string;
+  let paths: LayoutPaths;
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "identity-index-test-"));
+    paths = buildLayoutPaths(root);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("lists the identities directory once however many records it is asked about, and finds the displaced one", () => {
+    const IDENTITIES = 25;
+    for (let index = 0; index < IDENTITIES; index += 1) {
+      const directory = path.join(paths.identitiesDir, `id${String(index)}`);
+      fs.mkdirSync(directory, { recursive: true });
+      fs.writeFileSync(path.join(directory, "identity.json"), JSON.stringify({ name: `n${String(index)}` }));
+    }
+    // A superseded farm whose identity has no directory of its own: its record is displaced.
+    const lostId = "lost";
+    const farm = path.join(paths.identitiesDir, `.${lostId}.previous.4242.0f8fad5b-d9cb-469f-a165-70867728950e`);
+    fs.mkdirSync(farm, { recursive: true });
+    fs.writeFileSync(path.join(farm, "identity.json"), JSON.stringify({ name: "lost-name" }));
+    const records = identityRecords(paths);
+    const listings = vi.spyOn(fs, "readdirSync");
+    const index = indexIdentityRecords(paths, records, new Set());
+    expect(listings).toHaveBeenCalledTimes(1);
+    expect(index.displaced.map((record) => record.id)).toEqual([lostId]);
+    expect([...index.displacedIds]).toEqual([lostId]);
+    expect(index.names.get("id3")).toBe("n3");
   });
 });

@@ -3,8 +3,8 @@ import { ClaudeShimStateSchema, commandFilename, findPathShadow, resolveOwnBinar
 import type { LayoutPaths } from "./paths";
 import { readableOr } from "./readableConfig";
 import { readJson } from "./config/store";
-import { identityIdExists, identityRecords, listIdentityDirectories, type UnreachableIdentityEntry } from "./identityStore";
-import { identityNameIn, type IdentityRecord } from "./identityRecords";
+import { identityRecords, indexIdentityRecords, listIdentityDirectories, type UnreachableIdentityEntry } from "./identityStore";
+import { type IdentityRecord } from "./identityRecords";
 import { identityRecordFindings, type DisplacedIdentityRecord } from "./doctorIdentityRecords";
 import { describeInterruptedNameRename, strayNameRenameRecordFiles, unfinishedNameRenames } from "./identityNameRenameRecord";
 import { findExecutableInDir, realContentSourcePath, realFarmFs, realFsPort, realHeadroomSocketTrust, realInstalledClaudeVersions, realFrontDoorLiveness, realIsProcessRunning, realOwnExecutablePath, realProcessCommandLine, realResolveClaudeBinary, realRunPort } from "./realPorts";
@@ -948,12 +948,12 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
   const { names: identityNames, unreachable: unreachableIdentities } = listIdentityDirectories(paths);
   const records = identityRecords(paths);
   // A record whose entry holds no identity.json was read from a superseded farm (its directory missing, or swapped in before the file was carried over): it is reported as displaced, with what puts it back, rather than as a missing file; an entry that cannot be reached is reported as that instead.
-  const displacedIdentities = records.filter((record) => !identityIdExists(paths, record.id) && !unreachableIdentities.some((entry) => entry.name === record.id));
+  const { displaced: displacedIdentities, displacedIds, names: recordNames } = indexIdentityRecords(paths, records, new Set(unreachableIdentities.map((entry) => entry.name)));
   // An entry that is one directory with another (a symlink beside an identity's directory) holds an identity.json but has no record of its own: it is reported once, under the entry that holds it, as `identity list` lists it.
-  const identities: DoctorIdentityInput[] = identityNames.filter((id) => (records.some((record) => record.id === id) || !fs.existsSync(path.join(paths.identitiesDir, id, "identity.json"))) && !displacedIdentities.some((record) => record.id === id)).map((id) => {
+  const identities: DoctorIdentityInput[] = identityNames.filter((id) => (recordNames.has(id) || !fs.existsSync(path.join(paths.identitiesDir, id, "identity.json"))) && !displacedIds.has(id)).map((id) => {
     const farmRoot = path.join(paths.identitiesDir, id);
     const identityPath = path.join(farmRoot, "identity.json");
-    return { name: identityNameIn(records, id) ?? id, id, path: identityPath, raw: realFsPort.readFileUtf8(identityPath), farmRoot, credentialsFilePresent: fs.existsSync(credentialsFilePath(farmRoot)), account: readIdentityAccount(realFsPort, paths.identitiesDir, id)?.account };
+    return { name: recordNames.get(id) ?? id, id, path: identityPath, raw: realFsPort.readFileUtf8(identityPath), farmRoot, credentialsFilePresent: fs.existsSync(credentialsFilePath(farmRoot)), account: readIdentityAccount(realFsPort, paths.identitiesDir, id)?.account };
   });
 
   // An unreadable snapshot leaves that identity's windows unknown, which the window checks report nothing for, rather than failing the audit. Snapshots are filed by id and looked up by the name the checks reason in.

@@ -78,8 +78,17 @@ export function readIdentityRecords(port: IdentityRecordsPort, identitiesDir: st
   }
   const sorted = [...records].map(([id, name]) => ({ id, name })).sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
   // Two entries that are one directory (a symlink beside an identity's directory) read one identity.json, so they are one identity, whether or not its name can be read: the entry that is the directory itself is kept, else the first by id.
+  const byName = new Map<string | undefined, IdentityRecord[]>();
+  for (const record of sorted) {
+    const group = byName.get(record.name);
+    if (group === undefined) {
+      byName.set(record.name, [record]);
+    } else {
+      group.push(record);
+    }
+  }
   return sorted.filter((record) => {
-    const twins = sorted.filter((other) => other.name === record.name && port.sameDirectory(path.join(identitiesDir, other.id), path.join(identitiesDir, record.id)));
+    const twins = (byName.get(record.name) ?? []).filter((other) => port.sameDirectory(path.join(identitiesDir, other.id), path.join(identitiesDir, record.id)));
     const kept = twins.find((twin) => !port.isSymlink(path.join(identitiesDir, twin.id))) ?? twins[0];
     return kept === undefined || kept.id === record.id;
   });

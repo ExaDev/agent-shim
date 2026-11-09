@@ -171,3 +171,39 @@ describe("textRecordsPort", () => {
     expect(textRecordsPort({ readdir: () => [], readFileUtf8: () => '{"name":"work"}' }).readName("x")).toEqual({ name: "work" });
   });
 });
+
+describe("readIdentityRecords at the size of a large farm", () => {
+  const IDENTITIES = 300;
+  const ID_DIGITS = 5;
+  /** The most passes over the identities the reading makes: the entries, the ones that name an identity, and the twin search. */
+  const PASSES_ALLOWED = 5;
+  const names = (count: number): string[] => Array.from({ length: count }, (_, index) => `id${String(index).padStart(ID_DIGITS, "0")}`);
+
+  it("does a number of callback visits that grows linearly with the identities, not with their square", () => {
+    const entries = names(IDENTITIES);
+    const files = Object.fromEntries(entries.map((entry) => [`${DIR}/${entry}/identity.json`, { name: `name-${entry}` }]));
+    const original = Array.prototype.filter;
+    let visits = 0;
+    Array.prototype.filter = function (this: readonly unknown[], callback: (value: unknown, index: number, array: readonly unknown[]) => unknown, thisArg?: unknown): unknown[] {
+      return original.call(this, (value: unknown, index: number, array: readonly unknown[]) => { visits += 1; return callback.call(thisArg, value, index, array); });
+    } as typeof Array.prototype.filter;
+    let records: readonly unknown[];
+    try {
+      records = readIdentityRecords(port(entries, files), DIR);
+    } finally {
+      Array.prototype.filter = original;
+    }
+    expect(records).toHaveLength(IDENTITIES);
+    // A few passes over the identities, each visiting a record once; a pass for every record would visit IDENTITIES squared.
+    expect(visits).toBeLessThan(IDENTITIES * PASSES_ALLOWED);
+  });
+
+  it("still compares the records that share a name, so a symlink twin is one identity", () => {
+    const entries = ["work", "work-link", ...names(IDENTITIES)];
+    const files = Object.fromEntries(entries.map((entry) => [`${DIR}/${entry}/identity.json`, { name: entry === "work-link" ? "work" : `name-${entry}` }]));
+    files[`${DIR}/work/identity.json`] = { name: "work" };
+    const records = readIdentityRecords(port(entries, files, { "work-link": "work" }), DIR);
+    expect(records.filter((record) => record.name === "work")).toEqual([{ id: "work", name: "work" }]);
+    expect(records).toHaveLength(IDENTITIES + 1);
+  });
+});
