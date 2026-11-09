@@ -1,4 +1,5 @@
 
+import { sameFile } from "./fileIdentity";
 import { FILE_NAME_CHARS, FILE_NAME_FIRST_CHARS, FILE_NAME_RULE, InvalidProviderNameError, isFileName, isStoredName, MAX_NAME_BYTES } from "./config/names";
 import type { Command } from "commander";
 import fs from "node:fs";
@@ -299,9 +300,9 @@ export function registerCredentialCommand(program: Command, deps: CommandDeps, p
           const input = await ports.readInput();
           withIdentityNamesLock(deps.paths, realIdentityNamesLockPorts, () => {
             const currentId = requireStoredIdentityId(deps.paths, name);
-            const original = fs.fstatSync(selected.file);
-            const current = fs.statSync(path.join(deps.paths.identitiesDir, currentId, "identity.json"));
-            if (currentId !== selected.id || original.dev !== current.dev || original.ino !== current.ino) {
+            const original = fs.fstatSync(selected.file, { bigint: true });
+            const current = fs.statSync(path.join(deps.paths.identitiesDir, currentId, "identity.json"), { bigint: true });
+            if (currentId !== selected.id || !sameFile(original, current)) {
               throw new CredentialCommandError(`Identity "${name}" changed while reading the token. Try again.`);
             }
             const stored = storeIdentityToken(deps.paths, currentId, input);

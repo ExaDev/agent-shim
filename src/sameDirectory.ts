@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { fileKey, sameFile } from "./fileIdentity";
+
 /** The errors the filesystem gives for a path that cannot be reached because of what it points through or its permissions, not because of a fault in the machine: a cycle of links, a directory that cannot be searched, a path through a file. */
 export const UNREACHABLE_CODES: ReadonlySet<string> = new Set(["ELOOP", "EACCES", "ENOTDIR"]);
 
@@ -9,10 +11,10 @@ export function systemErrorCode(error: unknown): string | undefined {
   return typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code : undefined;
 }
 
-/** What `target` resolves to, or undefined when it does not exist or cannot be reached (`UNREACHABLE_CODES`); any other fault is thrown. */
-function reachableStat(target: string): fs.Stats | undefined {
+/** What `target` resolves to, read as bigints (`fileIdentity.ts`), or undefined when it does not exist or cannot be reached (`UNREACHABLE_CODES`); any other fault is thrown. */
+export function reachableStat(target: string): fs.BigIntStats | undefined {
   try {
-    return fs.statSync(target, { throwIfNoEntry: false });
+    return fs.statSync(target, { bigint: true, throwIfNoEntry: false });
   } catch (error) {
     const code = systemErrorCode(error);
     if (code !== undefined && UNREACHABLE_CODES.has(code)) {
@@ -22,20 +24,20 @@ function reachableStat(target: string): fs.Stats | undefined {
   }
 }
 
-/** What identifies the directory `target` is on disk, its device and inode, so that two paths are one directory exactly when their keys are equal; undefined when it does not exist or cannot be reached (`UNREACHABLE_CODES`). Read once for each path, so grouping n paths by their directory takes n reads, where comparing every pair takes n squared. */
-export function directoryKey(target: string): string | undefined {
-  const stat = reachableStat(target);
-  return stat === undefined ? undefined : `${String(stat.dev)}:${String(stat.ino)}`;
+/** What identifies the directory `target` is on disk, its device and inode read as bigints (`fileIdentity.ts`), so that two paths are one directory exactly when their keys are equal, whatever the size of the inode number; undefined when it does not exist or cannot be reached (`UNREACHABLE_CODES`). Read once for each path, so grouping n paths by their directory takes n reads, where comparing every pair takes n squared. */
+export function directoryKey(target: string, stat: (target: string) => fs.BigIntStats | undefined = reachableStat): string | undefined {
+  const reached = stat(target);
+  return reached === undefined ? undefined : fileKey(reached);
 }
 
-/** Whether two paths are one directory on disk, by device and inode: true for a name that differs only in case on a filesystem that ignores case, and for a symlink to the directory. False when either does not exist or cannot be reached (a cycle of links, a directory that cannot be searched, a path through a file), since neither can then be shown to be the other. */
-export function sameDirectory(first: string, second: string): boolean {
-  const a = reachableStat(first);
-  const b = reachableStat(second);
+/** Whether two paths are one directory on disk, by device and inode, read as bigints: true for a name that differs only in case on a filesystem that ignores case, and for a symlink to the directory. False when either does not exist or cannot be reached (a cycle of links, a directory that cannot be searched, a path through a file), since neither can then be shown to be the other. */
+export function sameDirectory(first: string, second: string, stat: (target: string) => fs.BigIntStats | undefined = reachableStat): boolean {
+  const a = stat(first);
+  const b = stat(second);
   if (a === undefined || b === undefined) {
     return false;
   }
-  return a.dev === b.dev && a.ino === b.ino;
+  return sameFile(a, b);
 }
 
 /** `name` with the case of every letter reversed. */

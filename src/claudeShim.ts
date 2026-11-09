@@ -1,3 +1,4 @@
+import { hasFileNumber, sameFile } from "./fileIdentity";
 import fs from "node:fs";
 import path from "node:path";
 import type { Command } from "commander";
@@ -73,7 +74,7 @@ export function isInvokedAsClaude(invokedName: string): boolean {
 /**
  * Builds the check `discoverClaudeBinary`'s PATH fallback uses to recognise this very tool among the `claude` candidates it finds, so the launcher can never recursively discover and spawn itself.
  *
- * A candidate counts as this tool when it is the file `claude-shim.json` records (the marker is authoritative even after an agent-shim upgrade left the target holding the previous version's bytes, when neither its content nor its inode match the running binary any more; the same trust `enableClaudeShim`/`disableClaudeShim` already place in the marker) or when it is the same file as this process's own content, compared by inode the way `enableClaudeShim` already compares for its "is this target mine" decision (`fs.statSync` follows symlinks, so a `claude` symlink pointing at the running binary counts as the same file too, while a package manager's symlink to a different package's launcher does not).
+ * A candidate counts as this tool when it is the file `claude-shim.json` records (the marker is authoritative even after an agent-shim upgrade left the target holding the previous version's bytes, when neither its content nor its inode match the running binary any more; the same trust `enableClaudeShim`/`disableClaudeShim` already place in the marker) or when it is the same file as this process's own content, compared by device and inode (read as bigints) the way `enableClaudeShim` already compares for its "is this target mine" decision (`fs.statSync` follows symlinks, so a `claude` symlink pointing at the running binary counts as the same file too, while a package manager's symlink to a different package's launcher does not).
  *
  * Deliberately checks candidate files rather than excluding whole directories, the previous shape: an npm global prefix's bin directory holds every globally-installed package's binaries side by side, so a directory-level exclusion hid a genuinely separate `@anthropic-ai/claude-code` install living in the same directory as agent-shim (#188). The layouts the exclusion existed for stay safe, because the only `claude` dropped in them is agent-shim's own shim copy: install.sh's `~/.local/bin`, Homebrew's `/opt/homebrew/bin` and Scoop's shims directory are shared bin directories in exactly the same way, and a different package's claude there is now found instead of hidden.
  */
@@ -81,7 +82,7 @@ export function resolveOwnBinaryCheck(paths: LayoutPaths, contentSourcePath: str
   const state = readJson(paths.claudeShimFile, ClaudeShimStateSchema);
   const recordedTarget = state === undefined ? undefined : path.resolve(state.targetPath);
   // Statted on first use rather than at build time, since discovery may resolve through the versions directory and never ask about a PATH candidate at all.
-  let ownStat: fs.Stats | undefined;
+  let ownStat: fs.BigIntStats | undefined;
   return (candidate) => {
     if (recordedTarget !== undefined && path.resolve(candidate) === recordedTarget) {
       return true;
@@ -92,10 +93,9 @@ export function resolveOwnBinaryCheck(paths: LayoutPaths, contentSourcePath: str
       ownStat !== undefined &&
       candidateStat !== undefined &&
       // A platform reporting no inode number for either file must not read every candidate as this tool.
-      ownStat.ino !== 0 &&
-      candidateStat.ino !== 0 &&
-      candidateStat.dev === ownStat.dev &&
-      candidateStat.ino === ownStat.ino
+      hasFileNumber(ownStat) &&
+      hasFileNumber(candidateStat) &&
+      sameFile(candidateStat, ownStat)
     );
   };
 }
@@ -113,9 +113,9 @@ function isCrossDeviceError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "EXDEV";
 }
 
-function lstatOrUndefined(target: string): fs.Stats | undefined {
+function lstatOrUndefined(target: string): fs.BigIntStats | undefined {
   try {
-    return fs.lstatSync(target);
+    return fs.lstatSync(target, { bigint: true });
   } catch (error) {
     if (isEnoent(error)) {
       return undefined;
@@ -125,9 +125,9 @@ function lstatOrUndefined(target: string): fs.Stats | undefined {
 }
 
 /** `fs.statSync` with ENOENT collapsed to undefined. Unlike `lstatOrUndefined` it follows symlinks, so a `claude` symlink resolves to whatever file it actually points at, which is what `resolveOwnBinaryCheck`'s inode comparison needs. */
-function statOrUndefined(target: string): fs.Stats | undefined {
+function statOrUndefined(target: string): fs.BigIntStats | undefined {
   try {
-    return fs.statSync(target);
+    return fs.statSync(target, { bigint: true });
   } catch (error) {
     if (isEnoent(error)) {
       return undefined;
@@ -182,9 +182,9 @@ export function enableClaudeShim(params: EnableShimParams, linkFs: LinkFs = node
 
   const existing = lstatOrUndefined(targetPath);
   if (existing !== undefined) {
-    const ownStat = fs.statSync(realContentPath);
+    const ownStat = fs.statSync(realContentPath, { bigint: true });
     const state = readJson(params.paths.claudeShimFile, ClaudeShimStateSchema);
-    const sameInode = existing.dev === ownStat.dev && existing.ino === ownStat.ino;
+    const sameInode = sameFile(existing, ownStat);
     const markerMatches = state !== undefined && path.resolve(state.targetPath) === targetPath;
     if (!sameInode && !markerMatches && !params.force) {
       throw new ForeignClaudeEntryError(targetPath, "enable");
@@ -244,8 +244,8 @@ export function disableClaudeShim(params: DisableShimParams): DisableShimResult 
     return { action: "not-enabled", targetPath };
   }
 
-  const ownStat = fs.statSync(realContentPath);
-  const sameInode = existing.dev === ownStat.dev && existing.ino === ownStat.ino;
+  const ownStat = fs.statSync(realContentPath, { bigint: true });
+  const sameInode = sameFile(existing, ownStat);
   const markerMatches = state !== undefined && path.resolve(state.targetPath) === targetPath;
   if (!sameInode && !markerMatches && !params.force) {
     throw new ForeignClaudeEntryError(targetPath, "disable");
