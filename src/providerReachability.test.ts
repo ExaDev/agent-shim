@@ -170,6 +170,30 @@ describe("realBaseUrlProbe", () => {
     expect(started).toEqual([]);
   });
 
+  it("pairs each verdict with its own base URL when targets that are not dialled sit between and around dialled ones", () => {
+    // Each probed target's verdict names its port, so a verdict handed to the wrong place shows.
+    const workers: ProbeWorkers = { start: (_source, data) => ({ verdict: () => ({ ok: false, reason: `probed ${String(data.port)}` }) }) };
+    const verdicts = realBaseUrlBatchProbe(
+      [
+        { baseUrl: "http://h.example:0/", timeoutMs: SHORT_CONNECT_BOUND_MS },
+        { baseUrl: "http://192.0.2.1:11", timeoutMs: SHORT_CONNECT_BOUND_MS },
+        { baseUrl: "ftp://example.com", timeoutMs: SHORT_CONNECT_BOUND_MS },
+        { baseUrl: "http://192.0.2.1:12", timeoutMs: SHORT_CONNECT_BOUND_MS },
+        { baseUrl: "http://h.example:0/", timeoutMs: SHORT_CONNECT_BOUND_MS },
+        { baseUrl: "ftp://example.org", timeoutMs: SHORT_CONNECT_BOUND_MS },
+      ],
+      workers,
+    );
+    expect(verdicts.map((verdict) => (verdict.ok ? "ok" : verdict.reason))).toEqual([
+      "the base URL names port 0, which nothing listens on",
+      "probed 11",
+      "the base URL is neither http nor https",
+      "probed 12",
+      "the base URL names port 0, which nothing listens on",
+      "the base URL is neither http nor https",
+    ]);
+  });
+
   it("starts the probe of every target before it waits on any, whichever targets are dialled", () => {
     const events: string[] = [];
     const workers: ProbeWorkers = {
