@@ -60,7 +60,7 @@ export default defineConfig([
   {
     files: ["src/frontdoor/doorWorker.ts", "src/frontdoor/probe.ts", "src/monotonicClock.ts"],
     rules: {
-      // These files bound local durations (a worker's deadline and stall limit, a probe's wait): a wall clock that steps (a time sync, a daylight saving change, a sleeping laptop) must not fire or stretch them, so they read the monotonic clock (`performance.now`, or `deadlineAfter`).
+      // These files bound local durations (a worker's deadline and stall limit, a probe's wait): a wall clock that steps (a time sync, a daylight saving change) must not fire or stretch them, so they read the monotonic clock (`performance.now`, or `deadlineAfter`), which a sleeping system stretches and never shortens.
       "no-restricted-properties": ["error", { object: "Date", property: "now", message: "Bound a local duration on the monotonic clock: performance.now or deadlineAfter from src/monotonicClock.ts." }],
     },
   },
