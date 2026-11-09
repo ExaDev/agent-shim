@@ -36,6 +36,16 @@ describe("countSteps", () => {
     expect(total).toBeGreaterThan(0);
   });
 
+  it("counts the iterators an array returns and the callback methods that walk from the end", () => {
+    let visited = 0;
+    expect(countSteps(() => { for (const entry of ITEMS.entries()) { visited += entry.length; } })).toBe(LENGTH + 1);
+    expect(countSteps(() => { for (const key of ITEMS.keys()) { visited += key; } })).toBe(LENGTH + 1);
+    expect(countSteps(() => { for (const value of ITEMS.values()) { visited += value; } })).toBe(LENGTH + 1);
+    expect(visited).toBeGreaterThan(0);
+    expect(countSteps(() => { ITEMS.reduceRight((total, item) => total + item, 0); })).toBe(LENGTH);
+    expect(countSteps(() => { ITEMS.findLastIndex((item) => item > 0); })).toBe(1);
+  });
+
   it("does not count what it says it does not count", () => {
     expect(countSteps(() => { ITEMS.slice(); ITEMS.concat(ITEMS); JSON.stringify(ITEMS); })).toBe(0);
     expect(countSteps(() => { Array.of(...new Set(ITEMS)); })).toBe(LENGTH + 1);

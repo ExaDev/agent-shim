@@ -736,11 +736,14 @@ export function fakeSocketTrust(
   };
 }
 
-const CALLBACK_METHODS = ["filter", "some", "find", "findIndex", "findLast", "every", "map", "forEach", "reduce", "flatMap"];
+const CALLBACK_METHODS = ["filter", "some", "find", "findIndex", "findLast", "findLastIndex", "every", "map", "forEach", "reduce", "reduceRight", "flatMap"];
+
+/** The methods that return an iterator over the array. */
+const ITERATOR_METHODS = [Symbol.iterator, "values", "keys", "entries"];
 const SCAN_METHODS = ["includes", "indexOf", "lastIndexOf"];
 
 /**
- * Runs `run` with the array operations counted and returns the number of elements they visited. Counted: each call of a callback method on an array (`filter`, `some`, `find`, `findIndex`, `findLast`, `every`, `map`, `forEach`, `reduce`, `flatMap`), counted as one step per callback call; the length of the array for each `includes`, `indexOf` and `lastIndexOf`; and one step for each `next` of an array's iterator, which a `for...of` and a spread of an array make. Not counted: iteration of a `Set` or `Map` (including a spread of one and `Map.forEach`), an indexed `for` loop, a sort comparator, the copies `slice`, `concat`, `join` and `toSorted` make, `findLastIndex`, string building and `JSON.stringify`, and anything in native code. So a pass nested inside a pass makes the count grow with the square of the collection only when both passes run through what is counted. The arrays are restored however `run` ends.
+ * Runs `run` with the array operations counted and returns the number of elements they visited. Counted: each call of a callback method on an array (`filter`, `some`, `find`, `findIndex`, `findLast`, `findLastIndex`, `every`, `map`, `forEach`, `reduce`, `reduceRight`, `flatMap`), counted as one step per callback call; the length of the array for each `includes`, `indexOf` and `lastIndexOf`; and one step for each `next` of an iterator an array returns (its own, `values`, `keys` or `entries`), which a `for...of` and a spread of an array make. Not counted: iteration of a `Set` or `Map` (including a spread of one and `Map.forEach`), an indexed `for` loop, a sort comparator, the copies `slice`, `concat`, `join` and `toSorted` make, string building and `JSON.stringify`, and anything in native code. So a pass nested inside a pass makes the count grow with the square of the collection only when both passes run through what is counted. The arrays are restored however `run` ends.
  */
 export function countSteps(run: () => void): number {
   const meter = startStepMeter();
@@ -776,8 +779,8 @@ export function startStepMeter(): StepMeter {
   const lengthOf = (self: unknown): number => (Array.isArray(self) ? self.length : 0);
   for (const name of CALLBACK_METHODS) {
     patch(name, (original) => function (this: unknown, callback: unknown, ...rest: readonly unknown[]) {
-      // `thisArg` is the second argument of every method but `reduce`, whose second is the initial value and whose callback has no `this`.
-      const receiver: unknown = name === "reduce" ? undefined : rest[0];
+      // `thisArg` is the second argument of every method but `reduce` and `reduceRight`, whose second is the initial value and whose callback has no `this`.
+      const receiver: unknown = name === "reduce" || name === "reduceRight" ? undefined : rest[0];
       const counted = typeof callback === "function" ? function (this: unknown, ...args: readonly unknown[]): unknown { steps += 1; return Reflect.apply(callback, receiver, args); } : callback;
       // Built with `concat`, not a spread, so the meter does not count its own iteration.
       return original(this, [counted].concat(rest));
@@ -789,18 +792,20 @@ export function startStepMeter(): StepMeter {
       return original(this, args);
     });
   }
-  patch(Symbol.iterator, (original) => function (this: unknown) {
-    const inner: unknown = original(this, []);
-    const next: unknown = Reflect.get(Object(inner), "next");
-    return {
-      next: (): unknown => {
-        steps += 1;
-        const result: unknown = typeof next === "function" ? Reflect.apply(next, inner, []) : { done: true, value: undefined };
-        return result;
-      },
-      [Symbol.iterator]() { return this; },
-    };
-  });
+  for (const name of ITERATOR_METHODS) {
+    patch(name, (original) => function (this: unknown) {
+      const inner: unknown = original(this, []);
+      const next: unknown = Reflect.get(Object(inner), "next");
+      return {
+        next: (): unknown => {
+          steps += 1;
+          const result: unknown = typeof next === "function" ? Reflect.apply(next, inner, []) : { done: true, value: undefined };
+          return result;
+        },
+        [Symbol.iterator]() { return this; },
+      };
+    });
+  }
   return {
     now: () => steps,
     stop: () => {
