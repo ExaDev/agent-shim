@@ -9,6 +9,7 @@ import { CliError } from "../cliError";
 import { type Provider, isAntigravityProvider, isCodexProvider, isHttpProvider, isRouterProvider } from "../config/schema";
 import { applyProfileChange, createProfile, ProfileAlreadyExistsError, ProfileNotFoundError, readProfile, removeProfile, requireProfileExists, setGlobalDefaultProfile } from "../configProfilesStore";
 import { summariseCredential } from "../credential";
+import { identityWriteView } from "../identityWriteView";
 import { mergeCredentialCache } from "../credentialCacheChange";
 import { addDirectoryRule, DirectoryRuleAlreadyExistsError, DirectoryRuleNotFoundError, listDirectoryRules, removeDirectoryRule, requireRuleSelector, updateDirectoryRule } from "../directoryRulesStore";
 import { addIdentity, IdentityAlreadyExistsError, IdentityNotFoundError, identityExists, readIdentity, removeIdentityWithLockHeld, REMOVED_STATE, loggedIdentityIds, requireIdentityAddable, requireIdentityNames, setAllowAmbientCredential, setDefaultConfigProfile, setIdentityLabel, setIdentityProvider, setIdentityAnchors, setIdentityCredential, useIdentity, type IdentityCredentialChange, identityNotFound } from "../identityStore";
@@ -152,21 +153,13 @@ function requireChange(given: boolean, fields: string): void {
   }
 }
 
-/** One identity as a write reports it, its credential block summarised so no source's value is echoed. */
+/** One identity as a write reports it (see `identityWriteView`), read back after the write. */
 function identityValue(name: string, paths: LayoutPaths) {
   const identity = readIdentity(paths, name);
   if (identity === undefined) {
     throw identityNotFound(paths, name);
   }
-  return {
-    name: identity.name,
-    ...(identity.label === undefined ? {} : { label: identity.label }),
-    ...(identity.defaultConfigProfile === undefined ? {} : { defaultConfigProfile: identity.defaultConfigProfile }),
-    ...(identity.provider === undefined ? {} : { provider: identity.provider }),
-    allowAmbientCredential: identity.allowAmbientCredential,
-    ...(identity.credential === undefined ? {} : { credential: summariseCredential(identity.credential) }),
-    ...(identity.anchors === undefined ? {} : { anchors: identity.anchors }),
-  };
+  return identityWriteView(identity);
 }
 
 /** One provider as a write reports it, the shape `provider show --json` prints except that its base URL is named as `displayBaseUrl` shows it, since a base URL may carry a credential and a write's report is logged by its callers. */
