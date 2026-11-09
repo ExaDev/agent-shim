@@ -1,3 +1,70 @@
+## [13.0.0](https://github.com/ExaDev/agent-shim/compare/v12.2.0...v13.0.0) (2026-11-09)
+
+### ⚠ BREAKING CHANGES
+
+* **launch:** a launch on an http provider whose base URL accepts no connection no longer exits
+  1; it prints the warning and starts the session. A script that relied on the exit status should
+  run `agent-shim check --strict` in the launch directory, which selects the identity, configuration
+  profile and provider the way a launch there does and fails when that provider is unreachable. It
+  cannot be told a --provider, --no-provider or --config-profile given to the launch itself (for a
+  launch given --no-provider, which probes nothing, it still fails for the directory's provider),
+  and --strict also fails on any other warning in the report.
+  The PrepareLaunchParams option probeBaseUrl, which took a probe that waits, is replaced by
+  startBaseUrlProbe, which takes one that returns a started probe to be read later.
+
+### Bug Fixes
+
+* **frontdoor:** answer a dial that rejects with its reason, and refuse port 0 in a base URL ([f11d69a](https://github.com/ExaDev/agent-shim/commit/f11d69ac5aeadb7679d6d07ec1bfc469869ebc71))
+* **frontdoor:** answer check.run and doctor.run as unavailable instead of faulting ([1eb1520](https://github.com/ExaDev/agent-shim/commit/1eb1520fc91496630aa01aaed7f1788105ba3cb8))
+* **frontdoor:** answer the door's lookup in the shape node asks for ([b55e7f7](https://github.com/ExaDev/agent-shim/commit/b55e7f7927f371caeb0369f44c1436df2cf971d7))
+* **frontdoor:** dial an IPv6 literal base URL by its address, as the probe does ([42b0e96](https://github.com/ExaDev/agent-shim/commit/42b0e9613fc763ef15163f3e59c428c9a78451ca))
+* **frontdoor:** give the reason of a dial that failed on every address of a name ([2cba145](https://github.com/ExaDev/agent-shim/commit/2cba145cf3285b6841030d9d57fad771ad4e6db2))
+* **frontdoor:** hint at DNS A records only for a name that is absent ([a5034a1](https://github.com/ExaDev/agent-shim/commit/a5034a175a2db88d7733094a9157ec0ddec5790e))
+* **frontdoor:** leave the local end of the connection out of a dial failure reason ([cb2699c](https://github.com/ExaDev/agent-shim/commit/cb2699c05472192471404fc99657232402ed95ed))
+* **frontdoor:** name the failure of an upstream request whose error has no message ([9c48e60](https://github.com/ExaDev/agent-shim/commit/9c48e60088a19c36ad9785cf587a5f844ba08a10))
+* **frontdoor:** probe a base URL with the door's own dial, in a worker whose verdict cannot be lost ([c581594](https://github.com/ExaDev/agent-shim/commit/c5815949b96363a8994fa7240443f6cb52be3972))
+* **frontdoor:** refuse a v4-mapped IPv6 literal that URL parsing writes in hex ([b7a5b21](https://github.com/ExaDev/agent-shim/commit/b7a5b2187b191928fa6c35919bbf722bbd0707f5))
+* **frontdoor:** resolve localhost and the names under it as loopback in the door's lookup ([f0e24ef](https://github.com/ExaDev/agent-shim/commit/f0e24eff27ee94d41eddfd67862eb77830183501))
+* **frontdoor:** say the door resolves names through DNS A records only when one does not resolve ([a881a94](https://github.com/ExaDev/agent-shim/commit/a881a94e94c34f734e01edd58e93c70670d118d9))
+* **frontdoor:** turn a worker that cannot start or ends without a verdict into a failed probe ([6f2171b](https://github.com/ExaDev/agent-shim/commit/6f2171b477b71e5cbe0502abc8c6065dcd8de15a))
+* **frontdoor:** write the probe's embedded functions without async or class fields ([33d4b1c](https://github.com/ExaDev/agent-shim/commit/33d4b1c0bb3fa645926446f8c2aac1a4e972ab26))
+* **identity:** print the credential summary, not the stored block, in identity add and set JSON ([48cfa5c](https://github.com/ExaDev/agent-shim/commit/48cfa5c4386088fe2c9783534132deea251a6e0e))
+* **launch:** overlap the provider probe with the daemons' bring-up ([7093666](https://github.com/ExaDev/agent-shim/commit/709366665964aa469fc6f20ddf2b4a1e6daf9c21))
+* **launch:** warn on an unreachable provider and launch anyway ([3ea0d0e](https://github.com/ExaDev/agent-shim/commit/3ea0d0e1fe745cb3385796926e9f944752ebaab0))
+* **launch:** write the launch report and every launcher line to standard error ([3097486](https://github.com/ExaDev/agent-shim/commit/309748680e1d13a7944494fe9e38cd771895c492))
+* **providers:** bound connectTimeoutMs by the longest timer delay ([def3689](https://github.com/ExaDev/agent-shim/commit/def36891b264c5e28b5f05b6e960517f2d54b9e7))
+* **providers:** name a base URL without its userinfo or query in the JSON a write prints ([cb06c90](https://github.com/ExaDev/agent-shim/commit/cb06c90a003a6a98910d52c0a95b6b9fb439e0bc))
+* **providers:** name a base URL without its userinfo or query wherever it is printed ([5750e17](https://github.com/ExaDev/agent-shim/commit/5750e17fb07efb2d7351e31519104a420740f676))
+* **providers:** print the provider view, not the stored file, in the JSON a write prints ([bd21e3d](https://github.com/ExaDev/agent-shim/commit/bd21e3d847a588d3792400d3c8c0d6d1588eb65a))
+* **providers:** refuse a base URL no listener can have when it is written ([63bee85](https://github.com/ExaDev/agent-shim/commit/63bee85efeb0002c04e11c5c360202354587495e))
+
+### Code Refactoring
+
+* **probe:** reuse StartedProbe for a started one-URL probe ([bd01f3e](https://github.com/ExaDev/agent-shim/commit/bd01f3ecfd8b5deef3900584f1a86e7e9a702ca9))
+
+### Documentation
+
+* describe the door's report procedures as unavailable and name probe limits by constant ([4ac68df](https://github.com/ExaDev/agent-shim/commit/4ac68df5c243d16eba5be917d304df47305ab25c))
+* describe the provider reachability sources and tests ([41b86c6](https://github.com/ExaDev/agent-shim/commit/41b86c668b590812f18b24921ca776f74a74cfa2))
+* drop the proxy example from the reasons the launch probe can be wrong ([98bbe1c](https://github.com/ExaDev/agent-shim/commit/98bbe1c9bc4c8b9b2175f72d3d0e10a7d31e0d2a))
+* say what check --strict sees of a launch that was given flags ([ae52c19](https://github.com/ExaDev/agent-shim/commit/ae52c19bbe42e445f789a783744035c589bb5666))
+* say which launch overrides check --strict cannot see ([d7df82c](https://github.com/ExaDev/agent-shim/commit/d7df82c65f43444e63e656093b040d65ca881f4e))
+* state the probe batch's rounds, and name ClaudeLaunchPlan in the library surface ([ef00a2a](https://github.com/ExaDev/agent-shim/commit/ef00a2afa2e48989ba3cd800a944d7d37acbc99b))
+
+### Tests
+
+* **frontdoor:** dial from a bindable source-port range in the lookup-shape test ([532edd4](https://github.com/ExaDev/agent-shim/commit/532edd47ab401877278fb6bb5f17cbae287ba0a1))
+* **frontdoor:** dial the lookup-shape test from ports below every ephemeral range ([8f80d6e](https://github.com/ExaDev/agent-shim/commit/8f80d6ea86ac058517e0abbff08151e23e470794))
+* **frontdoor:** give the real-listener probe tests a bound a loaded host cannot trip ([d7d3b45](https://github.com/ExaDev/agent-shim/commit/d7d3b45a01e0ba95be7aa7320d97cf2a16ae7540))
+* **frontdoor:** pin the reason of an unreachable upstream and of an empty dial rejection ([fad45a0](https://github.com/ExaDev/agent-shim/commit/fad45a0541fa2e7a5d3a52338054b215843a5f40))
+* **frontdoor:** reject a stand-in bind that fails instead of waiting on it forever ([0f2d082](https://github.com/ExaDev/agent-shim/commit/0f2d082544f7f451a3c3f056374bc692dfa887ce))
+* **frontdoor:** report the IPv6 pass-through test as skipped where ::1 cannot bind ([371be5e](https://github.com/ExaDev/agent-shim/commit/371be5eee1f5d81133fc2d79d66d031c25c55884))
+* **probe:** assert wait outcomes instead of elapsed time ([d3a06ce](https://github.com/ExaDev/agent-shim/commit/d3a06ce6c14005201fbf3daedffad0786c62f872))
+* **probe:** drop the elapsed-time tripwire between probe tests ([2535d60](https://github.com/ExaDev/agent-shim/commit/2535d60bcf4e7e163a33e8dedd41d4119fc7bfcc))
+* **probe:** pin the batch key to the bound and the verdict order to the targets ([136c051](https://github.com/ExaDev/agent-shim/commit/136c051d407ee4b77c0a04806d16d63420b33a4d))
+* **probe:** say what the lost-wake bound's assertions now require ([643d410](https://github.com/ExaDev/agent-shim/commit/643d410eee25e1c26e26079319735bc3aa93e5a9))
+* stop a lost wake of the probe waiter from stalling the suite ([aebb5e4](https://github.com/ExaDev/agent-shim/commit/aebb5e46b9004767cf82c0d085354793b22392e2))
+
 ## [12.2.0](https://github.com/ExaDev/agent-shim/compare/v12.1.0...v12.2.0) (2026-11-08)
 
 ### Features
