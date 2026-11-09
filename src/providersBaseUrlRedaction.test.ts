@@ -122,6 +122,32 @@ describe("a provider's base URL in the JSON views and the catalogue report", () 
     expect(readProvider(paths, "local")).toMatchObject({ baseUrl: SECRET_BASE_URL });
   });
 
+  it("prints no secret in the JSON of provider add, set and rename, whatever kind of credential source the provider has", async () => {
+    // A secret can sit in a literal's value or in a command's arguments; the other kinds name where a secret is and hold none, and are here to show their JSON is the summary too.
+    const SECRET = "TOPSECRETVALUE";
+    const sources: readonly (readonly [string, string])[] = [
+      ["literal", `literal:${SECRET}`],
+      ["command", `command:vault read --token ${SECRET}`],
+      ["env", "env:SOME_TOKEN"],
+      ["file", "file:/run/secrets/token"],
+      ["op", "op:op://vault/item/field"],
+      ["keychain", "keychain:service:account"],
+    ];
+    for (const [kind, credential] of sources) {
+      const name = `p-${kind}`;
+      const outputs = [
+        await run("add", name, "--display-name", "P", "--base-url", SECRET_BASE_URL, "--credential", credential, "--json"),
+        await run("set", name, "--display-name", "Renamed", "--json"),
+        await run("rename", name, `${name}-renamed`, "--json"),
+      ];
+      for (const output of outputs) {
+        expect(output, kind).not.toContain(SECRET);
+        expect(output, kind).not.toContain("hunter2");
+      }
+      expect(JSON.parse(outputs[0] ?? "{}"), kind).toMatchObject({ value: { credential: { sources: [{ kind }] } } });
+    }
+  });
+
   it("gives it whole in provider show --json, which prints the file's own fields so the value round-trips", async () => {
     await run("add", "local", "--display-name", "Local", "--base-url", SECRET_BASE_URL, "--credential", "literal:dummy");
     expect(JSON.parse(await run("show", "local", "--json"))).toMatchObject({ baseUrl: SECRET_BASE_URL });
