@@ -1,4 +1,5 @@
-import { spawnSyncBlocking } from "./blockingSpawn";
+import { spawnSyncBlocking, spawnSyncUnbounded } from "./blockingSpawn";
+import { BLOCKING_STEP_TIMEOUTS_MS } from "./doorBounds";
 import { refuseToBlockInRole } from "./processRole";
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -291,7 +292,7 @@ export function realIsProcessAlive(pid: number): boolean {
  * When `ps` is unavailable (no POSIX userland, i.e. Windows) the answer is "not a zombie", falling back to plain signal-0 semantics rather than guessing every process dead.
  */
 function realIsProcessZombie(pid: number): boolean {
-  const result = spawnSyncBlocking("a process-table read", "ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" });
+  const result = spawnSyncBlocking("a process-table read", "ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8", timeout: BLOCKING_STEP_TIMEOUTS_MS.processTable });
   return result.status === 0 && result.stdout.trim().startsWith("Z");
 }
 
@@ -306,7 +307,7 @@ export function realIsProcessRunning(pid: number): boolean {
  * Whether `pid` is a live process running this tool's front-door supervisor, read from its command line. Without `ps` (no POSIX userland) the answer is false: an unprovable identity must never be signalled.
  */
 export function realIsFrontDoorSupervisor(pid: number): boolean {
-  const result = spawnSyncBlocking("a process-table read", "ps", ["-o", "pid=,command=", "-p", String(pid)], { encoding: "utf8" });
+  const result = spawnSyncBlocking("a process-table read", "ps", ["-o", "pid=,command=", "-p", String(pid)], { encoding: "utf8", timeout: BLOCKING_STEP_TIMEOUTS_MS.processTable });
   return result.status === 0 && parseFrontDoorSupervisorPids(result.stdout).includes(pid);
 }
 
@@ -370,7 +371,7 @@ export function realReadFileTail(filePath: string, fromByte: number, maxBytes: n
 }
 
 /** How long one process-table read may take before it counts as unreadable: a `ps` over a handful of pids answers far inside this, and one that does not is stuck, and must not hold the supervisor's event loop or a launch. */
-const PS_TIMEOUT_MS = 2000;
+const PS_TIMEOUT_MS = BLOCKING_STEP_TIMEOUTS_MS.processTable;
 
 /** The command line `ps` reports for `pid`, or undefined when that is unknown: the pid has gone, there is no `ps` (no POSIX userland), or `ps` did not answer within `PS_TIMEOUT_MS`. Read-only: used to tell which release started a headroom daemon. */
 export function realProcessCommandLine(pid: number): string | undefined {
@@ -434,7 +435,7 @@ export const realRunPort: RunPort = {
       maxBuffer: RUN_OUTPUT_LIMIT_BYTES,
       ...(input === undefined ? {} : { input }),
       ...(options?.env === undefined ? {} : { env: definedEntries(options.env) }),
-      ...(options?.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }),
+      timeout: options?.timeoutMs ?? BLOCKING_STEP_TIMEOUTS_MS.auxiliaryCommand,
     });
     return { status: result.status, stdout: result.stdout, stderr: result.stderr };
   },
@@ -471,7 +472,7 @@ const MACOS_GUI_SESSION_MANAGER = "Aqua";
  */
 function hasDesktopSession(): boolean {
   if (process.platform === "darwin") {
-    const result = spawnSyncBlocking("a desktop-session check", "launchctl", ["managername"], { encoding: "utf8" });
+    const result = spawnSyncBlocking("a desktop-session check", "launchctl", ["managername"], { encoding: "utf8", timeout: BLOCKING_STEP_TIMEOUTS_MS.desktopSession });
     return result.status === 0 && result.stdout.trim() === MACOS_GUI_SESSION_MANAGER;
   }
   return hasDisplayServer();
@@ -729,7 +730,7 @@ export function realHeadroomPort(paths: LayoutPaths, options: { readonly spawnDa
 /** The real `SpawnPort`, backed by `node:child_process`'s `spawnSync` — the Node equivalent of the legacy bash tool's `exec`. */
 export const realSpawnPort: SpawnPort = {
   spawnSync(command, args, options) {
-    const result = spawnSyncBlocking("a spawned program", command, args, options);
+    const result = spawnSyncUnbounded("a spawned program", command, args, options);
     return { status: result.status, signal: result.signal, ...(result.error === undefined ? {} : { error: result.error }) };
   },
 };

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSyncBlocking } from "./blockingSpawn";
 import { findExecutableInDir, realFsPort } from "./realPorts";
+import { BLOCKING_STEP_TIMEOUTS_MS } from "./doorBounds";
 
 /** Returns the real path when readable, and the input when it cannot be resolved. */
 export function realpathOrSelf(target: string): string {
@@ -16,7 +17,7 @@ export function resolveMiseDispatcher(target: string, pathDirs: readonly string[
   const executable = realpathOrSelf(target);
   const trustedMise = path.join(path.dirname(trustedExecutable), "mise");
   if (path.basename(executable) !== "mise" || realpathOrSelf(trustedMise) !== executable) return undefined;
-  const result = spawnSyncBlocking("a mise shim lookup", executable, ["which", path.basename(target)], { encoding: "utf8", env });
+  const result = spawnSyncBlocking("a mise shim lookup", executable, ["which", path.basename(target)], { encoding: "utf8", env, timeout: BLOCKING_STEP_TIMEOUTS_MS.miseLookup });
   if (result.error !== undefined) return undefined;
   if (result.status === 0 && result.stdout.trim() !== "") return result.stdout.trim();
   if (!result.stderr.includes("not currently active")) return undefined;

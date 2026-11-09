@@ -12,6 +12,7 @@ import { catalogueBindingPath, catalogueCachePath, type CatalogueCache, type Cat
 import type { LayoutPaths } from "./paths";
 import { readProvider } from "./providersStore";
 import { realCredentialPort, realFarmFs, realFsPort } from "./realPorts";
+import { BLOCKING_STEP_TIMEOUTS_MS } from "./doorBounds";
 
 /** One real GET: the status and the parsed JSON body, which is `undefined` when the body is not JSON. */
 export const realCatalogueFetch: CatalogueFetch = async (url, headers, timeoutMs) => {
@@ -51,7 +52,7 @@ export async function refreshCatalogueForReal(paths: LayoutPaths, name: string, 
       return credential;
     },
   };
-  const versionResult = login === "codex-cli" ? spawnSyncBlocking("a Codex version check", "codex", ["--version"], { encoding: "utf8", env }) : undefined;
+  const versionResult = login === "codex-cli" ? spawnSyncBlocking("a Codex version check", "codex", ["--version"], { encoding: "utf8", env, timeout: BLOCKING_STEP_TIMEOUTS_MS.codexVersion }) : undefined;
   const codexVersion = versionResult?.status === 0 ? /^codex-cli\s+(\S+)/.exec(versionResult.stdout)?.[1] : undefined;
   const assertOwner = (): void => {
     if (supervisorPid !== undefined && readFrontDoorState(realFarmFs, paths.frontdoorStateFile)?.supervisorPid !== supervisorPid) throw new Error("front door changed during catalogue refresh");

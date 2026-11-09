@@ -179,6 +179,9 @@ const exitedHeadroom = new Set<number>();
 /** How long one `uv tool install` of the headroom source may run before the supervisor stops it and records the failure. A cold install resolves and builds a pinned git commit with its dependency set, which takes minutes on a slow link; an install past this bound is a hung resolver or a stalled transfer, and an unbounded wait would hold the supervisor and every launch behind it forever. */
 const HEADROOM_INSTALL_TIMEOUT_MS = 600_000;
 
+/** How long a lookup of the installed headroom (its tool directory, its version) may take: a local read and a version print. */
+const HEADROOM_LOOKUP_TIMEOUT_MS = 10_000;
+
 /** Per-attempt timeout on the readiness probe: a request over the local socket either answers quickly or the attempt has failed. */
 const READY_FETCH_TIMEOUT_MS = 2000;
 
@@ -252,7 +255,7 @@ const HEADROOM_TOOL_NAME = "headroom-ai";
  * The commit the `uv tool` install of headroom was built from, read from the `direct_url.json` in its dist-info, or undefined when `uv` cannot say, the tool is absent, or it was not installed from a git source.
  */
 function readInstalledHeadroomCommit(): string | undefined {
-  const toolDir = spawnSyncBlocking("a headroom tool lookup", "uv", ["tool", "dir"], { encoding: "utf8" });
+  const toolDir = spawnSyncBlocking("a headroom tool lookup", "uv", ["tool", "dir"], { encoding: "utf8", timeout: HEADROOM_LOOKUP_TIMEOUT_MS });
   if (toolDir.status !== 0) {
     return undefined;
   }
@@ -356,7 +359,7 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
       return result.status === 0 ? { ok: true } : { ok: false, error: `uv tool install exited ${String(result.status)}` };
     },
     headroomVersion: () => {
-      const result = spawnSyncBlocking("a headroom version check", "headroom", ["--version"], { encoding: "utf8" });
+      const result = spawnSyncBlocking("a headroom version check", "headroom", ["--version"], { encoding: "utf8", timeout: HEADROOM_LOOKUP_TIMEOUT_MS });
       return result.status === 0 ? result.stdout.trim() : undefined;
     },
     installedCommit: readInstalledHeadroomCommit,

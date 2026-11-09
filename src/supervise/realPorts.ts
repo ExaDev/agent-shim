@@ -87,6 +87,9 @@ function watchDirectory(directory: string, accepts: (filename: string) => boolea
 }
 
 /** What a terminal needs written to leave the modes claude sets while it runs, as claude itself leaves them when it exits: the cursor shown, mouse reporting, bracketed paste and focus reporting off, the enhanced keyboard mode popped, and the text attributes reset. The alternate screen is left alone: claude does not use it, and leaving a screen one was never in can move the cursor. */
+/** How long `stty sane` may take: it sets terminal flags and returns. */
+const TERMINAL_RESET_TIMEOUT_MS = 2_000;
+
 const TERMINAL_RESET = "\u001B[?25h\u001B[?1006l\u001B[?1003l\u001B[?1002l\u001B[?1000l\u001B[?2004l\u001B[?1004l\u001B[<u\u001B[0m";
 
 /**
@@ -97,5 +100,5 @@ export function resetTerminal(): void {
     return;
   }
   process.stdout.write(TERMINAL_RESET);
-  spawnSyncBlocking("a terminal reset", "stty", ["sane"], { stdio: ["inherit", "ignore", "ignore"] });
+  spawnSyncBlocking("a terminal reset", "stty", ["sane"], { stdio: ["inherit", "ignore", "ignore"], timeout: TERMINAL_RESET_TIMEOUT_MS });
 }
