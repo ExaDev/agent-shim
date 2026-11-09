@@ -25,12 +25,16 @@ describe("CONNECT routing decisions", () => {
     expect(parseConnectTarget("api.anthropic.com:8443")).toEqual({ host: "api.anthropic.com", port: 8443 });
   });
 
-  it("rejects an authority that names no host or an unusable port", () => {
-    expect(parseConnectTarget("")).toBeUndefined();
-    expect(parseConnectTarget(":443")).toBeUndefined();
-    expect(parseConnectTarget("host:not-a-port")).toBeUndefined();
-    expect(parseConnectTarget("host:0")).toBeUndefined();
-    expect(parseConnectTarget("host:70000")).toBeUndefined();
+  it("takes an IPv6 literal's address without its brackets, the form a dial needs", () => {
+    expect(parseConnectTarget("[::1]:443")).toEqual({ host: "::1", port: 443 });
+    expect(parseConnectTarget("[::1]")).toEqual({ host: "::1", port: HTTPS_PORT });
+    expect(parseConnectTarget("[::ffff:127.0.0.1]:8443")).toEqual({ host: "::ffff:127.0.0.1", port: 8443 });
+  });
+
+  it("refuses an authority that names no host or an unusable port, saying why", () => {
+    for (const authority of ["", ":443", "host:not-a-port", "host:0", "host:70000", "::1", "[::1", "[::1]x", "[]:443", "user@host:443"]) {
+      expect(parseConnectTarget(authority), authority).toHaveProperty("refusal");
+    }
   });
 
   it("intercepts exactly the configured hosts, nothing more", () => {

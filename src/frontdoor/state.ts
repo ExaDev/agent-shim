@@ -4,6 +4,7 @@ import { z } from "zod";
 import { ModelsConfigSchema, type ModelsConfig } from "../config/schema";
 import type { HeadroomFs } from "../headroom/state";
 import type { LayoutPaths } from "../paths";
+import { MAX_TCP_PORT } from "../baseUrlDial";
 import { catalogueCachePath } from "../providerCatalogue";
 
 /** Stores one provider's refresh state within the supervisor generation that owns it. */
@@ -142,9 +143,6 @@ export function writeFrontDoorState(fs: HeadroomFs, stateFile: string, state: Re
   fs.mkdirp(path.dirname(stateFile));
   fs.writeFilePrivate(stateFile, `${JSON.stringify(state, null, 2)}\n`);
 }
-
-/** The highest TCP port; a number above it names no listener. */
-export const MAX_TCP_PORT = 65535;
 
 /** The loopback origin of a direct listener on `port`. */
 export function directOrigin(port: number): string {
