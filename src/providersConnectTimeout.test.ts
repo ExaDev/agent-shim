@@ -4,6 +4,8 @@ import path from "node:path";
 import { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ConfigValidationError } from "./config/load";
+import { MAX_TIMER_DELAY_MS } from "./config/schema";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { registerProviderCommand } from "./providers";
 import { ProviderKindMismatchError, addProvider, readProvider, updateProvider } from "./providersStore";
@@ -38,6 +40,14 @@ describe("a provider's connect timeout", () => {
     expect(readProvider(paths, "local")).toMatchObject({ connectTimeoutMs: 500 });
     await run("set", "local", "--unset-connect-timeout");
     expect(readProvider(paths, "local")).not.toHaveProperty("connectTimeoutMs");
+  });
+
+  it("is refused above the longest delay a timer can hold, which Node would otherwise cut to 1 ms", async () => {
+    await run("add", "local", "--display-name", "Local", "--base-url", "http://127.0.0.1:4000", "--credential", "literal:dummy");
+    await expect(run("set", "local", "--connect-timeout", "30d")).rejects.toThrow(ConfigValidationError);
+    expect(readProvider(paths, "local")).not.toHaveProperty("connectTimeoutMs");
+    await run("set", "local", "--connect-timeout", `${String(MAX_TIMER_DELAY_MS)}ms`);
+    expect(readProvider(paths, "local")).toMatchObject({ connectTimeoutMs: MAX_TIMER_DELAY_MS });
   });
 
   it("is refused on a provider kind that dials no base URL", () => {
