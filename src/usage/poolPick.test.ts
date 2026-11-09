@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Pool } from "../config/schema";
 import { FAKE_NOW_MS, createFakeFarmFs, paths } from "../test-helpers";
+import { countSteps, growsLinearly } from "../test-helpers";
 import { loadPoolMembers, PoolGraphError, poolIdentities, rankPoolGraph, readStickyPick, recordStickyPick } from "./poolPick";
 import { PROMPT_CACHE_TTL_MS } from "./pick";
 import { USAGE_RETENTION_MS } from "./store";
@@ -244,5 +245,32 @@ describe("rankPoolGraph", () => {
     expect(() => graph(cyclic, "a", {})).toThrow(PoolGraphError);
     expect(() => graph(cyclic, "a", {})).toThrow("a -> b -> a");
     expect(() => graph({ loop: { identities: ["pool:loop"] } }, "loop", {})).toThrow("loop -> loop");
+  });
+});
+
+describe("loadPoolMembers at the size of a large pool and log", () => {
+  const FIRST = 20;
+  const SECOND = 40;
+  const THIRD = 80;
+  const SIZES = [FIRST, SECOND, THIRD] as const;
+  const RECORDS_PER_MEMBER = 5;
+
+  it("takes each member's records from a log grouped once, in steps that grow linearly with members and records together", () => {
+    const day = iso(0).slice(0, "YYYY-MM-DD".length);
+    const counts = SIZES.map((size) => {
+      const members = Array.from({ length: size }, (_, index) => `m${String(index)}`);
+      const log = members.flatMap((member) => Array.from({ length: RECORDS_PER_MEMBER }, (_, index) => recordLine(member, -(index + 1) * MINUTE_MS))).join("");
+      const fs = createFakeFarmFs({ [`${paths.usageLogDir}/${day}.1.jsonl`]: log });
+      return countSteps(() => { loadPoolMembers(fs, paths, members, FAKE_NOW_MS, (name) => name); });
+    });
+    expect(growsLinearly(SIZES, [counts[0] ?? 0, counts[1] ?? 0, counts[2] ?? 0]), `steps ${counts.join(", ")}`).toBe(true);
+  });
+
+  it("gives each member exactly its own records among many members' records", () => {
+    const day = iso(0).slice(0, "YYYY-MM-DD".length);
+    const fs = createFakeFarmFs({ [`${paths.usageLogDir}/${day}.1.jsonl`]: [recordLine("a", -MINUTE_MS), recordLine("b", -MINUTE_MS), recordLine("a", -(MINUTE_MS + MINUTE_MS)), recordLine("a", -MINUTE_MS, "z")].join("") });
+    const [a, b] = loadPoolMembers(fs, paths, ["a", "b"], FAKE_NOW_MS, (name) => name);
+    expect(a?.records).toHaveLength(2);
+    expect(b?.records).toHaveLength(1);
   });
 });

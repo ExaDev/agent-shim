@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { CliError } from "../cliError";
 import type { Pool } from "../config/schema";
+import type { UsageRecord } from "./schema";
 import { poolNameOf } from "../launcher/identity";
 import type { FarmFs } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
@@ -65,6 +66,20 @@ export type ProviderOf = (identity: string) => string | UnreadableProvider | und
 export function loadPoolMembers(fs: PoolPickFs, paths: PoolPickPaths, identities: readonly string[], nowMs: number, idOf: (name: string) => string | undefined, providerOf?: ProviderOf): readonly PoolMember[] {
   const windowStartMs = nowMs - FIVE_HOUR_WINDOW_MS;
   const log = readUsageLog(fs, paths.usageLogDir, { sinceMs: windowStartMs });
+  // The log is read for the window already (`sinceMs`), so each record is in it. Grouped once by who it is for, each member takes its group instead of searching the whole log.
+  const recordsOf = new Map<string, UsageRecord[]>();
+  for (const record of log.records) {
+    if (record.identity === undefined) {
+      continue;
+    }
+    const key = `${record.identity}\u0000${record.provider}`;
+    const group = recordsOf.get(key);
+    if (group === undefined) {
+      recordsOf.set(key, [record]);
+    } else {
+      group.push(record);
+    }
+  }
   return identities.map((identity): PoolMember => {
     const id = idOf(identity);
     if (id === undefined) {
@@ -76,7 +91,7 @@ export function loadPoolMembers(fs: PoolPickFs, paths: PoolPickPaths, identities
       ...(provider === undefined ? {} : { provider }),
       ...(typeof resolved === "object" ? { providerError: resolved.reason } : {}),
     };
-    const records = log.records.filter((record) => record.identity === id && record.provider === (provider ?? ANTHROPIC_PROVIDER) && Date.parse(record.at) >= windowStartMs);
+    const records = recordsOf.get(`${id}\u0000${provider ?? ANTHROPIC_PROVIDER}`) ?? [];
     try {
       const snapshot = readUsageSnapshot(fs, paths.usageSnapshotsDir, id);
       const account = readAccountMetadata(fs, paths.identitiesDir, id) ?? snapshot?.account;

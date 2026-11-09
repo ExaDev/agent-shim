@@ -4,7 +4,8 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigFileNotJsonError } from "./config/load";
 import { DuplicateIdentityNameError } from "./identityRecords";
-import { identityRecords, indexIdentityRecords, addIdentity, createIdentityNameReader, IdentityAlreadyExistsError, identityExists, identityIdOf, identityNameOf, listIdentities, readIdentity, removeIdentity, setIdentityLabel, useIdentity } from "./identityStore";
+import { countSteps, growsLinearly } from "./test-helpers";
+import { identityIdResolverOf, identityRecords, indexIdentityRecords, addIdentity, createIdentityNameReader, IdentityAlreadyExistsError, identityExists, identityIdOf, identityNameOf, listIdentities, readIdentity, removeIdentity, setIdentityLabel, useIdentity } from "./identityStore";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 
 describe("identities stored under an id that is not their name", () => {
@@ -247,5 +248,56 @@ describe("indexIdentityRecords", () => {
     expect(index.displaced.map((record) => record.id)).toEqual([lostId]);
     expect([...index.displacedIds]).toEqual([lostId]);
     expect(index.names.get("id3")).toBe("n3");
+  });
+});
+
+describe("identityIdResolverOf", () => {
+  const FIRST = 20;
+  const SECOND = 40;
+  const THIRD = 80;
+  const SIZES = [FIRST, SECOND, THIRD] as const;
+  let root: string;
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "identity-resolver-test-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("reads the identities once for every name asked, not once for each", () => {
+    const readsFor = (count: number): number => {
+      const paths = buildLayoutPaths(path.join(root, `farm${String(count)}`));
+      const names: string[] = [];
+      for (let index = 0; index < count; index += 1) {
+        const directory = path.join(paths.identitiesDir, `id${String(index)}`);
+        fs.mkdirSync(directory, { recursive: true });
+        fs.writeFileSync(path.join(directory, "identity.json"), JSON.stringify({ name: `n${String(index)}` }));
+        names.push(`n${String(index)}`);
+      }
+      const spy = vi.spyOn(fs, "readFileSync");
+      try {
+        const resolve = identityIdResolverOf(paths);
+        for (const name of names) {
+          expect(resolve(name)).toBe(`id${name.slice(1)}`);
+        }
+        return spy.mock.calls.length;
+      } finally {
+        spy.mockRestore();
+      }
+    };
+    const counts = SIZES.map((size) => readsFor(size));
+    expect(growsLinearly(SIZES, [counts[0] ?? 0, counts[1] ?? 0, counts[2] ?? 0]), `file reads ${counts.join(", ")}`).toBe(true);
+    expect(counts[2]).toBeLessThanOrEqual(THIRD * 2 + 2);
+  });
+
+  it("is not used up by the steps of one lookup either", () => {
+    const paths = buildLayoutPaths(path.join(root, "steps"));
+    fs.mkdirSync(path.join(paths.identitiesDir, "a"), { recursive: true });
+    fs.writeFileSync(path.join(paths.identitiesDir, "a", "identity.json"), JSON.stringify({ name: "alpha" }));
+    const resolve = identityIdResolverOf(paths);
+    expect(resolve("alpha")).toBe("a");
+    expect(countSteps(() => { resolve("alpha"); })).toBeLessThan(2);
   });
 });

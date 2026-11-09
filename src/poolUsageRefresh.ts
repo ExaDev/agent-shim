@@ -7,7 +7,7 @@ import { loadCascadeInput, readDirectorySelections } from "./launcher/cascade";
 import { decideIdentity, readActiveIdentity } from "./launcher/identity";
 import { refreshStalePoolMembers } from "./launcher/poolRefresh";
 import { resolveLayoutPaths, type LayoutPaths } from "./paths";
-import { identityIdOf } from "./identityStore";
+import { identityIdResolverOf } from "./identityStore";
 import { realMemberProviderResolver } from "./poolProviderWiring";
 import { readPools } from "./poolStore";
 import { realFarmFs, realFsPort, type DaemonSpawner } from "./realPorts";
@@ -45,7 +45,7 @@ export async function refreshPools(params: RefreshPoolsParams): Promise<void> {
   await refreshStalePoolMembers({
     poolNames: params.poolNames,
     pools: readPools(paths),
-    loadMembers: (identities) => loadPoolMembers(realFarmFs, paths, identities, Date.now(), (name) => identityIdOf(paths, name), params.providerOf),
+    loadMembers: (identities) => loadPoolMembers(realFarmFs, paths, identities, Date.now(), identityIdResolverOf(paths), params.providerOf),
     refresher,
   });
 }

@@ -19,7 +19,7 @@ import { missingIdentityRemedy, removeSettledNameRenames, requireNoInterruptedNa
 import { requireNameFreeOfUnfinishedRename } from "./identityRenameJournal";
 import { keychainCacheEntryExists, requireNoLeftoverKeychainLogin, type KeychainProbe } from "./keychainLogin";
 import { ignoresCase, sameDirectory, systemErrorCode, UNREACHABLE_CODES } from "./sameDirectory";
-import { FARM_SUFFIX_PATTERN, IDENTITY_FILE, freeIdentityId, identityIdIn, identityNameIn, readIdentityRecords, textRecordsPort, type IdentityRecord } from "./identityRecords";
+import { FARM_SUFFIX_PATTERN, IDENTITY_FILE, freeIdentityId, identityIdIn, identityIdLookup, identityNameIn, readIdentityRecords, textRecordsPort, type IdentityRecord } from "./identityRecords";
 import { liveLaunchesOn } from "./launcher/launchRecords";
 
 /** Raised by any operation that requires an identity to already exist, when it does not. `remedy` says what to do, adding the identity unless given (`identityNotFound` gives it from the state on disk). */
@@ -89,6 +89,15 @@ const realRecordsPort = textRecordsPort({ readdir: (directory) => (fs.existsSync
 /** Every identity's record (its id, the directory it is stored in, and its name), read fresh from the identities directory. See `readIdentityRecords`. */
 export function identityRecords(paths: LayoutPaths): readonly IdentityRecord[] {
   return readIdentityRecords(realRecordsPort, paths.identitiesDir);
+}
+
+/** What resolves many names to ids from one reading of the identity records, taken when the first name is asked: for a pass over many names (the members of pools), where `identityIdOf` would read every `identity.json` again for each. Records are read when the resolver is first used, so it is made for one pass and not kept. Throws what `identityIdOf` throws. */
+export function identityIdResolverOf(paths: LayoutPaths): (name: string) => string | undefined {
+  let lookup: ((name: string) => string | undefined) | undefined;
+  return (name) => {
+    lookup ??= identityIdLookup(identityRecords(paths));
+    return lookup(name);
+  };
 }
 
 /** The id (the directory under `identitiesDir`) of the identity named `name`, or undefined when there is none. Every lookup of an identity by name goes through this, since a renamed identity keeps the directory it was created with. Throws `DuplicateIdentityNameError` when two identities claim the name. */

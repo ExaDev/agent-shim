@@ -11,7 +11,7 @@ import { buildLayoutPaths } from "./paths";
 import { growsLinearly, startStepMeter } from "./test-helpers";
 
 /**
- * Each report is run against a farm in which every collection the user sizes is large and degenerate at once: identities with a readable name, with none (a file that is not JSON), all claiming one name, symlinks to one directory and displaced ones (an interrupted resync left their identity.json only in a superseded farm), a pool of many members and many configuration profiles. The array steps a report makes (`countSteps`) must grow exactly linearly with the farm (`growsLinearly`: counts are deterministic, so the slope may not grow), and so must the most steps it makes between two file system notes, which is what the door's silence window sees as a stall.
+ * Each report is run against a farm in which every collection the user sizes is large and degenerate at once: identities with a readable name, with none (a file that is not JSON), all claiming one name, symlinks to one directory and displaced ones (an interrupted resync left their identity.json only in a superseded farm), a pool of many members with a usage log of several records for each, and many configuration profiles. The array steps a report makes (`countSteps`) must grow exactly linearly with the farm (`growsLinearly`: counts are deterministic, so the slope may not grow), and so must the most steps it makes between two file system notes, which is what the door's silence window sees as a stall.
  *
  * What this can catch: a pass over a collection nested inside a pass over it that runs through the counted array operations, over the whole farm. What it cannot see: a quadratic cost that does not run through them (a `Set` or `Map` iteration, an indexed `for` loop, a sort comparator, a copy by `slice`, `concat` or `JSON.stringify`, string building), one in native code, one over a collection this farm does not hold (registered sessions, many providers), and a cost that grows with something other than the farm's size.
  */
@@ -22,6 +22,8 @@ const QUADRUPLE = 4;
 const REPORT_SIZES = [FIRST_FARM, FIRST_FARM * DOUBLE, FIRST_FARM * QUADRUPLE] as const;
 const GROUPS = 4;
 const UUID_TAIL_DIGITS = 12;
+const RECORDS_PER_MEMBER = 5;
+const MINUTE_MS = 60_000;
 
 let home: string;
 let previousHome: string | undefined;
@@ -78,6 +80,11 @@ function buildFarm(size: number) {
   for (let index = 0; index < each; index += 1) {
     fs.writeFileSync(path.join(paths.configProfilesDir, `profile${String(index)}.json`), "{}");
   }
+  // A usage log whose records reach into the current five-hour window, several for each member: what a pool pick reads for each member.
+  const day = new Date().toISOString().slice(0, "YYYY-MM-DD".length);
+  const lines = members.flatMap((member) => Array.from({ length: RECORDS_PER_MEMBER }, (_, index) => `${JSON.stringify({ schemaVersion: 1, at: new Date(Date.now() - (index + 1) * MINUTE_MS).toISOString(), identity: member, provider: "anthropic", route: "r", method: "POST", endpoint: "/v1/messages", status: 200, latencyMs: 1, durationMs: 1, outcome: "completed" })}\n`));
+  fs.mkdirSync(paths.usageLogDir, { recursive: true });
+  fs.writeFileSync(path.join(paths.usageLogDir, `${day}.1.jsonl`), lines.join(""));
   addPool(paths, "wide", members);
   fs.mkdirSync(path.join(home, "work"), { recursive: true });
   return paths;

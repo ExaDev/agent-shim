@@ -21,7 +21,7 @@ import { HEADROOM_POLL_MS } from "../headroom/supervisor";
 import { requestAccountMove } from "../supervise/registry";
 import { createTargetObservationStore } from "../selection/targetStore";
 import { checkForUpdate } from "../update/commands";
-import { createIdentityNameReader, identityIdOf, identityLabeller, listAnchoredIdentities, usageSnapshotOfName } from "../identityStore";
+import { createIdentityNameReader, identityIdOf, identityIdResolverOf, identityLabeller, listAnchoredIdentities, usageSnapshotOfName } from "../identityStore";
 import { readJobs } from "../jobStore";
 import { refreshStalePoolMembers } from "../launcher/poolRefresh";
 import { ANTHROPIC_USAGE_FRESHNESS_MS } from "../usage/anthropicUsageRefresh";
@@ -386,7 +386,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     // A configuration this door cannot read (a key from a newer agent-shim sharing the file) is logged each tick and never ends the process: every session routed through this door depends on it.
     try {
       const pools = readPools(paths);
-      refreshStalePoolMembers({ poolNames: Object.keys(pools), pools, loadMembers: (identities) => loadPoolMembers(realFarmFs, paths, identities, Date.now(), (name) => identityIdOf(paths, name)), refresher: anthropicRefresher }).catch((error: unknown) => {
+      refreshStalePoolMembers({ poolNames: Object.keys(pools), pools, loadMembers: (identities) => loadPoolMembers(realFarmFs, paths, identities, Date.now(), identityIdResolverOf(paths)), refresher: anthropicRefresher }).catch((error: unknown) => {
         log(`pool usage refresh failed: ${error instanceof Error ? error.message : String(error)}`);
       });
     } catch (error) {
