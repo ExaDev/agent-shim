@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import type { Pool } from "./config/schema";
+import type { Job, Pool } from "./config/schema";
 import { poolMemberIdentity } from "./config/schema";
 import { poolNameOf } from "./launcher/identity";
 import { modelsFindings } from "./models/doctor";
 import { expandMembers, virtualModelsReachingCycle } from "./modelsStore";
-import { poolWindowReadFindings } from "./poolWindowReads";
+import { jobWindowReadFindings, poolWindowReadFindings } from "./poolWindowReads";
 import { poolCycleOf, reportedPoolCycles } from "./poolStore";
-import { lineariseProfile, type ProfileSource } from "./resolve/extends";
+import { lineariseProfile, profilesReachingProblem, type ProfileSource } from "./resolve/extends";
 import { rankPool } from "./usage/pick";
 import { loadPoolMembers, poolIdentities, rankPoolGraph, PoolGraphError } from "./usage/poolPick";
-import { FAKE_NOW_MS, countSteps, createFakeFarmFs, growsLinearly, paths, seededGenerator } from "./test-helpers";
+import { FAKE_NOW_MS, countSteps, createFakeFarmFs, diamondChainPools, growsLinearly, paths, ringPools, seededGenerator } from "./test-helpers";
 import type { PoolMember } from "./usage/pick";
 import type { ModelsConfig } from "./config/schema";
 
@@ -69,19 +69,6 @@ function randomPools(seed: number): Record<string, Pool> {
   return pools;
 }
 
-/** A chain of diamonds: pool `d0` lists `a0` and `b0`, both list `d1`, and so on, so a walk that follows every path reaches the last pool 2^levels times. Each level's pools also hold an identity of their own. */
-function diamondChain(levels: number): Record<string, Pool> {
-  const pools: Record<string, Pool> = {};
-  for (let level = 0; level < levels; level += 1) {
-    pools[`d${String(level)}`] = { identities: [`pool:a${String(level)}`, `pool:b${String(level)}`] };
-    for (const side of ["a", "b"]) {
-      pools[`${side}${String(level)}`] = { identities: [`${side}id${String(level)}`, `pool:d${String(level + 1)}`] };
-    }
-  }
-  pools[`d${String(levels)}`] = { identities: ["i0", "i1"] };
-  return pools;
-}
-
 /** A chain of `length` pools, each listing the next and an identity of its own. */
 function longChain(length: number): Record<string, Pool> {
   const pools: Record<string, Pool> = {};
@@ -89,11 +76,6 @@ function longChain(length: number): Record<string, Pool> {
     pools[`c${String(index)}`] = { identities: [`id${String(index)}`, ...(index + 1 < length ? [`pool:c${String(index + 1)}`] : [])] };
   }
   return pools;
-}
-
-/** A ring of `length` pools, each listing the next. */
-function ring(length: number): Record<string, Pool> {
-  return Object.fromEntries(Array.from({ length }, (_, index) => [`r${String(index)}`, { identities: [`pool:r${String((index + 1) % length)}`] }]));
 }
 
 /** Many two-pool cycles, each listing the next pair before its own partner: every pool reaches all the later pairs, a walk through one finds its own cycle only after them, and each pair is a cycle of its own. */
@@ -177,12 +159,12 @@ describe("poolCycleOf and reportedPoolCycles", () => {
   });
 
   it("walks each pool once: a ring, a chain of two-pool cycles and a chain of diamonds make steps that grow linearly", () => {
-    expectLinear(CHAIN, (size) => countSteps(() => { reportedPoolCycles(ring(size)); }));
+    expectLinear(CHAIN, (size) => countSteps(() => { reportedPoolCycles(ringPools(size)); }));
     expectLinear(CHAIN, (size) => countSteps(() => { reportedPoolCycles(chainedPairs(size)); }));
     expectLinear(CHAIN, (size) => countSteps(() => { reportedPoolCycles(longChain(size)); }));
-    expectLinear(LEVELS, (levels) => countSteps(() => { reportedPoolCycles({ ...diamondChain(levels), back: { identities: ["pool:d0"] }, [`d${String(levels)}`]: { identities: ["pool:d0"] } }); }));
+    expectLinear(LEVELS, (levels) => countSteps(() => { reportedPoolCycles({ ...diamondChainPools(levels), back: { identities: ["pool:d0"] }, [`d${String(levels)}`]: { identities: ["pool:d0"] } }); }));
     expectLinear(CHAIN, (size) => countSteps(() => { poolCycleOf(longChain(size), "c0"); }));
-    expectLinear(LEVELS, (levels) => countSteps(() => { poolCycleOf(diamondChain(levels), "d0"); }));
+    expectLinear(LEVELS, (levels) => countSteps(() => { poolCycleOf(diamondChainPools(levels), "d0"); }));
   });
 });
 
@@ -340,7 +322,7 @@ describe("poolIdentities and rankPoolGraph", () => {
     return { resolutions, fileReads, logReads };
   }
 
-  const identitiesOfChain = (levels: number): string[] => ["i0", "i1", ...Array.from({ length: levels }, (_, level) => [`aid${String(level)}`, `bid${String(level)}`]).flat()];
+  const identitiesOfChain = (levels: number): string[] => [`lastid${String(levels)}`, ...Array.from({ length: levels }, (_, level) => [`aid${String(level)}`, `bid${String(level)}`]).flat()];
 
   it("ranks a chain of diamonds and a long chain resolving names and reading files in numbers that grow linearly, reading the usage log once", () => {
     const run = (sizes: readonly [number, number, number], build: (size: number) => { pools: Record<string, Pool>; top: string; identities: string[] }): void => {
@@ -355,12 +337,12 @@ describe("poolIdentities and rankPoolGraph", () => {
       expectLinear(sizes, (size) => costOf(size).resolutions);
       expectLinear(sizes, (size) => costs.get(size)?.fileReads ?? 0);
     };
-    run(LEVELS, (levels) => ({ pools: diamondChain(levels), top: "d0", identities: identitiesOfChain(levels) }));
+    run(LEVELS, (levels) => ({ pools: diamondChainPools(levels), top: "d0", identities: identitiesOfChain(levels) }));
     run(CHAIN, (size) => ({ pools: longChain(size), top: "c0", identities: Array.from({ length: size }, (_, index) => `id${String(index)}`) }));
   });
 
   it("lists the identities of a chain of diamonds and a long chain in steps that grow linearly", () => {
-    expectLinear(LEVELS, (levels) => countSteps(() => { poolIdentities(diamondChain(levels), "d0"); }));
+    expectLinear(LEVELS, (levels) => countSteps(() => { poolIdentities(diamondChainPools(levels), "d0"); }));
     expectLinear(CHAIN, (size) => countSteps(() => { poolIdentities(longChain(size), "c0"); }));
   });
 
@@ -374,8 +356,8 @@ describe("poolIdentities and rankPoolGraph", () => {
 describe("the identities a window read covers", () => {
   it("lists the identities of a chain of diamonds, each once, in steps that grow linearly", () => {
     const windowless = (): ReadonlySet<"fiveHour" | "sevenDay" | "extraUsage"> => new Set();
-    const read = (levels: number): readonly { readonly message: string }[] => poolWindowReadFindings({ ...diamondChain(levels), top: { identities: [{ identity: "pool:d0", when: { kind: "compare", op: "lt", left: { kind: "reference", key: "quota.fiveHour.utilization" }, right: { kind: "numberLiteral", value: 0.5 } } }] } }, windowless);
-    expect(read(2).map((finding) => /but (\S+) reports/.exec(finding.message)?.[1])).toEqual(["aid0", "aid1", "i0", "i1", "bid1", "bid0"]);
+    const read = (levels: number): readonly { readonly message: string }[] => poolWindowReadFindings({ ...diamondChainPools(levels), top: { identities: [{ identity: "pool:d0", when: { kind: "compare", op: "lt", left: { kind: "reference", key: "quota.fiveHour.utilization" }, right: { kind: "numberLiteral", value: 0.5 } } }] } }, windowless);
+    expect(read(2).map((finding) => /but (\S+) reports/.exec(finding.message)?.[1])).toEqual(["aid0", "aid1", "lastid2", "bid1", "bid0"]);
     expectLinear(LEVELS, (levels) => countSteps(() => { read(levels); }));
   });
 });
@@ -430,7 +412,7 @@ describe("lineariseProfile", () => {
   it("makes steps that grow linearly on a long chain and on a chain of diamonds", () => {
     expectLinear(CHAIN, (size) => countSteps(() => { lineariseProfile("c0", (name) => sourceOf(name === `c${String(size - 1)}` ? [] : [`c${String(Number(name.slice(1)) + 1)}`])); }));
     expectLinear(LEVELS, (levels) => {
-      const graph = Object.fromEntries(Object.entries(diamondChain(levels)).map(([name, pool]) => [name, pool.identities.map(poolMemberIdentity).map((identity) => poolNameOf(identity) ?? identity).filter((entry) => entry in diamondChain(levels))]));
+      const graph = Object.fromEntries(Object.entries(diamondChainPools(levels)).map(([name, pool]) => [name, pool.identities.map(poolMemberIdentity).map((identity) => poolNameOf(identity) ?? identity).filter((entry) => entry in diamondChainPools(levels))]));
       return countSteps(() => { lineariseProfile("d0", (name) => sourceOf(graph[name] ?? [])); });
     });
   });
@@ -500,12 +482,89 @@ describe("expandMembers", () => {
   });
 
   const chainOfDiamonds = (levels: number): ModelsConfig => ({
-    virtual: Object.fromEntries(Object.entries(diamondChain(levels)).map(([name, pool]) => [name, { mode: "ordered" as const, members: pool.identities.map(poolMemberIdentity).map((identity) => poolNameOf(identity) ?? `p/${identity}`) }])),
+    virtual: Object.fromEntries(Object.entries(diamondChainPools(levels)).map(([name, pool]) => [name, { mode: "ordered" as const, members: pool.identities.map(poolMemberIdentity).map((identity) => poolNameOf(identity) ?? `p/${identity}`) }])),
   });
 
   it("makes steps that grow linearly on a chain of diamonds and on a long chain, and in the models check of them", () => {
     expectLinear(LEVELS, (levels) => countSteps(() => { expandMembers("d0", chainOfDiamonds(levels)); }));
     expectLinear(CHAIN, (size) => countSteps(() => { expandMembers("c0", { virtual: Object.fromEntries(Object.entries(longChain(size)).map(([name, pool]) => [name, { mode: "ordered" as const, members: pool.identities.map(poolMemberIdentity).map((identity) => poolNameOf(identity) ?? `p/${identity}`) }])) }); }));
     expectLinear(LEVELS, (levels) => countSteps(() => { modelsFindings({ models: chainOfDiamonds(levels), providers: ["p"], identities: [] }); }));
+  });
+});
+
+describe("the window reads of pools and jobs", () => {
+  type Window = "fiveHour" | "sevenDay" | "extraUsage";
+  const WINDOWS: readonly Window[] = ["fiveHour", "sevenDay", "extraUsage"];
+  const JOB_WINDOWS = ["fiveHour", "sevenDay"] as const;
+  const PROSE: Readonly<Record<Window, string>> = { fiveHour: "five-hour", sevenDay: "seven-day", extraUsage: "extra-usage" };
+
+  /** The identities of a selector before it was walked into one set. */
+  function naiveIdentitiesOf(selector: string, pools: Readonly<Record<string, Pool>>, visited = new Set<string>()): readonly string[] {
+    const nested = poolNameOf(selector);
+    if (nested === undefined) {
+      return [selector];
+    }
+    const pool = pools[nested];
+    if (pool === undefined || visited.has(nested)) {
+      return [];
+    }
+    visited.add(nested);
+    return [...new Set(pool.identities.flatMap((member) => naiveIdentitiesOf(poolMemberIdentity(member), pools, visited)))];
+  }
+
+  it("reports the compacting pools and the jobs the walk of every identity of every selector reports, for many random graphs", () => {
+    let reported = 0;
+    for (let seed = 1; seed <= SEEDS; seed += 1) {
+      const next = seededGenerator(seed);
+      const pools = Object.fromEntries(Object.entries(randomPools(seed)).map(([name, pool]) => [name, { ...pool, identities: pool.identities.map(poolMemberIdentity), ...(next() < DAG_CHANCE ? { compactBeforeLimit: true } : {}) }]));
+      const received = new Map<string, ReadonlySet<Window> | undefined>(DIRECT.map((identity) => [identity, next() < DAG_CHANCE ? undefined : new Set(WINDOWS.filter(() => next() < DAG_CHANCE))]));
+      const windowsOf = (identity: string): ReadonlySet<Window> | undefined => received.get(identity);
+      const jobs: Record<string, Job> = Object.fromEntries(Array.from({ length: 1 + Math.floor(next() * MOST_ENTRIES) }, (_, index) => [`job${String(index)}`, { target: (next() < DAG_CHANCE ? { pool: `p${String(Math.floor(next() * MOST_POOLS))}` } : { identity: DIRECT[Math.floor(next() * DIRECT.length)] ?? "i0" }), trigger: { beforeReset: JOB_WINDOWS[Math.floor(next() * JOB_WINDOWS.length)] ?? "fiveHour", lead: "10m" }, prompt: "p", cwd: "/w", timeout: "1h" } as const]));
+      const expectedPools = Object.entries(pools).flatMap(([poolName, pool]) => (pool.compactBeforeLimit === true ? naiveIdentitiesOf(`pool:${poolName}`, pools).flatMap((identity) => {
+        const has = windowsOf(identity);
+        return has !== undefined && !has.has("fiveHour") && !has.has("sevenDay") ? [`Pool "${poolName}" compacts before the limit, but ${identity} reports no five-hour or seven-day window, so its sessions are never compacted before the limit.`] : [];
+      }) : []));
+      const expectedJobs = Object.entries(jobs).flatMap(([jobName, job]) => {
+        if (!("beforeReset" in job.trigger)) {
+          return [];
+        }
+        const { beforeReset } = job.trigger;
+        return naiveIdentitiesOf("pool" in job.target ? `pool:${job.target.pool}` : job.target.identity, pools).flatMap((identity) => {
+          const has = windowsOf(identity);
+          return has === undefined || has.has(beforeReset) ? [] : [`Job "${jobName}" runs before the ${PROSE[beforeReset]} window resets, but ${identity} reports no ${PROSE[beforeReset]} window, so the job is skipped whenever it runs as ${identity}.`];
+        });
+      });
+      reported += expectedPools.length + expectedJobs.length;
+      expect(poolWindowReadFindings(pools, windowsOf).map((finding) => finding.message), `seed ${String(seed)}`).toEqual(expectedPools);
+      expect(jobWindowReadFindings(jobs, pools, windowsOf).map((finding) => finding.message), `seed ${String(seed)}`).toEqual(expectedJobs);
+    }
+    expect(reported).toBeGreaterThan(0);
+  });
+
+  it("reads each selector once for any number of jobs naming it, in a pool of as many members", () => {
+    expectLinear(CHAIN, (size) => countSteps(() => {
+      const pools = { wide: { identities: Array.from({ length: size }, (_, index) => `m${String(index)}`) } };
+      jobWindowReadFindings(Object.fromEntries(Array.from({ length: size }, (_, index) => [`job${String(index)}`, { target: { pool: "wide" }, trigger: { beforeReset: "fiveHour", lead: "10m" }, prompt: "p", cwd: "/w", timeout: "1h" } as const])), pools, () => undefined);
+    }));
+  });
+});
+
+describe("profilesReachingProblem", () => {
+  it("names exactly the profiles from which lineariseProfile reports a diagnostic, for many random graphs", () => {
+    let problems = 0;
+    for (let seed = 1; seed <= SEEDS; seed += 1) {
+      const next = seededGenerator(seed);
+      const count = 2 + Math.floor(next() * MOST_POOLS);
+      const graph = Object.fromEntries(Array.from({ length: count }, (_, index) => [`q${String(index)}`, Array.from({ length: Math.floor(next() * MOST_ENTRIES) }, () => `q${String(Math.floor(next() * (count + 1)))}`)]));
+      const load = (name: string): ProfileSource | undefined => (graph[name] === undefined ? undefined : { name, profile: { extends: [...graph[name]] } });
+      const expected = Object.keys(graph).filter((name) => lineariseProfile(name, load).diagnostics.length > 0);
+      problems += expected.length;
+      expect([...profilesReachingProblem(Object.keys(graph), load)].sort(), `seed ${String(seed)}`).toEqual(expected.sort());
+    }
+    expect(problems).toBeGreaterThan(0);
+  });
+
+  it("walks each profile once however many chains reach it", () => {
+    expectLinear(CHAIN, (size) => countSteps(() => { profilesReachingProblem(Array.from({ length: size }, (_, index) => `c${String(index)}`), (name) => ({ name, profile: { extends: Number(name.slice(1)) + 1 < size ? [`c${String(Number(name.slice(1)) + 1)}`] : [] } })); }));
   });
 });

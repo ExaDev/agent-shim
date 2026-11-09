@@ -1,3 +1,4 @@
+import type { Pool } from "./config/schema";
 import path from "node:path";
 
 import categoriesDefaultJson from "./config/categories.default.json";
@@ -829,4 +830,24 @@ export function seededGenerator(seed: number): () => number {
     state = (Math.imul(state, LCG_MULTIPLIER) + LCG_INCREMENT) % LCG_MODULUS;
     return state / LCG_MODULUS;
   };
+}
+
+/**
+ * A chain of diamonds of pools: `d0` lists `a0` and `b0`, both list `d1`, and so on to `d<levels>`, so a walk that follows every path reaches the last pool 2^levels times. `leaf` names the identity a level's pool holds beside the pool it lists (`aid<level>` and `bid<level>` by default) and the identities of the last pool.
+ */
+export function diamondChainPools(levels: number, leaf: (side: string, level: number) => string = (side, level) => `${side}id${String(level)}`): Record<string, Pool> {
+  const pools: Record<string, Pool> = {};
+  for (let level = 0; level < levels; level += 1) {
+    pools[`d${String(level)}`] = { identities: [`pool:a${String(level)}`, `pool:b${String(level)}`] };
+    for (const side of ["a", "b"]) {
+      pools[`${side}${String(level)}`] = { identities: [leaf(side, level), `pool:d${String(level + 1)}`] };
+    }
+  }
+  pools[`d${String(levels)}`] = { identities: [leaf("last", levels)] };
+  return pools;
+}
+
+/** A ring of `length` pools, `r0` to `r<length - 1>`, each listing the next. */
+export function ringPools(length: number): Record<string, Pool> {
+  return Object.fromEntries(Array.from({ length }, (_, index) => [`r${String(index)}`, { identities: [`pool:r${String((index + 1) % length)}`] }]));
 }

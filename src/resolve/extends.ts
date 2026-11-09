@@ -83,6 +83,36 @@ export function lineariseProfile(rootName: string, load: ProfileLoader): Lineari
 }
 
 /**
+ * The profiles among `names` from which `lineariseProfile` would report a diagnostic: those that reach a profile that does not exist, or a cycle, through `extends`. Found in one pass over the graph, each profile visited once, so a caller that only needs to know whether a chain is clean (and linearises the ones that are not, for their messages) does not walk every profile's whole chain.
+ */
+export function profilesReachingProblem(names: readonly string[], load: ProfileLoader): ReadonlySet<string> {
+  const onPath = new Set<string>();
+  const reaching = new Map<string, boolean>();
+  const visit = (name: string): boolean => {
+    const known = reaching.get(name);
+    if (known !== undefined) {
+      return known;
+    }
+    onPath.add(name);
+    let problem = false;
+    for (const dependency of load(name)?.profile.extends ?? []) {
+      if (load(dependency) === undefined || onPath.has(dependency)) {
+        problem = true;
+      } else {
+        problem = visit(dependency) || problem;
+      }
+    }
+    onPath.delete(name);
+    reaching.set(name, problem);
+    return problem;
+  };
+  for (const name of names) {
+    visit(name);
+  }
+  return new Set([...reaching].filter(([, problem]) => problem).map(([name]) => name));
+}
+
+/**
  * Turns a profile's `extends` chain into cascade layers, base-first, starting at `startId`.
  *
  * A resolved profile is not a separate mechanism from the outer cascade: its chain flattens through the same ordered-layer sequence everything else uses, so a profile's resolved patch is simply one more run of inputs to the same algorithm.

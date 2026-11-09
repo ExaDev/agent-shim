@@ -51,7 +51,7 @@ import { reportedPoolCycles } from "./poolStore";
 import { describeSharedLoginMembers, sharedLoginMembers } from "./poolSharedLogins";
 import { jobWindowReadFindings, poolWindowReadFindings, receivedWindows } from "./poolWindowReads";
 import type { RunPort } from "./launcher/ports";
-import { lineariseProfile, type ProfileLoader, type ProfileSource } from "./resolve/extends";
+import { lineariseProfile, profilesReachingProblem, type ProfileLoader, type ProfileSource } from "./resolve/extends";
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
 
 export const DOCTOR_SEVERITIES = ["pass", "warn", "fail"] as const;
@@ -510,8 +510,10 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     checkPin("config-profile", entry.name, `Configuration profile "${entry.name}"`, validated.data.launch?.claudeVersion);
   }
   const loadProfile: ProfileLoader = (name) => profileSources.get(name);
+  // Only a profile that reaches a missing profile or a cycle has a message to give; the rest are clean without walking their chains again.
+  const withProblem = profilesReachingProblem([...profileSources.keys()], loadProfile);
   for (const name of profileSources.keys()) {
-    const linearised = lineariseProfile(name, loadProfile);
+    const linearised = withProblem.has(name) ? lineariseProfile(name, loadProfile) : { diagnostics: [] };
     if (linearised.diagnostics.length === 0) {
       push("config-profile", "pass", `${name} is valid and its extends chain resolves cleanly.`, name);
     } else {

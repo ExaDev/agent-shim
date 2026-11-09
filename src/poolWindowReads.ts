@@ -66,30 +66,55 @@ interface WindowReadFinding {
   readonly message: string;
 }
 
+/** An identity a selector can run as, with the windows it is known not to receive. */
+interface WithoutWindows {
+  readonly identity: string;
+  readonly missing: ReadonlySet<QuotaWindowName>;
+}
+
+/**
+ * For each selector asked about, the identities it can run as that are known to lack at least one window, in the order `identitiesOf` meets them, worked out once however many pools and jobs name the selector. An identity whose windows are unknown, or that receives all three, is not listed, so what a caller walks is the identities it can report on and not everything a large pool holds.
+ */
+function withoutWindowsReader(pools: Readonly<Record<string, Pool>>, windowsOf: (identity: string) => ReadonlySet<QuotaWindowName> | undefined): (selector: string) => readonly WithoutWindows[] {
+  const found = new Map<string, readonly WithoutWindows[]>();
+  return (selector) => {
+    const known = found.get(selector);
+    if (known !== undefined) {
+      return known;
+    }
+    const lacking = identitiesOf(selector, pools).flatMap((identity) => {
+      const received = windowsOf(identity);
+      const missing = received === undefined ? new Set<QuotaWindowName>() : new Set(WINDOW_NAMES.filter((window) => !received.has(window)));
+      return missing.size === 0 ? [] : [{ identity, missing }];
+    });
+    found.set(selector, lacking);
+    return lacking;
+  };
+}
+
 /**
  * The pools whose configuration reads a quota window that one of the identities it can run as does not currently receive, by what each identity's recorded state holds (`receivedWindows`): a member condition naming a window the member lacks is undecided for it, so the member is always ranked last within its class; a pool that compacts before the limit cannot measure a member that reports neither plan window. An identity whose windows are unknown is never reported. The findings name identities by their configured names only.
  */
 export function poolWindowReadFindings(pools: Readonly<Record<string, Pool>>, windowsOf: (identity: string) => ReadonlySet<QuotaWindowName> | undefined): readonly WindowReadFinding[] {
   const findings: WindowReadFinding[] = [];
+  const withoutWindows = withoutWindowsReader(pools, windowsOf);
   for (const [poolName, pool] of Object.entries(pools)) {
     for (const member of pool.identities) {
       if (typeof member === "string") {
         continue;
       }
       const reads = conditionReads(member.when);
-      for (const identity of identitiesOf(member.identity, pools)) {
-        const received = windowsOf(identity);
+      for (const { identity, missing } of withoutWindows(member.identity)) {
         for (const { window, reference } of reads) {
-          if (received !== undefined && !received.has(window)) {
+          if (missing.has(window)) {
             findings.push({ subject: poolName, message: `Pool "${poolName}" guards ${member.identity} with a condition that reads ${reference}, but ${identity} reports no ${WINDOW_PROSE[window]} window, so the condition is undecided for it and it always ranks last within its class.` });
           }
         }
       }
     }
     if (pool.compactBeforeLimit === true) {
-      for (const identity of identitiesOf(`pool:${poolName}`, pools)) {
-        const received = windowsOf(identity);
-        if (received !== undefined && !received.has("fiveHour") && !received.has("sevenDay")) {
+      for (const { identity, missing } of withoutWindows(`pool:${poolName}`)) {
+        if (missing.has("fiveHour") && missing.has("sevenDay")) {
           findings.push({ subject: poolName, message: `Pool "${poolName}" compacts before the limit, but ${identity} reports no five-hour or seven-day window, so its sessions are never compacted before the limit.` });
         }
       }
@@ -100,15 +125,13 @@ export function poolWindowReadFindings(pools: Readonly<Record<string, Pool>>, wi
 
 /** The before-reset jobs whose window one of the identities they can run as does not currently receive: the job keeper skips the job whenever its identity is one of those. An identity whose windows are unknown is never reported. */
 export function jobWindowReadFindings(jobs: Readonly<Record<string, Job>>, pools: Readonly<Record<string, Pool>>, windowsOf: (identity: string) => ReadonlySet<QuotaWindowName> | undefined): readonly WindowReadFinding[] {
+  const withoutWindows = withoutWindowsReader(pools, windowsOf);
   return Object.entries(jobs).flatMap(([jobName, job]) => {
     const { trigger, target } = job;
     if (!("beforeReset" in trigger)) {
       return [];
     }
-    const identities = "pool" in target ? identitiesOf(`pool:${target.pool}`, pools) : identitiesOf(target.identity, pools);
-    return identities.flatMap((identity) => {
-      const received = windowsOf(identity);
-      return received === undefined || received.has(trigger.beforeReset) ? [] : [{ subject: jobName, message: `Job "${jobName}" runs before the ${WINDOW_PROSE[trigger.beforeReset]} window resets, but ${identity} reports no ${WINDOW_PROSE[trigger.beforeReset]} window, so the job is skipped whenever it runs as ${identity}.` }];
-    });
+    const lacking = withoutWindows("pool" in target ? `pool:${target.pool}` : target.identity);
+    return lacking.flatMap(({ identity, missing }) => (missing.has(trigger.beforeReset) ? [{ subject: jobName, message: `Job "${jobName}" runs before the ${WINDOW_PROSE[trigger.beforeReset]} window resets, but ${identity} reports no ${WINDOW_PROSE[trigger.beforeReset]} window, so the job is skipped whenever it runs as ${identity}.` }] : []));
   });
 }
