@@ -47,6 +47,28 @@ import type { PrePipelineApi } from "./server";
  * This router is reads only; the door's writes live in routers of their own so each is a decision of its own (`lifecycleApi.ts` for the restart and the update check, `codexApi.ts` for the Codex sign-in, `configApi.ts` for identity, configuration-profile, provider, pool and directory-rule management). `createDoorApiNodeHandler` mounts these routers and the door-wide `events.subscribe` router beside the Remote Control router on the one prefix the provider listener already serves, so a consumer dials one address with one token for the whole door.
  */
 
+/**
+ * Thrown by a `checkReport` or `doctorReport` dependency that cannot collect its report where it runs. `check.run` and `doctor.run` answer it as `SERVICE_UNAVAILABLE` with its message, so a caller is told what to do instead of reading a fault of the door.
+ */
+export class DoorReportUnavailableError extends Error {
+  constructor(report: "check" | "doctor") {
+    super(`${report}.run is not available from the front door: collecting the report runs blocking steps (a git lookup, the keychain, the process table) that the door's event loop refuses, whatever the configuration. Run \`agent-shim ${report}\` from a shell. Collecting it in the door is tracked in agent-shim#769.`);
+    this.name = "DoorReportUnavailableError";
+  }
+}
+
+/** Runs `collect`, answering a `DoorReportUnavailableError` as the `SERVICE_UNAVAILABLE` it stands for. */
+function orUnavailable<T>(collect: () => T): T {
+  try {
+    return collect();
+  } catch (error) {
+    if (error instanceof DoorReportUnavailableError) {
+      throw new ORPCError("SERVICE_UNAVAILABLE", { message: error.message, cause: error });
+    }
+    throw error;
+  }
+}
+
 /** Everything the control-plane procedures need, injected so they serve against fakes in tests exactly as the door's real wiring serves against this machine. */
 export interface ControlApiDeps {
   /** This generation's control token: the same value the Remote Control router checks, since one mount serves both. */
@@ -147,16 +169,16 @@ export function createControlApiRouter(deps: ControlApiDeps) {
     check: {
       // The report's own JSON shape is the contract (the same one `check --json` prints and `checkReportSchema.ts` defines), so the procedure returns exactly that conversion.
       run: authed
-        .meta(openapi({ method: "GET", path: "/rest/check", summary: "Run the check report for one directory", tags: [CHECK_API_TAG] }))
+        .meta(openapi({ method: "GET", path: "/rest/check", summary: "Run the check report for one directory (the command line's own door answers SERVICE_UNAVAILABLE: see agent-shim#769)", tags: [CHECK_API_TAG] }))
         .input(CheckRunInputSchema)
         .output(CheckReportJsonSchema)
-        .handler(({ input }) => checkReportToJson(deps.checkReport(input.path, input.identity))),
+        .handler(({ input }) => orUnavailable(() => checkReportToJson(deps.checkReport(input.path, input.identity)))),
     },
     doctor: {
       run: authed
-        .meta(openapi({ method: "GET", path: "/rest/doctor", summary: "Run the doctor report", tags: [DOCTOR_API_TAG] }))
+        .meta(openapi({ method: "GET", path: "/rest/doctor", summary: "Run the doctor report (the command line's own door answers SERVICE_UNAVAILABLE: see agent-shim#769)", tags: [DOCTOR_API_TAG] }))
         .output(DoctorRunOutputSchema)
-        .handler(() => deps.doctorReport()),
+        .handler(() => orUnavailable(() => deps.doctorReport())),
     },
     pool: {
       pick: authed

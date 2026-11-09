@@ -140,6 +140,7 @@ describe("library surface", () => {
       "DoorEventSchema",
       "DoorEventSourceQuerySchema",
       "DoorHealthEventSchema",
+      "DoorReportUnavailableError",
       "DuplicateIdentityNameError",
       "EXIT_FAILURE",
       "EXIT_USAGE",
