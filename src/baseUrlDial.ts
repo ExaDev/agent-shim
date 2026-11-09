@@ -1,4 +1,5 @@
 import { isIPv6 } from "node:net";
+import { domainToASCII } from "node:url";
 
 /** The largest port a TCP listener can have. */
 export const MAX_TCP_PORT = 65535;
@@ -7,7 +8,12 @@ export const MAX_TCP_PORT = 65535;
  * The host a connection to `url` is opened to: its hostname, an IPv6 literal without the brackets the URL form needs. This is the one rule that turns a URL's host, or a CONNECT authority's (`parseDialAuthority`), into a dial target: `net.isIP("[::1]")` is 0, so a bracketed literal is taken for a name, goes to the resolver and fails with EBADNAME, whichever side dials it. A `URL` hostname is already well formed, so one pair of brackets round a colon-bearing literal is removed and nothing else changes.
  */
 export function dialHostOf(url: Readonly<Pick<URL, "hostname">>): string {
-  return url.hostname.replace(/^\[(.*)\]$/, "$1");
+  return withoutRootDot(url.hostname.replace(/^\[(.*)\]$/, "$1"));
+}
+
+/** `host` without the one trailing dot that names the DNS root: `api.anthropic.com.` is the same host as `api.anthropic.com` and must compare equal to it. */
+function withoutRootDot(host: string): string {
+  return host.endsWith(".") ? host.slice(0, -1) : host;
 }
 
 /** One authority as a dial target. */
@@ -62,11 +68,26 @@ function isDottedDecimal(host: string): boolean {
   return parts.length === IPV4_PARTS && parts.every((part) => /^(?:0|[1-9]\d{0,2})$/.test(part) && Number(part) <= MAX_OCTET);
 }
 
+/** Whether every character of `text` is ASCII, so an internationalised name is told from one that already is. */
+function isAscii(text: string): boolean {
+  return /^\p{ASCII}*$/u.test(text);
+}
+
+/** A last label spelling a number in any base: decimal digits, or hexadecimal with the `0x` prefix. The WHATWG URL parser reads such a host as an IPv4 address, so a host ending in one is a number or nothing. */
+const NUMERIC_LAST_LABEL = /^(?:\d+|0x[0-9a-f]*)$/;
+
 /**
- * The host an unbracketed authority names, lowercased, or the refusal. The grammar is positive: a reg-name of letters, digits and interior hyphens in labels of 1 to 63 characters (253 in all), or a dotted-decimal IPv4 address. Nothing else is dialled, so a byte `net.connect` would throw on (a NUL, a control character, a percent escape, a comma, a wildcard, an empty label) is refused with the 400 the client is owed instead of an accept followed by a drop.
+ * The canonical host an unbracketed authority names, or the refusal: lowercased, one trailing root dot removed, an internationalised name converted to its ASCII form, so the same host spelt two ways dials and compares as one. The grammar is positive: a reg-name of letters, digits and interior hyphens in labels of 1 to 63 characters (253 in all), or a dotted-decimal IPv4 address. A numeric shorthand (`127.1`, `0x7f.1`, a decimal or octal integer) is refused rather than read, since the dial would resolve it to an address the authority never wrote. Nothing else is dialled, so a byte `net.connect` would throw on (a NUL, a control character, a percent escape, a comma, a wildcard, an empty label) is refused with the 400 the client is owed instead of an accept followed by a drop.
  */
 function nameOf(host: string): string | DialAuthorityRefusal {
-  const lowered = host.toLowerCase();
+  const rooted = withoutRootDot(host.toLowerCase());
+  if (rooted === "") {
+    return { refusal: "an authority that names no host" };
+  }
+  const lowered = isAscii(rooted) ? rooted : domainToASCII(rooted);
+  if (lowered === "") {
+    return { refusal: "a host that does not convert to an ASCII name" };
+  }
   if (isDottedDecimal(lowered)) {
     return lowered;
   }
@@ -80,7 +101,15 @@ function nameOf(host: string): string | DialAuthorityRefusal {
   if (!labels.every((label) => LDH_LABEL.test(label))) {
     return { refusal: "a host that is not letters, digits and interior hyphens in non-empty dot-separated labels" };
   }
+  if (NUMERIC_LAST_LABEL.test(labels[labels.length - 1] ?? "")) {
+    return { refusal: "a numeric host that is not a dotted-decimal IPv4 address" };
+  }
   return lowered;
+}
+
+/** An IPv6 literal in the spelling a URL gives it (compressed, lowercase, a v4-mapped tail as hex), so the same address written two ways is one host; a literal with a zone id keeps its own spelling, which a URL cannot hold, with the zone's case kept. */
+function canonicalLiteral(literal: string): string {
+  return literal.includes("%") ? lowerHost(literal) : dialHostOf(new URL(`http://[${literal}]/`));
 }
 
 /** Lowercases a host but not its zone id, which names an interface and is case-sensitive. */
@@ -116,7 +145,7 @@ export function parseDialAuthority(authority: string, defaultPort: number): Dial
       return { refusal: "an authority with text after the closing bracket other than a port" };
     }
     const port = rest === "" ? defaultPort : portOf(rest.slice(1));
-    return typeof port === "string" ? { refusal: `an authority that ${port}` } : { host: lowerHost(literal), port };
+    return typeof port === "string" ? { refusal: `an authority that ${port}` } : { host: canonicalLiteral(literal), port };
   }
   const colons = authority.split(":").length - 1;
   if (colons > 1) {

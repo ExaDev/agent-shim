@@ -28,7 +28,7 @@ describe("CONNECT routing decisions", () => {
   it("takes an IPv6 literal's address without its brackets, the form a dial needs", () => {
     expect(parseConnectTarget("[::1]:443")).toEqual({ host: "::1", port: 443 });
     expect(parseConnectTarget("[::1]")).toEqual({ host: "::1", port: HTTPS_PORT });
-    expect(parseConnectTarget("[::ffff:127.0.0.1]:8443")).toEqual({ host: "::ffff:127.0.0.1", port: 8443 });
+    expect(parseConnectTarget("[::ffff:127.0.0.1]:8443")).toEqual({ host: "::ffff:7f00:1", port: 8443 });
   });
 
   it("returns undefined for an authority that names no host or an unusable port", () => {
