@@ -180,22 +180,27 @@ export const MAX_CONCURRENT_PROBES = Math.max(1, Math.floor(DOOR_SOURCE_PORT_COU
 /** What a process's id is multiplied by to place its batch's first port in the range: a number that does not divide the range's width, so processes with successive ids start far apart and the batches of report children running together do not all begin at the first port. */
 const PORT_BASE_SPREAD = 389;
 
-/** Where a batch of this process starts in the reserved range, as an offset from its first port. */
-const processPortBase = (): number => (process.pid * PORT_BASE_SPREAD) % DOOR_SOURCE_PORT_COUNT;
+/** How many ports the earlier batches of this process started workers on, so the next batch starts past them: the ports a probe used stay in TIME_WAIT for a while after it closes, and a rotation that began on them would walk past each. */
+let portsUsedByEarlierBatches = 0;
+
+/** Where the next batch of this process starts in the reserved range, as an offset from its first port: the process's own place (its id times `PORT_BASE_SPREAD`) past the ports its earlier batches used. */
+const processPortBase = (): number => (process.pid * PORT_BASE_SPREAD + portsUsedByEarlierBatches) % DOOR_SOURCE_PORT_COUNT;
 
 /** A probe target's identity: two providers on one host and port with one bound need one connection between them. */
 const targetKey = (target: { readonly host: string; readonly port: number; readonly timeoutMs: number }): string => `${target.host}\u0000${String(target.port)}\u0000${String(target.timeoutMs)}`;
 
 /**
- * Whether the door's own dial reaches each address within its bound: one connect each, closed again the moment it is accepted, so no request reaches a listener. Targets that name the same host, port and bound are probed once and share the verdict. At most `MAX_CONCURRENT_PROBES` workers run at once, each started before the verdict of the one `MAX_CONCURRENT_PROBES` places ahead is waited on, so the probes run together up to that bound and the rest start as earlier ones answer. Each worker's source-port rotation starts at its own place in the reserved range: the batch's offset (`portBase`, from the process id by default, so batches of different processes start apart) plus the worker's index times a stride that spreads the batch's workers over the range, or by one port where there are more targets than ports. A worker therefore finds its port at the first attempt however many targets there are, since the workers running at once are fewer than the ports between their starts; the ports it used stay in TIME_WAIT for a while after it closes, which a later batch of the same process, starting at the same offset, would walk past, so a process runs one batch (a report child does). Verdicts are returned in the order of `targets`.
+ * Whether the door's own dial reaches each address within its bound: one connect each, closed again the moment it is accepted, so no request reaches a listener. Targets that name the same host, port and bound are probed once and share the verdict. At most `MAX_CONCURRENT_PROBES` workers run at once, each started before the verdict of the one `MAX_CONCURRENT_PROBES` places ahead is waited on, so the probes run together up to that bound and the rest start as earlier ones answer. Each worker's source-port rotation starts at its own place in the reserved range: the batch's offset (`portBase`, from the process id by default, so batches of different processes start apart) plus the worker's index times a stride that spreads the batch's workers over the range, or by one port where there are more targets than ports. A worker therefore finds its port at the first attempt however many targets there are, since the workers running at once are fewer than the ports between their starts; the ports it used stay in TIME_WAIT for a while after it closes, so a later batch of the same process starts past the ports the earlier ones used (`portsUsedByEarlierBatches`) and does not walk over them. Verdicts are returned in the order of `targets`.
  */
-export function probeAddressesAcceptSync(targets: readonly { readonly host: string; readonly port: number; readonly timeoutMs: number }[], workers: ProbeWorkers = realProbeWorkers, portBase: number = processPortBase()): readonly ListenerVerdict[] {
+export function probeAddressesAcceptSync(targets: readonly { readonly host: string; readonly port: number; readonly timeoutMs: number }[], workers: ProbeWorkers = realProbeWorkers, portBase?: number): readonly ListenerVerdict[] {
   refuseToBlockInRole("a synchronous probe of a provider's address");
+  const base = portBase ?? processPortBase();
   const distinct = new Map<string, { readonly host: string; readonly port: number; readonly timeoutMs: number }>();
   for (const target of targets) {
     distinct.set(targetKey(target), target);
   }
   const unique = Array.from(distinct.values());
+  portsUsedByEarlierBatches += unique.length;
   const stride = Math.max(1, Math.floor(DOOR_SOURCE_PORT_COUNT / unique.length));
   const verdicts = new Map<string, ListenerVerdict>();
   const running: { readonly key: string; readonly verdict: () => ListenerVerdict }[] = [];
@@ -209,7 +214,7 @@ export function probeAddressesAcceptSync(targets: readonly { readonly host: stri
     if (running.length >= MAX_CONCURRENT_PROBES) {
       settleOldest();
     }
-    const portFirst = DOOR_SOURCE_PORT_START + ((portBase + index * stride) % DOOR_SOURCE_PORT_COUNT);
+    const portFirst = DOOR_SOURCE_PORT_START + ((base + index * stride) % DOOR_SOURCE_PORT_COUNT);
     running.push({ key: targetKey(target), verdict: workers.start(ACCEPT_PROBE_SOURCE, { host: target.host, port: target.port, portStart: DOOR_SOURCE_PORT_START, portEnd: DOOR_SOURCE_PORT_END, portFirst }, target.timeoutMs).verdict });
   });
   while (running.length > 0) {

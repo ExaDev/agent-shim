@@ -11,7 +11,7 @@ import { enterProcessRole } from "../processRole";
 import { MAX_TIMER_DELAY_MS } from "../config/schema";
 import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS } from "../providerReachability";
 import { PROBE_WAIT_MARGIN_MS } from "./probe";
-import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, reportProgressTarget, LOCAL_WORK_ANNOUNCE_INTERVAL_MS, REPORT_QUIET_MS, REPORT_SIZE_PREFIX, encodeReportSize } from "./reportProgress";
+import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, reportProgressTarget, ownReleaseIdentity, LOCAL_WORK_ANNOUNCE_INTERVAL_MS, REPORT_QUIET_MS, REPORT_SIZE_PREFIX, encodeReportSize } from "./reportProgress";
 import { createDoorReports } from "./doorReports";
 import { MAX_REPORT_CHILDREN } from "./reportLimits";
 
@@ -338,6 +338,12 @@ describe("the bound on a report child", () => {
   it("names its own process, descriptor and release in the variable it gives the child", async () => {
     const seen = createDoorReports({ selfInvocation: nodeRunning(`process.stderr.write(process.env.${REPORT_PROGRESS_FD_ENV} ?? "none"); process.exitCode = 1;`), env: {}, door: DOOR });
     await expect(seen.doctorReport(new AbortController().signal)).rejects.toThrow(reportProgressTarget(REPORT_PROGRESS_FD, process.pid, DOOR));
+  });
+
+  it("names the running process's own release and build when the host gives none", async () => {
+    const seen = createDoorReports({ selfInvocation: nodeRunning(`process.stderr.write(process.env.${REPORT_PROGRESS_FD_ENV} ?? "none"); process.exitCode = 1;`), env: {} });
+    await expect(seen.doctorReport(new AbortController().signal)).rejects.toThrow(reportProgressTarget(REPORT_PROGRESS_FD, process.pid, ownReleaseIdentity()));
+    expect(ownReleaseIdentity().build).not.toBe("");
   });
 
   it("says the door should be restarted when the executable it runs is gone", async () => {

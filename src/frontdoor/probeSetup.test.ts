@@ -251,6 +251,16 @@ describe("a batch of provider probes at the size of a large configuration", () =
     expect(firsts).toEqual([DOOR_SOURCE_PORT_START, DOOR_SOURCE_PORT_START + OTHER_BASE]);
   });
 
+  it("starts a later batch of the same process past the ports the earlier one used, so it does not walk over them", () => {
+    const firsts: number[] = [];
+    const workers: ProbeWorkers = { start: (_source, data) => { firsts.push(Number(data.portFirst)); return { verdict: () => ({ ok: true }) }; } };
+    probeAddressesAcceptSync(distinctTargets(1), workers);
+    probeAddressesAcceptSync(distinctTargets(1), workers);
+    const [first, second] = firsts;
+    expect(first).toBeDefined();
+    expect(second).toBe(DOOR_SOURCE_PORT_START + ((((first ?? 0) - DOOR_SOURCE_PORT_START) + 1) % DOOR_SOURCE_PORT_COUNT));
+  });
+
   it("holds the probes of every report child that runs at once to the share of the range it names", () => {
     expect(MAX_CONCURRENT_PROBES * MAX_REPORT_CHILDREN).toBeLessThanOrEqual(DOOR_SOURCE_PORT_COUNT / PROBE_SHARE_DENOMINATOR);
   });
