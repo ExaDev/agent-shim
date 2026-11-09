@@ -34,18 +34,31 @@ export interface DoorWorkerData {
   };
 }
 
-/** What a worker posts once, when its task ends: the value, or why it failed. */
-export type DoorWorkerMessage = { readonly kind: "done"; readonly value: unknown } | { readonly kind: "failed"; readonly name: string; readonly message: string };
+/**
+ * What a worker posts once, when its task ends: the value, or that it failed. A failure carries the error's class name and, when it has one, its short `code` (ENOENT, ETIMEDOUT), and nothing else: an error's message can hold what a credential command printed to its standard error, and the door must not carry that to a caller of its API or into its log. The detail is what `agent-shim doctor` and `agent-shim check` print from a shell.
+ */
+export type DoorWorkerMessage = { readonly kind: "done"; readonly value: unknown } | { readonly kind: "failed"; readonly name: string; readonly code?: string };
+
+/** An error class name or code as a worker may post it: a short identifier, which cannot carry a message. */
+const IDENTIFIER = /^[A-Za-z][A-Za-z0-9_]{0,63}$/u;
+
+/** Whether `value` is a short identifier. */
+export function isIdentifier(value: unknown): value is string {
+  return typeof value === "string" && IDENTIFIER.test(value);
+}
 
 /** Whether `value` is the data a door worker is started with. */
 export function isDoorWorkerData(value: unknown): value is DoorWorkerData {
   return typeof value === "object" && value !== null && "doorWorker" in value && typeof value.doorWorker === "object" && value.doorWorker !== null && "task" in value.doorWorker && "heartbeat" in value.doorWorker && value.doorWorker.heartbeat instanceof SharedArrayBuffer;
 }
 
-/** Whether `value` is a message a door worker posts. */
+/** Whether `value` is a message a door worker posts, of exactly the shape `DoorWorkerMessage` allows. */
 export function isDoorWorkerMessage(value: unknown): value is DoorWorkerMessage {
   if (typeof value !== "object" || value === null || !("kind" in value)) {
     return false;
   }
-  return (value.kind === "done" && "value" in value) || (value.kind === "failed" && "name" in value && typeof value.name === "string" && "message" in value && typeof value.message === "string");
+  if (value.kind === "done") {
+    return "value" in value && Object.keys(value).length === 2;
+  }
+  return value.kind === "failed" && "name" in value && isIdentifier(value.name) && (!("code" in value) || isIdentifier(value.code)) && Object.keys(value).every((key) => key === "kind" || key === "name" || key === "code");
 }

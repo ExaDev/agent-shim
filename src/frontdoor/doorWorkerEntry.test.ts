@@ -32,6 +32,14 @@ async function postedFor(task: string, input: unknown): Promise<DoorWorkerMessag
   return mocks.posted[0] as DoorWorkerMessage;
 }
 
+/** `error` with `fields` defined on it, as a thrown error of another library carries a code. */
+function errorWith(error: Error, fields: Readonly<Record<string, string>>): Error {
+  for (const [key, value] of Object.entries(fields)) {
+    Object.defineProperty(error, key, { value, enumerable: true, configurable: true });
+  }
+  return error;
+}
+
 describe("the door worker entry", () => {
   beforeEach(() => {
     mocks.refresh.mockReset().mockResolvedValue(undefined);
@@ -43,9 +51,16 @@ describe("the door worker entry", () => {
     expect(mocks.refresh).toHaveBeenCalledWith(buildLayoutPaths("/shim"), "c", process.env, SUPERVISOR_PID, GENERATION);
   });
 
-  it("answers failed with the error's name and message when the task throws", async () => {
-    mocks.refresh.mockRejectedValue(new TypeError("front door changed during catalogue refresh"));
-    expect(await postedFor("refresh-catalogue", { root: "/shim", name: "c", supervisorPid: SUPERVISOR_PID, generation: GENERATION })).toEqual({ kind: "failed", name: "TypeError", message: "front door changed during catalogue refresh" });
+  it("answers failed with the error's class name and code and never its message, which may hold what a credential command printed", async () => {
+    mocks.refresh.mockRejectedValue(errorWith(new TypeError("credential command failed: TOPSECRET"), { code: "ECONNRESET" }));
+    const message = await postedFor("refresh-catalogue", { root: "/shim", name: "c", supervisorPid: SUPERVISOR_PID, generation: GENERATION });
+    expect(message).toEqual({ kind: "failed", name: "TypeError", code: "ECONNRESET" });
+    expect(JSON.stringify(message)).not.toContain("TOPSECRET");
+  });
+
+  it("posts a generic class name for an error whose name or code is not a short identifier", async () => {
+    mocks.refresh.mockRejectedValue(errorWith(new Error("x"), { name: "my secret name!", code: "not an identifier" }));
+    expect(await postedFor("refresh-catalogue", { root: "/shim", name: "c", supervisorPid: SUPERVISOR_PID, generation: GENERATION })).toEqual({ kind: "failed", name: "Error" });
   });
 
   it("refuses an input that does not fit its task, before any work", async () => {

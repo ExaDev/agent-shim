@@ -65,4 +65,39 @@ describe("a door worker running the real bundle", () => {
     },
     REAL_WORKER_TEST_BUDGET_MS,
   );
+
+  it(
+    "carries nothing a credential command printed to standard error out of a worker, in a failure or in a report",
+    async () => {
+      const host = createDoorWorkerHost({ code, deadlineMs: { check: REAL_WORKER_TEST_BUDGET_MS, doctor: REAL_WORKER_TEST_BUDGET_MS, "refresh-catalogue": REAL_WORKER_TEST_BUDGET_MS } });
+      const root = path.join(dir, "home-secret");
+      fs.mkdirSync(path.join(root, "providers"), { recursive: true });
+      const marker = "STDERR-MARKER-TOPSECRET";
+      fs.writeFileSync(
+        path.join(root, "providers", "leaky.json"),
+        JSON.stringify({ displayName: "Leaky", baseUrl: "http://127.0.0.1:1", credential: { sources: [{ command: ["/bin/sh", "-c", `echo ${marker} >&2; exit 3`] }] }, catalogue: { tier: "haiku" } }),
+      );
+      try {
+        const seen: string[] = [];
+        const refresh = await host.run("refresh-catalogue", { root, name: "leaky", supervisorPid: process.pid, generation: "10000000-0000-4000-8000-000000000001" }, () => undefined).then(
+          () => "refreshed",
+          (error: unknown) => {
+            seen.push(error instanceof Error ? error.message : String(error));
+            return "failed";
+          },
+        );
+        expect(refresh).toBe("failed");
+        const doctor = await host.run("doctor", { root }, (value) => DoctorRunOutputSchema.parse(value));
+        seen.push(JSON.stringify(doctor));
+        seen.push(JSON.stringify(await host.run("check", { root, path: dir }, (value) => CheckReportJsonSchema.parse(value))));
+        for (const text of seen) {
+          expect(text).not.toContain(marker);
+        }
+        expect(seen[0]).toContain("agent-shim provider models --refresh");
+      } finally {
+        host.stop();
+      }
+    },
+    REAL_WORKER_TEST_BUDGET_MS,
+  );
 });
