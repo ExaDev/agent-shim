@@ -12,7 +12,7 @@ import { MAX_TIMER_DELAY_MS } from "../config/schema";
 import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS } from "../providerReachability";
 import { PROBE_WAIT_MARGIN_MS } from "./probe";
 import { REPORT_PROGRESS_FD, REPORT_PROGRESS_FD_ENV, reportProgressTarget, LOCAL_WORK_ANNOUNCE_INTERVAL_MS, REPORT_QUIET_MS, REPORT_SIZE_PREFIX, encodeReportSize } from "./reportProgress";
-import { createDoorReports } from "./doorReports";
+import { MAX_REPORT_CHILDREN, createDoorReports } from "./doorReports";
 
 /** The release the doors in these tests say they are. */
 const RELEASE = "12.0.0";
@@ -66,6 +66,109 @@ function fakeReportChild(): { readonly spawn: typeof spawn; readonly progress: P
   const child = new FakeChild();
   return { spawn: (() => child) as unknown as typeof spawn, progress, killed: () => child.killed };
 }
+
+/** Report children the test finishes itself: each spawn makes a fresh fake child, remembered in the order started, and `finish` ends the oldest that is still running with `report` as its output. */
+function controllableChildren(): { readonly spawn: typeof spawn; readonly started: () => number; readonly running: () => number; readonly peak: () => number; readonly finish: (report: string) => void; readonly killedCount: () => number } {
+  class Fake extends EventEmitter {
+    public readonly stdout = new PassThrough();
+    public readonly stdio = [null, this.stdout, new PassThrough(), new PassThrough()];
+    public done = false;
+    public wasKilled = false;
+    public kill(): boolean {
+      this.wasKilled = true;
+      this.done = true;
+      queueMicrotask(() => { this.emit("close", null, "SIGKILL"); });
+      return true;
+    }
+  }
+  const children: Fake[] = [];
+  let peakRunning = 0;
+  const alive = (): number => children.filter((child) => !child.done).length;
+  return {
+    spawn: (() => {
+      const fake = new Fake();
+      children.push(fake);
+      peakRunning = Math.max(peakRunning, alive());
+      return fake;
+    }) as unknown as typeof spawn,
+    started: () => children.length,
+    running: alive,
+    peak: () => peakRunning,
+    killedCount: () => children.filter((child) => child.wasKilled).length,
+    finish: (report) => {
+      const oldest = children.find((child) => !child.done);
+      if (oldest === undefined) {
+        throw new Error("no report child is running");
+      }
+      oldest.done = true;
+      oldest.stdout.write(`${encodeReportSize(Buffer.byteLength(report))}${report}`);
+      oldest.emit("close", 0, null);
+    },
+  };
+}
+
+describe("reports requested together", () => {
+  const FIRST = 100;
+  const SECOND = 200;
+  const THIRD = 400;
+  const SIZES = [FIRST, SECOND, THIRD] as const;
+  const settle = async (): Promise<void> => {
+    await new Promise<void>((resolve) => { setImmediate(resolve); });
+  };
+
+  it("share one child for any number of requests for the same report, and each gets the report", async () => {
+    for (const size of SIZES) {
+      const children = controllableChildren();
+      const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, release: RELEASE, spawn: children.spawn });
+      const asked = Array.from({ length: size }, async () => reports.doctorReport(undefined));
+      await settle();
+      expect(children.started(), `size ${String(size)}`).toBe(1);
+      children.finish(JSON.stringify(DOCTOR));
+      const answers = await Promise.all(asked);
+      expect(answers).toHaveLength(size);
+      expect(answers.every((answer) => answer.ok === DOCTOR.ok)).toBe(true);
+      // A request made after the report is in starts a new child: nothing is cached.
+      void reports.doctorReport(undefined).catch(() => undefined);
+      await settle();
+      expect(children.started()).toBe(2);
+    }
+  });
+
+  it("run no more children at once than the bound, however many different reports are asked for", async () => {
+    for (const size of SIZES) {
+      const children = controllableChildren();
+      const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, release: RELEASE, spawn: children.spawn });
+      const asked = Array.from({ length: size }, async (_, index) => reports.checkReport(`/work/${String(index)}`, undefined, undefined).catch(() => undefined));
+      await settle();
+      for (let finished = 0; finished < size; finished += 1) {
+        expect(children.running(), `size ${String(size)} after ${String(finished)}`).toBe(Math.min(MAX_REPORT_CHILDREN, size - finished));
+        children.finish("{}");
+        await settle();
+      }
+      await Promise.all(asked);
+      expect(children.peak()).toBeLessThanOrEqual(MAX_REPORT_CHILDREN);
+      expect(children.started()).toBe(size);
+    }
+  });
+
+  it("end the child only when every request waiting on it has aborted", async () => {
+    const children = controllableChildren();
+    const reports = createDoorReports({ selfInvocation: nodeRunning(""), env: {}, release: RELEASE, spawn: children.spawn });
+    const first = new AbortController();
+    const second = new AbortController();
+    const a = reports.doctorReport(first.signal).catch((error: unknown) => error);
+    const b = reports.doctorReport(second.signal).catch((error: unknown) => error);
+    await settle();
+    first.abort(new Error("first gave up"));
+    expect(await a).toEqual(new Error("first gave up"));
+    await settle();
+    expect(children.killedCount()).toBe(0);
+    second.abort(new Error("second gave up"));
+    expect(await b).toEqual(new Error("second gave up"));
+    await settle();
+    expect(children.killedCount()).toBe(1);
+  });
+});
 
 describe("the bound on a report child", () => {
   const QUIET_MS = 1_000;

@@ -133,14 +133,88 @@ async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEn
 }
 
 /**
- * The door's `check` and `doctor` reports, each collected by a child of the door's own executable (`agent-shim check --json`, `agent-shim doctor --json`) rather than in the door's process: collecting them runs commands, reads the keychain and probes listeners and provider base URLs, every one of which blocks the calling thread, and the door's thread is the event loop that answers every session (see `refuseToBlockInRole`). The child prints exactly the JSON `check --json` and `doctor --json` print, which is the control API's contract, validated here against the same schemas the API's output is.
+ * How many report children the door runs at once: the two kinds of report its control API serves, `doctor` and `check`, one child each. A child is a whole process and may itself run up to `MAX_CONCURRENT_PROBES` probe workers, so the bound keeps what a burst of requests costs to a fixed number of them; requests beyond it wait for a child to end, in the order they came.
+ */
+export const MAX_REPORT_CHILDREN = 2;
+
+/** Runs tasks at most `max` at a time, the rest waiting their turn in order. */
+function createGate(max: number): <T>(task: () => Promise<T>) => Promise<T> {
+  let active = 0;
+  const waiting: (() => void)[] = [];
+  return async <T>(task: () => Promise<T>): Promise<T> => {
+    if (active >= max) {
+      // The slot of the task that ends is handed to the first waiting one, so `active` stays where it was.
+      await new Promise<void>((resolve) => { waiting.push(resolve); });
+    } else {
+      active += 1;
+    }
+    try {
+      return await task();
+    } finally {
+      const next = waiting.shift();
+      if (next === undefined) {
+        active -= 1;
+      } else {
+        next();
+      }
+    }
+  };
+}
+
+/** One report being collected, and how many requests are waiting on it. */
+interface InFlight {
+  readonly result: Promise<unknown>;
+  readonly ended: AbortController;
+  waiters: number;
+}
+
+/**
+ * Shares one collection among requests for the same report made while it runs, each with its own abort signal: the collection is ended only when every request waiting on it has aborted, and a request that aborts stops waiting at once. Without it a burst of identical requests would start a child for each.
+ */
+function createCoalescer(): (key: string, collect: (signal: AbortSignal) => Promise<unknown>, signal: AbortSignal | undefined) => Promise<unknown> {
+  const inFlight = new Map<string, InFlight>();
+  return async (key, collect, signal) => {
+    signal?.throwIfAborted();
+    let entry = inFlight.get(key);
+    if (entry === undefined) {
+      const ended = new AbortController();
+      const started: InFlight = { result: collect(ended.signal).finally(() => { inFlight.delete(key); }), ended, waiters: 0 };
+      inFlight.set(key, started);
+      entry = started;
+    }
+    const shared = entry;
+    shared.waiters += 1;
+    // The collection's outcome is read below by every waiter; this keeps an outcome nobody is left to read from being an unhandled rejection.
+    shared.result.catch(() => undefined);
+    return await new Promise<unknown>((resolve, reject) => {
+      const onAbort = (): void => {
+        shared.waiters -= 1;
+        if (shared.waiters === 0) {
+          shared.ended.abort(signal?.reason);
+        }
+        reject(signal?.reason instanceof Error ? signal.reason : new Error("the report request was aborted"));
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      shared.result.then(
+        (value) => { signal?.removeEventListener("abort", onAbort); resolve(value); },
+        (error: unknown) => { signal?.removeEventListener("abort", onAbort); reject(error instanceof Error ? error : new Error(String(error))); },
+      );
+    });
+  };
+}
+
+/**
+ * The door's `check` and `doctor` reports, each collected by a child of the door's own executable (`agent-shim check --json`, `agent-shim doctor --json`) rather than in the door's process: collecting them runs commands, reads the keychain and probes listeners and provider base URLs, every one of which blocks the calling thread, and the door's thread serves every session. Requests for the same report made while one runs share its child, and at most `MAX_REPORT_CHILDREN` children run at once. See `runSelfJson` for how a child is watched and ended.
  */
 export function createDoorReports(deps: Readonly<{ selfInvocation: SelfInvocation; env: NodeJS.ProcessEnv; release: string; silenceMs?: number; spawn?: typeof spawn }>): DoorReports {
   const spawnChild = deps.spawn ?? spawn;
   // `silenceMs` fixes the silence window for a test.
   const silenceMs = deps.silenceMs ?? reportSilenceWindowMs(REPORT_QUIET_MS);
+  const gate = createGate(MAX_REPORT_CHILDREN);
+  const coalesce = createCoalescer();
+  const collect = async (args: readonly string[], signal: AbortSignal): Promise<unknown> => await gate(async () => await runSelfJson(deps.selfInvocation, deps.env, deps.release, args, { silenceMs, signal, spawn: spawnChild }));
   return {
-    checkReport: async (path, identity, signal) => CheckReportJsonSchema.parse(await runSelfJson(deps.selfInvocation, deps.env, deps.release, ["check", path, ...(identity === undefined ? [] : ["--identity", identity]), "--json"], { silenceMs, signal, spawn: spawnChild })),
-    doctorReport: async (signal) => DoctorRunOutputSchema.parse(await runSelfJson(deps.selfInvocation, deps.env, deps.release, ["doctor", "--json"], { silenceMs, signal, spawn: spawnChild })),
+    checkReport: async (path, identity, signal) => CheckReportJsonSchema.parse(await coalesce(JSON.stringify(["check", path, identity ?? null]), async (ended) => await collect(["check", path, ...(identity === undefined ? [] : ["--identity", identity]), "--json"], ended), signal)),
+    doctorReport: async (signal) => DoctorRunOutputSchema.parse(await coalesce("doctor", async (ended) => await collect(["doctor", "--json"], ended), signal)),
   };
 }
