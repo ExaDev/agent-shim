@@ -1,5 +1,5 @@
 import type { ModelsConfig } from "../config/schema";
-import { expandMembers, memberKindOf } from "../modelsStore";
+import { expandMembers, memberKindOf, virtualModelsReachingCycle } from "../modelsStore";
 import { FAMILY_PREFIX, buildFamilies, familyKeyOf } from "./families";
 import { modelIdentity, relateIdentities, type ModelIdentity } from "./identity";
 
@@ -29,6 +29,7 @@ export function modelsFindings(input: Readonly<ModelsDoctorInput>): readonly Mod
   const providers = new Set(input.providers);
   const identities = new Set(input.identities);
   const virtualNames = new Set(Object.keys(models.virtual ?? {}));
+  const cyclic = virtualModelsReachingCycle(models);
   for (const [name, model] of Object.entries(models.virtual ?? {})) {
     for (const member of model.members) {
       const kind = memberKindOf(member, models);
@@ -47,13 +48,16 @@ export function modelsFindings(input: Readonly<ModelsDoctorInput>): readonly Mod
         }
       }
     }
-    try {
-      expandMembers(name, models);
-    } catch (error) {
-      findings.push({ severity: "fail", message: `Virtual model "${name}" cannot be expanded: ${error instanceof Error ? error.message : String(error)}` });
+    // Expansion fails only for a model that reaches a cycle, so only those and the models that choose by price (which need the expanded list) are expanded.
+    let expanded: readonly string[] | undefined;
+    if (cyclic.has(name) || model.mode === "cheapest") {
+      try {
+        expanded = expandMembers(name, models);
+      } catch (error) {
+        findings.push({ severity: "fail", message: `Virtual model "${name}" cannot be expanded: ${error instanceof Error ? error.message : String(error)}` });
+      }
     }
-    if (model.mode === "cheapest") {
-      const expanded = expandMembers(name, models);
+    if (model.mode === "cheapest" && expanded !== undefined) {
       const unpriced = expanded.filter((member) => models.prices?.[member] === undefined && memberKindOf(member, models) !== "virtual");
       if (unpriced.length > 0) {
         findings.push({ severity: "warn", message: `Virtual model "${name}" chooses by price, but no prices are set for: ${unpriced.join(", ")}.` });

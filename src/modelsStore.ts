@@ -70,15 +70,27 @@ export function expandMembers(name: string, models: ModelsConfig | undefined): r
   const virtual = models?.virtual ?? {};
   const expanded: string[] = [];
   const seen = new Set<string>();
-  const walk = (current: string, chain: readonly string[]): void => {
+  // The virtual models being expanded, as a chain for the message of a cycle and a set for the lookup, and those already expanded in full: a model reached again adds no member the first expansion did not, so it is expanded once however many models list it.
+  const chain: string[] = [];
+  const onChain = new Set<string>();
+  const done = new Set<string>();
+  const walk = (current: string): void => {
     const nested = virtual[current];
     if (nested !== undefined) {
-      if (chain.includes(current)) {
+      if (onChain.has(current)) {
         throw new Error(`virtual model cycle: ${[...chain, current].join(" -> ")}`);
       }
-      for (const member of nested.members) {
-        walk(member, [...chain, current]);
+      if (done.has(current)) {
+        return;
       }
+      chain.push(current);
+      onChain.add(current);
+      for (const member of nested.members) {
+        walk(member);
+      }
+      chain.pop();
+      onChain.delete(current);
+      done.add(current);
       return;
     }
     if (!seen.has(current)) {
@@ -90,10 +102,43 @@ export function expandMembers(name: string, models: ModelsConfig | undefined): r
   if (top === undefined) {
     throw new VirtualModelNotFoundError(name);
   }
+  chain.push(name);
+  onChain.add(name);
   for (const member of top.members) {
-    walk(member, [name]);
+    walk(member);
   }
   return expanded;
+}
+
+/**
+ * The virtual models from which a cycle of nested virtual models can be reached, found in one pass over the nesting. These are exactly the models `expandMembers` throws for (a cycle on the way to any member), so a caller that only needs to know whether expansion fails does not expand every model.
+ */
+export function virtualModelsReachingCycle(models: ModelsConfig | undefined): ReadonlySet<string> {
+  const virtual = models?.virtual ?? {};
+  const onPath = new Set<string>();
+  const reaching = new Map<string, boolean>();
+  const visit = (name: string): boolean => {
+    const known = reaching.get(name);
+    if (known !== undefined) {
+      return known;
+    }
+    onPath.add(name);
+    let cyclic = false;
+    for (const member of virtual[name]?.members ?? []) {
+      if (virtual[member] === undefined) {
+        continue;
+      }
+      // A member already on the path closes a cycle through every model on the path below it; the walk goes on over the other members so each is still marked.
+      cyclic = (onPath.has(member) || visit(member)) || cyclic;
+    }
+    onPath.delete(name);
+    reaching.set(name, cyclic);
+    return cyclic;
+  };
+  for (const name of Object.keys(virtual)) {
+    visit(name);
+  }
+  return new Set([...reaching].filter(([, cyclic]) => cyclic).map(([name]) => name));
 }
 
 /** Sets one virtual model, creating or replacing it, with the block written back. */

@@ -817,3 +817,16 @@ export function startStepMeter(): StepMeter {
 export function growsLinearly(sizes: readonly [number, number, number], counts: readonly [number, number, number]): boolean {
   return (counts[2] - counts[1]) * (sizes[1] - sizes[0]) <= (counts[1] - counts[0]) * (sizes[2] - sizes[1]);
 }
+
+const LCG_MULTIPLIER = 1_664_525;
+const LCG_INCREMENT = 1_013_904_223;
+const LCG_MODULUS = 4_294_967_296;
+
+/** A small deterministic generator of numbers in [0, 1), so a comparison over random inputs is the same on every run. */
+export function seededGenerator(seed: number): () => number {
+  let state = seed;
+  return () => {
+    state = (Math.imul(state, LCG_MULTIPLIER) + LCG_INCREMENT) % LCG_MODULUS;
+    return state / LCG_MODULUS;
+  };
+}

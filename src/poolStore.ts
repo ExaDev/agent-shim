@@ -53,31 +53,104 @@ function writePools(paths: LayoutPaths, pools: Readonly<Record<string, Pool>>): 
   applyPatch(paths.globalConfigFile, GlobalConfigSchema, { pools }, { defaults: {} });
 }
 
+/** The pools a pool's member entries nest, in member order. */
+function nestedPoolsOf(pools: Readonly<Record<string, Pool>>, name: string): readonly string[] {
+  return (pools[name]?.identities ?? []).flatMap((entry) => {
+    const nested = poolNameOf(poolMemberIdentity(entry));
+    return nested === undefined ? [] : [nested];
+  });
+}
+
 /**
- * The chain of pool names a cycle through `name` would follow in `pools`, or undefined when no nested member reaches back to it. Pure graph walk over the given pool map, so `pool add`/`pool set` can check the map the write would produce and `doctor` the map on disk.
+ * The chain of pool names a cycle through `name` would follow in `pools`, or undefined when no nested member reaches back to it. Pure graph walk over the given pool map, so `pool add`/`pool set` can check the map the write would produce and `doctor` the map on disk. Each pool is walked once: a pool whose walk found no way back to `name` has none, however it is reached again. `within` limits the walk to those pools, which cannot change the answer when it holds every pool that can reach `name` (a strongly connected component of it).
  */
-export function poolCycleOf(pools: Readonly<Record<string, Pool>>, name: string): readonly string[] | undefined {
-  const walk = (current: string, path: readonly string[]): readonly string[] | undefined => {
-    for (const entry of pools[current]?.identities ?? []) {
-      const nested = poolNameOf(poolMemberIdentity(entry));
-      if (nested === undefined) {
-        continue;
-      }
+export function poolCycleOf(pools: Readonly<Record<string, Pool>>, name: string, within?: ReadonlySet<string>): readonly string[] | undefined {
+  const onPath = new Set<string>([name]);
+  const exhausted = new Set<string>();
+  const path: string[] = [name];
+  const walk = (current: string): readonly string[] | undefined => {
+    for (const nested of nestedPoolsOf(pools, current)) {
       // Reaching `name` again is the cycle being looked for; any other pool already on the path is a different cycle, which cannot reach `name` through itself.
       if (nested === name) {
         return [...path, nested];
       }
-      if (path.includes(nested)) {
+      if (onPath.has(nested) || exhausted.has(nested) || (within !== undefined && !within.has(nested))) {
         continue;
       }
-      const found = walk(nested, [...path, nested]);
+      onPath.add(nested);
+      path.push(nested);
+      const found = walk(nested);
       if (found !== undefined) {
         return found;
       }
+      path.pop();
+      onPath.delete(nested);
+      exhausted.add(nested);
     }
     return undefined;
   };
-  return walk(name, [name]);
+  return walk(name);
+}
+
+/**
+ * The strongly connected components of the pool graph that hold a cycle (more than one pool, or a pool nesting itself), found in one pass over every pool and nested entry.
+ */
+function cyclicComponents(pools: Readonly<Record<string, Pool>>): readonly ReadonlySet<string>[] {
+  const index = new Map<string, number>();
+  const lowlink = new Map<string, number>();
+  const onStack = new Set<string>();
+  const stack: string[] = [];
+  const components: ReadonlySet<string>[] = [];
+  const connect = (name: string): void => {
+    const own = index.size;
+    index.set(name, own);
+    lowlink.set(name, own);
+    stack.push(name);
+    onStack.add(name);
+    for (const nested of nestedPoolsOf(pools, name)) {
+      if (pools[nested] === undefined) {
+        continue;
+      }
+      if (!index.has(nested)) {
+        connect(nested);
+        lowlink.set(name, Math.min(lowlink.get(name) ?? own, lowlink.get(nested) ?? own));
+      } else if (onStack.has(nested)) {
+        lowlink.set(name, Math.min(lowlink.get(name) ?? own, index.get(nested) ?? own));
+      }
+    }
+    if (lowlink.get(name) === own) {
+      const component = new Set<string>();
+      for (let member = stack.pop(); member !== undefined; member = stack.pop()) {
+        onStack.delete(member);
+        component.add(member);
+        if (member === name) {
+          break;
+        }
+      }
+      if (component.size > 1 || nestedPoolsOf(pools, name).includes(name)) {
+        components.push(component);
+      }
+    }
+  };
+  for (const name of Object.keys(pools)) {
+    if (!index.has(name)) {
+      connect(name);
+    }
+  }
+  return components;
+}
+
+/**
+ * The cycles `doctor` reports: one chain for each group of pools that all reach one another (a strongly connected component with a cycle in it), the chain `poolCycleOf` finds through the group's first pool by name, in the order of those names. Pools on a ring are one group and are reported once; a group with several cycles through it shows one, and the next shows once that is fixed. Found with one pass over the graph and a walk within each group, so the cost grows with the graph however many cycles it holds.
+ */
+export function reportedPoolCycles(pools: Readonly<Record<string, Pool>>): readonly (readonly string[])[] {
+  return cyclicComponents(pools)
+    .flatMap((component) => {
+      const first = [...component].sort()[0];
+      const chain = first === undefined ? undefined : poolCycleOf(pools, first, component);
+      return chain === undefined ? [] : [chain];
+    })
+    .sort((left, right) => (left[0] ?? "").localeCompare(right[0] ?? ""));
 }
 
 /**

@@ -47,7 +47,7 @@ import { aliasFindings, readProviderAliases, type ProviderAliases } from "./prov
 import { describeProviderEndpoint, legacyProviderConversion, LegacyProviderFileError } from "./providersStore";
 import { ambientCredentialFinding } from "./launcher/guard";
 import { poolNameOf } from "./launcher/identity";
-import { poolCycleOf } from "./poolStore";
+import { reportedPoolCycles } from "./poolStore";
 import { describeSharedLoginMembers, sharedLoginMembers } from "./poolSharedLogins";
 import { jobWindowReadFindings, poolWindowReadFindings, receivedWindows } from "./poolWindowReads";
 import type { RunPort } from "./launcher/ports";
@@ -639,18 +639,8 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
       push("pool", "warn", describeSharedLoginMembers(poolName, shared), poolName);
     }
   }
-  // A cycle can only appear by editing config.json by hand (add and set refuse one), and every pool on it is reported once.
-  const reportedCycles = new Set<string>();
-  for (const poolName of Object.keys(pools).sort()) {
-    const chain = poolCycleOf(pools, poolName);
-    if (chain === undefined) {
-      continue;
-    }
-    const key = [...chain].slice(0, -1).sort().join(">");
-    if (reportedCycles.has(key)) {
-      continue;
-    }
-    reportedCycles.add(key);
+  // A cycle can only appear by editing config.json by hand (add and set refuse one), and every pool on a cycle is reported on a chain.
+  for (const chain of reportedPoolCycles(pools)) {
     push("pool", "fail", `Pool cycle: ${chain.join(" -> ")}. A pool cannot nest itself, directly or through another pool.`, chain[0]);
   }
   // A window an identity does not receive answers nothing, so whatever reads it for that identity stays undecided or idle without failing.

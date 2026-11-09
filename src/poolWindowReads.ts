@@ -37,18 +37,27 @@ function conditionReads(when: WhenCondition): readonly { readonly window: QuotaW
   return [...direct, ...derived];
 }
 
-/** The identities a selector can run as: itself, or every identity a nested pool can pick, through any depth of nesting. A pool visited once is not visited again, so a cycle (which the doctor reports on its own) ends the walk. */
-function identitiesOf(selector: string, pools: Readonly<Record<string, Pool>>, visited = new Set<string>()): readonly string[] {
-  const nested = poolNameOf(selector);
-  if (nested === undefined) {
-    return [selector];
-  }
-  const pool = pools[nested];
-  if (pool === undefined || visited.has(nested)) {
-    return [];
-  }
-  visited.add(nested);
-  return [...new Set(pool.identities.flatMap((member) => identitiesOf(poolMemberIdentity(member), pools, visited)))];
+/** The identities a selector can run as: itself, or every identity a nested pool can pick, through any depth of nesting, each once in the order the walk meets them. A pool is walked once, so a cycle (which the doctor reports on its own) ends the walk and a pool nested by several others adds nothing the second time. */
+function identitiesOf(selector: string, pools: Readonly<Record<string, Pool>>): readonly string[] {
+  const found = new Set<string>();
+  const walked = new Set<string>();
+  const walk = (current: string): void => {
+    const nested = poolNameOf(current);
+    if (nested === undefined) {
+      found.add(current);
+      return;
+    }
+    const pool = pools[nested];
+    if (pool === undefined || walked.has(nested)) {
+      return;
+    }
+    walked.add(nested);
+    for (const member of pool.identities) {
+      walk(poolMemberIdentity(member));
+    }
+  };
+  walk(selector);
+  return [...found];
 }
 
 /** One warning, with the pool or job it is about. */

@@ -34,12 +34,14 @@ export interface LinearisedProfiles {
  */
 export function lineariseProfile(rootName: string, load: ProfileLoader): LinearisedProfiles {
   const stack: string[] = [];
+  // The same names as `stack`, for the lookup; the array keeps the order the message of a cycle names.
+  const onStack = new Set<string>();
   const visited = new Set<string>();
   const order: string[] = [];
   const diagnostics: Diagnostic[] = [];
 
   const visit = (name: string): void => {
-    if (stack.includes(name)) {
+    if (onStack.has(name)) {
       diagnostics.push({
         code: "EXTENDS_CYCLE",
         severity: "error",
@@ -65,10 +67,12 @@ export function lineariseProfile(rootName: string, load: ProfileLoader): Lineari
     }
 
     stack.push(name);
+    onStack.add(name);
     for (const dependency of source.profile.extends ?? []) {
       visit(dependency);
     }
     stack.pop();
+    onStack.delete(name);
 
     visited.add(name);
     order.push(name);

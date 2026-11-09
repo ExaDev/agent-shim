@@ -5,7 +5,7 @@ import { expandMembers } from "../modelsStore";
 import { buildFamilies, expandFamilyMembers, familyKeyOf, type Family } from "./families";
 import { modelsFindings } from "./doctor";
 import { relateModels } from "./identity";
-import { countSteps, growsLinearly } from "../test-helpers";
+import { countSteps, growsLinearly, seededGenerator as generator } from "../test-helpers";
 
 /** The grouping as it was written before it was indexed: each target compared with every group in turn, and the user's assertions searched for each comparison. The indexed `buildFamilies` must give exactly its result. */
 function naiveFamilies(refs: readonly string[], models: ModelsConfig | undefined): readonly { readonly key: string; readonly refs: readonly string[] }[] {
@@ -38,19 +38,6 @@ function naiveFamilies(refs: readonly string[], models: ModelsConfig | undefined
     }
   }
   return groups;
-}
-
-/** A small deterministic generator, so the comparison is the same on every run. */
-const LCG_MULTIPLIER = 1_664_525;
-const LCG_INCREMENT = 1_013_904_223;
-const LCG_MODULUS = 4_294_967_296;
-
-function generator(seed: number): () => number {
-  let state = seed;
-  return () => {
-    state = (Math.imul(state, LCG_MULTIPLIER) + LCG_INCREMENT) % LCG_MODULUS;
-    return state / LCG_MODULUS;
-  };
 }
 
 /** How likely each optional part of a random models block is, and how many entries the parts hold at most. */
