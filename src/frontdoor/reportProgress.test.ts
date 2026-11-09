@@ -12,6 +12,7 @@ import {
   reportSilenceWindowMs,
   encodeReportProgress,
   installReportProgress,
+  ReportReleaseSkewError,
   reportProgressTarget,
   LOCAL_WORK_ANNOUNCE_INTERVAL_MS,
   type ReportProgress,
@@ -59,13 +60,14 @@ describe("the progress stream", () => {
 });
 
 const PARENT = 4_242;
+const RELEASE = "12.0.0";
 
 /** The value a door that is process `PARENT` gives a child announcing on `DESCRIPTOR`. */
-const TARGET = reportProgressTarget(DESCRIPTOR, PARENT);
+const TARGET = reportProgressTarget(DESCRIPTOR, PARENT, RELEASE);
 
 /** `installReportProgress` as the child of process `PARENT`. */
 function installAsChild(env: Readonly<Record<string, string | undefined>>, write: (fd: number, text: string) => void, now: () => number = () => 0, fsModule: object = {}, writeOutput: (text: string) => void = () => undefined): (() => void) | undefined {
-  return installReportProgress(env, write, now, fsModule, writeOutput, PARENT);
+  return installReportProgress(env, write, now, fsModule, writeOutput, PARENT, RELEASE);
 }
 
 describe("installReportProgress", () => {
@@ -76,14 +78,21 @@ describe("installReportProgress", () => {
   });
 
   it("removes the variable and announces nothing when it does not name this process's parent, or is not a descriptor and a parent", () => {
-    for (const named of [reportProgressTarget(DESCRIPTOR, PARENT + 1), String(DESCRIPTOR), "not-a-number", "3:x", "3.5:4242", "-1:4242", "", ":4242", "3:"]) {
+    for (const named of [reportProgressTarget(DESCRIPTOR, PARENT + 1, RELEASE), reportProgressTarget(DESCRIPTOR, PARENT + 1, "13.0.0"), String(DESCRIPTOR), `${String(DESCRIPTOR)}:${String(PARENT)}`, "not-a-number", "3:x", "3.5:4242", "-1:4242", "", ":4242", "3:"]) {
       const written: string[] = [];
       const env: Record<string, string | undefined> = { [REPORT_PROGRESS_FD_ENV]: named };
-      expect(installReportProgress(env, (_fd, text) => { written.push(text); }, () => 0, {}, () => undefined, PARENT), named).toBeUndefined();
+      expect(installReportProgress(env, (_fd, text) => { written.push(text); }, () => 0, {}, () => undefined, PARENT, RELEASE), named).toBeUndefined();
       withBlockingStep(undefined, () => undefined);
       expect(env).toEqual({});
       expect(written).toEqual([]);
     }
+  });
+
+  it("refuses, naming both releases and how to replace the door, when the door that started it is of another release, and still removes the variable", () => {
+    const env: Record<string, string | undefined> = { [REPORT_PROGRESS_FD_ENV]: reportProgressTarget(DESCRIPTOR, PARENT, "12.1.0") };
+    expect(() => installReportProgress(env, () => undefined, () => 0, {}, () => undefined, PARENT, RELEASE)).toThrow(ReportReleaseSkewError);
+    expect(() => installReportProgress({ [REPORT_PROGRESS_FD_ENV]: reportProgressTarget(DESCRIPTOR, PARENT, "12.1.0") }, () => undefined, () => 0, {}, () => undefined, PARENT, RELEASE)).toThrow(/runs agent-shim 12\.1\.0, and this is agent-shim 12\.0\.0.*agent-shim frontdoor restart/);
+    expect(env).toEqual({});
   });
 
   it("does nothing when the environment names no descriptor", () => {

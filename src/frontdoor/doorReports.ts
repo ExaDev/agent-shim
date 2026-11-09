@@ -53,6 +53,11 @@ function readablePipe(child: ChildProcess, index: number): Readable {
   return stream;
 }
 
+/** Whether `error` is the failure to start a program that is not there. */
+function isMissingExecutable(error: unknown): boolean {
+  return error instanceof Error && Reflect.get(error, "code") === "ENOENT";
+}
+
 /** What `runSelfJson` is bounded by, and the process it starts. */
 interface RunLimits {
   readonly silenceMs: number;
@@ -63,16 +68,16 @@ interface RunLimits {
 /**
  * Runs the door's own executable with `args` and reads the JSON report it prints, failing with what it wrote to stderr when it printed none, or when what it printed is not JSON. The child leads its own process group and is ended, with everything it started, and the call fails, once any of these holds: it has gone `limit.silenceMs` (`reportSilenceWindowMs` of the quiet bound) without announcing anything outside a step, or stayed longer than a blocking step's announced bound and `PROBE_WAIT_MARGIN_MS` inside that step (the margin a probe's caller waits past its bound, which also covers a killed command being reaped), the child announcing each on `REPORT_PROGRESS_FD` (see `reportProgress.ts`); `limit.signal` aborts (the request's client went away); or it prints a report longer than the size it announced before it, which is the only bound on what the door keeps, since a report grows with the user's data.
  */
-async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEnv, args: readonly string[], limit: RunLimits): Promise<unknown> {
+async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEnv, release: string, args: readonly string[], limit: RunLimits): Promise<unknown> {
   const invocation = selfInvocation(args);
   const command = `agent-shim ${args.join(" ")}`;
   limit.signal?.throwIfAborted();
   const { status, signal, stdout, stderr, shortRead } = await new Promise<{ readonly status: number | null; readonly signal: NodeJS.Signals | null; readonly stdout: string; readonly stderr: string; readonly shortRead: { readonly received: number; readonly announced: number } | undefined }>((resolve, reject) => {
-    const child = limit.spawn(invocation.command, [...invocation.args], { stdio: ["ignore", "pipe", "pipe", "pipe"], env: { ...env, [REPORT_PROGRESS_FD_ENV]: reportProgressTarget(REPORT_PROGRESS_FD, process.pid) }, detached: true });
-    const releases: (() => void)[] = [];
+    const child = limit.spawn(invocation.command, [...invocation.args], { stdio: ["ignore", "pipe", "pipe", "pipe"], env: { ...env, [REPORT_PROGRESS_FD_ENV]: reportProgressTarget(REPORT_PROGRESS_FD, process.pid, release) }, detached: true });
+    const cleanups: (() => void)[] = [];
     const finish = (settle: () => void): void => {
-      for (const release of releases) {
-        release();
+      for (const cleanup of cleanups) {
+        cleanup();
       }
       settle();
     };
@@ -87,7 +92,7 @@ async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEn
       watchdog = setTimeout(() => { fail(new Error(`${command} made no progress within ${String(allowedMs)}ms`)); }, timerDelay(allowedMs));
     };
     arm(limit.silenceMs);
-    releases.push(() => { clearTimeout(watchdog); });
+    cleanups.push(() => { clearTimeout(watchdog); });
     const outPipe = readablePipe(child, 1);
     const errPipe = readablePipe(child, 2);
     const progress = readablePipe(child, REPORT_PROGRESS_FD);
@@ -97,7 +102,7 @@ async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEn
     }));
     const onAbort = (): void => { fail(limit.signal?.reason); };
     limit.signal?.addEventListener("abort", onAbort, { once: true });
-    releases.push(() => { limit.signal?.removeEventListener("abort", onAbort); });
+    cleanups.push(() => { limit.signal?.removeEventListener("abort", onAbort); });
     const output = createReportOutputReader((reason) => { fail(new Error(`${command} ${reason}`)); });
     let err = "";
     outPipe.on("data", (chunk: Buffer | string) => { output.push(chunk); });
@@ -105,7 +110,7 @@ async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEn
     errPipe.on("data", (chunk: string) => {
       err = (err + chunk).slice(-STDERR_TAIL_CHARS);
     });
-    child.once("error", (error) => { finish(() => { reject(error); }); });
+    child.once("error", (error) => { finish(() => { reject(isMissingExecutable(error) ? new Error(`${command} could not be started: ${invocation.command} is gone, so a release replaced or removed the one this front door runs. Run \`agent-shim frontdoor restart\` to replace the door.`, { cause: error }) : error); }); });
     child.once("close", (code, endedBy) => { finish(() => { resolve({ status: code, signal: endedBy, stdout: output.report(), stderr: err, shortRead: output.shortRead() }); }); });
   });
   const diagnostics = stderr.trim();
@@ -130,12 +135,12 @@ async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEn
 /**
  * The door's `check` and `doctor` reports, each collected by a child of the door's own executable (`agent-shim check --json`, `agent-shim doctor --json`) rather than in the door's process: collecting them runs commands, reads the keychain and probes listeners and provider base URLs, every one of which blocks the calling thread, and the door's thread is the event loop that answers every session (see `refuseToBlockInRole`). The child prints exactly the JSON `check --json` and `doctor --json` print, which is the control API's contract, validated here against the same schemas the API's output is.
  */
-export function createDoorReports(deps: Readonly<{ selfInvocation: SelfInvocation; env: NodeJS.ProcessEnv; silenceMs?: number; spawn?: typeof spawn }>): DoorReports {
+export function createDoorReports(deps: Readonly<{ selfInvocation: SelfInvocation; env: NodeJS.ProcessEnv; release: string; silenceMs?: number; spawn?: typeof spawn }>): DoorReports {
   const spawnChild = deps.spawn ?? spawn;
   // `silenceMs` fixes the silence window for a test.
   const silenceMs = deps.silenceMs ?? reportSilenceWindowMs(REPORT_QUIET_MS);
   return {
-    checkReport: async (path, identity, signal) => CheckReportJsonSchema.parse(await runSelfJson(deps.selfInvocation, deps.env, ["check", path, ...(identity === undefined ? [] : ["--identity", identity]), "--json"], { silenceMs, signal, spawn: spawnChild })),
-    doctorReport: async (signal) => DoctorRunOutputSchema.parse(await runSelfJson(deps.selfInvocation, deps.env, ["doctor", "--json"], { silenceMs, signal, spawn: spawnChild })),
+    checkReport: async (path, identity, signal) => CheckReportJsonSchema.parse(await runSelfJson(deps.selfInvocation, deps.env, deps.release, ["check", path, ...(identity === undefined ? [] : ["--identity", identity]), "--json"], { silenceMs, signal, spawn: spawnChild })),
+    doctorReport: async (signal) => DoctorRunOutputSchema.parse(await runSelfJson(deps.selfInvocation, deps.env, deps.release, ["doctor", "--json"], { silenceMs, signal, spawn: spawnChild })),
   };
 }

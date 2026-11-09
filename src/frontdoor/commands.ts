@@ -49,6 +49,7 @@ import { captureFromEnv } from "./capture";
 import { CONNECT_INTERCEPT_HOST, CONNECT_INTERCEPT_HOSTS, CONNECT_LIMITS, CONNECT_TAP_HOSTS, HTTPS_PORT, LOOPBACK_LEAF_NAMES, createLeafCache, ensureCa, generateCa, mintLeaf, realConnectCertStore, startConnectServer, type CaMaterial } from "./connect";
 import { lateRcEventDial, lateRcStreamDial, realConnectEffects, realRcEventDial, realRcStreamDial, type RcDialTarget } from "./connectEffects";
 import { createCredentialCustody } from "./custody";
+import packageJson from "../../package.json";
 import { createDoorReports } from "./doorReports";
 import { collectPoolPick } from "../poolPickReport";
 import { realMemberProviderResolver } from "../poolProviderWiring";
@@ -579,7 +580,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         },
         now: () => Date.now(),
         frontDoorStatus: () => collectFrontDoorStatus(realFarmFs, realHeadroomSocketTrust, paths, realIsProcessRunning),
-        ...createDoorReports({ selfInvocation, env: { ...process.env, AGENT_SHIM_HOME: paths.root } }),
+        ...createDoorReports({ selfInvocation, release: packageJson.version, env: { ...process.env, AGENT_SHIM_HOME: paths.root } }),
         // The pool table is read per call, not captured here, so a pool created or removed after the door started is ranked or refused by its live name the same moment the CLI would see it. The door's own environment is never a substitute for a caller's, so each member's provider is resolved from the directory's configuration and the member's own declaration alone.
         poolPick: (pool: string, directory: string) => {
           const pools = readPools(paths);
