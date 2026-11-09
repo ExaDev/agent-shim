@@ -8,7 +8,7 @@ import { DOOR_WORKER_CODE_ASSET } from "../../scripts/bundle-options.mts";
 import { CliError } from "../cliError";
 import { LONGEST_BLOCKING_STEP_MS } from "../doorBounds";
 import { CATALOGUE_REFRESH_DEADLINE_MS } from "../providerCatalogue";
-import { doorWorkerInputSchemas, isDoorWorkerMessage, type DoorProcessFacts, type DoorWorkerData, type DoorWorkerTaskName, type DoorWorkerTasks } from "./doorWorkerProtocol";
+import { doorWorkerInputSchemas, identifiedFailure, isDoorWorkerMessage, type DoorProcessFacts, type DoorWorkerData, type DoorWorkerTaskName, type DoorWorkerTasks } from "./doorWorkerProtocol";
 
 /**
  * The front door runs the work that blocks its thread (a report's synchronous probes, a catalogue refresh's credential commands) in a worker thread of its own process, never in its event loop and never in a child process.
@@ -70,9 +70,12 @@ const NEXT_STEP: Readonly<Record<DoorWorkerTaskName, string>> = {
   "refresh-catalogue": "run `agent-shim provider models --refresh <name>` from a shell for the detail",
 };
 
+/** Why a task failed: it outlasted its deadline, its heartbeat stood still, its worker raised an error or ended with no answer, its answer was not a valid result, its input was refused, its caller went away, or the door is ending. A caller maps the kind to a status; the message is for a person. */
+export type DoorWorkerFailureKind = "deadline" | "stalled" | "worker" | "answer" | "input" | "cancelled" | "stopped";
+
 /** Raised when a task's worker ended without an answer, was stopped by the watchdog, the caller or the door, or answered something that was not a valid result. `reason` names the cause in the door's own words (never a worker's message), and the message ends with what to do next. */
 export class DoorWorkerFailedError extends CliError {
-  constructor(task: DoorWorkerTaskName | "an unknown task", reason: string) {
+  constructor(task: DoorWorkerTaskName | "an unknown task", reason: string, readonly kind: DoorWorkerFailureKind) {
     super(`${task} failed in its worker: ${reason}${task === "an unknown task" ? "" : `; ${NEXT_STEP[task]}`}`);
     this.name = "DoorWorkerFailedError";
   }
@@ -121,6 +124,8 @@ export interface DoorWorkerHostOptions {
   readonly deadlineMs: Readonly<Record<DoorWorkerTaskName, number>>;
   readonly maxConcurrent?: number;
   readonly maxQueued?: number;
+  /** Told one line for each task that fails or is refused: the task, the kind and the door's own reason, never a worker's message. */
+  readonly log?: (line: string) => void;
 }
 
 /** Runs the door's worker tasks. */
@@ -145,7 +150,7 @@ interface Flight {
   callers: number;
   state: FlightState;
   /** Ends the flight with `reason` for every caller and stops its worker, if it has one. */
-  cancel: (reason: string) => void;
+  cancel: (reason: string, kind: DoorWorkerFailureKind) => void;
 }
 
 /** A promise with its settlers, for the flights. */
@@ -166,6 +171,12 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
   const stallLimitMs = options.stallLimitMs ?? DOOR_WORKER_STALL_LIMIT_MS;
   const maxConcurrent = options.maxConcurrent ?? MAX_CONCURRENT_DOOR_WORKERS;
   const maxQueued = options.maxQueued ?? MAX_QUEUED_DOOR_WORKER_TASKS;
+  const log = options.log ?? ((): void => undefined);
+  /** The failure of a task, logged once here with its kind and reason (never a worker's message), for the caller to throw or reject with. */
+  const failure = (task: DoorWorkerTaskName | "an unknown task", reason: string, kind: DoorWorkerFailureKind): DoorWorkerFailedError => {
+    log(`door worker ${task} failed (${kind}): ${reason}`);
+    return new DoorWorkerFailedError(task, reason, kind);
+  };
   /** The flights not yet over, by request: an equal request joins one of these. */
   const inFlight = new Map<string, Flight>();
   /** The flights waiting for a place, oldest first. */
@@ -219,8 +230,9 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
   const launch = (flight: Flight): void => {
     if (stopped || flight.state === "ended") {
       // Nothing was spawned: the door is ending, or the flight was cancelled between being given the place and this turn.
-      close(flight);
-      flight.outcome.reject(new DoorWorkerFailedError(flight.task, stopped ? "the front door is ending" : "it was cancelled"));
+      if (close(flight)) {
+        flight.outcome.reject(failure(flight.task, "the front door is ending", "stopped"));
+      }
       releasePlace();
       return;
     }
@@ -254,9 +266,9 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
       }
       terminate();
     };
-    flight.cancel = (reason) => {
+    flight.cancel = (reason, kind) => {
       finish(() => {
-        flight.outcome.reject(new DoorWorkerFailedError(flight.task, reason));
+        flight.outcome.reject(failure(flight.task, reason, kind));
       });
     };
     stopWatchdog = clock.every(() => {
@@ -267,29 +279,31 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
         lastBeatAt = now;
       }
       if (now - startedAt > options.deadlineMs[flight.task]) {
-        flight.cancel("it outlasted its deadline");
+        flight.cancel("it outlasted its deadline", "deadline");
       } else if (now - lastBeatAt > stallLimitMs) {
-        flight.cancel("it stalled: nothing in it moved");
+        flight.cancel("it stalled: nothing in it moved", "stalled");
       }
     }, DOOR_WORKER_WATCHDOG_INTERVAL_MS);
     worker.on("message", (value) => {
       if (!isDoorWorkerMessage(value)) {
-        flight.cancel("it answered with something other than a result");
+        flight.cancel("it answered with something other than a result", "worker");
         return;
       }
       finish(() => {
         if (value.kind === "done") {
           flight.outcome.resolve(value.value);
         } else {
-          flight.outcome.reject(new DoorWorkerFailedError(flight.task, `it ended with ${value.name}${value.code === undefined ? "" : ` (${value.code})`}`));
+          flight.outcome.reject(failure(flight.task, `it ended with ${value.name}${value.code === undefined ? "" : ` (${value.code})`}`, "worker"));
         }
       });
     });
     worker.on("error", (error) => {
-      flight.cancel(error.message);
+      // An uncaught error in the thread: its class name and code only, as a posted failure carries, never its message, which can hold what a credential command printed.
+      const { name, code } = identifiedFailure(error);
+      flight.cancel(`it raised ${name}${code === undefined ? "" : ` (${code})`}`, "worker");
     });
     worker.on("exit", (code) => {
-      flight.cancel(`it ended with code ${String(code)} without an answer`);
+      flight.cancel(`it ended with code ${String(code)} without an answer`, "worker");
       threadHasEnded();
     });
   };
@@ -299,7 +313,7 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
   /** Creates the flight for a request and gives it a place, or queues it, or refuses it when the queue is full. */
   const begin = (key: string, task: DoorWorkerTaskName, input: unknown): Flight => {
     if (stopped) {
-      throw new DoorWorkerFailedError(task, "the front door is ending");
+      throw failure(task, "the front door is ending", "stopped");
     }
     const flight: Flight = {
       key,
@@ -308,10 +322,10 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
       outcome: deferred<unknown>(),
       callers: 0,
       state: "queued",
-      cancel: (reason) => {
+      cancel: (reason, kind) => {
         // Before it has a worker: it leaves the books at once, freeing its place in the queue.
         if (close(flight)) {
-          flight.outcome.reject(new DoorWorkerFailedError(task, reason));
+          flight.outcome.reject(failure(task, reason, kind));
         }
       },
     };
@@ -323,6 +337,7 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
         launch(flight);
       });
     } else if (queue.length >= maxQueued) {
+      log(`door worker ${task} refused: every worker is busy and the queue is full`);
       throw new DoorWorkerBusyError(task);
     } else {
       queue.push(flight);
@@ -337,14 +352,14 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
     run: async <T extends DoorWorkerTaskName>(task: T, input: InputOf<T>, parse: (value: unknown) => OutputOf<T>, signal?: AbortSignal): Promise<OutputOf<T>> => {
       // Before any thread exists: a task the door does not know, or an input that does not fit it, is refused here.
       if (!Object.hasOwn(doorWorkerInputSchemas, task)) {
-        throw new DoorWorkerFailedError("an unknown task", "the door has no such task");
+        throw failure("an unknown task", "the door has no such task", "input");
       }
       const accepted = doorWorkerInputSchemas[task].safeParse(input);
       if (!accepted.success) {
-        throw new DoorWorkerFailedError(task, `its input was refused (${accepted.error.issues.map((issue) => issue.path.join(".")).join(", ")})`);
+        throw failure(task, `its input was refused (${accepted.error.issues.map((issue) => issue.path.join(".")).join(", ")})`, "input");
       }
       if (signal?.aborted === true) {
-        throw new DoorWorkerFailedError(task, "it was cancelled");
+        throw new DoorWorkerFailedError(task, "it was cancelled", "cancelled");
       }
       const key = JSON.stringify([task, input]);
       const flight = inFlight.get(key) ?? begin(key, task, input);
@@ -354,9 +369,9 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
       const onAbort = (): void => {
         flight.callers -= 1;
         if (flight.callers === 0) {
-          flight.cancel("it was cancelled");
+          flight.cancel("it was cancelled", "cancelled");
         }
-        released.reject(new DoorWorkerFailedError(task, "it was cancelled"));
+        released.reject(new DoorWorkerFailedError(task, "it was cancelled", "cancelled"));
       };
       signal?.addEventListener("abort", onAbort, { once: true });
       try {
@@ -365,7 +380,7 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
           return parse(answer);
         } catch (error) {
           // A worker's answer that does not fit the schema is its failure, named by where it did not fit and not by the value.
-          throw new DoorWorkerFailedError(task, `its answer was not a valid result${error instanceof z.ZodError ? ` (${error.issues.map((issue) => issue.path.join(".")).join(", ")})` : ""}`);
+          throw failure(task, `its answer was not a valid result${error instanceof z.ZodError ? ` (${error.issues.map((issue) => issue.path.join(".")).join(", ")})` : ""}`, "answer");
         }
       } finally {
         signal?.removeEventListener("abort", onAbort);
@@ -374,13 +389,13 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
     stop: () => {
       stopped = true;
       for (const flight of [...inFlight.values()]) {
-        flight.cancel("the front door is ending");
+        flight.cancel("the front door is ending", "stopped");
       }
     },
   };
 }
 
-/** The host a real front door runs its worker tasks through: the code text is read now, once, from the embedded asset or from the bundle file at `facts.contentSourcePath`, every task has its deadline, and the workers are told the door's own executable and content paths. */
-export function createRealDoorWorkerHost(facts: DoorProcessFacts): DoorWorkerHost {
-  return createDoorWorkerHost({ code: readDoorWorkerCode(facts.contentSourcePath), facts, deadlineMs: DOOR_WORKER_DEADLINES });
+/** The host a real front door runs its worker tasks through: the code text is read now, once, from the embedded asset or from the bundle file at `facts.contentSourcePath`, every task has its deadline, and the workers are told the door's own executable and content paths. `log` takes one line for each task that fails or is refused. */
+export function createRealDoorWorkerHost(facts: DoorProcessFacts, log: (line: string) => void): DoorWorkerHost {
+  return createDoorWorkerHost({ code: readDoorWorkerCode(facts.contentSourcePath), facts, deadlineMs: DOOR_WORKER_DEADLINES, log });
 }

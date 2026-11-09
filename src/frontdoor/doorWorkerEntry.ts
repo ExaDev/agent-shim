@@ -6,7 +6,7 @@ import { buildLayoutPaths } from "../paths";
 import { observeBlockingSteps } from "../processRole";
 import { refreshCatalogueForReal } from "../realCatalogueRefresh";
 import { adoptProcessPathFacts } from "../realPorts";
-import { doorWorkerInputSchemas, isDoorWorkerData, isIdentifier, type DoorWorkerMessage, type DoorWorkerTaskName, type DoorWorkerTasks } from "./doorWorkerProtocol";
+import { doorWorkerInputSchemas, identifiedFailure, isDoorWorkerData, type DoorWorkerMessage, type DoorWorkerTaskName, type DoorWorkerTasks } from "./doorWorkerProtocol";
 
 /** Runs `task` on `input` against this worker's environment, which is a copy of the door's at the moment the worker started and whose module state (roles, caches, file wrappers) is its own. */
 async function runTask(task: DoorWorkerTaskName, input: unknown, env: NodeJS.ProcessEnv): Promise<DoorWorkerTasks[DoorWorkerTaskName]["output"]> {
@@ -29,11 +29,9 @@ async function runTask(task: DoorWorkerTaskName, input: unknown, env: NodeJS.Pro
   }
 }
 
-/** The failure a worker posts for an error: its class name and short code if they are identifiers, never its message. */
+/** The failure a worker posts for an error: its class name and code if they are identifiers, never its message. */
 function failureOf(error: unknown): DoorWorkerMessage {
-  const name = error instanceof Error && isIdentifier(error.name) ? error.name : "Error";
-  const code: unknown = error instanceof Error && "code" in error ? error.code : undefined;
-  return isIdentifier(code) ? { kind: "failed", name, code } : { kind: "failed", name };
+  return { kind: "failed", ...identifiedFailure(error) };
 }
 
 /**

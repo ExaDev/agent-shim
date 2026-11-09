@@ -353,7 +353,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
   const anthropicRefresher = createRealAnthropicUsageRefresher({ paths, store: usageStore, cwd: process.cwd(), spawnDaemon: spawnDetachedSupervisor, log });
   /** The timers of the work the door runs on its own account, so a drain can stop them. */
   const keeperTimers: NodeJS.Timeout[] = [];
-  const doorWorkers = createRealDoorWorkerHost({ ownExecutablePath: realOwnExecutablePath(), contentSourcePath: realContentSourcePath() }); // reads the code its workers evaluate once, now
+  const doorWorkers = createRealDoorWorkerHost({ ownExecutablePath: realOwnExecutablePath(), contentSourcePath: realContentSourcePath() }, log); // reads the code its workers evaluate once, now
   const everyFreshnessInterval = (tick: () => void): void => {
     const timer = setInterval(tick, ANTHROPIC_USAGE_FRESHNESS_MS);
     timer.unref();
