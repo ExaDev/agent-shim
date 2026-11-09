@@ -179,7 +179,7 @@ export interface RunDoctorParams {
   readonly providers: readonly DoctorProviderInput[];
   /** The recorded former names of renamed providers. Omit to leave them out of the findings. */
   readonly providerAliases?: ProviderAliases;
-  /** Probes the base URLs of every valid http provider together, one connection each, each bounded by its provider's connect timeout. Omit to leave reachability out of the findings; with it, a valid http provider whose base URL accepts no connection fails, naming the URL. */
+  /** Probes the base URLs of every valid http provider, up to `MAX_CONCURRENT_PROBES` distinct targets together and any more in rounds of that many, one connection each, each bounded by its provider's connect timeout. Omit to leave reachability out of the findings; with it, a valid http provider whose base URL accepts no connection fails, naming the URL. */
   readonly probeBaseUrls?: BaseUrlBatchProbe;
   /** The journals of identity renames that were left unfinished, and the files in their directory that are not journals. Omit to leave renames out of the findings. */
   readonly renameJournals?: RenameJournalListing;
@@ -671,7 +671,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     return poolName === undefined ? validIdentityAgents.has(selector) : poolName in pools;
   };
 
-  // Every http provider's base URL is probed in one batch before any finding is pushed, so their bounds run at once rather than adding up.
+  // Every http provider's base URL is probed in one batch before any finding is pushed, up to `MAX_CONCURRENT_PROBES` distinct targets at once, so their bounds run together within a round and add only across rounds.
   const unreachableLines = params.probeBaseUrls === undefined ? new Map<string, string>() : probeProviderReachabilities(params.providers.flatMap(validProviderOf), params.probeBaseUrls);
   for (const entry of params.providers) {
     if (!pushNameFinding(push, "provider", "provider", entry)) {

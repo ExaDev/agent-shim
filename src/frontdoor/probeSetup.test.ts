@@ -165,6 +165,8 @@ describe("a batch of provider probes", () => {
 
 describe("a batch of provider probes at the size of a large configuration", () => {
   const OTHER_BASE = 40;
+  /** How many probes at a time the documentation states. */
+  const DOCUMENTED_CONCURRENT_PROBES = 10;
   /** What a process id is multiplied by to place its first batch (see `probe.ts`). */
   const PORT_BASE_SPREAD = 389;
   /** The share of the reserved range, as its reciprocal, that probes may hold between them. */
@@ -291,6 +293,8 @@ describe("a batch of provider probes at the size of a large configuration", () =
 
   it("holds a batch's concurrent probes to the share of the range it names", () => {
     expect(MAX_CONCURRENT_PROBES).toBe(DOOR_SOURCE_PORT_COUNT / PROBE_SHARE_DENOMINATOR);
+    // The documentation (`docs/configuration-model.md`, `docs/architecture.md`) says ten; a change of the share changes that text with this.
+    expect(MAX_CONCURRENT_PROBES).toBe(DOCUMENTED_CONCURRENT_PROBES);
   });
 
   it("probes a host, port and bound once however many providers name them, and gives each provider the verdict", () => {
