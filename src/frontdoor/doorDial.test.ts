@@ -169,6 +169,19 @@ describe("doorDial", () => {
 });
 
 describe("the provider probe on its worker thread", () => {
+  it("reaches a listener on loopback by the name localhost, which a resolver is never asked about", async () => {
+    const server = net.createServer();
+    servers.push(server);
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("listener has no TCP address");
+    }
+    expect(probeAddressesAcceptSync([{ host: "localhost", port: address.port, timeoutMs: SHORT_BOUND_MS }])).toEqual([{ ok: true }]);
+  });
+
   it("connects to a loopback listener and sends it nothing", async () => {
     const received: Buffer[] = [];
     let closed = false;
@@ -217,6 +230,28 @@ describe("evaluating each embedded dial function from its source text alone", ()
       resolvedAddresses = addresses as readonly { readonly address: string; readonly family: number }[];
     });
     expect(resolvedAddresses).toEqual([{ address: "192.0.2.99", family: 4 }]);
+  });
+
+  it("answers localhost and the names under it as the loopback addresses without asking a resolver, evaluated in isolation", () => {
+    const isolatedCreateLookup = vm.runInNewContext(`(${createDoorLookup.toString()})`, { Error }) as typeof createDoorLookup;
+    const asked: string[] = [];
+    const lookup = isolatedCreateLookup({
+      isIP: () => 0,
+      resolve4: (host) => {
+        asked.push(host);
+      },
+    });
+    for (const name of ["localhost", "LOCALHOST", "localhost.", "api.localhost", "a.b.Localhost."]) {
+      let answered: unknown;
+      lookup(name, {}, (_err, addresses) => {
+        answered = addresses;
+      });
+      expect(answered, name).toEqual([{ address: "127.0.0.1", family: 4 }, { address: "::1", family: 6 }]);
+    }
+    // A name that only ends in the letters is a different name, and goes to the resolver.
+    lookup("notlocalhost", {}, () => undefined);
+    lookup("localhost.example", {}, () => undefined);
+    expect(asked).toEqual(["notlocalhost", "localhost.example"]);
   });
 
   it("dials a name through doorDial evaluated in isolation", async () => {
