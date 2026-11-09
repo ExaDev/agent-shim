@@ -13,7 +13,7 @@ import { doorWorkerInputSchemas, isDoorWorkerMessage, type DoorProcessFacts, typ
 /**
  * The front door runs the work that blocks its thread (a report's synchronous probes, a catalogue refresh's credential commands) in a worker thread of its own process, never in its event loop and never in a child process.
  *
- * The worker evaluates the code text the door read when it started (`readDoorWorkerCode`), so an upgrade in place changes nothing about a running door until it restarts: a worker created from a path read again would run the new build beside the old door. It is given one task by name and its input by structured clone, answers once, and ends. Nothing authenticates it by environment variable, descriptor or parent process, because it shares the door's process.
+ * The worker evaluates the code text the door read when it started (`readDoorWorkerCode`), so an upgrade in place changes nothing about a running door's worker tasks until it restarts: a worker created from a path read again would run the new build beside the old door. It is given one task by name and its input by structured clone, answers once, and ends. Nothing authenticates it by environment variable, descriptor or parent process, because it shares the door's process.
  */
 
 /**
