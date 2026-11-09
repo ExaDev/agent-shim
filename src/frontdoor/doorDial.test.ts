@@ -138,6 +138,50 @@ describe("probeAccept", () => {
     expect(verdict).toEqual({ ok: false, reason: "ECONNREFUSED: connect ECONNREFUSED 127.0.0.1:1; connect ECONNREFUSED ::1:1" });
   });
 
+  it("leaves the local end of the connection out of a failure's reason, so the reason is the same on every run", async () => {
+    class Refused extends Error {
+      public readonly code = "ECONNREFUSED";
+    }
+    class Aggregate extends Error {
+      public readonly code = "ECONNREFUSED";
+      public readonly errors: Refused[];
+      constructor(localPort: number) {
+        super("");
+        this.errors = [new Refused(`connect ECONNREFUSED 127.0.0.1:1 - Local (0.0.0.0:${String(localPort)})`), new Refused(`connect ECONNREFUSED ::1:1 - Local (:::${String(localPort)})`)];
+      }
+    }
+    const reasonFor = async (failure: Error): Promise<string> => {
+      const verdict = await probeAccept(
+        async () =>
+          await doorDial(
+            {
+              connect: () => {
+                const socket = new SilentSocket();
+                queueMicrotask(() => {
+                  socket.emit("error", failure);
+                });
+                return socket;
+              },
+              lookup: createDoorLookup({ isIP: net.isIP, resolve4: () => undefined }),
+              isIP: () => 0,
+            },
+            { host: "localhost", port: 1 },
+            new SourcePortRange(RANGE_START, RANGE_END),
+          ),
+        SHORT_BOUND_MS,
+        manualTimer().start,
+      );
+      return verdict.ok ? "" : verdict.reason;
+    };
+    const FIRST_LOCAL_PORT = 48_767;
+    const SECOND_LOCAL_PORT = 51_203;
+    const first = await reasonFor(new Aggregate(FIRST_LOCAL_PORT));
+    expect(first).toBe("ECONNREFUSED: connect ECONNREFUSED 127.0.0.1:1; connect ECONNREFUSED ::1:1");
+    expect(await reasonFor(new Aggregate(SECOND_LOCAL_PORT))).toBe(first);
+    const single = new Refused(`connect ECONNREFUSED 127.0.0.1:1 - Local (0.0.0.0:${String(FIRST_LOCAL_PORT)})`);
+    expect(await reasonFor(single)).toBe("ECONNREFUSED: connect ECONNREFUSED 127.0.0.1:1");
+  });
+
   class CodedError extends Error {
     public readonly code: string;
     constructor(message: string, code: string) {

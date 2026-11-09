@@ -85,12 +85,20 @@ export async function doorDial<S extends DialSocket>(io: DoorDialIo<S>, target: 
         resolve({ error: null, socket });
       });
       socket.once("error", (error) => {
+        // Node appends the local end of the connection (` - Local (0.0.0.0:48767)`) to a connect error's message once the dial binds a source port, and the port differs on every run, so the reason the probe, `doctor` and the door's answer give would change from one run to the next: it is dropped, and the remote address and the code say what failed.
+        const withoutLocalEnd = (message: string): string => message.replace(/ - Local \([^)]*\)/gu, "");
         // A name that resolves to several addresses (`localhost`: 127.0.0.1 and ::1) is dialled by trying each, and when every attempt fails node emits an AggregateError whose own message is empty: its reason is the attempts' reasons, joined, with the code kept, so no report built from `message` ends on "ECONNREFUSED: ".
         const attempts: unknown = Reflect.get(error, "errors");
         if (error.message === "" && Array.isArray(attempts) && attempts.length > 0) {
-          const flattened: NodeJS.ErrnoException = new Error(attempts.map((attempt: unknown) => (attempt instanceof Error ? attempt.message : String(attempt))).join("; "));
+          const flattened: NodeJS.ErrnoException = new Error(attempts.map((attempt: unknown) => withoutLocalEnd(attempt instanceof Error ? attempt.message : String(attempt))).join("; "));
           flattened.code = error.code;
           resolve({ error: flattened, socket });
+          return;
+        }
+        if (withoutLocalEnd(error.message) !== error.message) {
+          const trimmed: NodeJS.ErrnoException = new Error(withoutLocalEnd(error.message));
+          trimmed.code = error.code;
+          resolve({ error: trimmed, socket });
           return;
         }
         resolve({ error, socket });
