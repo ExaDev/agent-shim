@@ -391,7 +391,7 @@ describe("the pass-through route", () => {
     }
   });
 
-  it("reaches an upstream whose base URL is an IPv6 literal, by the same host the launch probe dials", async () => {
+  it("reaches an upstream whose base URL is an IPv6 literal, by the same host the launch probe dials", async (context) => {
     const server = http.createServer((_request, response) => {
       response.writeHead(HTTP_STATUS.ok, { "content-type": "application/json" });
       response.end('{"ok":true}');
@@ -405,9 +405,9 @@ describe("the pass-through route", () => {
         resolve(true);
       });
     });
-    // A host with no IPv6 loopback cannot show this; every other host does.
+    // A host with no IPv6 loopback cannot show this; the report lists the test as skipped there, not passed.
     if (!bound) {
-      return;
+      context.skip();
     }
     const address = server.address();
     if (address === null || typeof address === "string") {
