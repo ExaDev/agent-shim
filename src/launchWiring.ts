@@ -156,6 +156,9 @@ export interface PrepareClaudeLaunchOptions {
   readonly agentShim?: string;
 }
 
+/** What `prepareClaudeLaunch` returns: the launch's plan, and the warnings preparing it raised (a provider whose base URL accepts no connection, a quota the front door last saw, an unreadable login file), which the command line prints to standard error and a library host decides what to do with. */
+export type ClaudeLaunchPlan = LaunchPlan & { readonly warnings: readonly string[] };
+
 /**
  * The spawner a library launch starts the front door and headroom daemons through: the executable at `agentShim` when one is named, otherwise the package's own command line bundle (`agentShimCliPath`) run with the Node running this process, found when a launch first needs a daemon.
  */
@@ -166,15 +169,18 @@ export function daemonSpawnerFor(agentShim: string | undefined): DaemonSpawner {
 /**
  * Resolves a launch for `options.cwd` on this machine and returns what to spawn, so another tool can start `claude` as an identity, through a provider, with the same sharing rules the command line applies, without shelling out. It performs the effects the child depends on: the identity's farm is resynced, and the front door and headroom are brought up and this process registered with them. Call `release` on the plan when the child has exited.
  *
- * A refused launch throws `LaunchRefusedError` carrying the launcher's own message. Interactive offers (creating a missing identity or profile on a terminal) belong to the command line and are not made here.
+ * A refused launch throws `LaunchRefusedError` carrying the launcher's own message. A launch that proceeds despite a problem it noticed (an unreachable provider among them) returns it in the plan's `warnings`. Interactive offers (creating a missing identity or profile on a terminal) belong to the command line and are not made here.
  */
-export function prepareClaudeLaunch(options: PrepareClaudeLaunchOptions): LaunchPlan {
+export function prepareClaudeLaunch(options: PrepareClaudeLaunchOptions): ClaudeLaunchPlan {
   const paths = options.paths ?? resolveLayoutPaths();
   const refusals: string[] = [];
+  const warnings: string[] = [];
   const log: LogPort = {
     info: () => undefined,
     report: () => undefined,
-    warn: () => undefined,
+    warn: (message) => {
+      warnings.push(message);
+    },
     error: (message) => {
       refusals.push(message);
     },
@@ -188,7 +194,7 @@ export function prepareClaudeLaunch(options: PrepareClaudeLaunchOptions): Launch
     },
   };
   const spawnDaemon = daemonSpawnerFor(options.agentShim);
-  return prepareLaunch(realPrepareLaunchParams(paths, { proc, log, spawnDaemon, farm: buildFarmRuntime(paths, options.cwd) }));
+  return { ...prepareLaunch(realPrepareLaunchParams(paths, { proc, log, spawnDaemon, farm: buildFarmRuntime(paths, options.cwd) })), warnings };
 }
 
 /** What `resolveClaudeLaunch` needs from its caller: the launch `prepareClaudeLaunch` takes, less the daemon executable, since a resolution starts no daemon. */

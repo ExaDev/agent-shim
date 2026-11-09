@@ -110,7 +110,7 @@ describe("runLauncher provider selection", () => {
     expect(log.errors).toEqual(["agent-shim: provider z has no usable credential: env Z_API_TOKEN is unset or empty"]);
   });
 
-  it("refuses with exit 1, naming the provider and its base URL, when the base URL accepts no connection, probed within the provider's own bound", () => {
+  it("warns on standard error, naming the provider and its base URL, when the base URL accepts no connection, probed within the provider's own bound, and launches anyway", () => {
     const spawn = fakeSpawn();
     const log = fakeLog();
     const asked: [string, number][] = [];
@@ -121,7 +121,7 @@ describe("runLauncher provider selection", () => {
       paths,
       fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/z.json`]: { ...providerZ, connectTimeoutMs: ownConnectTimeoutMs } }),
       spawn,
-      proc: fakeProc({ Z_API_TOKEN: "tok-z" }, ["--provider", "z"]),
+      proc: fakeProc({ Z_API_TOKEN: "tok-z" }, ["--provider", "z", "--print"]),
       log,
       resolveClaudeBinary: () => discovered,
       probeBaseUrl: (baseUrl, timeoutMs) => {
@@ -130,24 +130,56 @@ describe("runLauncher provider selection", () => {
       },
     });
 
-    expect(code).toBe(1);
     expect(asked).toEqual([[providerZ.baseUrl, ownConnectTimeoutMs]]);
-    expect(spawn.spawnSync).not.toHaveBeenCalled();
-    expect(log.errors).toEqual([`agent-shim: provider z could not connect to ${providerZ.baseUrl}: no connection accepted within 1500ms`]);
+    expect(log.warns).toEqual([`provider z could not connect to ${providerZ.baseUrl}: no connection accepted within 1500ms`]);
+    // A warning goes to standard error with the launcher's other warnings, never into the report on standard output, which a caller piping `--print` output reads.
+    expect(log.reports.flat().map((row) => row.value).join("\n")).not.toContain("could not connect");
+    expect(log.errors).toEqual([]);
+    expect(spawn.spawnSync).toHaveBeenCalledTimes(1);
+    expect(code).toBe(0);
   });
 
-  it("launches on a provider whose base URL accepts a connection", () => {
+  it("launches on a provider whose base URL accepts a connection, with no warning", () => {
     const spawn = fakeSpawn();
+    const log = fakeLog();
     launch({
       paths,
       fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/z.json`]: providerZ }),
       spawn,
       proc: fakeProc({ Z_API_TOKEN: "tok-z" }, ["--provider", "z", "--print"]),
-      log: fakeLog(),
+      log,
       resolveClaudeBinary: () => discovered,
       probeBaseUrl: () => ({ ok: true }),
     });
     expect(spawn.spawnSync).toHaveBeenCalledTimes(1);
+    expect(log.warns).toEqual([]);
+  });
+
+  it("probes nothing for a launch with no provider, or one opted out with --no-provider", () => {
+    const asked: string[] = [];
+    const probe = (baseUrl: string): { readonly ok: true } => {
+      asked.push(baseUrl);
+      return { ok: true };
+    };
+    // The first launch is the control: the cascade selects provider z and the probe runs. The second opts out of that selection with --no-provider, and the third has no provider anywhere.
+    const launches = [
+      { argv: ["@work"], cascade: { launch: { provider: "z" } } },
+      { argv: ["@work", "--no-provider"], cascade: { launch: { provider: "z" } } },
+      { argv: ["@work"], cascade: {} },
+    ];
+    for (const { argv, cascade } of launches) {
+      launch({
+        paths,
+        fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/z.json`]: providerZ }),
+        spawn: fakeSpawn(),
+        proc: fakeProc({ Z_API_TOKEN: "tok-z" }, argv),
+        log: fakeLog(),
+        resolveClaudeBinary: () => discovered,
+        farm: fakeFarm(createFakeFarmFs({}), cascade),
+        probeBaseUrl: probe,
+      });
+    }
+    expect(asked).toEqual([providerZ.baseUrl]);
   });
 
   it("launches a local-proxy provider with a literal placeholder credential and nothing in the environment", () => {
