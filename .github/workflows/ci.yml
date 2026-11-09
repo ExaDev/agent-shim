@@ -928,8 +928,6 @@ jobs:
           sparse-checkout: .github/actions
       - name: Tap and install
         uses: ./.github/actions/brew-install
-        with:
-          tag: ${{ needs.semantic-release.outputs.tag }}
       - name: Check installed version matches the tag
         run: |
           agent-shim --version
@@ -980,8 +978,6 @@ jobs:
           sparse-checkout: .github/actions
       - name: Tap and install
         uses: ./.github/actions/brew-install
-        with:
-          tag: ${{ needs.semantic-release.outputs.tag }}
       - name: Check installed version matches the tag
         run: |
           agent-shim --version
@@ -1041,8 +1037,6 @@ jobs:
           sparse-checkout: .github/actions
       - name: Tap and install
         uses: ./.github/actions/brew-install
-        with:
-          tag: ${{ needs.semantic-release.outputs.tag }}
       - name: Check installed version matches the tag
         run: |
           agent-shim --version
