@@ -1,0 +1,15 @@
+name: Tap and install the Homebrew formula
+description: Taps ExaDev/agent-shim and installs the formula with brew's output kept off the runner's stdout pipe. A brew that dies of a broken pipe is counted as having succeeded only when the tap or the installed version shows it did the work; any other failure fails the step.
+
+inputs:
+  tag:
+    description: The released tag (vX.Y.Z) whose version the formula must install.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        RELEASE_TAG: ${{ inputs.tag }}
+      run: ${{ github.action_path }}/install.sh ExaDev/agent-shim ExaDev/agent-shim/agent-shim "${RELEASE_TAG#v}"
