@@ -105,15 +105,26 @@ export async function probeAccept<S extends DialSocket>(dial: () => Promise<Dial
       settled = true;
       resolve({ ok: false, reason: `no connection accepted within ${String(timeoutMs)}ms` });
     }, timeoutMs);
-    void dial().then((outcome) => {
-      outcome.socket.destroy();
-      if (settled) {
-        return;
-      }
-      settled = true;
-      cancel();
-      resolve(outcome.error === null ? { ok: true } : { ok: false, reason: `${outcome.error.code === undefined ? "" : `${outcome.error.code}: `}${outcome.error.message}` });
-    });
+    void dial().then(
+      (outcome) => {
+        outcome.socket.destroy();
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cancel();
+        resolve(outcome.error === null ? { ok: true } : { ok: false, reason: `${outcome.error.code === undefined ? "" : `${outcome.error.code}: `}${outcome.error.message}` });
+      },
+      // A dial that throws before it has a socket (a port the system refuses to connect to) rejects: that is the probe's answer, with the reason, not an unhandled rejection in the worker.
+      (error: unknown) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cancel();
+        resolve({ ok: false, reason: error instanceof Error ? error.message : String(error) });
+      },
+    );
   });
 }
 

@@ -146,6 +146,13 @@ describe("realBaseUrlProbe", () => {
     expect(rest).toEqual([]);
   });
 
+  it("answers a base URL that names port 0 with a reason, as a verdict, without starting a probe for it", () => {
+    const started: unknown[] = [];
+    const workers: ProbeWorkers = { start: (_source, data) => { started.push(data.port); return { verdict: () => ({ ok: true }) }; } };
+    expect(realBaseUrlBatchProbe([{ baseUrl: "http://h.example:0/", timeoutMs: SHORT_CONNECT_BOUND_MS }], workers)).toEqual([{ ok: false, reason: "the base URL names port 0, which nothing listens on" }]);
+    expect(started).toEqual([]);
+  });
+
   it("starts the probe of every target before it waits on any, whichever targets are dialled", () => {
     const events: string[] = [];
     const workers: ProbeWorkers = {
