@@ -126,17 +126,21 @@ describe("a door worker running the real bundle", () => {
   it(
     "reports the same path-resolution findings in a worker as the command line does, for a plain-bundle install on PATH, from the facts the door passes",
     async () => {
-      // A plain-bundle install: the bundle is an executable named agent-shim in a directory on PATH.
+      // A plain-bundle install as npm lays it out: the bundle is a .cjs file, and a link named agent-shim in a directory on PATH points at it (so the loader reads it as CommonJS whatever the directories above it hold).
+      const lib = path.join(dir, "install", "lib");
       const bin = path.join(dir, "install", "bin");
+      fs.mkdirSync(lib, { recursive: true });
       fs.mkdirSync(bin, { recursive: true });
+      const bundle = path.join(lib, "cli.cjs");
+      fs.writeFileSync(bundle, code, { mode: 0o755 });
       const installed = path.join(bin, "agent-shim");
-      fs.writeFileSync(installed, code, { mode: 0o755 });
+      fs.symlinkSync(bundle, installed);
       const root = path.join(dir, "home-path");
       fs.mkdirSync(root, { recursive: true });
       const before = { PATH: process.env.PATH, AGENT_SHIM_HOME: process.env.AGENT_SHIM_HOME };
       process.env.PATH = `${bin}${path.delimiter}${before.PATH ?? ""}`;
       process.env.AGENT_SHIM_HOME = root;
-      const host = createDoorWorkerHost({ code, facts: { ownExecutablePath: installed, contentSourcePath: installed }, deadlineMs: { check: REAL_WORKER_TEST_BUDGET_MS, doctor: REAL_WORKER_TEST_BUDGET_MS, "refresh-catalogue": REAL_WORKER_TEST_BUDGET_MS } });
+      const host = createDoorWorkerHost({ code, facts: { ownExecutablePath: installed, contentSourcePath: bundle }, deadlineMs: { check: REAL_WORKER_TEST_BUDGET_MS, doctor: REAL_WORKER_TEST_BUDGET_MS, "refresh-catalogue": REAL_WORKER_TEST_BUDGET_MS } });
       try {
         const cli = spawnSync(process.execPath, [installed, "doctor", "--json"], { env: process.env, encoding: "utf8" });
         const fromCli = DoctorRunOutputSchema.parse(JSON.parse(cli.stdout));
