@@ -8,7 +8,7 @@ import * as esbuild from "esbuild";
 import { rollup } from "rollup";
 import { dts } from "rollup-plugin-dts";
 
-import { ESBUILD_TARGET, cliBundleOptions } from "./bundle-options.mts";
+import { DOOR_WORKER_CODE_ASSET, ESBUILD_TARGET, cliBundleOptions } from "./bundle-options.mts";
 
 /**
  * Bundles `src/cli.ts` with esbuild into a single CJS file, then — unless `--bundle-only` is given — invokes the now-stable `node --build-sea=<config>` single command (Node v25.5.0 or later) to produce a self-contained single-executable-application binary.
@@ -130,6 +130,8 @@ function writeSeaConfig(): string {
   // Schema per https://nodejs.org/api/single-executable-applications.html — every field here is read directly from that page, not guessed. Paths are relative to `distDir`, since that is where `node --build-sea=` is invoked from below.
   const seaConfig = {
     main: bundleFileName,
+    // The bundle again as an asset: a SEA offers no way to read its own main script, and the front door's worker threads evaluate this text.
+    assets: { [DOOR_WORKER_CODE_ASSET]: bundleFileName },
     output: outputBinaryName,
     disableExperimentalSEAWarning: true,
     useSnapshot: false,

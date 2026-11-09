@@ -1,10 +1,12 @@
 import path from "node:path";
+import { isMainThread } from "node:worker_threads";
 
 import { reportFatalError } from "./cliReport";
 import type { CommandDeps } from "./cli/commandDeps";
 import { isInvokedAsClaude } from "./claudeShim";
 import { aliasLegacyEnv } from "./legacy";
 import { realPromptsPort } from "./configure";
+import { runDoorWorkerEntry } from "./frontdoor/doorWorkerEntry";
 import { tryRunAtIdentityShortcut } from "./identityManager";
 import { resolveLayoutPaths } from "./paths";
 import { realRunPort } from "./realPorts";
@@ -41,11 +43,16 @@ async function main(): Promise<void> {
   await buildProgram({ ...deps, runClaude }).parseAsync(process.argv);
 }
 
-main().catch((error: unknown) => {
-  process.exitCode = reportFatalError(error, {
-    writeErr: (line) => {
-      console.error(line);
-    },
-    env: process.env,
+// The front door starts its worker threads from this same bundle text (`src/frontdoor/doorWorker.ts`), so evaluating the bundle in a worker runs the task the door asked for, never the command line.
+if (isMainThread) {
+  main().catch((error: unknown) => {
+    process.exitCode = reportFatalError(error, {
+      writeErr: (line) => {
+        console.error(line);
+      },
+      env: process.env,
+    });
   });
-});
+} else {
+  void runDoorWorkerEntry();
+}
