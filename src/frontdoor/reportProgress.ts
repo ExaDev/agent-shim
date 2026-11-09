@@ -43,7 +43,7 @@ export function encodeReportSize(bytes: number): string {
 
 /** What `createReportOutputReader` returns: `push` takes standard output as it arrives, `report` is the report read so far (empty until the size line is whole), and `shortRead` says how many bytes of the announced size are missing once the child has ended (undefined when the report is whole or no size was announced). */
 export interface ReportOutputReader {
-  readonly push: (chunk: string) => void;
+  readonly push: (chunk: Buffer | string) => void;
   readonly report: () => string;
   readonly shortRead: () => { readonly received: number; readonly announced: number } | undefined;
 }
@@ -52,38 +52,41 @@ export interface ReportOutputReader {
  * Reads a report child's standard output: a size line (`encodeReportSize`) and then exactly that many bytes of report. The size is what the child announced it would print, so it is the whole bound on what the door keeps: a child that prints a report longer than it announced, prints no size line, or prints a malformed one is ended through `fail` with the reason, and no constant caps a report that grows with the user's data.
  */
 export function createReportOutputReader(fail: (reason: string) => void): ReportOutputReader {
-  let header = "";
+  const LINE_FEED = 0x0a;
+  let header = Buffer.alloc(0);
   let announced: number | undefined;
-  let report = "";
+  const chunks: Buffer[] = [];
   let reportBytes = 0;
   return {
     push: (chunk) => {
-      let rest = chunk;
+      let rest = typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk;
       if (announced === undefined) {
-        header += rest;
-        const lineEnd = header.indexOf("\n");
+        header = Buffer.concat([header, rest]);
+        const lineEnd = header.indexOf(LINE_FEED);
         if (lineEnd === -1) {
           if (header.length > REPORT_SIZE_LINE_MAX_CHARS) {
             fail("printed output without announcing its size");
           }
           return;
         }
-        const size = header.startsWith(REPORT_SIZE_PREFIX) ? Number(header.slice(REPORT_SIZE_PREFIX.length, lineEnd)) : Number.NaN;
+        const line = header.subarray(0, lineEnd).toString("latin1");
+        const size = line.startsWith(REPORT_SIZE_PREFIX) ? Number(line.slice(REPORT_SIZE_PREFIX.length)) : Number.NaN;
         if (!Number.isSafeInteger(size) || size < 0) {
           fail("printed output without announcing its size");
           return;
         }
         announced = size;
-        rest = header.slice(lineEnd + 1);
+        rest = header.subarray(lineEnd + 1);
       }
-      reportBytes += Buffer.byteLength(rest);
+      // Bytes are counted as they arrive and decoded once at the end: decoding each chunk would count a character cut off mid-sequence as its replacement character.
+      reportBytes += rest.length;
       if (reportBytes > announced) {
         fail(`printed more than the ${String(announced)} bytes it announced`);
         return;
       }
-      report += rest;
+      chunks.push(rest);
     },
-    report: () => report,
+    report: () => Buffer.concat(chunks).toString("utf8"),
     shortRead: () => (announced !== undefined && reportBytes < announced ? { received: reportBytes, announced } : undefined),
   };
 }

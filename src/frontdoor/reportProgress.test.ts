@@ -123,6 +123,11 @@ describe("local work announcements", () => {
 });
 
 describe("the report output reader", () => {
+  /** The first byte of a two-byte UTF-8 character (U+00C3 onward). */
+  const TWO_BYTE_LEAD = Array.from(Buffer.from("é").subarray(0, 1));
+  /** Where the test splits a report: inside the two-byte character, then inside the three-byte one. */
+  const FIRST_SPLIT = 7;
+  const SECOND_SPLIT = 9;
   /** Feeds `chunks` to a reader and returns the report it kept and every failure it raised. */
   function read(chunks: readonly string[]): { readonly report: string; readonly failures: readonly string[] } {
     const failures: string[] = [];
@@ -137,6 +142,28 @@ describe("the report output reader", () => {
     const text = `${encodeReportSize(Buffer.byteLength("{\"a\":1}\n"))}{"a":1}\n`;
     expect(read([text])).toEqual({ report: '{"a":1}\n', failures: [] });
     expect(read(text.split(""))).toEqual({ report: '{"a":1}\n', failures: [] });
+  });
+
+  it("counts the raw bytes of a report cut off inside a multibyte character, whatever the chunking", () => {
+    const failures: string[] = [];
+    const reader = createReportOutputReader((reason) => { failures.push(reason); });
+    const announced = 10;
+    // Eight bytes and the first byte of a two-byte character: nine bytes received, one short of what was announced.
+    reader.push(Buffer.concat([Buffer.from(encodeReportSize(announced)), Buffer.from("aaaaaaaa"), Buffer.from(TWO_BYTE_LEAD)]));
+    expect(failures).toEqual([]);
+    expect(reader.shortRead()).toEqual({ received: 9, announced });
+  });
+
+  it("reads a healthy multibyte report whole when a character is split across chunks", () => {
+    const failures: string[] = [];
+    const reader = createReportOutputReader((reason) => { failures.push(reason); });
+    const report = Buffer.from('{"a":"é€😀"}');
+    reader.push(Buffer.concat([Buffer.from(encodeReportSize(report.length)), report.subarray(0, FIRST_SPLIT)]));
+    reader.push(report.subarray(FIRST_SPLIT, SECOND_SPLIT));
+    reader.push(report.subarray(SECOND_SPLIT));
+    expect(failures).toEqual([]);
+    expect(reader.shortRead()).toBeUndefined();
+    expect(reader.report()).toBe('{"a":"é€😀"}');
   });
 
   it("counts the report in bytes, not characters", () => {

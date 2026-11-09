@@ -390,6 +390,22 @@ describe("the door's check and doctor reports", () => {
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`exited 1 having printed 0 of the ${String(announced)} bytes it announced: could not read the keychain`);
   });
 
+  it("names a short read, not an over-long one, when a child is cut off inside a multibyte character", async () => {
+    const announced = 10;
+    const script = `process.stdout.write(Buffer.concat([Buffer.from(${JSON.stringify(encodeReportSize(announced))}), Buffer.from("aaaaaaaa"), Buffer.from([0xc3])]));`;
+    const reports = createDoorReports({ selfInvocation: nodeRunning(script), env: {} });
+    await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow(`exited 0 having printed 9 of the ${String(announced)} bytes it announced`);
+  });
+
+  it("accepts a healthy multibyte report the child printed in pieces", async () => {
+    const report = JSON.stringify({ findings: [], ok: true, note: "é€😀" });
+    const script = `const body = Buffer.from(${JSON.stringify(report)}); process.stdout.write(${JSON.stringify(encodeReportSize(Buffer.byteLength(report)))}); process.stdout.write(body.subarray(0, 25)); setTimeout(() => process.stdout.write(body.subarray(25)), 30);`;
+    const reports = createDoorReports({ selfInvocation: nodeRunning(script), env: {} });
+    const failure = await reports.doctorReport(new AbortController().signal).then(() => "", (error: unknown) => (error instanceof Error ? error.message : String(error)));
+    expect(failure).not.toContain("bytes it announced");
+    expect(failure).not.toContain("not JSON");
+  });
+
   it("still says it exited without a report when a child announced nothing and printed nothing", async () => {
     const reports = createDoorReports({ selfInvocation: nodeRunning("process.exitCode = 3;"), env: {} });
     await expect(reports.doctorReport(new AbortController().signal)).rejects.toThrow("exited 3 without a report");

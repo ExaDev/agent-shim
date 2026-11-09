@@ -100,8 +100,7 @@ async function runSelfJson(selfInvocation: SelfInvocation, env: NodeJS.ProcessEn
     releases.push(() => { limit.signal?.removeEventListener("abort", onAbort); });
     const output = createReportOutputReader((reason) => { fail(new Error(`${command} ${reason}`)); });
     let err = "";
-    outPipe.setEncoding("utf8");
-    outPipe.on("data", (chunk: string) => { output.push(chunk); });
+    outPipe.on("data", (chunk: Buffer | string) => { output.push(chunk); });
     errPipe.setEncoding("utf8");
     errPipe.on("data", (chunk: string) => {
       err = (err + chunk).slice(-STDERR_TAIL_CHARS);
