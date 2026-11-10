@@ -1,3 +1,24 @@
+## [14.0.3](https://github.com/ExaDev/agent-shim/compare/v14.0.2...v14.0.3) (2026-11-10)
+
+### Bug Fixes
+
+* **frontdoor:** judge a multi-address dial by its attempts and remember excluded source ports ([e2a373d](https://github.com/ExaDev/agent-shim/commit/e2a373d90f146b4fb07b7b1321ac85d899b98fa8))
+* **frontdoor:** move past a Windows excluded source port in the dial rotation ([cd485c4](https://github.com/ExaDev/agent-shim/commit/cd485c438382e1e6c60f2dd28058344a66466347))
+* **frontdoor:** retry the next source port when any attempt of a multi-address dial failed on it ([9a32459](https://github.com/ExaDev/agent-shim/commit/9a3245963020cecf64c0d31efb5516a82953fbb0))
+* **headroom:** judge no allowlist rule where headroom cannot be served ([5b22aff](https://github.com/ExaDev/agent-shim/commit/5b22afff699778cb18d6afaadc3033d806b3c843))
+
+### Continuous Integration
+
+* dial a loopback listener from the Windows smoke jobs ([7222460](https://github.com/ExaDev/agent-shim/commit/72224607b4d1c7fa337b772ecf5d2537fda56d00))
+* end the Windows dial smoke step with a stated success ([4715181](https://github.com/ExaDev/agent-shim/commit/4715181397f5ecf5603f0946d876c0718b723063))
+* report what doctor printed when the Windows dial smoke step gets no report ([999ac25](https://github.com/ExaDev/agent-shim/commit/999ac255f27b6d16a5cb42fbf9ec1329a92bc84d))
+
+### Tests
+
+* **ci:** run the Windows dial smoke script over a stub binary under pwsh ([244ea70](https://github.com/ExaDev/agent-shim/commit/244ea706f3dd309e1f3f3fdb4f28cbdd66494601))
+* **ci:** title the dial smoke script test for what it enforces ([f4ea770](https://github.com/ExaDev/agent-shim/commit/f4ea7705c4e62a3d70de5a0dbf609d8c5e37ab8c))
+* **doctor:** run the real-wired report as win32 does, with no POSIX user id ([61cebab](https://github.com/ExaDev/agent-shim/commit/61cebab7252991dad8cee0728bd1e6910b9e4957))
+
 ## [14.0.2](https://github.com/ExaDev/agent-shim/compare/v14.0.1...v14.0.2) (2026-11-10)
 
 ### Bug Fixes
