@@ -1,3 +1,4 @@
+import { topLevelModel } from "./topLevelModel";
 import { PassThrough } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 
@@ -46,7 +47,7 @@ export interface RequestScan {
  *
  * The mechanism is persistent `data`/`end` listeners, not an async iterator: an iterator broken out of mid-flight detaches its listeners, and a stream that ends while nobody is listening leaves a later `next()` waiting for an `end` that already fired. Persistent listeners cannot miss it, and pausing the source the moment the head is decided is what keeps the scan bounded while the remainder streams straight through to the replay under real backpressure.
  *
- * Nothing here parses the body: the model field is found as the first `"model": "..."` pair of the head's text, and an image block as the first `"type": "image"` inside it, which is exactly how the fields appear in the JSON Claude Code serialises. A head with neither (or a body the cap could not cover) reports the fact as absent, which the condition evaluator carries as indeterminate.
+ * Nothing here parses the body: the model field is found as the `"model"` key of the top-level object in the head's text (`topLevelModel`: a walk over strings and brace depth, so a `model` nested in `messages` never counts), and an image block as the first `"type": "image"` inside it, which is exactly how the fields appear in the JSON Claude Code serialises. A head with neither (or a body the cap could not cover) reports the fact as absent, which the condition evaluator carries as indeterminate.
  */
 export async function scanRequestHead(request: RoutedRequest, wholeBody = false): Promise<RequestScan> {
   const body = request.body;
@@ -65,7 +66,7 @@ export async function scanRequestHead(request: RoutedRequest, wholeBody = false)
   const replay = new PassThrough();
   // Destroying the replay with the body's failure emits `error` on it, and a stream with no `error` listener turns that into an uncaught exception that ends the process. A client aborting its upload fails the body whether or not the route has attached to the replay yet, so the scan owns a listener; a consumer reading the replay still receives the same error through the stream itself.
   replay.on("error", () => undefined);
-  const modelIn = (): string | undefined => /"model"\s*:\s*"((?:[^"\\]|\\.)+)"/.exec(text)?.[1];
+  const modelIn = (): string | undefined => topLevelModel(text)?.value;
 
   const settled = new Promise<RequestScan>((resolve) => {
     const settle = (): void => {

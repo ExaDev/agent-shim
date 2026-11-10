@@ -631,10 +631,10 @@ describe("rewriting the model field in a body's head", () => {
     return Buffer.concat(out);
   }
 
-  it("rewrites a model key written with whitespace before its colon, as the scan finds it", async () => {
+  it("rewrites a model key written with whitespace before its colon, as the scan finds it, changing the value alone", async () => {
     const body = Buffer.from('{"model" : "' + HAIKU_NAME + '", "messages": []}', "utf8");
     const out = await rewrittenBytes([body], body.length, HAIKU_NAME, "glm-4.5-air");
-    expect(out.toString("utf8")).toBe('{"model":"glm-4.5-air", "messages": []}');
+    expect(out.toString("utf8")).toBe('{"model" : "glm-4.5-air", "messages": []}');
   });
 
   it("rewrites a model value written with an escaped quote whole, as the scan reads it", async () => {
