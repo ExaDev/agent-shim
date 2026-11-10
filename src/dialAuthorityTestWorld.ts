@@ -1,4 +1,6 @@
-import { MAX_LABEL_LENGTH, MAX_NAME_LENGTH } from "./baseUrlDial";
+/** RFC 1035 section 2.3.4 fixes a label at 63 octets and a name at 255 octets in wire form, which is 253 characters in dotted text. The limits are written here as literals, not read from the implementation, so changing the implementation's constants turns these tests red. */
+export const RFC_1035_MAX_LABEL = 63;
+export const RFC_1035_MAX_NAME = 253;
 
 /** A host no refusal reason has a reason to contain; a client's bytes in a reason would be a header injection and a credential leak (userinfo is the authority's secret half). */
 export const MARKER = "zq9marker7";
@@ -26,8 +28,8 @@ export const MALFORMED_WITH_MARKER: readonly string[] = [
   `${MARKER}-.x`,
   `${MARKER}*`,
   `${MARKER}.0x7f.1`,
-  `${"a".repeat(MAX_LABEL_LENGTH + 1)}${MARKER}`,
-  `${MARKER}.${"a".repeat(MAX_NAME_LENGTH)}`,
+  `${"a".repeat(RFC_1035_MAX_LABEL + 1)}${MARKER}`,
+  `${MARKER}.${"a".repeat(RFC_1035_MAX_NAME)}`,
   `${MARKER}\u200d`,
   `ho]${MARKER}`,
   `ho[${MARKER}`,
