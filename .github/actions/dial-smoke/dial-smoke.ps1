@@ -49,3 +49,6 @@ finally {
   $closed.Stop()
   Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
 }
+
+# Reached only when every check above passed (a failed one throws). The step's exit status would otherwise be that of the last command run: doctor's, which is non-zero for findings unrelated to a runner, or the cleanup's, which can fail on a file Windows still holds.
+exit 0
