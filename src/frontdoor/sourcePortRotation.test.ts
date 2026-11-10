@@ -68,17 +68,20 @@ describe("which source-port failures move the rotation on", () => {
     ["win32", ["EACCES@bind", "EACCES@bind"], "excluded"],
     ["win32", ["EACCES@bind", "EADDRINUSE@bind"], "excluded"],
     ["win32", ["EADDRINUSE@bind", "EADDRINUSE@bind"], "held"],
-    ["win32", ["EACCES@bind", "ECONNREFUSED@connect"], undefined],
-    ["win32", ["EACCES@bind", "EACCES@connect"], undefined],
+    ["win32", ["EACCES@bind", "ECONNREFUSED@connect"], "excluded"],
+    ["win32", ["ECONNREFUSED@connect", "ECONNREFUSED@connect"], undefined],
+    ["win32", ["EACCES@connect", "ECONNREFUSED@connect"], undefined],
     ["linux", ["EACCES@bind", "EACCES@bind"], undefined],
+    ["linux", ["EACCES@bind", "ECONNREFUSED@connect"], undefined],
+    ["linux", ["ECONNREFUSED@connect", "EADDRINUSE@bind"], "held"],
     ["linux", ["EADDRINUSE@bind", "EADDRINUSE@bind"], "held"],
-    ["linux", ["EADDRINUSE@bind", "ECONNREFUSED@connect"], undefined],
-  ] as const)("on %s an AggregateError of %j is judged by its attempts: %s", (platform, attempts, kind) => {
+    ["linux", ["ECONNREFUSED@connect", "ECONNREFUSED@connect"], undefined],
+  ] as const)("on %s an AggregateError of %j moves on when any attempt was a source-port failure: %s", (platform, attempts, kind) => {
     expect(sourcePortClassifier(platform)(aggregateOf(...attempts))).toBe(kind);
   });
 
   it("judges a nested AggregateError by its attempts too", () => {
-    const nested: NodeJS.ErrnoException = new AggregateError([aggregateOf("EACCES@bind", "EACCES@bind"), failureOf("EACCES@bind")], "");
+    const nested: NodeJS.ErrnoException = new AggregateError([aggregateOf("EACCES@bind", "ECONNREFUSED@connect"), failureOf("ECONNREFUSED@connect")], "");
     expect(sourcePortClassifier("win32")(nested)).toBe("excluded");
     expect(sourcePortClassifier("linux")(nested)).toBeUndefined();
   });
@@ -163,15 +166,26 @@ describe("which source-port failures move the rotation on", () => {
     expect(ports).toEqual([RANGE_START, RANGE_START + 1, RANGE_START + 2]);
   });
 
-  it("fails an aggregate at once when any attempt failed at the destination, on Windows too", async () => {
-    const { outcome, ports } = await dialOn("win32", ["AGG:EACCES@bind|ECONNREFUSED@connect", undefined]);
-    expect(outcome.error?.code).toBe("EACCES");
-    expect(ports).toHaveLength(1);
+  it("moves on from an aggregate in which only some attempts were refused at the bind, and fails at once when none was", async () => {
+    const mixed = await dialOn("win32", ["AGG:ECONNREFUSED@connect|EACCES@bind", undefined]);
+    expect(mixed.outcome.error).toBeNull();
+    expect(mixed.ports).toHaveLength(2);
+    const destinationOnly = await dialOn("win32", ["AGG:ECONNREFUSED@connect|ECONNREFUSED@connect", undefined]);
+    expect(destinationOnly.outcome.error?.code).toBe("ECONNREFUSED");
+    expect(destinationOnly.ports).toHaveLength(1);
+  });
+
+  it("is bounded by the range when every dial of an aggregate has one source-port failure and one refusal", async () => {
+    const { outcome, ports } = await dialOn("linux", Array.from({ length: RANGE_WIDTH * 2 }, () => "AGG:ECONNREFUSED@connect|EADDRINUSE@bind"));
+    expect(ports).toHaveLength(RANGE_WIDTH);
+    expect(outcome.error).not.toBeNull();
   });
 
   it("fails an aggregate of bind refusals at once on a platform that excludes no ranges", async () => {
     const { ports } = await dialOn("linux", ["AGG:EACCES@bind|EACCES@bind", undefined]);
     expect(ports).toHaveLength(1);
+    const withRefusal = await dialOn("linux", ["AGG:EACCES@bind|ECONNREFUSED@connect", undefined]);
+    expect(withRefusal.ports).toHaveLength(1);
   });
 
   it("says every source port was refused only when every one was, and counts the others as held when some were", async () => {
@@ -287,5 +301,55 @@ describe("the rotation's memory of ports the system refuses", () => {
     await dial();
     // The held port came round again as the cursor wrapped, instead of being skipped for ever.
     expect(attempts).toEqual([FIRST, FIRST + 1, FIRST]);
+  });
+});
+
+describe("a name that resolves to ::1 and 127.0.0.1 with a listener on 127.0.0.1 only, over real sockets", () => {
+  const HELD_PORT = 31_980;
+  const RANGE_LAST = 31_989;
+  const IPV4_FAMILY = 4;
+  const IPV6_FAMILY = 6;
+
+  it("succeeds after the rotation moves past a held source port, though the ::1 attempt was refused", async () => {
+    const holder = net.createServer();
+    const listener = net.createServer((socket) => {
+      socket.destroy();
+    });
+    await new Promise<void>((resolve) => {
+      holder.listen(HELD_PORT, "0.0.0.0", resolve);
+    });
+    await new Promise<void>((resolve) => {
+      listener.listen(0, "127.0.0.1", resolve);
+    });
+    const address = listener.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("listener has no TCP address");
+    }
+    const lookup: net.LookupFunction = (_host, options, reply) => {
+      const answers = [{ address: "::1", family: IPV6_FAMILY }, { address: "127.0.0.1", family: IPV4_FAMILY }];
+      if (options.all === true) {
+        reply(null, answers);
+      } else {
+        reply(null, "127.0.0.1", IPV4_FAMILY);
+      }
+    };
+    const before = net.getDefaultAutoSelectFamily();
+    net.setDefaultAutoSelectFamily(true);
+    try {
+      const attempts: (number | undefined)[] = [];
+      const outcome = await doorDial(
+        { connect: (options) => { attempts.push(options.localPort); return net.connect(options); }, lookup, isIP: net.isIP, sourcePortFailure: sourcePortClassifier("linux") },
+        { host: "provider.example", port: address.port },
+        new SourcePortRange(HELD_PORT, RANGE_LAST),
+      );
+      outcome.socket.destroy();
+      expect(outcome.error).toBeNull();
+      expect(attempts[0]).toBe(HELD_PORT);
+      expect(attempts.length).toBeGreaterThan(1);
+    } finally {
+      net.setDefaultAutoSelectFamily(before);
+      holder.close();
+      listener.close();
+    }
   });
 });
