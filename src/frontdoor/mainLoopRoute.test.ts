@@ -125,7 +125,7 @@ describe("a provider-less session's helper requests follow its main loop", () =>
     const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0, mainLoopRoutes: record, fs: fakeFs({ [`${PROVIDERS_DIR}/r.json`]: { kind: "router", displayName: "Router" } }), providersDir: PROVIDERS_DIR, codexPorts: unusedCodexPorts(), directPort: () => OWN_PORT, env: {}, credentials: fakeAsyncCredentials() });
     const resolution = await resolve({ method: "POST", url: "/v1/messages", headers: { "x-claude-code-request-class": "main" }, body: Readable.from([Buffer.from(JSON.stringify({ model: "r/anything", messages: [] }))]), signal: new AbortController().signal, session: { identity: undefined, sessionId: "s-1", provider: undefined, headroom: false, projectId: undefined, launch: launchOfSession("s-1") } });
     expect(resolution.ok && resolution.route.name).toBe("router:r");
-    expect(record.routeOf(launchOfSession("s-1"))).toEqual({ kind: "provider", provider: "r" });
+    expect(record.routeOf(launchOfSession("s-1"))).toMatchObject({ kind: "provider", provider: "r", requestedModel: "r/anything", servedModel: "anything" });
   });
 
   it("sends the helpers back to the Anthropic route once the main loop returns there", async () => {
@@ -133,11 +133,12 @@ describe("a provider-less session's helper requests follow its main loop", () =>
     try {
       await send(world, { model: "z/glm-5.3", requestClass: "main" });
       await send(world, { model: HAIKU_NAME, requestClass: "auxiliary" });
-      // `/model` back to a Claude model: the main loop is on Anthropic again, and the helper after it follows.
-      await send(world, { model: "claude-opus-5-5", requestClass: "main" });
+      // `/model anthropic/<model>`: the main loop is on Anthropic again, and the helper after it follows.
+      await send(world, { model: "anthropic/claude-opus-5-5", requestClass: "main" });
       await send(world, { model: HAIKU_NAME, requestClass: "auxiliary" });
       expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-5.3", Z_HAIKU_MODEL]);
       expect(world.toAnthropic).toEqual(["main", "auxiliary"]);
+      expect(world.anthropicModels).toEqual(["claude-opus-5-5", HAIKU_NAME]);
     } finally {
       await world.close();
     }
@@ -431,11 +432,11 @@ describe("a session launched before the class header was asked for", () => {
     }
   });
 
-  it("still counts a request with neither header as the main loop, which re-points the record", async () => {
+  it("still counts a request with neither header as the main loop, which re-points the record when it names Anthropic", async () => {
     const world = await startWorld();
     try {
       await send(world, { model: "z/glm-5.3" });
-      await send(world, { model: "claude-opus-5-5" });
+      await send(world, { model: "anthropic/claude-opus-5-5" });
       await send(world, { model: "claude-sonnet-5-5", agentId: "agent-1" });
       expect(world.toAnthropic).toEqual(["(no class)", "(no class)"]);
     } finally {
@@ -539,7 +540,7 @@ describe("followingMainLoop over a resolver that records what it is asked", () =
       return Promise.resolve({ ok: true, route: { name: "stand-in", headroomEligible: false, headroomUpstream: undefined, serve: async () => Promise.resolve() }, request });
     };
     const follow = async (url: string, requestClass: string | undefined, session = "s-1"): Promise<RouteResolution> =>
-      await followingMainLoop(resolve, { record, helperModel: () => ({ kind: "as-is" }) })({
+      await followingMainLoop(resolve, { record, providerMapping: () => ({ model: { kind: "as-is" }, credential: undefined }), loginOf: () => "the launch's login", definesProvider: () => false })({
         method: "POST",
         url,
         headers: requestClass === undefined ? {} : { "x-claude-code-request-class": requestClass },
@@ -554,7 +555,7 @@ describe("followingMainLoop over a resolver that records what it is asked", () =
     const record = mainLoopRoutesOfLiveSessions();
     record.record(launchOfSession("s-1"), { kind: "provider", provider: "z" });
     const resolve = async (): Promise<RouteResolution> => await Promise.resolve({ ok: true, route: { name: "stand-in", headroomEligible: false, headroomUpstream: undefined, serve: async () => Promise.resolve() } });
-    const resolution = await followingMainLoop(resolve, { record, helperModel: () => ({ kind: "as-is" }) })({
+    const resolution = await followingMainLoop(resolve, { record, providerMapping: () => ({ model: { kind: "as-is" }, credential: undefined }), loginOf: () => "the launch's login", definesProvider: () => false })({
       method: "POST",
       url: "/v1/messages",
       headers: { "x-claude-code-request-class": "auxiliary" },
@@ -584,7 +585,7 @@ describe("followingMainLoop over a resolver that records what it is asked", () =
     const { follow, record } = fixture();
     record.record(launchOfSession("s-1"), { kind: "provider", provider: "z" });
     await follow("/v1/messages", undefined);
-    expect(record.routeOf(launchOfSession("s-1"))).toEqual({ kind: "anthropic" });
+    expect(record.routeOf(launchOfSession("s-1"))).toMatchObject({ kind: "anthropic" });
   });
 
   it("sends a helper whose class is not one Claude Code sends where the main loop is, as it does any other helper", async () => {

@@ -21,7 +21,7 @@ import type { DiscoveredClaudeBinary } from "./versionDiscovery";
 import type { PipelineDeps } from "./frontdoor/pipeline";
 import { AUTH_HEADER } from "./frontdoor/route";
 import { createMainLoopRouteRecord, type MainLoopRoutePorts, type MainLoopRouteRecord } from "./frontdoor/mainLoopRoute";
-import { launchKeyOf, type FrontDoorLaunch, type MainLoopRoute } from "./frontdoor/state";
+import { launchKeyOf, type FrontDoorLaunch, type RouteContext } from "./frontdoor/state";
 import type { FrontDoorSessionDetails } from "./frontdoor/state";
 
 /** The shipped classification map, parsed once, for use as the default in tests. */
@@ -416,9 +416,12 @@ const EXISTING_IDENTITIES: Readonly<Record<string, unknown>> = Object.fromEntrie
   ["work", "personal"].map((name) => [`${paths.identitiesDir}/${name}/identity.json`, { name, allowAmbientCredential: false }]),
 );
 
-/** A fake `FsPort` over `ownFiles`, layered over `EXISTING_IDENTITIES` so a test only spells out the files it is actually about. */
-export function fakeFs(ownFiles: Record<string, unknown>, symlinks: Readonly<Record<string, string>> = {}): FsPort {
-  const files: Record<string, unknown> = { ...EXISTING_IDENTITIES, ...ownFiles };
+/** A fake `FsPort` over `files`, layered over `EXISTING_IDENTITIES` so a test only spells out the files it is actually about. */
+export function fakeFs(files: Record<string, unknown>, symlinks: Readonly<Record<string, string>> = {}): FsPort {
+  // The files are the object the test passed, so a test that keeps it can change a file between two reads, as a person editing a provider file does.
+  for (const [name, content] of Object.entries(EXISTING_IDENTITIES)) {
+    files[name] ??= content;
+  }
   // A path as the directory it reaches: absolute and without a trailing separator, with a symlink followed to its target.
   const reached = (target: string): string => {
     const resolved = path.resolve(target);
@@ -496,7 +499,7 @@ export function fakeFrontDoorEnv(identity?: string, extra: Readonly<Record<strin
 
 /** A durable route store held in memory, standing for the registry directory that outlives a door process. */
 export function inMemoryRouteStore(): MainLoopRoutePorts["stored"] {
-  const held = new Map<string, MainLoopRoute>();
+  const held = new Map<string, RouteContext>();
   // A count of the writes of each launch's copy, standing for the modification time a file's identity would carry.
   const versions = new Map<string, number>();
   return {

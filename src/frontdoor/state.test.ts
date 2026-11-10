@@ -195,11 +195,12 @@ describe("front-door session registry", () => {
       const fs = createFakeFarmFs(text === undefined ? {} : { [file]: text });
       return readLaunchRoute(fs, paths.frontdoorSessionsDir, { pid: LIVE, startedAt: 1 });
     };
-    const good = { version: 1, startedAt: 1, route: { kind: "provider", provider: "z" } };
+    const good = { version: 2, startedAt: 1, route: { kind: "provider", provider: "z" } };
     expect(read(undefined)).toBeUndefined();
     expect(read(JSON.stringify(good))).toEqual({ kind: "provider", provider: "z" });
     expect(() => read("not json")).toThrow("is not JSON");
-    expect(() => read(JSON.stringify({ ...good, version: 2 }))).toThrow("written by a newer door");
+    expect(read(JSON.stringify({ ...good, version: 1 }))).toEqual({ kind: "provider", provider: "z" });
+    expect(() => read(JSON.stringify({ ...good, version: 3 }))).toThrow("written by a newer door");
     expect(() => read(JSON.stringify({ ...good, version: 99 }))).toThrow("written by a newer door");
     expect(() => read(JSON.stringify({ startedAt: 1, route: good.route }))).toThrow("is not a route file this door reads");
     expect(() => read(JSON.stringify({ ...good, extra: true }))).toThrow("is not a route file this door reads");
