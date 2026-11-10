@@ -3,7 +3,7 @@ import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
-import { CODEX_DEFAULT_TIER_MODELS } from "../config/schema";
+import { ANTIGRAVITY_DEFAULT_TIER_MODELS, CODEX_DEFAULT_TIER_MODELS } from "../config/schema";
 import { FAKE_HOME, createFakeFarmFs, mainLoopRoutesOfLiveSessions } from "../test-helpers";
 import { createMainLoopRouteRecord, followingMainLoop } from "./mainLoopRoute";
 import { HAIKU_NAME, PROVIDERS_DIR, launchOfSession, send, startWorld, Z_HAIKU_MODEL, Z_OPUS_MODEL, Z_SONNET_MODEL } from "./mainLoopRouteTestWorld";
@@ -75,6 +75,19 @@ describe("a bare Claude model name from a session whose main loop is on a provid
     }
   });
 
+  it("passes the name after the anthropic/ prefix upstream exactly as the person wrote it, whether or not it is a Claude name the door knows", async () => {
+    const world = await startWorld();
+    try {
+      await send(world, { model: "z/glm-5.3", requestClass: "main" });
+      await send(world, { model: "anthropic/some-model-the-door-has-never-heard-of", requestClass: "main" });
+      await send(world, { model: "anthropic/claude-sonnet-4-20250514[1m]", requestClass: "main" });
+      expect(world.anthropicModels).toEqual(["some-model-the-door-has-never-heard-of", "claude-sonnet-4-20250514[1m]"]);
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-5.3"]);
+    } finally {
+      await world.close();
+    }
+  });
+
   it("reaches Anthropic with the prefix removed from a session that never left it, and for a helper", async () => {
     const world = await startWorld();
     try {
@@ -105,6 +118,19 @@ describe("a bare Claude model name from a session whose main loop is on a provid
       await send(world, { model: "z/glm-5.3", requestClass: "main" });
       expect((await send(world, { model: SONNET_NAME, requestClass: "main" })).status).toBe(HTTP_STATUS.ok);
       expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-5.3", SONNET_NAME]);
+      expect(world.toAnthropic).toEqual([]);
+    } finally {
+      await world.close();
+    }
+  });
+
+  it("is mapped by an antigravity provider's own tier mapping, and never reaches the launch's account", async () => {
+    const world = await startWorld();
+    try {
+      await send(world, { model: "ag/auto", requestClass: "main" });
+      expect((await send(world, { model: SONNET_NAME, requestClass: "main" })).status).toBe(HTTP_STATUS.ok);
+      expect(world.generated).toHaveLength(2);
+      expect(world.generated[1]).toBe(ANTIGRAVITY_DEFAULT_TIER_MODELS.sonnet[0]);
       expect(world.toAnthropic).toEqual([]);
     } finally {
       await world.close();
@@ -198,6 +224,29 @@ describe("the route context the door keeps for a launch", () => {
       expect(text).not.toContain(SECRET);
       expect(lines.join("\n")).not.toContain(SECRET);
     } finally {
+      await world.close();
+    }
+  });
+
+  it("holds no value of any credential source: a literal, a command's arguments or an environment variable's value reach neither the route file, nor a log line, nor the usage log", async () => {
+    const { fs, lines, world, file } = await recordedWorld();
+    try {
+      const LITERAL = "LITERAL-VALUE-7f3a";
+      const ARGUMENT = "COMMAND-ARGUMENT-9c1d";
+      const ENV_VALUE = "ENV-VALUE-5b2e";
+      process.env.Q_TOKEN_FOR_TEST = ENV_VALUE;
+      world.setProvider("q", { displayName: "Q", baseUrl: `http://127.0.0.1:${String(world.upstreamPort)}`, credential: { sources: [{ env: "Q_TOKEN_FOR_TEST" }, { command: ["/usr/bin/true", ARGUMENT] }, { literal: LITERAL }] } });
+      await send(world, { model: "q/glm-5.3", requestClass: "main" });
+      await send(world, { model: SONNET_NAME, requestClass: "main" });
+      const text = fs.readFileUtf8(file) ?? "";
+      expect(text).toContain("Q_TOKEN_FOR_TEST");
+      for (const value of [LITERAL, ARGUMENT, ENV_VALUE]) {
+        expect(text).not.toContain(value);
+        expect(lines.join("\n")).not.toContain(value);
+        expect(JSON.stringify(world.records)).not.toContain(value);
+      }
+    } finally {
+      delete process.env.Q_TOKEN_FOR_TEST;
       await world.close();
     }
   });
