@@ -58,9 +58,19 @@ export type FrontDoorSession = z.infer<typeof FrontDoorSessionSchema>;
 /** What names one launch: its launcher's pid and the time it registered. A launcher that registers again under its own pid (a relaunch after an account move, a `--resume`) writes a new start time, so per-launch state the door keeps never passes from one launch to the next, even when both carry the same session id. */
 export type FrontDoorLaunch = Pick<FrontDoorSession, "pid" | "startedAt">;
 
-/** Where a launch's main loop last went: the Anthropic route (Claude Code's own API) or a provider by name. */
-const MainLoopRouteSchema = z.union([z.strictObject({ kind: z.literal("anthropic") }), z.strictObject({ kind: z.literal("provider"), provider: z.string().min(1) })]);
-export type MainLoopRoute = z.infer<typeof MainLoopRouteSchema>;
+/** The longest a model name or a credential description in a route context may be: far above any real one, and the bound that keeps the file written per launch small whatever a request names. */
+export const MAX_CONTEXT_TEXT_LENGTH = 256;
+
+const ContextText = z.string().min(1).max(MAX_CONTEXT_TEXT_LENGTH);
+
+/** The facts about a route that are names, never values: the credential by what describes it (a variable name, a path, a program, a reference, a Keychain service, the identity whose login it is), and the models by name. */
+const ContextFacts = { credential: ContextText.optional(), requestedModel: ContextText.optional(), servedModel: ContextText.optional() };
+
+/**
+ * What the door knows of a launch's main loop, held per launch: the route it is on (the Anthropic route, Claude Code's own API, or a provider by name) and, as names, the credential that route uses and the model the main loop last asked for with the one the route served it under. The configuration that applied is not part of it: the provider file and the models block are read afresh for every request, so a changed file applies to the next one, and a stored copy would only go stale.
+ */
+const RouteContextSchema = z.union([z.strictObject({ kind: z.literal("anthropic"), ...ContextFacts }), z.strictObject({ kind: z.literal("provider"), provider: z.string().min(1), ...ContextFacts })]);
+export type RouteContext = z.infer<typeof RouteContextSchema>;
 
 /** The key one launch is known by in a map. */
 export function launchKeyOf(launch: Readonly<FrontDoorLaunch>): string {
@@ -336,8 +346,8 @@ export function launchRouteStore(fs: HeadroomFs, sessionsDir: string, log: (line
 /** What a door keeps a launch's main-loop route in. */
 export interface MainLoopRouteStore {
   /** Where the launch's main loop last went as the store holds it, or undefined for none; throws for a copy that exists and cannot be read. */
-  readonly read: (launch: Readonly<FrontDoorLaunch>) => MainLoopRoute | undefined;
-  readonly write: (launch: Readonly<FrontDoorLaunch>, route: MainLoopRoute) => void;
+  readonly read: (launch: Readonly<FrontDoorLaunch>) => RouteContext | undefined;
+  readonly write: (launch: Readonly<FrontDoorLaunch>, route: RouteContext) => void;
   /** What identifies the copy as it is now (its modification time and size), or undefined when there is none or it cannot be told: one stat of one file, so a door can tell that another door rewrote it without reading it. Never throws. An undefined identity is never a reason to read. */
   readonly identity: (launch: Readonly<FrontDoorLaunch>) => string | undefined;
 }
@@ -370,15 +380,17 @@ function launchRouteName(pid: number): string {
   return `${String(pid)}.route.json`;
 }
 
-/** The version of the route file this door writes and reads. A file of a higher version was written by a newer door whose format this one cannot judge, so it is reported as unreadable, never taken for "no route". */
-const LAUNCH_ROUTE_FILE_VERSION = 1;
+/**
+ * The version of the route file this door writes. Version 1, written before the route carried a credential and models, named a route only and is a route context with no facts, so it is read as one; a file of a higher version was written by a newer door whose format this one cannot judge, so it is reported as unreadable, never taken for "no route".
+ */
+const LAUNCH_ROUTE_FILE_VERSION = 2;
 
-const LaunchRouteFileSchema = z.strictObject({ version: z.literal(LAUNCH_ROUTE_FILE_VERSION), startedAt: z.number(), route: MainLoopRouteSchema });
+const LaunchRouteFileSchema = z.strictObject({ version: z.union([z.literal(1), z.literal(LAUNCH_ROUTE_FILE_VERSION)]), startedAt: z.number(), route: RouteContextSchema });
 
 /**
  * Records where `launch`'s main loop last went, in the registry directory beside the launch's own record, so a restarted or replacing door finds it and the launch's helper requests keep following it. Written only while the launch's record is still on disk: the door admits a request from its cached view of the registry, which can outlive the launch's release by a tick, and a route written after the release would be an orphan nothing but the prune removes. The check reads the record at the write, so the window left is the two synchronous calls between the read and the write.
  */
-export function writeLaunchRoute(fs: HeadroomFs, sessionsDir: string, launch: Readonly<FrontDoorLaunch>, route: MainLoopRoute): void {
+export function writeLaunchRoute(fs: HeadroomFs, sessionsDir: string, launch: Readonly<FrontDoorLaunch>, route: RouteContext): void {
   if (readFrontDoorSessionRecord(fs, sessionsDir, sessionRecordName(launch.pid))?.startedAt !== launch.startedAt) {
     return;
   }
@@ -389,7 +401,7 @@ export function writeLaunchRoute(fs: HeadroomFs, sessionsDir: string, launch: Re
 /**
  * Where `launch`'s main loop last went, or undefined when none was recorded or the file belongs to an earlier launch under the same pid (a different start time). A file that exists and cannot be read as a route of this door's version (not JSON, not the shape, written by a newer door, or unreadable) throws, naming which: a launch's helpers are then sent down the launch's own route, and that must be reported, not taken for "nothing recorded".
  */
-export function readLaunchRoute(fs: Pick<HeadroomFs, "readFileUtf8">, sessionsDir: string, launch: Readonly<FrontDoorLaunch>): MainLoopRoute | undefined {
+export function readLaunchRoute(fs: Pick<HeadroomFs, "readFileUtf8">, sessionsDir: string, launch: Readonly<FrontDoorLaunch>): RouteContext | undefined {
   const name = launchRouteName(launch.pid);
   const text = fs.readFileUtf8(path.join(sessionsDir, name));
   if (text === undefined) {

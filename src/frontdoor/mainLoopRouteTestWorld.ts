@@ -132,7 +132,7 @@ export function unusedCodexPorts(): Omit<CodexRoutePorts, "loadProvider"> {
 /**
  * `resolve` with the Anthropic route replaced by a stand-in: that route is the real API, so a request the door would send there is answered 502 here instead, and its class handed to `reached`, so no test ever leaves the machine and each can assert what reached Anthropic.
  */
-export function standingInForAnthropic(resolve: (request: RoutedRequest) => Promise<RouteResolution>, reached: (requestClass: string) => void): (request: RoutedRequest) => Promise<RouteResolution> {
+export function standingInForAnthropic(resolve: (request: RoutedRequest) => Promise<RouteResolution>, reached: (requestClass: string, model: string | undefined) => void): (request: RoutedRequest) => Promise<RouteResolution> {
   return async (request) => {
     const resolution = await resolve(request);
     if (!resolution.ok || resolution.route.name !== "anthropic") {
@@ -145,7 +145,13 @@ export function standingInForAnthropic(resolve: (request: RoutedRequest) => Prom
         headroomEligible: false,
         headroomUpstream: undefined,
         serve: async (served, response) => {
-          reached(served.headers["x-claude-code-request-class"]?.toString() ?? "(no class)");
+          const chunks: Buffer[] = [];
+          // What the route would send is the request the resolution names when it rewrote the original, whose own body the scan has already read.
+          for await (const chunk of (resolution.request ?? served).body) {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+          }
+          const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+          reached(served.headers["x-claude-code-request-class"]?.toString() ?? "(no class)", typeof parsed === "object" && parsed !== null && "model" in parsed && typeof parsed.model === "string" ? parsed.model : undefined);
           response.start(HTTP_STATUS.badGateway, { "content-type": "application/json" });
           await response.write(JSON.stringify({ type: "error", error: { type: "api_error", message: "the test's stand-in for the Anthropic route" } }));
           response.end();
@@ -158,12 +164,18 @@ export function standingInForAnthropic(resolve: (request: RoutedRequest) => Prom
 export interface World {
   readonly url: string;
   readonly upstream: { readonly seen: UpstreamSeen[] };
+  /** The port of the `http` provider `z`'s upstream, for a test that rewrites the provider's file. */
+  readonly upstreamPort: number;
   readonly codexCalls: readonly { readonly init: { readonly body?: string } }[];
   /** The model each generation call the antigravity provider's backend received named. */
   readonly generated: readonly string[];
   readonly records: UsageRecord[];
+  /** The model name each request that reached the stand-in for the Anthropic route carried, in order. */
+  readonly anthropicModels: (string | undefined)[];
   /** The class of each request that reached the stand-in for the Anthropic route. */
   readonly toAnthropic: string[];
+  /** Replaces a provider's file between two requests, as a person editing it does. */
+  readonly setProvider: (name: string, definition: unknown) => void;
   readonly close: () => Promise<void>;
 }
 
@@ -179,9 +191,7 @@ export async function startWorld(
   const gemini = await fakeGeminiBackend();
   const codexFetch = recordingFetch(() => fakeResponse({ events: TEXT_TURN }));
   const codexPorts = codexPortsOver(codexFetch.fetch);
-  const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0,
-    mainLoopRoutes: record,
-    fs: fakeFs({
+  const providerFiles: Record<string, unknown> = {
       [`${PROVIDERS_DIR}/z.json`]: { displayName: "Z", baseUrl: `http://127.0.0.1:${String(upstream.port)}`, credential: { sources: [{ literal: "z-token" }] }, env: zTierEnv },
       [`${PROVIDERS_DIR}/ag.json`]: { kind: "antigravity", displayName: "Antigravity", credential: { sources: [{ literal: "ag-token" }] }, antigravity: { mode: "cloud", cloud: { endpoint: gemini.endpoint } } },
       [`${PROVIDERS_DIR}/cx.json`]: { kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "placeholder" }] } },
@@ -191,7 +201,10 @@ export async function startWorld(
       [`${PROVIDERS_DIR}/m.json`]: { displayName: "M", baseUrl: `http://127.0.0.1:${String(upstream.port)}`, credential: { sources: [{ literal: "m-token" }] }, routes: [{ when: { kind: "textCompare", op: "matches", left: { kind: "reference", key: "request.model" }, right: { kind: "textLiteral", value: ".*" } }, provider: "z" }] },
       // A provider file that is no valid provider: a helper whose main loop was recorded on it reaches the routing loop's own refusal.
       [`${PROVIDERS_DIR}/bad.json`]: { displayName: 5 },
-    }),
+  };
+  const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0,
+    mainLoopRoutes: record,
+    fs: fakeFs(providerFiles),
     providersDir: PROVIDERS_DIR,
     codexPorts,
     directPort: () => OWN_PORT,
@@ -201,6 +214,7 @@ export async function startWorld(
   });
   const records: UsageRecord[] = [];
   const toAnthropic: string[] = [];
+  const anthropicModels: (string | undefined)[] = [];
   const usage = createUsageMiddleware({
     record: (entry) => {
       records.push(entry);
@@ -213,14 +227,17 @@ export async function startWorld(
   });
   const server = createFrontDoorServer(
     async (pipelineRequest) => {
-      await serveRouted(pipelineRequest, { resolveRoute: standingInForAnthropic(resolve, (requestClass) => {
+      await serveRouted(pipelineRequest, { resolveRoute: standingInForAnthropic(resolve, (requestClass, model) => {
           toAnthropic.push(requestClass);
+          anthropicModels.push(model);
         }), canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [usage], admit, now: () => 0, log: () => undefined });
     },
     () => undefined,
   );
   const handle = await listenFrontDoor(server);
-  return { url: `http://127.0.0.1:${String(handle.port)}`, upstream, codexCalls: codexFetch.calls, generated: gemini.generated, records, toAnthropic, close: handle.close };
+  return { url: `http://127.0.0.1:${String(handle.port)}`, upstream, upstreamPort: upstream.port, codexCalls: codexFetch.calls, generated: gemini.generated, records, toAnthropic, anthropicModels, setProvider: (name, definition) => {
+      providerFiles[`${PROVIDERS_DIR}/${name}.json`] = definition;
+    }, close: handle.close };
 }
 
 /** Sends one Messages request as a launch's child would: its capability, its session id, and, when given, the class Claude Code states and a launch provider. */

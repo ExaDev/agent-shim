@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { FAKE_HOME, createFakeFarmFs, inMemoryRouteStore } from "../test-helpers";
 import { createMainLoopRouteRecord, type MainLoopRoutePorts } from "./mainLoopRoute";
-import { launchKeyOf, launchRouteStore, type MainLoopRoute, removeFrontDoorSession, writeFrontDoorSession, type FrontDoorLaunch } from "./state";
+import { launchKeyOf, launchRouteStore, type RouteContext, removeFrontDoorSession, writeFrontDoorSession, type FrontDoorLaunch } from "./state";
 
 describe("the main-loop route record", () => {
   /** A registry whose launches the test starts and ends. */
@@ -170,7 +170,7 @@ describe("a main-loop record whose store fails", () => {
 
 describe("a main-loop record over a durable copy that fails", () => {
   const launch: FrontDoorLaunch = { pid: 9, startedAt: 1 };
-  const z: MainLoopRoute = { kind: "provider", provider: "z" };
+  const z: RouteContext = { kind: "provider", provider: "z" };
 
   /** A store that fails its writes while `failing.writes` and its reads while `failing.reads`, counting every call. */
   function flaky(): { readonly ports: MainLoopRoutePorts; readonly failing: { writes: boolean; reads: boolean }; readonly lines: string[]; readonly calls: { reads: number; writes: number }; readonly store: ReturnType<typeof inMemoryRouteStore> } {
@@ -298,7 +298,7 @@ describe("a main-loop record over a durable copy that fails", () => {
 
 describe("two doors over one durable copy", () => {
   const launch: FrontDoorLaunch = { pid: 9, startedAt: 1 };
-  const z: MainLoopRoute = { kind: "provider", provider: "z" };
+  const z: RouteContext = { kind: "provider", provider: "z" };
 
   /** Two records, standing for the old door and its replacement, over one store that counts every read. */
   function twoDoors(): { readonly a: ReturnType<typeof createMainLoopRouteRecord>; readonly b: ReturnType<typeof createMainLoopRouteRecord>; readonly reads: { count: number }; readonly store: ReturnType<typeof inMemoryRouteStore> } {
@@ -383,7 +383,7 @@ describe("two doors over one durable copy", () => {
 describe("a route store whose stat fails", () => {
   const SESSIONS_DIR = `${FAKE_HOME}/.agent-shim/frontdoor/sessions`;
   const launch: FrontDoorLaunch = { pid: 4242, startedAt: 7 };
-  const z: MainLoopRoute = { kind: "provider", provider: "z" };
+  const z: RouteContext = { kind: "provider", provider: "z" };
   const routeFile = `${SESSIONS_DIR}/${String(launch.pid)}.route.json`;
   /** How many helper lookups follow a failing stat: more than one, so a read per lookup is told from a read once. */
   const LOOKUPS = 5;
