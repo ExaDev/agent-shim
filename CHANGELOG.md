@@ -1,3 +1,32 @@
+## [14.0.2](https://github.com/ExaDev/agent-shim/compare/v14.0.1...v14.0.2) (2026-11-10)
+
+### Bug Fixes
+
+* **frontdoor:** accept an underscore in a CONNECT host label ([ce8ca99](https://github.com/ExaDev/agent-shim/commit/ce8ca99e860999d97518edba4a281599675f32f1))
+* **frontdoor:** dial a CONNECT to an IPv6 literal without its brackets ([68a03e4](https://github.com/ExaDev/agent-shim/commit/68a03e4e09fa02d123d120039f6ae33049fe4c53))
+* **frontdoor:** dial one host the same whichever way it is spelt ([cf18edb](https://github.com/ExaDev/agent-shim/commit/cf18edb7f6bcf42867721a6217a3ff61459bf4b6))
+* **frontdoor:** keep parseConnectTarget returning undefined for a refused authority ([c52d7e0](https://github.com/ExaDev/agent-shim/commit/c52d7e08455d537497706eed02870f29c679ab35))
+* **frontdoor:** refuse a CONNECT host that is not a name or a dotted-decimal address ([e2649f0](https://github.com/ExaDev/agent-shim/commit/e2649f01a78c299341f089b91782e12cc85b43e0))
+* **lint:** allow ipv6Groups to split an address at its colons ([9929be5](https://github.com/ExaDev/agent-shim/commit/9929be54a0b28a2aac87885c7c7a3859d3cadbef))
+* **lint:** refuse every way of building a dial target from a URL host or a colon cut ([e58165a](https://github.com/ExaDev/agent-shim/commit/e58165ac145e73f02bf1e1b7a46e73c249166d16))
+* **lint:** see regex cuts and const keys, and exempt only the outermost function ([e175fef](https://github.com/ExaDev/agent-shim/commit/e175fef124fedcc5cf567d9eb36a2c9b78b06f6d))
+
+### Code Refactoring
+
+* **config:** share one DNS name grammar between CONNECT hosts and NO_PROXY entries ([2cda08d](https://github.com/ExaDev/agent-shim/commit/2cda08d19bc5f83086dc2f16a73b2bf20752ee03))
+
+### Documentation
+
+* describe the CONNECT authority grammar and the 400 refusal ([ce33218](https://github.com/ExaDev/agent-shim/commit/ce33218c42b0834406ac7786493f807a15a0c1b3))
+* state which NO_PROXY spellings the shared host grammar refuses and why ([26abf2e](https://github.com/ExaDev/agent-shim/commit/26abf2ef2d9d7347853e5d23f2ddb5aef5311f18))
+
+### Tests
+
+* **config:** pin an uppercase hexadecimal last label as refused ([b18c4e3](https://github.com/ExaDev/agent-shim/commit/b18c4e3f77dc260fe39f6db3fa1e3ac5fb85807a))
+* **frontdoor:** pin that a refused CONNECT authority is never quoted back ([90f8067](https://github.com/ExaDev/agent-shim/commit/90f8067df1c1726b246b7fd25e2aaeb0bfc4cc0f))
+* **frontdoor:** pin the DNS name limits as literals and add underscore hosts to the table ([dc1eb02](https://github.com/ExaDev/agent-shim/commit/dc1eb026041dfa0cf6183ba32c557dd6e2c8d700))
+* **frontdoor:** pin the refusal header on a malformed CONNECT authority ([1609309](https://github.com/ExaDev/agent-shim/commit/1609309148a5d2c98ec05ab27b012a3d80bea83e))
+
 ## [14.0.1](https://github.com/ExaDev/agent-shim/compare/v14.0.0...v14.0.1) (2026-11-09)
 
 ### Documentation
