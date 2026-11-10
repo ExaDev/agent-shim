@@ -5,13 +5,13 @@ import { proxyBypassName, proxyBypassSyntaxProblem } from "./proxyBypass";
 
 describe("proxyBypassSyntaxProblem", () => {
   it("accepts a host name, a leading-dot domain and an IPv4 address", () => {
-    for (const entry of ["example.com", "mcp.example.com", ".example.com", "localhost", "10.0.0.1", "a-b.example.com", "MCP.Example.com"]) {
+    for (const entry of ["example.com", "mcp.example.com", ".example.com", "localhost", "10.0.0.1", "a-b.example.com", "MCP.Example.com", "my_service", "_dmarc.example.com"]) {
       expect(proxyBypassSyntaxProblem(entry), entry).toBeUndefined();
     }
   });
 
   it("refuses the forms the runtime would ignore or that are not a host, so a malformed entry cannot silently do nothing", () => {
-    for (const entry of ["", " example.com", "example.com ", "*", "*.example.com", "https://example.com", "example.com/path", "user@example.com", "a.example.com,b.example.com", "exa mple.com", "-bad.example.com", "bad-.example.com", "bad..example.com", "example.com:443", "10.0.0.1:80", "300.1.1.1", "[::1]", "ex_ample.com", "..example.com"]) {
+    for (const entry of ["", " example.com", "example.com ", "*", "*.example.com", "https://example.com", "example.com/path", "user@example.com", "a.example.com,b.example.com", "exa mple.com", "-bad.example.com", "bad-.example.com", "bad..example.com", "example.com:443", "10.0.0.1:80", "300.1.1.1", "[::1]", "..example.com"]) {
       expect(proxyBypassSyntaxProblem(entry), entry).toBeDefined();
     }
   });
