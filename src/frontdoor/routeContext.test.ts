@@ -15,6 +15,13 @@ const SONNET_NAME = "claude-sonnet-5-5";
 const OPUS_NAME = "claude-opus-5-5";
 const SESSIONS_DIR = `${FAKE_HOME}/.agent-shim/frontdoor/sessions`;
 
+/** What is on disk for a launch: the route file as an old door reads it, the facts file beside it, and both texts. */
+function onDisk(fs: ReturnType<typeof createFakeFarmFs>, pid: number): { readonly route: unknown; readonly facts: unknown; readonly text: string } {
+  const routeText = fs.readFileUtf8(`${SESSIONS_DIR}/${String(pid)}.route.json`) ?? "";
+  const factsText = fs.readFileUtf8(`${SESSIONS_DIR}/${String(pid)}.context.json`) ?? "";
+  return { route: routeText === "" ? undefined : JSON.parse(routeText), facts: factsText === "" ? undefined : JSON.parse(factsText), text: `${routeText}${factsText}` };
+}
+
 describe("a bare Claude model name from a session whose main loop is on a provider", () => {
   it("is mapped through that provider's tier mapping on the main loop too, and nothing reaches Anthropic", async () => {
     const world = await startWorld();
@@ -199,7 +206,7 @@ describe("a bare Claude model name from a session whose main loop is on a provid
 describe("the route context the door keeps for a launch", () => {
   const SECRET = "z-token";
 
-  async function recordedWorld(): Promise<{ readonly fs: ReturnType<typeof createFakeFarmFs>; readonly lines: string[]; readonly world: Awaited<ReturnType<typeof startWorld>>; readonly file: string }> {
+  async function recordedWorld(): Promise<{ readonly fs: ReturnType<typeof createFakeFarmFs>; readonly lines: string[]; readonly world: Awaited<ReturnType<typeof startWorld>>; readonly pid: number }> {
     const fs = createFakeFarmFs();
     const launch = launchOfSession("s-1");
     writeFrontDoorSession(fs, SESSIONS_DIR, { pid: launch.pid, startedAt: launch.startedAt, token: "t" });
@@ -209,17 +216,17 @@ describe("the route context the door keeps for a launch", () => {
     };
     const store = launchRouteStore(fs, SESSIONS_DIR, log);
     const world = await startWorld(createMainLoopRouteRecord({ holdsLaunch: () => true, stored: store, log }));
-    return { fs, lines, world, file: `${SESSIONS_DIR}/${String(launch.pid)}.route.json` };
+    return { fs, lines, world, pid: launch.pid };
   }
 
   it("names the credential and the models, as names, and holds no value", async () => {
-    const { fs, lines, world, file } = await recordedWorld();
+    const { fs, lines, world, pid } = await recordedWorld();
     try {
       await send(world, { model: "z/glm-5.3", requestClass: "main" });
       await send(world, { model: SONNET_NAME, requestClass: "main" });
-      const text = fs.readFileUtf8(file) ?? "";
-      const stored: unknown = JSON.parse(text);
-      expect(stored).toMatchObject({ version: 2, route: { kind: "provider", provider: "z", requestedModel: SONNET_NAME, servedModel: Z_SONNET_MODEL } });
+      const { route, facts, text } = onDisk(fs, pid);
+      expect(route).toMatchObject({ version: 1, route: { kind: "provider", provider: "z" } });
+      expect(facts).toMatchObject({ version: 1, facts: { requestedModel: SONNET_NAME, servedModel: Z_SONNET_MODEL } });
       expect(text).toContain("bearer from literal");
       expect(text).not.toContain(SECRET);
       expect(lines.join("\n")).not.toContain(SECRET);
@@ -229,7 +236,7 @@ describe("the route context the door keeps for a launch", () => {
   });
 
   it("holds no value of any credential source: a literal, a command's arguments or an environment variable's value reach neither the route file, nor a log line, nor the usage log", async () => {
-    const { fs, lines, world, file } = await recordedWorld();
+    const { fs, lines, world, pid } = await recordedWorld();
     try {
       const LITERAL = "LITERAL-VALUE-7f3a";
       const ARGUMENT = "COMMAND-ARGUMENT-9c1d";
@@ -238,7 +245,7 @@ describe("the route context the door keeps for a launch", () => {
       world.setProvider("q", { displayName: "Q", baseUrl: `http://127.0.0.1:${String(world.upstreamPort)}`, credential: { sources: [{ env: "Q_TOKEN_FOR_TEST" }, { command: ["/usr/bin/true", ARGUMENT] }, { literal: LITERAL }] } });
       await send(world, { model: "q/glm-5.3", requestClass: "main" });
       await send(world, { model: SONNET_NAME, requestClass: "main" });
-      const text = fs.readFileUtf8(file) ?? "";
+      const { text } = onDisk(fs, pid);
       expect(text).toContain("Q_TOKEN_FOR_TEST");
       for (const value of [LITERAL, ARGUMENT, ENV_VALUE]) {
         expect(text).not.toContain(value);
@@ -252,11 +259,13 @@ describe("the route context the door keeps for a launch", () => {
   });
 
   it("records the Anthropic route with the session's login and no provider", async () => {
-    const { fs, world, file } = await recordedWorld();
+    const { fs, world, pid } = await recordedWorld();
     try {
       await send(world, { model: "z/glm-5.3", requestClass: "main" });
       await send(world, { model: `anthropic/${SONNET_NAME}`, requestClass: "main" });
-      expect(JSON.parse(fs.readFileUtf8(file) ?? "{}")).toMatchObject({ version: 2, route: { kind: "anthropic", credential: "the launch's login", requestedModel: `anthropic/${SONNET_NAME}`, servedModel: SONNET_NAME } });
+      const { route, facts } = onDisk(fs, pid);
+      expect(route).toMatchObject({ version: 1, route: { kind: "anthropic" } });
+      expect(facts).toMatchObject({ facts: { credential: "the launch's login", requestedModel: `anthropic/${SONNET_NAME}`, servedModel: SONNET_NAME } });
     } finally {
       await world.close();
     }
@@ -270,23 +279,23 @@ describe("the route context the door keeps for a launch", () => {
     const world = await startWorld(createMainLoopRouteRecord({ holdsLaunch: () => true, stored: launchRouteStore(fs, SESSIONS_DIR, log), log }), HTTP_STATUS.ok, { virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } });
     try {
       await send(world, { model: "fast", requestClass: "main" });
-      const stored: unknown = JSON.parse(fs.readFileUtf8(`${SESSIONS_DIR}/${String(launch.pid)}.route.json`) ?? "{}");
-      expect(stored).toMatchObject({ route: { kind: "provider", provider: "z", requestedModel: "fast" } });
-      expect(JSON.stringify(stored)).not.toContain("servedModel");
+      const { facts } = onDisk(fs, launch.pid);
+      expect(facts).toMatchObject({ facts: { requestedModel: "fast" } });
+      expect(JSON.stringify(facts)).not.toContain("servedModel");
     } finally {
       await world.close();
     }
   });
 
   it("leaves out a model name too long to keep, so the file stays readable", async () => {
-    const { fs, world, file } = await recordedWorld();
+    const { fs, world, pid } = await recordedWorld();
     try {
       const long = `z/${"a".repeat(MAX_CONTEXT_TEXT_LENGTH + 1)}`;
       await send(world, { model: long, requestClass: "main" });
-      const stored: unknown = JSON.parse(fs.readFileUtf8(file) ?? "{}");
-      expect(stored).toMatchObject({ route: { kind: "provider", provider: "z" } });
-      expect(JSON.stringify(stored)).not.toContain("requestedModel");
-      expect(JSON.stringify(stored)).not.toContain("servedModel");
+      const { route, text } = onDisk(fs, pid);
+      expect(route).toMatchObject({ route: { kind: "provider", provider: "z" } });
+      expect(text).not.toContain("requestedModel");
+      expect(text).not.toContain("servedModel");
       expect(launchRouteStore(fs, SESSIONS_DIR, () => undefined).read(launchOfSession("s-1"))).toMatchObject({ kind: "provider", provider: "z" });
     } finally {
       await world.close();

@@ -63,14 +63,17 @@ export const MAX_CONTEXT_TEXT_LENGTH = 256;
 
 const ContextText = z.string().min(1).max(MAX_CONTEXT_TEXT_LENGTH);
 
-/** The facts about a route that are names, never values: the credential by what describes it (a variable name, a path, a program, a reference, a Keychain service, the identity whose login it is), and the models by name. */
-const ContextFacts = { credential: ContextText.optional(), requestedModel: ContextText.optional(), servedModel: ContextText.optional() };
+/** The route a launch's main loop is on: the Anthropic route (Claude Code's own API) or a provider by name. */
+const LaunchRouteSchema = z.union([z.strictObject({ kind: z.literal("anthropic") }), z.strictObject({ kind: z.literal("provider"), provider: z.string().min(1) })]);
+
+/** The facts about a route that are names, never values: the credential by what describes it (a variable name, a path, a program, a reference, a Keychain service, the identity whose login it is), and the model the main loop last asked for with the one the route served it under. */
+const ContextFactsSchema = z.strictObject({ credential: ContextText.optional(), requestedModel: ContextText.optional(), servedModel: ContextText.optional() });
+type ContextFacts = z.infer<typeof ContextFactsSchema>;
 
 /**
- * What the door knows of a launch's main loop, held per launch: the route it is on (the Anthropic route, Claude Code's own API, or a provider by name) and, as names, the credential that route uses and the model the main loop last asked for with the one the route served it under. The configuration that applied is not part of it: the provider file and the models block are read afresh for every request, so a changed file applies to the next one, and a stored copy would only go stale.
+ * What the door knows of a launch's main loop, held per launch: the route it is on and, as names, the credential that route uses and the models asked for and served. The configuration that applied is not part of it: the provider file and the `models` block are read afresh for every request, so a changed file applies to the next one, and a stored copy would only go stale. No routing decision reads the facts, only the route: they describe the route and are never what places a request.
  */
-const RouteContextSchema = z.union([z.strictObject({ kind: z.literal("anthropic"), ...ContextFacts }), z.strictObject({ kind: z.literal("provider"), provider: z.string().min(1), ...ContextFacts })]);
-export type RouteContext = z.infer<typeof RouteContextSchema>;
+export type RouteContext = z.infer<typeof LaunchRouteSchema> & ContextFacts;
 
 /** The key one launch is known by in a map. */
 export function launchKeyOf(launch: Readonly<FrontDoorLaunch>): string {
@@ -318,10 +321,18 @@ export function recordOf(details: FrontDoorSessionDetails | undefined): Pick<Fro
 
 /** The durable store a door keeps launches' main-loop routes in: the registry directory, which outlives any door process. */
 export function launchRouteStore(fs: HeadroomFs, sessionsDir: string, log: (line: string) => void): MainLoopRouteStore {
-  // The launches whose stat is failing, so a stat that keeps failing is reported once per launch until one succeeds, not once per helper request.
+  // The launches whose stat is failing, or whose facts file could not be read, so a failure that keeps happening is reported once per launch until it stops, not once per helper request.
   const failing = new Set<string>();
+  const badFacts = new Set<string>();
   return {
-    read: (launch) => readLaunchRoute(fs, sessionsDir, launch),
+    read: (launch) =>
+      readLaunchRoute(fs, sessionsDir, launch, (message) => {
+        const key = launchKeyOf(launch);
+        if (!badFacts.has(key)) {
+          badFacts.add(key);
+          log(`front door: could not read the facts recorded for launch ${String(launch.pid)}'s main loop (${message}), so its route is used without them`);
+        }
+      }),
     write: (launch, route) => {
       writeLaunchRoute(fs, sessionsDir, launch, route);
     },
@@ -329,9 +340,11 @@ export function launchRouteStore(fs: HeadroomFs, sessionsDir: string, log: (line
     identity: (launch) => {
       const key = launchKeyOf(launch);
       try {
-        const stat = fs.lstat(path.join(sessionsDir, launchRouteName(launch.pid)));
+        const route = fs.lstat(path.join(sessionsDir, launchRouteName(launch.pid)));
+        const facts = fs.lstat(path.join(sessionsDir, launchFactsName(launch.pid)));
         failing.delete(key);
-        return stat === undefined ? undefined : `${String(stat.mtimeMs)}:${String(stat.sizeBytes)}`;
+        const of = (stat: typeof route): string => (stat === undefined ? "-" : `${String(stat.mtimeMs)}:${String(stat.sizeBytes)}`);
+        return route === undefined ? undefined : `${of(route)}|${of(facts)}`;
       } catch (error) {
         if (!failing.has(key)) {
           failing.add(key);
@@ -359,6 +372,7 @@ export function writeFrontDoorSession(fs: HeadroomFs, sessionsDir: string, sessi
   fs.mkdirPrivate(sessionsDir);
   // A launch registering again under this pid is a new launch: the route the pid's earlier launch left is not its own.
   fs.removeRecursive(path.join(sessionsDir, launchRouteName(session.pid)));
+  fs.removeRecursive(path.join(sessionsDir, launchFactsName(session.pid)));
   fs.writeFilePrivate(path.join(sessionsDir, sessionRecordName(session.pid)), `${JSON.stringify(session, null, 2)}\n`);
 }
 
@@ -380,28 +394,52 @@ function launchRouteName(pid: number): string {
   return `${String(pid)}.route.json`;
 }
 
-/**
- * The version of the route file this door writes. Version 1, written before the route carried a credential and models, named a route only and is a route context with no facts, so it is read as one; a file of a higher version was written by a newer door whose format this one cannot judge, so it is reported as unreadable, never taken for "no route".
- */
-const LAUNCH_ROUTE_FILE_VERSION = 2;
-
-const LaunchRouteFileSchema = z.strictObject({ version: z.union([z.literal(1), z.literal(LAUNCH_ROUTE_FILE_VERSION)]), startedAt: z.number(), route: RouteContextSchema });
+/** The file beside launcher `pid`'s route file that holds the facts about the route, as names: the credential and the models. Separate so the route file stays exactly what every door version reads, and a door that reads no facts loses nothing it decides by. */
+function launchFactsName(pid: number): string {
+  return `${String(pid)}.context.json`;
+}
 
 /**
- * Records where `launch`'s main loop last went, in the registry directory beside the launch's own record, so a restarted or replacing door finds it and the launch's helper requests keep following it. Written only while the launch's record is still on disk: the door admits a request from its cached view of the registry, which can outlive the launch's release by a tick, and a route written after the release would be an orphan nothing but the prune removes. The check reads the record at the write, so the window left is the two synchronous calls between the read and the write.
+ * The version of the route file. It names the route only, `{"version":1,"startedAt":N,"route":{...}}`, as every door has written it: a door reads the route of a launch whatever else a newer door keeps beside it. A file of a higher version was written by a newer door whose format this one cannot judge, so it is reported as unreadable, never taken for "no route".
  */
-export function writeLaunchRoute(fs: HeadroomFs, sessionsDir: string, launch: Readonly<FrontDoorLaunch>, route: RouteContext): void {
+const LAUNCH_ROUTE_FILE_VERSION = 1;
+
+/** The version of the facts file. Facts the reader cannot read cost the facts and never the route. */
+const LAUNCH_FACTS_FILE_VERSION = 1;
+
+const LaunchRouteFileSchema = z.strictObject({ version: z.literal(LAUNCH_ROUTE_FILE_VERSION), startedAt: z.number(), route: LaunchRouteSchema });
+
+const LaunchFactsFileSchema = z.strictObject({ version: z.literal(LAUNCH_FACTS_FILE_VERSION), startedAt: z.number(), facts: ContextFactsSchema });
+
+/**
+ * Records where `launch`'s main loop last went, and the facts about it, in the registry directory beside the launch's own record, so a restarted or replacing door finds them and the launch's helper requests keep following the route. Written only while the launch's registry record is on disk, since a route file for a launch with no record would outlive it. The context is checked against its schema first and an invalid one throws, so no file is written that this reader would reject. The facts go first and the route last, and the route file is the one whose change another door sees: the two being momentarily out of step costs a fact, never a route.
+ */
+export function writeLaunchRoute(fs: HeadroomFs, sessionsDir: string, launch: Readonly<FrontDoorLaunch>, context: RouteContext): void {
+  const { facts, route } = splitContext(context);
   if (readFrontDoorSessionRecord(fs, sessionsDir, sessionRecordName(launch.pid))?.startedAt !== launch.startedAt) {
     return;
   }
   fs.mkdirPrivate(sessionsDir);
+  const factsFile = path.join(sessionsDir, launchFactsName(launch.pid));
+  if (Object.keys(facts).length === 0) {
+    fs.removeRecursive(factsFile);
+  } else {
+    fs.writeFilePrivate(factsFile, `${JSON.stringify({ version: LAUNCH_FACTS_FILE_VERSION, startedAt: launch.startedAt, facts })}\n`);
+  }
   fs.writeFilePrivate(path.join(sessionsDir, launchRouteName(launch.pid)), `${JSON.stringify({ version: LAUNCH_ROUTE_FILE_VERSION, startedAt: launch.startedAt, route })}\n`);
 }
 
+/** The route and the facts of a context, each checked against its schema: a name over the bound, an empty one or an unknown field throws. */
+function splitContext(context: RouteContext): { readonly route: z.infer<typeof LaunchRouteSchema>; readonly facts: ContextFacts } {
+  const facts = ContextFactsSchema.parse({ ...(context.credential === undefined ? {} : { credential: context.credential }), ...(context.requestedModel === undefined ? {} : { requestedModel: context.requestedModel }), ...(context.servedModel === undefined ? {} : { servedModel: context.servedModel }) });
+  const route = LaunchRouteSchema.parse(context.kind === "provider" ? { kind: "provider", provider: context.provider } : { kind: "anthropic" });
+  return { route, facts };
+}
+
 /**
- * Where `launch`'s main loop last went, or undefined when none was recorded or the file belongs to an earlier launch under the same pid (a different start time). A file that exists and cannot be read as a route of this door's version (not JSON, not the shape, written by a newer door, or unreadable) throws, naming which: a launch's helpers are then sent down the launch's own route, and that must be reported, not taken for "nothing recorded".
+ * Where `launch`'s main loop last went, with the facts recorded about it, or undefined when none was recorded or the files belong to an earlier launch under the same pid (a different start time). A route file that exists and cannot be read as one (not JSON, not the shape, written by a newer door, or unreadable) throws, naming which: a launch's helpers are then sent down the launch's own route, and that must be reported, not taken for "nothing recorded". A facts file that cannot be read costs the facts only, reported through `factsProblem`: the route is returned without them.
  */
-export function readLaunchRoute(fs: Pick<HeadroomFs, "readFileUtf8">, sessionsDir: string, launch: Readonly<FrontDoorLaunch>): RouteContext | undefined {
+export function readLaunchRoute(fs: Pick<HeadroomFs, "readFileUtf8">, sessionsDir: string, launch: Readonly<FrontDoorLaunch>, factsProblem: (message: string) => void): RouteContext | undefined {
   const name = launchRouteName(launch.pid);
   const text = fs.readFileUtf8(path.join(sessionsDir, name));
   if (text === undefined) {
@@ -421,7 +459,32 @@ export function readLaunchRoute(fs: Pick<HeadroomFs, "readFileUtf8">, sessionsDi
   if (!parsed.success) {
     throw new Error(`${name} is not a route file this door reads`);
   }
-  return parsed.data.startedAt === launch.startedAt ? parsed.data.route : undefined;
+  if (parsed.data.startedAt !== launch.startedAt) {
+    return undefined;
+  }
+  return { ...parsed.data.route, ...readLaunchFacts(fs, sessionsDir, launch, factsProblem) };
+}
+
+/** The facts recorded for `launch`, or none when there is no file, it belongs to an earlier launch under the pid, or it cannot be read (then reported). */
+function readLaunchFacts(fs: Pick<HeadroomFs, "readFileUtf8">, sessionsDir: string, launch: Readonly<FrontDoorLaunch>, factsProblem: (message: string) => void): ContextFacts {
+  const name = launchFactsName(launch.pid);
+  const text = fs.readFileUtf8(path.join(sessionsDir, name));
+  if (text === undefined) {
+    return {};
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    factsProblem(`${name} is not JSON`);
+    return {};
+  }
+  const parsed = LaunchFactsFileSchema.safeParse(json);
+  if (!parsed.success) {
+    factsProblem(`${name} is not a facts file this door reads`);
+    return {};
+  }
+  return parsed.data.startedAt === launch.startedAt ? parsed.data.facts : {};
 }
 
 /** What a registry record shows without its capability: the one projection every listing uses, so a token can never ride along into something that prints or serialises a session. */
@@ -453,9 +516,9 @@ export function listFrontDoorSessions(fs: HeadroomFs, sessionsDir: string): read
   return sessions.sort((a, b) => a.pid - b.pid);
 }
 
-/** The pid a route file's name belongs to, or undefined for any other name. */
+/** The pid a route or facts file's name belongs to, or undefined for any other name. */
 function routeFilePid(name: string): number | undefined {
-  const match = /^([1-9]\d*)\.route\.json$/.exec(name);
+  const match = /^([1-9]\d*)\.(?:route|context)\.json$/.exec(name);
   return match?.[1] === undefined ? undefined : Number(match[1]);
 }
 
@@ -463,6 +526,7 @@ function routeFilePid(name: string): number | undefined {
 export function removeFrontDoorSession(fs: HeadroomFs, sessionsDir: string, pid: number): void {
   fs.removeRecursive(path.join(sessionsDir, sessionRecordName(pid)));
   fs.removeRecursive(path.join(sessionsDir, launchRouteName(pid)));
+  fs.removeRecursive(path.join(sessionsDir, launchFactsName(pid)));
 }
 
 /**
