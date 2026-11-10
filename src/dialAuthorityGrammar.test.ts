@@ -1,8 +1,8 @@
 import * as net from "node:net";
 import { describe, expect, it } from "vitest";
 
-import { MAX_LABEL_LENGTH, MAX_NAME_LENGTH, parseDialAuthority } from "./baseUrlDial";
-import { MALFORMED_WITH_MARKER, MARKER } from "./dialAuthorityTestWorld";
+import { parseDialAuthority } from "./baseUrlDial";
+import { MALFORMED_WITH_MARKER, MARKER, RFC_1035_MAX_LABEL, RFC_1035_MAX_NAME } from "./dialAuthorityTestWorld";
 
 const DEFAULT_PORT = 443;
 const ASCII_END = 0x80;
@@ -46,12 +46,12 @@ describe("the host grammar of an unbracketed authority", () => {
   });
 
   it("holds a label to 63 characters and a name to 253", () => {
-    const label = "a".repeat(MAX_LABEL_LENGTH);
+    const label = "a".repeat(RFC_1035_MAX_LABEL);
     expect(parseDialAuthority(label, DEFAULT_PORT)).toEqual({ host: label, port: DEFAULT_PORT });
     expect(parseDialAuthority(`${label}a`, DEFAULT_PORT)).toHaveProperty("refusal");
     const labelsBefore = 3;
-    const longest = [...Array.from({ length: labelsBefore }, () => label), "a".repeat(MAX_NAME_LENGTH - labelsBefore * (MAX_LABEL_LENGTH + 1))].join(".");
-    expect(longest).toHaveLength(MAX_NAME_LENGTH);
+    const longest = [...Array.from({ length: labelsBefore }, () => label), "a".repeat(RFC_1035_MAX_NAME - labelsBefore * (RFC_1035_MAX_LABEL + 1))].join(".");
+    expect(longest).toHaveLength(RFC_1035_MAX_NAME);
     expect(parseDialAuthority(longest, DEFAULT_PORT)).toEqual({ host: longest, port: DEFAULT_PORT });
     expect(parseDialAuthority(`${longest}a`, DEFAULT_PORT)).toHaveProperty("refusal");
   });

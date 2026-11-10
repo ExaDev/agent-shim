@@ -48,10 +48,10 @@ function portOf(text: string): number | string {
 }
 
 /** The longest a label may be (RFC 1035). */
-export const MAX_LABEL_LENGTH = 63;
+const MAX_LABEL_LENGTH = 63;
 
 /** The longest a name may be in its dotted form (RFC 1035). */
-export const MAX_NAME_LENGTH = 253;
+const MAX_NAME_LENGTH = 253;
 
 /** The parts of a dotted-decimal IPv4 address. */
 const IPV4_PARTS = 4;
