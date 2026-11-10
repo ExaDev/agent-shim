@@ -96,7 +96,7 @@ export interface PortRotation {
 /**
  * The one classification of "this source port cannot be used, move on" that every rotation of reserved source ports shares, for the operating system named by `platform` (a `process.platform` value, passed in so nothing here reads the host). It answers `held` for a port another socket holds (`EADDRINUSE`, or the `EADDRNOTAVAIL` a port held at connect time produces) on every platform; `excluded` for `EACCES` at the bind on `win32` only, where a port inside an excluded range (Hyper-V, WSL2 and Docker Desktop reserve blocks of ports) is refused that way; and undefined for everything else, so on every other platform `EACCES` at a bind is a real error. A destination's `EACCES` is never a source-port problem on any platform: node names the failing syscall, and only `bind` counts.
  *
- * A name that resolves to several addresses is dialled by trying each, and node then rejects with an `AggregateError` whose own code and syscall say nothing reliable (its `errors` hold each attempt's). Such an error is judged by its attempts: every one must be a source-port failure for the dial to move on, since a single destination error means a different source port would not have helped; one `excluded` attempt makes the whole `excluded`.
+ * A name that resolves to several addresses is dialled by trying each, and node then rejects with an `AggregateError` whose own code and syscall say nothing reliable (its `errors` hold each attempt's). Such an error is judged by its attempts: it is a source-port failure when ANY attempt was one, because a different source port can let that address succeed (a v4-only listener reached by `localhost` answers the `::1` attempt with a refusal and the `127.0.0.1` attempt fails on a held source port, and moving on is right); it is not when every attempt failed for another reason, where no source port would have helped. One `excluded` attempt makes the whole `excluded`. The retry stays bounded by the rotation's width.
  *
  * It references nothing but its parameters, because the probe's worker embeds its source text.
  */
@@ -105,7 +105,7 @@ export function sourcePortClassifier(platform: string): (error: NodeJS.ErrnoExce
     const attempts: unknown = Reflect.get(error, "errors");
     if (Array.isArray(attempts) && attempts.length > 0) {
       const kinds = attempts.map((attempt: unknown) => (attempt instanceof Error ? classify(attempt) : undefined));
-      return kinds.includes(undefined) ? undefined : kinds.includes("excluded") ? "excluded" : "held";
+      return kinds.includes("excluded") ? "excluded" : kinds.includes("held") ? "held" : undefined;
     }
     if (error.code === "EADDRINUSE" || error.code === "EADDRNOTAVAIL") {
       return "held";
