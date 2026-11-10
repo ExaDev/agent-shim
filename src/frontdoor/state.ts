@@ -307,15 +307,28 @@ export function recordOf(details: FrontDoorSessionDetails | undefined): Pick<Fro
 }
 
 /** The durable store a door keeps launches' main-loop routes in: the registry directory, which outlives any door process. */
-export function launchRouteStore(fs: HeadroomFs, sessionsDir: string): MainLoopRouteStore {
+export function launchRouteStore(fs: HeadroomFs, sessionsDir: string, log: (line: string) => void): MainLoopRouteStore {
+  // The launches whose stat is failing, so a stat that keeps failing is reported once per launch until one succeeds, not once per helper request.
+  const failing = new Set<string>();
   return {
     read: (launch) => readLaunchRoute(fs, sessionsDir, launch),
     write: (launch, route) => {
       writeLaunchRoute(fs, sessionsDir, launch, route);
     },
+    // Best effort and the one place that owns its failure: the identity only saves a read, so a stat that cannot be made (no permission, an I/O error, a path that is not a directory) is no identity, never a failed request.
     identity: (launch) => {
-      const stat = fs.lstat(path.join(sessionsDir, launchRouteName(launch.pid)));
-      return stat === undefined ? undefined : `${String(stat.mtimeMs)}:${String(stat.sizeBytes)}`;
+      const key = launchKeyOf(launch);
+      try {
+        const stat = fs.lstat(path.join(sessionsDir, launchRouteName(launch.pid)));
+        failing.delete(key);
+        return stat === undefined ? undefined : `${String(stat.mtimeMs)}:${String(stat.sizeBytes)}`;
+      } catch (error) {
+        if (!failing.has(key)) {
+          failing.add(key);
+          log(`front door: could not stat where launch ${String(launch.pid)}'s main loop went, so a route another door writes may go unseen until its next main-loop request: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        return undefined;
+      }
     },
   };
 }
@@ -325,7 +338,7 @@ export interface MainLoopRouteStore {
   /** Where the launch's main loop last went as the store holds it, or undefined for none; throws for a copy that exists and cannot be read. */
   readonly read: (launch: Readonly<FrontDoorLaunch>) => MainLoopRoute | undefined;
   readonly write: (launch: Readonly<FrontDoorLaunch>, route: MainLoopRoute) => void;
-  /** What identifies the copy as it is now (its modification time and size), or undefined when there is none: one stat of one file, so a door can tell that another door rewrote it without reading it. */
+  /** What identifies the copy as it is now (its modification time and size), or undefined when there is none or it cannot be told: one stat of one file, so a door can tell that another door rewrote it without reading it. Never throws. An undefined identity is never a reason to read. */
   readonly identity: (launch: Readonly<FrontDoorLaunch>) => string | undefined;
 }
 

@@ -210,7 +210,7 @@ describe("front-door session registry", () => {
     const fs = createFakeFarmFs({});
     const dir = paths.frontdoorSessionsDir;
     writeFrontDoorSession(fs, dir, { pid: LIVE, startedAt: 1, token: "t" });
-    const store = launchRouteStore(fs, dir);
+    const store = launchRouteStore(fs, dir, () => undefined);
     expect(store.identity({ pid: LIVE, startedAt: 1 })).toBeUndefined();
     store.write({ pid: LIVE, startedAt: 1 }, { kind: "anthropic" });
     const first = store.identity({ pid: LIVE, startedAt: 1 });

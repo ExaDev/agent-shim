@@ -368,6 +368,117 @@ describe("two doors over one durable copy", () => {
   });
 });
 
+describe("a route store whose stat fails", () => {
+  const SESSIONS_DIR = `${FAKE_HOME}/.agent-shim/frontdoor/sessions`;
+  const launch: FrontDoorLaunch = { pid: 4242, startedAt: 7 };
+  const z: MainLoopRoute = { kind: "provider", provider: "z" };
+  const routeFile = `${SESSIONS_DIR}/${String(launch.pid)}.route.json`;
+  /** How many helper lookups follow a failing stat: more than one, so a read per lookup is told from a read once. */
+  const LOOKUPS = 5;
+
+  /** The real store over a fake filesystem whose `lstat` of the route file throws EACCES while `denied.stat`, counting the reads of the route file and failing its writes while `denied.write`. */
+  function world(): { readonly record: ReturnType<typeof createMainLoopRouteRecord>; readonly store: ReturnType<typeof launchRouteStore>; readonly denied: { stat: boolean; write: boolean }; readonly reads: { count: number }; readonly lines: string[]; readonly fs: ReturnType<typeof createFakeFarmFs> } {
+    const base = createFakeFarmFs();
+    writeFrontDoorSession(base, SESSIONS_DIR, { pid: launch.pid, startedAt: launch.startedAt, token: "t" });
+    const denied = { stat: false, write: false };
+    const reads = { count: 0 };
+    const lines: string[] = [];
+    const fs: ReturnType<typeof createFakeFarmFs> = {
+      ...base,
+      lstat: (target) => {
+        if (denied.stat && target === routeFile) {
+          const refusal: NodeJS.ErrnoException = new Error("EACCES: permission denied");
+          refusal.code = "EACCES";
+          throw refusal;
+        }
+        return base.lstat(target);
+      },
+      readFileUtf8: (target) => {
+        if (target === routeFile) {
+          reads.count += 1;
+        }
+        return base.readFileUtf8(target);
+      },
+      writeFilePrivate: (target, contents) => {
+        if (denied.write && target === routeFile) {
+          throw new Error("disk full");
+        }
+        base.writeFilePrivate(target, contents);
+      },
+    };
+    const store = launchRouteStore(fs, SESSIONS_DIR, (line) => {
+      lines.push(line);
+    });
+    const record = createMainLoopRouteRecord({ holdsLaunch: () => true, stored: store, log: () => undefined });
+    return { record, store, denied, reads, lines, fs };
+  }
+
+  it("returns no identity and reports once per launch, until a stat succeeds", () => {
+    const w = world();
+    w.denied.stat = true;
+    expect(w.store.identity(launch)).toBeUndefined();
+    expect(w.store.identity(launch)).toBeUndefined();
+    expect(w.lines).toHaveLength(1);
+    expect(w.lines[0]).toContain("EACCES");
+    w.denied.stat = false;
+    expect(w.store.identity(launch)).toBeUndefined();
+    w.denied.stat = true;
+    w.store.identity(launch);
+    expect(w.lines).toHaveLength(2);
+  });
+
+  it("fails no request at a helper's first lookup, and routes it by what the copy holds", () => {
+    const w = world();
+    w.store.write(launch, z);
+    w.denied.stat = true;
+    expect(w.record.routeOf(launch)).toEqual(z);
+  });
+
+  it("fails no main-loop request after it wrote, and records the route", () => {
+    const w = world();
+    w.denied.stat = true;
+    expect(() => {
+      w.record.record(launch, z);
+    }).not.toThrow();
+    expect(w.record.routeOf(launch)).toEqual(z);
+    expect(w.store.read(launch)).toEqual(z);
+  });
+
+  it("fails no helper lookup that retries a write, and no lookup that compares", () => {
+    const w = world();
+    w.denied.write = true;
+    w.record.record(launch, z);
+    w.denied.write = false;
+    w.denied.stat = true;
+    expect(w.record.routeOf(launch)).toEqual(z);
+    expect(w.store.read(launch)).toEqual(z);
+    expect(w.record.routeOf(launch)).toEqual(z);
+  });
+
+  it("never turns a stat that starts failing after a read into a read of the copy per helper", () => {
+    const w = world();
+    w.store.write(launch, z);
+    expect(w.record.routeOf(launch)).toEqual(z);
+    const afterFirst = w.reads.count;
+    w.denied.stat = true;
+    for (let lookup = 0; lookup < LOOKUPS; lookup += 1) {
+      expect(w.record.routeOf(launch)).toEqual(z);
+    }
+    expect(w.reads.count).toBe(afterFirst);
+  });
+
+  it("never turns a stat that keeps failing into a read of the copy per helper: an unknown identity forces no read", () => {
+    const w = world();
+    w.denied.stat = true;
+    expect(w.record.routeOf(launch)).toBeUndefined();
+    const afterFirst = w.reads.count;
+    for (let lookup = 0; lookup < LOOKUPS; lookup += 1) {
+      w.record.routeOf(launch);
+    }
+    expect(w.reads.count).toBe(afterFirst);
+  });
+});
+
 describe("a launch that ended while only helper lookups arrived", () => {
   it("drops an ended launch's entry when another launch is first looked up, so the same launch registered again reads the store afresh", () => {
     const store = inMemoryRouteStore();
@@ -408,7 +519,7 @@ describe("the route file of a launch whose registry record is gone", () => {
   it("is not written when the launch's record was removed after the door's cached view admitted the request", () => {
     const fs = createFakeFarmFs();
     writeFrontDoorSession(fs, SESSIONS_DIR, { pid: launch.pid, startedAt: launch.startedAt, token: "t" });
-    const store = launchRouteStore(fs, SESSIONS_DIR);
+    const store = launchRouteStore(fs, SESSIONS_DIR, () => undefined);
     // The view still holds the launch (it refreshes at the next tick), while the launcher has already released it on disk.
     const record = createMainLoopRouteRecord({ holdsLaunch: () => true, stored: store, log: () => undefined });
     removeFrontDoorSession(fs, SESSIONS_DIR, launch.pid);
@@ -420,7 +531,7 @@ describe("the route file of a launch whose registry record is gone", () => {
   it("is written while the record is on disk, and not for a record of another start time under the pid", () => {
     const fs = createFakeFarmFs();
     writeFrontDoorSession(fs, SESSIONS_DIR, { pid: launch.pid, startedAt: launch.startedAt, token: "t" });
-    const store = launchRouteStore(fs, SESSIONS_DIR);
+    const store = launchRouteStore(fs, SESSIONS_DIR, () => undefined);
     store.write(launch, { kind: "provider", provider: "z" });
     expect(store.read(launch)).toEqual({ kind: "provider", provider: "z" });
     const earlier: FrontDoorLaunch = { pid: launch.pid, startedAt: launch.startedAt - 1 };
