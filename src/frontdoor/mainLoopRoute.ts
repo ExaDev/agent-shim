@@ -64,7 +64,7 @@ function sameRoute(a: MainLoopRoute, b: MainLoopRoute): boolean {
 /**
  * Builds the record, bounded by the door's session registry: an entry lives exactly as long as the registry holds its launch. A launch's entry is dropped when a later write or first lookup of another launch finds it ended, so the record never holds more launches than the registry did since then, and a launch is only ever named by a request that presented its live capability.
  *
- * A lookup reads the durable copy once and keeps the answer, a miss included, and then watches the copy's identity (its modification time and size, one stat per lookup, on the door's thread) instead of re-reading it: a copy another door rewrote, as the door replacing this one does while this one drains, changes identity, and only then is it read again. A route this door wrote or has in memory unwritten is its own and is not compared. A copy that exists and cannot be read (corrupt, or written by a newer door) is reported and counts as a miss until its identity changes. A copy that failed to write is retried on the next lookup as well as the next write, one attempt each, so a helper does not wait for a main-loop request to see the store mended.
+ * A lookup reads the durable copy once and keeps the answer, a miss included, and then watches the copy's identity (its modification time and size, one stat per lookup, on the door's thread) instead of re-reading it: a copy another door rewrote, as the door replacing this one does while this one drains, changes identity, and only then is it read again. A route this door wrote or has in memory unwritten is its own and is not compared. A copy that exists and cannot be read (corrupt, or written by a newer door) is reported and counts as a miss until its identity changes. An identity the store cannot tell (no file, or a stat that failed) never forces a read. A copy that failed to write is retried on the next lookup as well as the next write, one attempt each, so a helper does not wait for a main-loop request to see the store mended.
  */
 export function createMainLoopRouteRecord(ports: MainLoopRoutePorts): MainLoopRouteRecord {
   // `route` is undefined for a cached miss. `persisted` is what the durable copy holds, which differs from `route` after a failed write and until a later write succeeds. `identity` is the copy's identity when this door last wrote or read it.
@@ -141,7 +141,9 @@ export function createMainLoopRouteRecord(ports: MainLoopRoutePorts): MainLoopRo
         routes.set(key, { ...entry, persisted, identity: written ? ports.stored.identity(launch) : entry.identity });
         return entry.route;
       }
-      if (ports.stored.identity(launch) !== entry.identity) {
+      // An identity that cannot be told (undefined: no file, or a stat that failed) is never a reason to read, so a stat that keeps failing cannot turn every helper into a read.
+      const current = ports.stored.identity(launch);
+      if (current !== undefined && current !== entry.identity) {
         const loaded = load(launch);
         routes.set(key, loaded);
         return loaded.route;
