@@ -12,6 +12,14 @@ import { catalogueCachePath } from "../providerCatalogue";
 import { MAX_TCP_PORT } from "../baseUrlDial";
 import { recordOf, listFrontDoorDirectRecords, isSessionRecordName, launchRouteStore, listFrontDoorSessions, pruneMalformedFrontDoorDirectFiles, pruneDeadFrontDoorSessions, readFrontDoorCodexHome, readFrontDoorCodexRecord, readFrontDoorState, readLaunchRoute, removeFrontDoorSession, writeFrontDoorCodexHome, writeFrontDoorSession, writeFrontDoorState, writeLaunchRoute } from "./state";
 
+/** Versions of the route file past the one this door writes, up to well beyond what any door will reach. */
+const NEXT_VERSION = 2;
+const THIRD_VERSION = 3;
+const NEAR_HUNDRED_VERSION = 99;
+const HUNDRED_VERSION = 100;
+const FAR_VERSION = 1000;
+const NEWER_VERSIONS: readonly number[] = [NEXT_VERSION, THIRD_VERSION, NEAR_HUNDRED_VERSION, HUNDRED_VERSION, FAR_VERSION];
+
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 
 const LIVE = 301;
@@ -201,8 +209,9 @@ describe("front-door session registry", () => {
     expect(read(undefined)).toBeUndefined();
     expect(read(JSON.stringify(good))).toEqual({ kind: "provider", provider: "z" });
     expect(() => read("not json")).toThrow("is not JSON");
-    expect(() => read(JSON.stringify({ ...good, version: 2 }))).toThrow("written by a newer door");
-    expect(() => read(JSON.stringify({ ...good, version: 99 }))).toThrow("written by a newer door");
+    for (const newer of NEWER_VERSIONS) {
+      expect(() => read(JSON.stringify({ ...good, version: newer })), `version ${String(newer)}`).toThrow("written by a newer door");
+    }
     expect(() => read(JSON.stringify({ startedAt: 1, route: good.route }))).toThrow("is not a route file this door reads");
     expect(() => read(JSON.stringify({ ...good, extra: true }))).toThrow("is not a route file this door reads");
     expect(() => read(JSON.stringify({ ...good, route: { kind: "provider", provider: "" } }))).toThrow("is not a route file this door reads");
@@ -293,7 +302,7 @@ describe("front-door session registry", () => {
     });
 
     it("reads the route without the facts, reporting once per launch, when the facts file is not JSON, has another shape, an empty name, an extra field or a version it does not know", () => {
-      for (const facts of ["not json", JSON.stringify({ version: 1, startedAt: 7, facts: { credential: "" } }), JSON.stringify({ version: 1, startedAt: 7, facts: { other: "x" } }), JSON.stringify({ version: 2, startedAt: 7, facts: {} }), JSON.stringify({ startedAt: 7, facts: {} })]) {
+      for (const facts of ["not json", JSON.stringify({ version: 1, startedAt: 7, facts: { credential: "" } }), JSON.stringify({ version: 1, startedAt: 7, facts: { servedModel: "a".repeat(MAX_CONTEXT_TEXT_LENGTH + 1) } }), JSON.stringify({ version: 1, startedAt: 7, facts: { other: "x" } }), JSON.stringify({ version: 2, startedAt: 7, facts: {} }), JSON.stringify({ startedAt: 7, facts: {} })]) {
         const { fs, lines, store } = launched();
         store.write(launch, provider);
         fs.writeFilePrivate(factsFile, facts);

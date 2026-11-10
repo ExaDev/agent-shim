@@ -4,6 +4,13 @@ import { FAKE_HOME, createFakeFarmFs, inMemoryRouteStore } from "../test-helpers
 import { createMainLoopRouteRecord, type MainLoopRoutePorts } from "./mainLoopRoute";
 import { launchKeyOf, launchRouteStore, type RouteContext, removeFrontDoorSession, writeFrontDoorSession, type FrontDoorLaunch } from "./state";
 
+/** Versions of the route file past the one this door writes, up to well beyond what any door will reach. */
+const NEXT_VERSION = 2;
+const THIRD_VERSION = 3;
+const NEAR_HUNDRED_VERSION = 99;
+const HUNDRED_VERSION = 100;
+const NEWER_VERSIONS: readonly number[] = [NEXT_VERSION, THIRD_VERSION, NEAR_HUNDRED_VERSION, HUNDRED_VERSION];
+
 describe("the main-loop route record", () => {
   /** A registry whose launches the test starts and ends. */
   function registryOf(stored: MainLoopRoutePorts["stored"] = inMemoryRouteStore()): MainLoopRoutePorts & { readonly start: (launch: Readonly<FrontDoorLaunch>) => void; readonly end: (launch: Readonly<FrontDoorLaunch>) => void } {
@@ -488,6 +495,63 @@ describe("a route store whose stat fails", () => {
       w.record.routeOf(launch);
     }
     expect(w.reads.count).toBe(afterFirst);
+  });
+});
+
+describe("a context that changes only in the credential it names", () => {
+  const launch: FrontDoorLaunch = { pid: 9, startedAt: 1 };
+
+  it("is written again when the credential's name changed, and not when it did not", () => {
+    const writes: (string | undefined)[] = [];
+    const base = inMemoryRouteStore();
+    const record = createMainLoopRouteRecord({
+      holdsLaunch: () => true,
+      stored: {
+        read: base.read,
+        identity: base.identity,
+        write: (held, route) => {
+          writes.push(route.credential);
+          base.write(held, route);
+        },
+      },
+      log: () => undefined,
+    });
+    const route = { kind: "provider", provider: "z" } as const;
+    record.record(launch, { ...route, credential: "bearer from env A" });
+    record.record(launch, { ...route, credential: "bearer from env A" });
+    record.record(launch, { ...route, credential: "bearer from env B" });
+    record.record(launch, { ...route, credential: "bearer from env B" });
+    expect(writes).toEqual(["bearer from env A", "bearer from env B"]);
+  });
+});
+
+describe("a route file of a version this door does not know, over the real store", () => {
+  const SESSIONS_DIR = `${FAKE_HOME}/.agent-shim/frontdoor/sessions`;
+  const launch: FrontDoorLaunch = { pid: 4242, startedAt: 7 };
+
+  function over(version: number): { readonly lines: string[]; readonly record: ReturnType<typeof createMainLoopRouteRecord> } {
+    const fs = createFakeFarmFs();
+    writeFrontDoorSession(fs, SESSIONS_DIR, { pid: launch.pid, startedAt: launch.startedAt, token: "t" });
+    fs.writeFilePrivate(`${SESSIONS_DIR}/${String(launch.pid)}.route.json`, `${JSON.stringify({ version, startedAt: launch.startedAt, route: { kind: "provider", provider: "z" } })}\n`);
+    const lines: string[] = [];
+    const log = (line: string): void => {
+      lines.push(line);
+    };
+    return { lines, record: createMainLoopRouteRecord({ holdsLaunch: () => true, stored: launchRouteStore(fs, SESSIONS_DIR, log), log }) };
+  }
+
+  it.each(NEWER_VERSIONS)("is reported once and counted as no route when it is version %s", (version) => {
+    const { lines, record } = over(version);
+    expect(record.routeOf(launch)).toBeUndefined();
+    expect(record.routeOf(launch)).toBeUndefined();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("written by a newer door");
+  });
+
+  it("is read as a provider-only context when it is version 1", () => {
+    const { lines, record } = over(1);
+    expect(record.routeOf(launch)).toEqual({ kind: "provider", provider: "z" });
+    expect(lines).toEqual([]);
   });
 });
 
