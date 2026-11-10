@@ -9,6 +9,17 @@ const SCRIPT = path.join(__dirname, "..", ".github", "actions", "brew-install", 
 const EXPECTED = "12.2.0";
 const SIGPIPE_STATUS = 141;
 
+/**
+ * The two real failing lines, as the runner printed them, so a fake brew's transcript is taken from a real failure and the next real signature is a one-line fixture. The runner shows brew's `::error::<message>` annotation as `##[error]<message>`.
+ * Install: run 42461478176 (the v12.2.0 release commit), job "Verify Homebrew install (Linux, ubuntu-24.04-arm)": `##[error]exadev/agent-shim/agent-shim: Broken pipe`, exit 1.
+ * Tap: run 42736184177 (the v14.0.2 release), same job: `Tapped 1 formula (16 files, 365.8KB).` then `##[error]Broken pipe`, exit 1, with the tap cloned.
+ */
+const REAL_INSTALL_LINE = "##[error]exadev/agent-shim/agent-shim: Broken pipe";
+const REAL_TAP_LINE = "##[error]Broken pipe";
+const REAL_TAP_PRECEDING_LINE = "Tapped 1 formula (16 files, 365.8KB).";
+/** The message inside the runner's `##[error]` rendering, which is what brew's `onoe` was given. */
+const messageOf = (runnerLine: string): string => runnerLine.replace(/^##\[error\]/, "");
+
 /** A `brew` that behaves as the case says, recording its calls: each subcommand's exit status and output come from the environment, and `list --versions` answers what is "installed". */
 function fakeBrew(dir: string): string {
   const bin = path.join(dir, "bin");
@@ -18,7 +29,15 @@ function fakeBrew(dir: string): string {
     `#!/bin/sh
 echo "$@" >> "$FAKE_BREW_CALLS"
 case "$1" in
-  tap) echo "$FAKE_TAP_OUT"; exit "\${FAKE_TAP_STATUS:-0}" ;;
+  tap)
+    echo "$FAKE_TAP_OUT"
+    # brew's onoe line for the tap, rendered as brew renders it: an Actions annotation under Actions, "Error: " elsewhere.
+    if [ -n "$FAKE_TAP_OFAIL" ]; then
+      if [ "$GITHUB_ACTIONS" = true ]; then echo "::error::$FAKE_TAP_OFAIL" >&2
+      elif [ -n "$HOMEBREW_COLOR" ]; then printf '\\033[31mError:\\033[0m %s\\n' "$FAKE_TAP_OFAIL" >&2
+      else echo "Error: $FAKE_TAP_OFAIL" >&2; fi
+    fi
+    exit "\${FAKE_TAP_STATUS:-0}" ;;
   install)
     echo "$FAKE_INSTALL_OUT"
     echo "$FAKE_INSTALL_ERR" >&2
@@ -51,12 +70,23 @@ describe("the Homebrew install step", () => {
   });
 
   /** Runs the step against a fake brew; `tapPresent` says whether the tap directory exists afterwards. */
-  function run(env: Readonly<Record<string, string>>, tapPresent = true): { readonly status: number | null; readonly output: string; readonly calls: string } {
+  function run(env: Readonly<Record<string, string>>, tap: "complete" | "absent" | "no-commit" | "no-formula" = "complete"): { readonly status: number | null; readonly output: string; readonly calls: string } {
     const world = fs.mkdtempSync(path.join(dir, "run-"));
     const bin = fakeBrew(world);
     const tapDir = path.join(world, "tap");
-    if (tapPresent) {
-      fs.mkdirSync(tapDir);
+    if (tap !== "absent") {
+      fs.mkdirSync(path.join(tapDir, "Formula"), { recursive: true });
+      const git = (...args: readonly string[]): void => {
+        spawnSync("git", ["-C", tapDir, "-c", "user.name=t", "-c", "user.email=t@example.com", ...args], { encoding: "utf8", env: { PATH: process.env.PATH ?? "", HOME: world } });
+      };
+      git("init", "-q");
+      if (tap !== "no-formula") {
+        fs.writeFileSync(path.join(tapDir, "Formula", "agent-shim.rb"), "class AgentShim < Formula\nend\n");
+      }
+      if (tap !== "no-commit") {
+        git("add", "-A");
+        git("commit", "-q", "--allow-empty", "-m", "tap");
+      }
     }
     const calls = path.join(world, "calls");
     fs.writeFileSync(calls, "");
@@ -160,21 +190,89 @@ describe("the Homebrew install step", () => {
     expect(result.status).toBe(SIGPIPE_STATUS);
   });
 
-  it("counts a tap that ended with exit 141 as done when the tap directory exists, and fails when it does not", () => {
+  it("counts a tap that ended with exit 141 as done when the tap is in place, and fails when it is not", () => {
     const base = { FAKE_TAP_STATUS: String(SIGPIPE_STATUS), FAKE_INSTALLED: EXPECTED };
-    expect(run(base, true).status).toBe(0);
-    const absent = run(base, false);
+    expect(run(base).status).toBe(0);
+    const absent = run(base, "absent");
     expect(absent.status).toBe(SIGPIPE_STATUS);
     expect(absent.output).toContain("brew tap ExaDev/agent-shim failed");
   });
 
-  it("fails a tap that failed for another reason, though the directory exists", () => {
-    const result = run({ FAKE_TAP_STATUS: "1", FAKE_TAP_OUT: "Error: repository not found", FAKE_INSTALLED: EXPECTED }, true);
+  const TAP_MESSAGE = messageOf(REAL_TAP_LINE);
+  const TAP_ENV = { FAKE_TAP_STATUS: "1", FAKE_TAP_OUT: REAL_TAP_PRECEDING_LINE, FAKE_TAP_OFAIL: TAP_MESSAGE, FAKE_INSTALLED: EXPECTED };
+
+  it("counts the tap's own failing signature as done in each of brew's renderings, when the tap is in place", () => {
+    for (const { name, env } of ENVIRONMENTS) {
+      const result = run({ ...env, ...TAP_ENV });
+      expect(result.status, name).toBe(0);
+      expect(result.output, name).toContain("brew tap ended with a broken pipe");
+      expect(result.calls, name).toContain("install");
+    }
+  });
+
+  it("takes the install's real failing line and the tap's, each as the runner printed it, from the fixtures", () => {
+    expect(REAL_INSTALL_LINE).toBe(`##[error]${OFAIL}`);
+    expect(REAL_TAP_LINE).toBe(`##[error]${TAP_MESSAGE}`);
+    expect(TAP_MESSAGE).toBe("Broken pipe");
+  });
+
+  it("fails the tap's signature when what the tap was for is not in place: no directory, no commit, no formula file", () => {
+    for (const state of ["absent", "no-commit", "no-formula"] as const) {
+      const result = run({ GITHUB_ACTIONS: "true", CI: "true", ...TAP_ENV }, state);
+      expect(result.status, state).toBe(1);
+      expect(result.output, state).toContain("brew tap ExaDev/agent-shim failed with status 1");
+      expect(result.calls, state).not.toContain("install");
+    }
+  });
+
+  it("does not take a near miss for the tap's signature, with the tap in place", () => {
+    const nearMisses = [
+      "::error::Broken pipe while cloning",
+      "Error: Broken pipe.",
+      "::error::broken pipe",
+      "Warning: Broken pipe",
+      "##[error]Broken pipe",
+      "saw Broken pipe in the output",
+      "Error: repository not found",
+      "::error::exadev/agent-shim/agent-shim: Broken pipe",
+      "\u001B[31mError:\u001B[0m Broken pipe now",
+    ];
+    for (const line of nearMisses) {
+      const result = run({ FAKE_TAP_STATUS: "1", FAKE_TAP_OUT: line, FAKE_INSTALLED: EXPECTED });
+      expect(result.status, line).toBe(1);
+      expect(result.output, line).toContain(line);
+      expect(result.calls, line).not.toContain("install");
+    }
+  });
+
+  it("takes the message as a whole line without brew's prefix too, for the tap and for the install", () => {
+    const tap = run({ FAKE_TAP_STATUS: "1", FAKE_TAP_OUT: TAP_MESSAGE, FAKE_INSTALLED: EXPECTED });
+    expect(tap.status).toBe(0);
+    const install = run({ FAKE_INSTALL_STATUS: "1", FAKE_INSTALL_OUT: OFAIL, FAKE_INSTALLED: EXPECTED });
+    expect(install.status).toBe(0);
+  });
+
+  it("takes only exit status 1, or 141 for the tap, for the tap's signature", () => {
+    for (const status of ["2", "127", "130"]) {
+      const result = run({ GITHUB_ACTIONS: "true", ...TAP_ENV, FAKE_TAP_STATUS: status });
+      expect(result.status, status).toBe(Number(status));
+    }
+  });
+
+  it("accepts the tap's signature among other lines, and fails the tap's bare line under a status of 1 only when it is not a whole line", () => {
+    const among = run({ GITHUB_ACTIONS: "true", ...TAP_ENV, FAKE_TAP_OUT: "==> Tapping exadev/agent-shim\nTapped 1 formula" });
+    expect(among.status).toBe(0);
+    const inside = run({ FAKE_TAP_STATUS: "1", FAKE_TAP_OUT: "the error was: Broken pipe", FAKE_INSTALLED: EXPECTED });
+    expect(inside.status).toBe(1);
+  });
+
+  it("fails a tap that failed for another reason, though the tap is in place", () => {
+    const result = run({ FAKE_TAP_STATUS: "1", FAKE_TAP_OUT: "Error: repository not found", FAKE_INSTALLED: EXPECTED });
     expect(result.status).toBe(1);
   });
 
   it("does not run the install when the tap failed", () => {
-    const result = run({ FAKE_TAP_STATUS: "1", FAKE_TAP_OUT: "Error: repository not found" }, false);
+    const result = run({ FAKE_TAP_STATUS: "1", FAKE_TAP_OUT: "Error: repository not found" }, "absent");
     expect(result.calls).not.toContain("install");
   });
 });
