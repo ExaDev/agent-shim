@@ -1,0 +1,13 @@
+name: Dial a loopback listener with the built binary
+description: Starts two loopback listeners (one left up, one stopped), points two providers at them and checks that the binary's own dial, which doctor uses, reaches the first and reports the second unreachable. It runs the dial where the platform's own rules apply, for example the port ranges Windows excludes from binding. Runs under pwsh, which every hosted runner provides.
+
+inputs:
+  binary:
+    description: Path to the built agent-shim executable.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: pwsh
+      run: ${{ github.action_path }}/dial-smoke.ps1 -Binary '${{ inputs.binary }}'

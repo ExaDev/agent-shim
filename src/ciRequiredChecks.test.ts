@@ -90,3 +90,27 @@ describe("the Homebrew verification", () => {
     }
   });
 });
+
+describe("the Windows smoke jobs", () => {
+  const WORKFLOWS_DIR = path.join(__dirname, "..", ".github", "workflows");
+  const ACTION = "./.github/actions/dial-smoke";
+  const SMOKE_JOBS = ["smoke-test-windows-x64", "smoke-test-windows-arm64"];
+  const JobsSchema = z.object({ jobs: z.record(z.string(), z.looseObject({ steps: z.array(z.looseObject({ uses: z.string().optional(), with: z.looseObject({}).optional() })) })) });
+
+  it("check the repository out for the dial action and then use it, since a Windows bind inside an excluded port range is refused only when a dial is made", () => {
+    const jobs = JobsSchema.parse(parse(fs.readFileSync(path.join(WORKFLOWS_DIR, "ci.yml"), "utf8"))).jobs;
+    for (const id of SMOKE_JOBS) {
+      const steps = jobs[id]?.steps ?? [];
+      const checkout = steps.findIndex((step) => step.uses?.startsWith("actions/checkout@") === true);
+      const dial = steps.findIndex((step) => step.uses === ACTION);
+      expect(checkout, `${id} checks out`).toBeGreaterThanOrEqual(0);
+      expect(dial, `${id} dials`).toBeGreaterThan(checkout);
+    }
+  });
+
+  it("run the dial in the job that runs the binary, with no job of its own", () => {
+    const jobs = JobsSchema.parse(parse(fs.readFileSync(path.join(WORKFLOWS_DIR, "ci.yml"), "utf8"))).jobs;
+    const users = Object.entries(jobs).filter(([, job]) => job.steps.some((step) => step.uses === ACTION)).map(([id]) => id);
+    expect(users.sort()).toEqual([...SMOKE_JOBS].sort());
+  });
+});
