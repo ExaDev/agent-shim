@@ -1,3 +1,77 @@
+## [14.1.0](https://github.com/ExaDev/agent-shim/compare/v14.0.4...v14.1.0) (2026-11-10)
+
+### Features
+
+* **frontdoor:** answer whether a live launch carries a session id ([bba9da2](https://github.com/ExaDev/agent-shim/commit/bba9da28fa62a3dcf0f280c1b301d229129d5064))
+* **frontdoor:** follow the main loop's provider for a subagent that carries only an agent id ([fb011cd](https://github.com/ExaDev/agent-shim/commit/fb011cdb6f7c4ce457fdb4a6b5f8f602b5652432))
+* **frontdoor:** keep a launch's main-loop route across a door restart ([52c185f](https://github.com/ExaDev/agent-shim/commit/52c185f24e5b734f923931a56708901bb7177f6e))
+* **launcher:** ask door-routed children for Claude Code's request class ([a9fe5d7](https://github.com/ExaDev/agent-shim/commit/a9fe5d7e2741ba12d9874f09fa0673d2d0aca31f))
+
+### Bug Fixes
+
+* **frontdoor:** decode a scanned body whole across chunk boundaries ([7b461df](https://github.com/ExaDev/agent-shim/commit/7b461dfa8de13b5d25b01d4a8e02ac0193700af4))
+* **frontdoor:** drop the duplicate product prefix from the route store failure line ([02c8f68](https://github.com/ExaDev/agent-shim/commit/02c8f68a09fac9f323b292389aacc70038e061a0))
+* **frontdoor:** fail a scan of a request body that was already read to its end ([1b95b3d](https://github.com/ExaDev/agent-shim/commit/1b95b3d6c6469b9747996d686da8d284126f783d))
+* **frontdoor:** follow a route another door wrote after this door cached a miss ([04a22ae](https://github.com/ExaDev/agent-shim/commit/04a22ae3b76c85367eb7e1d35695c08bb37e577c))
+* **frontdoor:** keep a failed route write out of the request that recorded it ([4bc926b](https://github.com/ExaDev/agent-shim/commit/4bc926b661d9aa349b35df81bc4fefab9d61d2d7))
+* **frontdoor:** keep a failing stat of the route file from failing a request ([614ecfc](https://github.com/ExaDev/agent-shim/commit/614ecfcc633596d326e4b444c8448de3a6f8b6cc))
+* **frontdoor:** keep helpers from failing open on a route store that is unreadable or stale ([336dcb8](https://github.com/ExaDev/agent-shim/commit/336dcb860973087fd5c0bc87c02a3a1caf608796))
+* **frontdoor:** key a launch's main-loop route on the capability its request presented ([c51deb2](https://github.com/ExaDev/agent-shim/commit/c51deb271f11bfd49c171bcab3abd4f36f6b9bc2))
+* **frontdoor:** key a launch's main-loop route on the launch, not its session id ([ea455d7](https://github.com/ExaDev/agent-shim/commit/ea455d708d40c0fa9ce72d2d71c493f61523939b))
+* **frontdoor:** leave the door's transparent-surface session out of the main-loop record ([a8ce305](https://github.com/ExaDev/agent-shim/commit/a8ce3055f1a17887e4c5bb49990b2e5d08d47d7c))
+* **frontdoor:** match a model key written with whitespace before its colon ([7ae2e46](https://github.com/ExaDev/agent-shim/commit/7ae2e46c61803261fd784f36bd445f664290ba3b))
+* **frontdoor:** never take a request with an agent id for the main loop ([850a36d](https://github.com/ExaDev/agent-shim/commit/850a36d48b97bacf4aa6f5ea239286caf8124f80))
+* **frontdoor:** prune a route file left with no registry record ([833f33f](https://github.com/ExaDev/agent-shim/commit/833f33f740288ac017839593bb53217aebe4d467))
+* **frontdoor:** read a model name holding an escaped quote whole ([ea57b30](https://github.com/ExaDev/agent-shim/commit/ea57b30675b398e5a52586b6c5e675239d7aba3d))
+* **frontdoor:** read the request class strictly and rewrite a helper's model in the body's head ([64465fc](https://github.com/ExaDev/agent-shim/commit/64465fcd161a59eb095393ad26495634de520510))
+* **frontdoor:** refuse a router helper with no tier pointer ([beea06d](https://github.com/ExaDev/agent-shim/commit/beea06d4da9ecf858c318f89d81e8f437f85e6c2))
+* **frontdoor:** retry a main-loop route write that failed until the durable copy matches ([5c968a9](https://github.com/ExaDev/agent-shim/commit/5c968a91d74fd367c3320a2849772bbb832ebe1e))
+* **frontdoor:** route a session's helper requests to its main loop's provider ([5714de8](https://github.com/ExaDev/agent-shim/commit/5714de8c4536ba87d9193ab78f565344a46da5c3)), closes [#744](https://github.com/ExaDev/agent-shim/issues/744)
+* **frontdoor:** send a helper that precedes the first main request down the launch's route ([280a2d8](https://github.com/ExaDev/agent-shim/commit/280a2d8258ed1ecd41c6a00ce843abd268869fdc))
+* **frontdoor:** write a launch's route file only while its registry record exists ([abef998](https://github.com/ExaDev/agent-shim/commit/abef998f737d71044b601a78d7771573c3ec4709))
+* **statusline:** draw a session's model from its main-loop record ([75286d5](https://github.com/ExaDev/agent-shim/commit/75286d573666f0f762c76fd6cb3eea75e6b4ae3b))
+
+### Code Refactoring
+
+* **frontdoor:** drop the helper fallback the provider resolver never reaches ([ba9e973](https://github.com/ExaDev/agent-shim/commit/ba9e973d9346598c887d50e1cf870ac78909cca0))
+* **frontdoor:** import the identity store once in the door commands ([d872d4b](https://github.com/ExaDev/agent-shim/commit/d872d4ba7bb9071e4bf5893785fca8db36a2c64a))
+* keep the route and request class constants module-internal ([ddd9fd9](https://github.com/ExaDev/agent-shim/commit/ddd9fd91b5e0827dac9e0dbb3f49976d8f3946fd))
+* **models:** decide a model name's Claude tier in one place ([5c2f83b](https://github.com/ExaDev/agent-shim/commit/5c2f83b1168ace2f3109cd4eda83eaf4fddb126e))
+* **resolve:** iterate the shared tier list when merging a models layer ([8c6ba5c](https://github.com/ExaDev/agent-shim/commit/8c6ba5c27f90eee33d4d3ee9627533173cc257f5))
+
+### Documentation
+
+* **codex:** point the model mapping comment at claudeTierOf ([7e4b80d](https://github.com/ExaDev/agent-shim/commit/7e4b80d5e0c24e0934a8f89b6933d99b94453870))
+* define a helper request by its class header or agent id and describe the new route tests ([51ac8bf](https://github.com/ExaDev/agent-shim/commit/51ac8bf3de18233e7c35db2c11663b8194e99ceb))
+* describe the main-loop helper limits without counting them ([7d69b3d](https://github.com/ExaDev/agent-shim/commit/7d69b3d57ba8ade59a02ace4bfb29b5d1ce1ef40))
+* **frontdoor:** say that only a write evicts a main-loop route entry ([3b83f86](https://github.com/ExaDev/agent-shim/commit/3b83f8605d8e4b6c139b8cac8d59589a67978dfd))
+* **frontdoor:** state that RequestScan.model keeps the JSON source form of the name ([43a441e](https://github.com/ExaDev/agent-shim/commit/43a441eb6e5995c238e8a18ae1836de91429f710))
+* **launcher:** list the request class hint among what a door launch sets ([3166e66](https://github.com/ExaDev/agent-shim/commit/3166e66841f315cbcb42356b0f8e7c8744523084))
+* say how a door follows a route another door wrote ([91438dd](https://github.com/ExaDev/agent-shim/commit/91438dd4ea3807b690f22be231839db2399aa14e))
+* say that a classless helper of an earlier launch moves the main-loop record ([659cac4](https://github.com/ExaDev/agent-shim/commit/659cac4d6a79faefd14042488cbe277d6bc89ac0))
+* say what a failing stat of the route file does ([f656140](https://github.com/ExaDev/agent-shim/commit/f656140a8a049ab8a48645a0885e4bb713615161))
+* say what the door reads per request and what applies at launch ([508178c](https://github.com/ExaDev/agent-shim/commit/508178c5b94d0b050bada3605efc93e0467d9d7b))
+* state the final rules for a session's helper requests ([0b1ca26](https://github.com/ExaDev/agent-shim/commit/0b1ca260cbc64761f6289d0fd123581e1ac616d7))
+* state what the helper route record cannot promise ([64b56be](https://github.com/ExaDev/agent-shim/commit/64b56be3d871ad5272491225b5146bd81dc61062))
+* **usage:** state that a request with only an agent id is classed subagent ([362073c](https://github.com/ExaDev/agent-shim/commit/362073c247efba8d806c94d2338836818d1a7a9e))
+
+### Tests
+
+* **frontdoor:** answer a body that is not JSON with 400 in the fake upstream ([2f8a52c](https://github.com/ExaDev/agent-shim/commit/2f8a52c23557ad1571b0d59f253d5b36f85f6a10))
+* **frontdoor:** hold a launch registered since the last rescan by reading its record ([c3810f9](https://github.com/ExaDev/agent-shim/commit/c3810f91452f3055b9aee593ce4f59960350c0d7))
+* **frontdoor:** keep every helper-routing case off the real Anthropic API ([5be9fb7](https://github.com/ExaDev/agent-shim/commit/5be9fb79bad3745bf334c6ce6c1e54d2f084d519))
+* **frontdoor:** pin a helper's refusal from the provider its main loop was on ([a3205ca](https://github.com/ExaDev/agent-shim/commit/a3205cad929b68c65faf87d37c8050cb4e4473be))
+* **frontdoor:** pin a native session's judge request to antigravity/auto ([fd10904](https://github.com/ExaDev/agent-shim/commit/fd109043532ea6b0f30446cf778ecaa7725111f2))
+* **frontdoor:** pin that a first lookup drops the entries of ended launches ([f401dce](https://github.com/ExaDev/agent-shim/commit/f401dce625dc60a42a866f8ff88fc63da56c4427))
+* **frontdoor:** pin that a retried write's own copy is not read back ([240a743](https://github.com/ExaDev/agent-shim/commit/240a7432416979f6352f0d5bf40c15c0704430fe))
+* **frontdoor:** pin the helper model mapping and the usage log's requested model ([408ce77](https://github.com/ExaDev/agent-shim/commit/408ce772031d54275404abaf88008e10cf6e32f5))
+* **frontdoor:** rewrite the route store on a provider-to-provider step and report per launch ([fc9f121](https://github.com/ExaDev/agent-shim/commit/fc9f121ec9ac70c18bb43789a7031b7b943af413))
+* **frontdoor:** send a helper under a tier model name holding a multi-byte character intact ([1fe02d1](https://github.com/ExaDev/agent-shim/commit/1fe02d16bffb800d01375c36000094186b614aa9))
+* **frontdoor:** serve a launch's requests when its route store fails ([fe48e62](https://github.com/ExaDev/agent-shim/commit/fe48e62d00abe1ba9f8e1fb23417a715f583fe09))
+* **frontdoor:** write the orphan route file directly so the prune is exercised ([338f2d2](https://github.com/ExaDev/agent-shim/commit/338f2d20c9ef3e7ea14621f296a5ffd089bcc0c5))
+* **models:** pin the shared Claude tier function directly ([2765728](https://github.com/ExaDev/agent-shim/commit/2765728330b83ff47cce54c601006115fb6473a3))
+* **usage:** pin that the middleware copies a request class into the record ([55a8674](https://github.com/ExaDev/agent-shim/commit/55a86742eff56a77ba56e1e4cfcd5745790bf901))
+
 ## [14.0.4](https://github.com/ExaDev/agent-shim/compare/v14.0.3...v14.0.4) (2026-11-10)
 
 ### Bug Fixes
