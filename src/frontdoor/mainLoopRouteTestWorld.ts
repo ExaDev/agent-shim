@@ -187,6 +187,10 @@ export async function startWorld(
       [`${PROVIDERS_DIR}/cx.json`]: { kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "placeholder" }] } },
 
       [`${PROVIDERS_DIR}/r.json`]: { kind: "router", displayName: "Router" },
+      // A provider whose `routes` hand every request on to `z`: its resolution scans the request again, after the name-resolving scan has read the name the client sent.
+      [`${PROVIDERS_DIR}/m.json`]: { displayName: "M", baseUrl: `http://127.0.0.1:${String(upstream.port)}`, credential: { sources: [{ literal: "m-token" }] }, routes: [{ when: { kind: "textCompare", op: "matches", left: { kind: "reference", key: "request.model" }, right: { kind: "textLiteral", value: ".*" } }, provider: "z" }] },
+      // A provider file that is no valid provider: a helper whose main loop was recorded on it reaches the routing loop's own refusal.
+      [`${PROVIDERS_DIR}/bad.json`]: { displayName: 5 },
     }),
     providersDir: PROVIDERS_DIR,
     codexPorts,
