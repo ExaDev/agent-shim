@@ -9,8 +9,8 @@ const config: KnipConfig = {
     "@semantic-release/npm",
     "conventional-changelog-conventionalcommits",
   ],
-  // Runtime-invoked external tools, not npm dependencies: the headroom supervisor spawns `uv tool install` and the headroom proxy itself, so their names appear as spawn literals knip cannot resolve to a package; the statusline's port tests make a FIFO with the system's `mkfifo`, since Node has no call that makes one.
-  ignoreBinaries: ["headroom", "mkfifo"],
+  // Runtime-invoked external tools, not npm dependencies: the headroom supervisor spawns `uv tool install` and the headroom proxy itself, so their names appear as spawn literals knip cannot resolve to a package; the statusline's port tests make a FIFO with the system's `mkfifo`, since Node has no call that makes one; the dial smoke script's test runs it under `pwsh`, which every hosted runner has, and skips where it is absent.
+  ignoreBinaries: ["headroom", "mkfifo", "pwsh"],
 };
 
 export default config;
