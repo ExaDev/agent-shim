@@ -26,7 +26,7 @@ describe("the main-loop route record", () => {
   it("drops an ended launch's entry on a write by another launch, so the same launch registered again finds nothing in memory", () => {
     // The durable copy answers nothing, so only the in-memory entry can say what was recorded; the launch is identical (pid and start time) when it is registered again, so the one thing that can make the second read empty is the eviction.
     const live = new Set<FrontDoorLaunch>([a, b]);
-    const record = createMainLoopRouteRecord({ holdsLaunch: (held) => live.has(held), stored: { read: () => undefined, write: () => undefined }, log: () => undefined });
+    const record = createMainLoopRouteRecord({ holdsLaunch: (held) => live.has(held), stored: { read: () => undefined, write: () => undefined, identity: () => undefined }, log: () => undefined });
     record.record(a, { kind: "provider", provider: "z" });
     expect(record.routeOf(a)).toEqual({ kind: "provider", provider: "z" });
     live.delete(a);
@@ -66,6 +66,7 @@ describe("the main-loop route record", () => {
     const base = inMemoryRouteStore();
     const registry = registryOf({
       read: base.read,
+      identity: base.identity,
       write: (launch, route) => {
         writes.push(route.kind === "provider" ? route.provider : route.kind);
         base.write(launch, route);
@@ -91,6 +92,7 @@ describe("a main-loop record whose store fails", () => {
       holdsLaunch: () => true,
       stored: {
         read: () => undefined,
+        identity: () => undefined,
         write: () => {
           throw new Error("disk full");
         },
@@ -114,6 +116,7 @@ describe("a main-loop record whose store fails", () => {
       holdsLaunch: () => true,
       stored: {
         read: store.read,
+        identity: store.identity,
         write: (written, route) => {
           if (failing) {
             throw new Error("disk full");
@@ -143,6 +146,7 @@ describe("a main-loop record whose store fails", () => {
       holdsLaunch: (held) => live.has(held),
       stored: {
         read: () => undefined,
+        identity: () => undefined,
         write: () => {
           throw new Error("disk full");
         },
@@ -182,6 +186,7 @@ describe("a main-loop record over a durable copy that fails", () => {
       ports: {
         holdsLaunch: () => true,
         stored: {
+          identity: store.identity,
           read: (held) => {
             calls.reads += 1;
             if (failing.reads) {
@@ -276,6 +281,90 @@ describe("a main-loop record over a durable copy that fails", () => {
     expect(world.calls.reads).toBe(1);
     record.record(launch, z);
     expect(world.calls.writes).toBe(writes);
+  });
+});
+
+describe("two doors over one durable copy", () => {
+  const launch: FrontDoorLaunch = { pid: 9, startedAt: 1 };
+  const z: MainLoopRoute = { kind: "provider", provider: "z" };
+
+  /** Two records, standing for the old door and its replacement, over one store that counts every read. */
+  function twoDoors(): { readonly a: ReturnType<typeof createMainLoopRouteRecord>; readonly b: ReturnType<typeof createMainLoopRouteRecord>; readonly reads: { count: number }; readonly store: ReturnType<typeof inMemoryRouteStore> } {
+    const store = inMemoryRouteStore();
+    const reads = { count: 0 };
+    const ports: MainLoopRoutePorts = {
+      holdsLaunch: () => true,
+      stored: {
+        identity: store.identity,
+        write: store.write,
+        read: (held) => {
+          reads.count += 1;
+          return store.read(held);
+        },
+      },
+      log: () => undefined,
+    };
+    return { a: createMainLoopRouteRecord(ports), b: createMainLoopRouteRecord(ports), reads, store };
+  }
+
+  it("follows a route another door wrote after this one cached a miss", () => {
+    const { a, b } = twoDoors();
+    expect(a.routeOf(launch)).toBeUndefined();
+    b.record(launch, z);
+    expect(a.routeOf(launch)).toEqual(z);
+  });
+
+  it("follows a route another door rewrote after this one cached the one it had read", () => {
+    const { a, b } = twoDoors();
+    b.record(launch, z);
+    expect(a.routeOf(launch)).toEqual(z);
+    b.record(launch, { kind: "anthropic" });
+    expect(a.routeOf(launch)).toEqual({ kind: "anthropic" });
+  });
+
+  it("does not read the copy again while it is unchanged, however many helpers ask, a miss included", () => {
+    const { a, b, reads } = twoDoors();
+    a.routeOf(launch);
+    a.routeOf(launch);
+    expect(reads.count).toBe(1);
+    b.record(launch, z);
+    a.routeOf(launch);
+    a.routeOf(launch);
+    a.routeOf(launch);
+    expect(reads.count).toBe(2);
+  });
+
+  it("does not take its own write for another door's, so a route it recorded is not read back", () => {
+    const { a, reads } = twoDoors();
+    a.record(launch, z);
+    a.routeOf(launch);
+    a.routeOf(launch);
+    expect(reads.count).toBe(0);
+  });
+
+  it("keeps a route it holds unwritten (the store failed) over what the copy says, since its own main loop is the newer", () => {
+    const store = inMemoryRouteStore();
+    store.write(launch, z);
+    let failing = true;
+    const record = createMainLoopRouteRecord({
+      holdsLaunch: () => true,
+      stored: {
+        identity: store.identity,
+        read: store.read,
+        write: (held, route) => {
+          if (failing) {
+            throw new Error("disk full");
+          }
+          store.write(held, route);
+        },
+      },
+      log: () => undefined,
+    });
+    record.record(launch, { kind: "anthropic" });
+    expect(record.routeOf(launch)).toEqual({ kind: "anthropic" });
+    failing = false;
+    expect(record.routeOf(launch)).toEqual({ kind: "anthropic" });
+    expect(store.read(launch)).toEqual({ kind: "anthropic" });
   });
 });
 
