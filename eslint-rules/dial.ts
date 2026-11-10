@@ -26,24 +26,79 @@ function allowancesOf(options: readonly unknown[]): readonly Allowance[] {
 /** A node of the ESTree the linter walks. */
 type AstNode = ReturnType<Rule.RuleContext["sourceCode"]["getAncestors"]>[number];
 
-/** The name a function declaration, or a variable initialised with an arrow or function expression, gives its function, or undefined for any other node. */
-function functionName(node: AstNode): string | undefined {
+/** Whether `node` is a function of any form. */
+function isFunction(node: AstNode): boolean {
+  return node.type === "FunctionDeclaration" || node.type === "FunctionExpression" || node.type === "ArrowFunctionExpression";
+}
+
+/** The name a function declaration, or an arrow or function expression assigned to a variable, goes by, or undefined for an anonymous function. */
+function nameOfFunction(node: AstNode, parent: AstNode | undefined): string | undefined {
   if (node.type === "FunctionDeclaration") {
     return node.id.name;
   }
-  if (node.type === "VariableDeclarator" && node.id.type === "Identifier" && (node.init?.type === "ArrowFunctionExpression" || node.init?.type === "FunctionExpression")) {
-    return node.id.name;
-  }
-  return undefined;
+  return parent?.type === "VariableDeclarator" && parent.id.type === "Identifier" ? parent.id.name : undefined;
 }
 
-/** Whether `node` sits inside an allowed function of the file being linted. */
+/**
+ * Whether `node` sits inside an allowed function of the file being linted. Only the OUTERMOST function enclosing the node is compared with the allowed names, so a function of the same name nested in some other function does not inherit the exemption, and everything inside an allowed top-level function does.
+ */
 function isAllowed(context: Rule.RuleContext, node: Rule.Node, allowances: readonly Allowance[]): boolean {
   const names = allowances.filter((allowance) => context.filename.endsWith(allowance.file)).flatMap((allowance) => allowance.within);
-  return context.sourceCode.getAncestors(node).some((ancestor) => {
-    const name = functionName(ancestor);
-    return name !== undefined && names.includes(name);
-  });
+  const ancestors = context.sourceCode.getAncestors(node);
+  const index = ancestors.findIndex(isFunction);
+  const outermost = ancestors[index];
+  if (outermost === undefined) {
+    return false;
+  }
+  const name = nameOfFunction(outermost, ancestors[index - 1]);
+  return name !== undefined && names.includes(name);
+}
+
+/** Any node of the ESTree the linter walks. */
+type EsNode = Parameters<Rule.RuleContext["sourceCode"]["getScope"]>[0];
+
+/** The text a node spells when it is a string the linter can read without running anything: a literal, a template or a concatenation of such, or a `const` of the same file initialised with one. Anything else (a call's result, a parameter, a property) is undefined, which is what the rules cannot see. */
+function staticString(context: Rule.RuleContext, node: EsNode, depth = 0): string | undefined {
+  const MAX_DEPTH = 8;
+  if (depth > MAX_DEPTH) {
+    return undefined;
+  }
+  if (node.type === "Literal") {
+    return typeof node.value === "string" ? node.value : undefined;
+  }
+  if (node.type === "TemplateLiteral") {
+    let text = "";
+    for (const [index, quasi] of node.quasis.entries()) {
+      const expression = node.expressions[index];
+      const inserted = expression === undefined ? "" : staticString(context, expression, depth + 1);
+      if (quasi.value.cooked === null || quasi.value.cooked === undefined || inserted === undefined) {
+        return undefined;
+      }
+      text += quasi.value.cooked + inserted;
+    }
+    return text;
+  }
+  if (node.type === "BinaryExpression" && node.operator === "+") {
+    const left = node.left.type === "PrivateIdentifier" ? undefined : staticString(context, node.left, depth + 1);
+    const right = staticString(context, node.right, depth + 1);
+    return left === undefined || right === undefined ? undefined : left + right;
+  }
+  if (node.type === "Identifier") {
+    let scope: ReturnType<Rule.RuleContext["sourceCode"]["getScope"]> | null = context.sourceCode.getScope(node);
+    while (scope !== null) {
+      const variable = scope.set.get(node.name);
+      if (variable !== undefined) {
+        const [definition] = variable.defs;
+        if (definition?.type !== "Variable" || definition.parent.kind !== "const") {
+          return undefined;
+        }
+        const initialiser = definition.node.init;
+        return initialiser === null || initialiser === undefined ? undefined : staticString(context, initialiser, depth + 1);
+      }
+      scope = scope.upper;
+    }
+  }
+  return undefined;
 }
 
 /** The minimal parser services the type-aware rule reads: the program's checker and the map from an ESTree node to its TypeScript node. */
@@ -59,21 +114,12 @@ function isTypeServices(value: unknown): value is TypeServices {
 /** The properties of a `URL` whose value keeps an IPv6 literal's brackets. */
 const BRACKETED_HOST_PROPERTIES: ReadonlySet<string> = new Set(["hostname", "host"]);
 
-/** The name an ESTree property key or member property spells, whether written as an identifier, a string, or a template with no substitutions, or undefined when it is computed from something else. */
-function spelledName(node: { readonly type: string }, computed: boolean): string | undefined {
-  if (!computed && node.type === "Identifier" && "name" in node && typeof node.name === "string") {
+/** The name an ESTree property key or member property spells: an identifier when not computed, else whatever string the computed expression statically is (`u["hostname"]`, `u[`hostname`]`, `u[KEY]` over a const, `u["host" + "name"]`), or undefined when it depends on something the linter cannot evaluate. */
+function spelledName(context: Rule.RuleContext, node: EsNode, computed: boolean): string | undefined {
+  if (!computed && node.type === "Identifier") {
     return node.name;
   }
-  if (node.type === "Literal" && "value" in node && typeof node.value === "string") {
-    return node.value;
-  }
-  if (node.type === "TemplateLiteral" && "quasis" in node && Array.isArray(node.quasis) && node.quasis.length === 1) {
-    const only: unknown = node.quasis[0];
-    if (typeof only === "object" && only !== null && "value" in only && typeof only.value === "object" && only.value !== null && "cooked" in only.value && typeof only.value.cooked === "string") {
-      return only.value.cooked;
-    }
-  }
-  return undefined;
+  return staticString(context, node);
 }
 
 /** Whether `property` of `type` is declared by the platform's `URL`, so a `Pick<URL, "hostname">` and a `URL` subtype count as a URL and an unrelated `host` field does not. */
@@ -86,9 +132,13 @@ function isUrlProperty(checker: ts.TypeChecker, type: ts.Type, property: string)
 }
 
 const BRACKET_MESSAGE =
-  "A URL's host and hostname keep an IPv6 literal's brackets, which net.isIP takes for a name, so a dial built from one fails with EBADNAME: reach a dial target through dialHostOf or dialTargetOf in src/baseUrlDial.ts. Code that never dials (a display or a comparison) disables this one line and says so.";
+  "A URL's host and hostname keep an IPv6 literal's brackets, which net.isIP takes for a name, so a dial built from one fails with EBADNAME: reach a dial target through dialHostOf or dialTargetOf in src/baseUrlDial.ts. Code that never dials (a display or a comparison) is added to the rule's allow list in eslint.config.ts, by function, with its reason.";
 
-/** Reports every read of a `URL`'s `host` or `hostname`: member access (dotted, bracketed, string-keyed or templated), destructuring in a declaration, an assignment or a parameter, and optional chaining on any of them. */
+/**
+ * Reports every read of a `URL`'s `host` or `hostname`: member access (dotted, bracketed, string-keyed, templated, keyed by a `const` of the same file or by a concatenation of string literals), destructuring in a declaration, an assignment or a parameter, and optional chaining on any of them.
+ *
+ * What it cannot see: a key computed by a function's result, a parameter or a property; a value whose type is `any` or an unrelated object that happens to hold a URL's host; and a host read through a different API (`url.href` parsed again, `url.origin`).
+ */
 const noUrlHostRead: Rule.RuleModule = {
   meta: { type: "problem", schema: [{ type: "object" }], messages: { read: BRACKET_MESSAGE } },
   create(context) {
@@ -104,7 +154,7 @@ const noUrlHostRead: Rule.RuleModule = {
     };
     return {
       MemberExpression(node) {
-        const name = spelledName(node.property, node.computed);
+        const name = spelledName(context, node.property, node.computed);
         const type = name === undefined || !BRACKETED_HOST_PROPERTIES.has(name) ? undefined : typeOf(node.object);
         if (name !== undefined && type !== undefined && isUrlProperty(checker, type, name) && !isAllowed(context, node, allowances)) {
           context.report({ node, messageId: "read" });
@@ -114,7 +164,7 @@ const noUrlHostRead: Rule.RuleModule = {
         // A pattern on the left of an assignment has no type of its own worth reading; the value assigned from is what is destructured.
         const type = typeOf(node.parent.type === "AssignmentExpression" && node.parent.left === node ? node.parent.right : node);
         for (const entry of node.properties) {
-          const name = entry.type === "Property" ? spelledName(entry.key, entry.computed) : undefined;
+          const name = entry.type === "Property" ? spelledName(context, entry.key, entry.computed) : undefined;
           if (type !== undefined && name !== undefined && BRACKETED_HOST_PROPERTIES.has(name) && isUrlProperty(checker, type, name) && !isAllowed(context, node, allowances)) {
             context.report({ node: entry, messageId: "read" });
           }
@@ -125,12 +175,38 @@ const noUrlHostRead: Rule.RuleModule = {
 };
 
 const COLON_MESSAGE =
-  "Splitting a host or authority at a colon takes an IPv6 literal for a host and a port: parse it with parseDialAuthority in src/baseUrlDial.ts, which understands brackets. A line that splits something else (a header line, a credential pair) disables this one line and says so.";
+  "Splitting a host or authority at a colon takes an IPv6 literal for a host and a port: parse it with parseDialAuthority in src/baseUrlDial.ts, which understands brackets. A function that splits something else (a header line, a credential pair) is added to the rule's allow list in eslint.config.ts, by function, with its reason. This rule is applied to the code that dials (src/frontdoor, src/baseUrl*.ts, src/provider*.ts) and to no other directory.";
 
-/** The string methods that locate or split at a colon, which is how an authority's port is found. */
-const COLON_SPLITTERS: ReadonlySet<string> = new Set(["split", "indexOf", "lastIndexOf"]);
+/** The methods that locate, split, match or replace at a pattern, which is how an authority's port is found. */
+const COLON_METHODS: ReadonlySet<string> = new Set(["split", "indexOf", "lastIndexOf", "match", "matchAll", "search", "replace", "replaceAll", "exec", "test"]);
 
-/** Reports `x.split(":")`, `x.indexOf(":")` and `x.lastIndexOf(":")` in any quoting: the three shapes by which an authority is cut at its port. */
+/** The methods a regular expression itself has, so one written as the receiver (`/:/.test(x)`) is a cut too. */
+const REGEXP_METHODS: ReadonlySet<string> = new Set(["exec", "test"]);
+
+/** Whether a regular expression's source holds a colon that is matched, not the `(?:` of a non-capturing group. */
+function matchesColon(source: string): boolean {
+  return source.replaceAll("(?:", "").includes(":");
+}
+
+/** Whether `node` is a regular expression, written as a literal or `new RegExp(<string>)`, that matches a colon. */
+function isColonPattern(context: Rule.RuleContext, node: EsNode): boolean {
+  if (node.type === "Literal") {
+    const regex: unknown = "regex" in node ? node.regex : undefined;
+    return typeof regex === "object" && regex !== null && "pattern" in regex && typeof regex.pattern === "string" && matchesColon(regex.pattern);
+  }
+  if (node.type === "NewExpression" && node.callee.type === "Identifier" && node.callee.name === "RegExp") {
+    const [source] = node.arguments;
+    const text = source === undefined ? undefined : staticString(context, source);
+    return text !== undefined && matchesColon(text);
+  }
+  return false;
+}
+
+/**
+ * Reports a string or pattern method cut at a colon, which is how an authority is split at its port: `split`, `indexOf`, `lastIndexOf`, `match`, `matchAll`, `search`, `replace`, `replaceAll`, `exec` and `test`, with a `":"` argument in any quoting, a template, a concatenation, a `const` of the same file holding one, or a regular expression (literal or `new RegExp` of a static string) that matches a colon, and a colon regular expression used as the receiver of `exec` or `test`.
+ *
+ * What it cannot see: a colon that reaches the call through a function's result, a parameter, a property or an imported constant; a regular expression held in a variable; a cut made by `slice` at an index found some other way; and any file outside the globs the configuration applies it to.
+ */
 const noColonSplit: Rule.RuleModule = {
   meta: { type: "problem", schema: [{ type: "object" }], messages: { split: COLON_MESSAGE } },
   create(context) {
@@ -141,9 +217,13 @@ const noColonSplit: Rule.RuleModule = {
         if (callee.type !== "MemberExpression") {
           return;
         }
-        const method = spelledName(callee.property, callee.computed);
+        const method = spelledName(context, callee.property, callee.computed);
+        if (method === undefined || !COLON_METHODS.has(method)) {
+          return;
+        }
         const [first] = node.arguments;
-        if (method !== undefined && COLON_SPLITTERS.has(method) && first !== undefined && spelledName(first, true) === ":" && !isAllowed(context, node, allowances)) {
+        const cutsAtColon = (first !== undefined && (staticString(context, first) === ":" || isColonPattern(context, first))) || (REGEXP_METHODS.has(method) && isColonPattern(context, callee.object));
+        if (cutsAtColon && !isAllowed(context, node, allowances)) {
           context.report({ node, messageId: "split" });
         }
       },
