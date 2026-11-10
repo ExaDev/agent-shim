@@ -172,6 +172,19 @@ describe("createUsageMiddleware", () => {
     expect(singleRecord(h).provider).toBe("antigravity");
   });
 
+  it("copies a request class the event carries into the record, and leaves the field out when it carries none", () => {
+    for (const [requestClass, expected] of [["auxiliary", "auxiliary"], [undefined, undefined]] as const) {
+      const h = harness();
+      const body = begin(h, event({ requestClass }));
+      body.chunk(bytes(STREAM_BODY));
+      finishBody(h, body);
+      h.flush();
+      const record = singleRecord(h);
+      expect(record.requestClass).toBe(expected);
+      expect("requestClass" in record).toBe(expected !== undefined);
+    }
+  });
+
   it("records that a request crossed headroom, taking it from the event rather than the session's flag", () => {
     const h = harness();
     const body = begin(h, event({ viaHeadroom: true }));
