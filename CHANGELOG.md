@@ -1,3 +1,28 @@
+## [14.2.0](https://github.com/ExaDev/agent-shim/compare/v14.1.0...v14.2.0) (2026-11-10)
+
+### Features
+
+* **frontdoor:** route a session by the context its main loop is on, bare model names included ([915da6a](https://github.com/ExaDev/agent-shim/commit/915da6ab2dfbd749d8c1f9130fef45312394472e))
+
+### Bug Fixes
+
+* **frontdoor:** keep the route file as every door reads it and put the facts beside it ([dbd596d](https://github.com/ExaDev/agent-shim/commit/dbd596daacaf5d812cc9b5ea9adfdcf56a74ed3a))
+* **frontdoor:** read and rewrite the top-level model field, not the first model in the head ([aabdb5e](https://github.com/ExaDev/agent-shim/commit/aabdb5e047a440c997422095bc9d56b3a0d5086a))
+* **frontdoor:** serve a request that chose no route by the context's provider, whatever it names ([a6c837b](https://github.com/ExaDev/agent-shim/commit/a6c837b5375107e37929683efca68ac6bb94ef68))
+
+### Documentation
+
+* describe the route context and how a bare Claude model name follows it ([d170f3b](https://github.com/ExaDev/agent-shim/commit/d170f3bcef2e56f48b238a61220dcc6cf6b64217))
+* name the route context section for what it covers, and describe the two files ([dc48817](https://github.com/ExaDev/agent-shim/commit/dc48817314caa5975cd0b350158e8b8d25a7ecd8))
+* say what a door that predates the context file leaves behind ([f9d8964](https://github.com/ExaDev/agent-shim/commit/f9d89640cca1d13d6f217a9d971957bcfa5f43b5))
+* say what a request that chose no route gets, and what a Claude name and the model field are ([539e487](https://github.com/ExaDev/agent-shim/commit/539e487999af6006a425f73db02223f5b937fcbc))
+
+### Tests
+
+* **frontdoor:** pin the credential name in a change, the reader bound and the route file version ([c7d1d4d](https://github.com/ExaDev/agent-shim/commit/c7d1d4d77a20c61dfad750aa41e358920f0af713))
+* **frontdoor:** pin the way back as written, no credential value, and the antigravity mapping ([bb86b6a](https://github.com/ExaDev/agent-shim/commit/bb86b6a091a88814f6912a912717d9f57d55e359))
+* keep fakeFs a copy of the files it is given, and edit a provider file through its own helper ([16f1565](https://github.com/ExaDev/agent-shim/commit/16f1565ba58d5a286a9ee72f34f74ce9babea4df))
+
 ## [14.1.0](https://github.com/ExaDev/agent-shim/compare/v14.0.4...v14.1.0) (2026-11-10)
 
 ### Features
