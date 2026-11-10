@@ -6,6 +6,7 @@ import type { RouteResolution } from "./pipeline";
 import { RequestClassSchema, type RequestClass } from "../usage/schema";
 import { PROVIDER_PATH_PREFIX, internalHeaderValue, parseProviderPath, type RoutedRequest } from "./route";
 import { scanRequestHead } from "./requestScan";
+import { topLevelModel } from "./topLevelModel";
 import { claudeNameTier } from "../models/tiers";
 import { MAX_CONTEXT_TEXT_LENGTH, launchKeyOf, type FrontDoorLaunch, type MainLoopRouteStore, type RouteContext } from "./state";
 
@@ -306,8 +307,12 @@ function asBytes(value: string): string {
  * `request` with the model field in the first `headBytes` bytes of its body changed from `from` to `to`, and every other byte, the head's and the rest's, passed through exactly as it came: the rest streams on under the replay's backpressure and is never held. Unlike `withModel` it needs no copy of the body, which is what lets a helper that carries a whole conversation be rewritten without reading it. The framing header goes, because the new name is a different length.
  */
 export function withModelInHead(request: RoutedRequest, headBytes: number, from: string, to: string): RoutedRequest {
-  const pattern = new RegExp('"model"\\s*:\\s*"' + asBytes(from).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + '"');
-  const rewriteHead = (head: Buffer): Buffer => Buffer.from(head.toString("latin1").replace(pattern, () => `"model":${asBytes(JSON.stringify(to))}`), "latin1");
+  // The head's bytes viewed one character each: `topLevelModel` looks only at ASCII structure, so the offsets it finds are byte offsets.
+  const rewriteHead = (head: Buffer): Buffer => {
+    const text = head.toString("latin1");
+    const found = topLevelModel(text);
+    return found?.value === asBytes(from) ? Buffer.from(`${text.slice(0, found.start)}${asBytes(JSON.stringify(to))}${text.slice(found.end)}`, "latin1") : head;
+  };
   async function* rewritten(): AsyncGenerator<Buffer> {
     let held = Buffer.alloc(0);
     let headDone = false;
@@ -339,8 +344,8 @@ export function withModelInHead(request: RoutedRequest, headBytes: number, from:
  * `request` with its body's model field changed from `from` to `to`, rewritten in the one copy of the body a whole-body scan holds (`text`), exactly one field changed. The framing header goes, because the new name is a different length and the forward re-frames the body itself.
  */
 export function withModel(request: RoutedRequest, text: string, from: string, to: string): RoutedRequest {
-  // A function replacement, so nothing in the new name is read as a replacement pattern.
-  const rewritten = text.replace(new RegExp('"model"\\s*:\\s*"' + from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + '"'), () => `"model":${JSON.stringify(to)}`);
+  const found = topLevelModel(text);
+  const rewritten = found?.value === from ? `${text.slice(0, found.start)}${JSON.stringify(to)}${text.slice(found.end)}` : text;
   const headers = Object.fromEntries(Object.entries(request.headers).filter(([name]) => name.toLowerCase() !== "content-length"));
   return { ...request, headers, body: Readable.from([Buffer.from(rewritten, "utf8")]) };
 }
