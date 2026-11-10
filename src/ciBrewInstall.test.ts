@@ -140,7 +140,6 @@ describe("the Homebrew install step", () => {
       "##[error]exadev/agent-shim/agent-shim: Broken pipe",
       "::error::exadev/agent-shim/agent-shim: Broken pipe while fetching",
       "Error: exadev/agent-shim/agent-shim: Broken pipe.",
-      "Broken pipe",
       "agent-shim: Broken pipe",
       "saw exadev/agent-shim/agent-shim: Broken pipe in the output",
       "Error: No available formula",
@@ -250,6 +249,20 @@ describe("the Homebrew install step", () => {
     expect(tap.status).toBe(0);
     const install = run({ FAKE_INSTALL_STATUS: "1", FAKE_INSTALL_OUT: OFAIL, FAKE_INSTALLED: EXPECTED });
     expect(install.status).toBe(0);
+  });
+
+  it("takes the bare message for the install too, in each rendering, since the top-level rescue prints it for any command, and still only another formula's prefix is a near miss", () => {
+    for (const { name, env } of ENVIRONMENTS) {
+      const bare = run({ ...env, FAKE_INSTALL_STATUS: "1", FAKE_OFAIL: TAP_MESSAGE, FAKE_INSTALLED: EXPECTED });
+      expect(bare.status, name).toBe(0);
+      expect(bare.output, name).toContain("brew install ended with a broken pipe");
+    }
+    const other = run({ GITHUB_ACTIONS: "true", FAKE_INSTALL_STATUS: "1", FAKE_OFAIL: "exadev/agent-shim/other: Broken pipe", FAKE_INSTALLED: EXPECTED });
+    expect(other.status).toBe(1);
+    const noInstall = run({ GITHUB_ACTIONS: "true", FAKE_INSTALL_STATUS: "1", FAKE_OFAIL: TAP_MESSAGE, FAKE_INSTALLED: "" });
+    expect(noInstall.status).toBe(1);
+    const statusTwo = run({ GITHUB_ACTIONS: "true", FAKE_INSTALL_STATUS: "2", FAKE_OFAIL: TAP_MESSAGE, FAKE_INSTALLED: EXPECTED });
+    expect(statusTwo.status).toBe(2);
   });
 
   it("takes only exit status 1, or 141 for the tap, for the tap's signature", () => {
