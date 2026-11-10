@@ -96,7 +96,7 @@ export interface TranslatedRequest {
 }
 
 /**
- * Maps a requested Claude model onto a codex model. A request that already names a codex model (every model the backend serves is `gpt-*`) passes through untouched, so Claude Code's own model settings (`ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_*_MODEL`) can name one explicitly. Otherwise the first tier in `CLAUDE_TIERS` order whose name appears in the requested model (case-insensitive) decides, and `defaultModel` covers everything else.
+ * Maps a requested Claude model onto a codex model. A request that already names a codex model (every model the backend serves is `gpt-*`) passes through untouched, so Claude Code's own model settings (`ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_*_MODEL`) can name one explicitly. Otherwise the tier `claudeTierOf` finds in the requested name decides, and `defaultModel` covers everything else.
  */
 export function mapModel(requested: string, config: ResolvedCodexConfig): string {
   if (requested.startsWith("gpt-")) {
