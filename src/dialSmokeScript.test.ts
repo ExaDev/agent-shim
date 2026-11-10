@@ -4,6 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+/*
+ * What this file enforces is the dial smoke script's reading of `doctor --json`, over stub binaries under pwsh: a valid report (the live provider reachable, the closed port reported unreachable) passes; the live provider reported unreachable fails; the closed port left unreported fails; no report at all fails.
+ *
+ * It does not guard the script's explicit `exit 0`: the stub cannot make a POSIX host's `pwsh -Command` end with a leftover non-zero status the way the Windows runner's did, so only the Windows smoke jobs show whether that line is needed.
+ */
+
 const SCRIPT = path.join(__dirname, "..", ".github", "actions", "dial-smoke", "dial-smoke.ps1");
 
 /** The longest the script's own run (a few process starts under pwsh) takes on a loaded machine, a bound on the test and not a result. */
@@ -28,7 +34,7 @@ esac
 exit 1
 `;
 
-describe.skipIf(process.platform === "win32" || !HAS_PWSH)("the Windows dial smoke script, run as the composite action runs it", () => {
+describe.skipIf(process.platform === "win32" || !HAS_PWSH)("the dial smoke script's reading of the doctor report, over a stub binary under pwsh", () => {
   const roots: string[] = [];
 
   afterEach(() => {
@@ -52,11 +58,11 @@ describe.skipIf(process.platform === "win32" || !HAS_PWSH)("the Windows dial smo
     return result.status;
   }
 
-  it("passes when doctor reports the live listener reachable and the closed port unreachable, though doctor itself exits non-zero and the cleanup cannot remove a directory", () => {
+  it("passes on a report that has the live provider reachable and the closed port unreachable, whatever status the stub doctor exits with", () => {
     expect(run("valid")).toBe(0);
   }, RUN_BUDGET_MS);
 
-  it.each(["live-unreachable", "closed-unreported", "none"])("fails when doctor's answer is %s", (mode) => {
+  it.each(["live-unreachable", "closed-unreported", "none"])("fails on the report shape %s", (mode) => {
     expect(run(mode)).not.toBe(0);
   }, RUN_BUDGET_MS);
 });
