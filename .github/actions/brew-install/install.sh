@@ -15,28 +15,34 @@ name="${formula##*/}"
 log="$(mktemp)"
 trap 'rm -f "$log"' EXIT
 
-# The one judgement of a brew command that failed, shared by the tap and the install. A failure is the broken pipe only when ALL of these hold: (a) the exit status is exactly 1, or 141 where the caller says a signal death counts (the tap's, which prints nothing); (b) for status 1, the captured output holds a whole line that is exactly the command's message, with at most brew's own prefix, and (c) the command's postcondition holds, since the status and the line say only that something wrote to a closed pipe, and what matters is what the command left behind. Anything else fails the step with brew's output.
+# The one judgement of a brew command that failed, shared by the tap and the install. A failure is the broken pipe only when ALL of these hold: (a) the exit status is exactly 1, or 141 where the caller says a signal death counts (the tap's, which prints nothing); (b) for status 1, the captured output holds a whole line that is exactly the command's message, with brew's own prefix, and (c) the command's postcondition holds, since the status and the line say only that something wrote to a closed pipe, and what matters is what the command left behind. Anything else fails the step with brew's output.
 #
-# brew's `onoe` prints a rescued Ruby `Errno::EPIPE` (a `SystemCallError`, message `Broken pipe`) as `::error::<message>` under Actions (the runner shows `##[error]`) and `Error: <message>` elsewhere, then exits 1 (Library/Homebrew/brew.rb, `rescue RuntimeError, SystemCallError`; Library/Homebrew/utils/output.rb, `onoe`). The tap's message is the bare `Broken pipe`, from the exception itself; the install's is `<formula>: Broken pipe`, from `ofail` in install.rb with the formula as brew normalises it (lower case). Lines are compared whole with awk, so the formula's characters are never read as a pattern, and ANSI colour is stripped first (with HOMEBREW_COLOR set and no CI variables brew writes the word Error in red): only SGR sequences (`ESC[` digits and semicolons, `m`) go, with a literal ESC from printf, which sed on bash 3.2 and BSD and GNU sed all take.
+# brew's `onoe` prints a rescued Ruby `Errno::EPIPE` (a `SystemCallError`, message `Broken pipe`) as `::error::<message>` under Actions (the runner shows `##[error]`) and `Error: <message>` elsewhere, then exits 1 (Library/Homebrew/brew.rb, `rescue RuntimeError, SystemCallError`; Library/Homebrew/utils/output.rb, `onoe`). The tap's message is the bare `Broken pipe`, from the exception itself; the install's is `<formula>: Broken pipe`, from `ofail` in install.rb with the formula as brew normalises it (lower case), or the bare `Broken pipe` when the exception reaches the top-level rescue instead, as the tap's did, so the install accepts both. Lines are compared whole with awk, so the formula's characters are never read as a pattern, and ANSI colour is stripped first (with HOMEBREW_COLOR set and no CI variables brew writes the word Error in red): only SGR sequences (`ESC[` digits and semicolons, `m`) go, with a literal ESC from printf, which sed on bash 3.2 and BSD and GNU sed all take.
 #
-# Usage: broken_pipe_tolerated <status> <signal-death-counts: yes|no> <message> <postcondition command...>
+# Usage: broken_pipe_tolerated <status> <signal-death-counts: yes|no> <postcondition function> <message>...   (any one of the messages)
 broken_pipe_tolerated() {
-  local status="$1" signal_counts="$2" message="$3"
+  local status="$1" signal_counts="$2" postcondition="$3"
   shift 3
   if [ "$status" -eq 141 ] && [ "$signal_counts" = yes ]; then
     :
-  elif [ "$status" -eq 1 ] && broken_pipe_line "$message"; then
+  elif [ "$status" -eq 1 ] && broken_pipe_line "$@"; then
     :
   else
     return 1
   fi
-  "$@"
+  "$postcondition"
 }
 
+# Whether the captured output holds a whole line that is one of the messages with brew's own prefix. brew never writes the message bare (`onoe` prints `::error::` under Actions and `Error: ` elsewhere), so a line without the prefix is not the signature.
 broken_pipe_line() {
-  local esc
+  local esc message
   esc="$(printf '\033')"
-  sed -e "s/${esc}\\[[0-9;]*m//g" "$log" | awk -v message="$1" '$0 == message || $0 == "::error::" message || $0 == "Error: " message { found = 1 } END { exit !found }'
+  for message in "$@"; do
+    if sed -e "s/${esc}\\[[0-9;]*m//g" "$log" | awk -v message="$message" '$0 == message || $0 == "::error::" message || $0 == "Error: " message { found = 1 } END { exit !found }'; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 # What the tap must have left: its directory, a commit checked out in it, and the formula file. A tap that printed `Tapped` and then hit the closed pipe in the work that follows the clone (the description cache, the untapped-taps setting, the private-repository check) has all three, and a tap that failed to clone has none.
@@ -61,7 +67,7 @@ run_brew() {
 status=0
 run_brew tap "$tap" || status=$?
 if [ "$status" -ne 0 ]; then
-  if ! broken_pipe_tolerated "$status" yes "Broken pipe" tap_in_place; then
+  if ! broken_pipe_tolerated "$status" yes tap_in_place "Broken pipe"; then
     echo "error: brew tap $tap failed with status $status" >&2
     exit "$status"
   fi
@@ -72,7 +78,7 @@ status=0
 run_brew install "$formula" || status=$?
 if [ "$status" -ne 0 ]; then
   # The install's postcondition is the version check below, which every path ends in.
-  if ! broken_pipe_tolerated "$status" no "$(install_message)" true; then
+  if ! broken_pipe_tolerated "$status" no true "$(install_message)" "Broken pipe"; then
     echo "error: brew install $formula failed with status $status" >&2
     exit "$status"
   fi
