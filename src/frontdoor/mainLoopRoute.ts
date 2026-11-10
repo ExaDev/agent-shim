@@ -22,16 +22,18 @@ const AGENT_ID_HEADER = "x-claude-code-agent-id";
 const MAIN_REQUEST_CLASS = "main";
 
 /**
- * The request's class as the client stated it: one of the classes Claude Code sends, `unknown` for any other value (a repeated header, which Node joins into one string, included, so a client-chosen string is neither logged nor echoed). With no class stated (a launch whose child was not asked for the header, or a request whose query source Claude Code does not know) a request that carries an agent id is `subagent`, the class Claude Code gives an agent's own requests, and any other is undefined. The headers are found whatever their case, like every internal header.
+ * The request's class as the client stated it: one of the classes Claude Code sends, `unknown` for any other value (a repeated header, which Node joins into one string, included, so a client-chosen string is neither logged nor echoed). A request that carries an agent id is never the main loop, whatever class it states, because Claude Code attaches the id to every request made from a non-main agent context: stated as `main` it is `subagent`, the class Claude Code gives an agent's own requests, so it follows the main loop and never moves it, and with no class stated it is `subagent` as well. Any other stated class stands. With neither a class nor an agent id the request is undefined, which is the main loop's. An empty agent id is no agent id. The headers are found whatever their case, like every internal header.
  */
 export function requestClassOf(headers: Readonly<IncomingHttpHeaders>): RequestClass | undefined {
+  const agentId = internalHeaderValue(headers, AGENT_ID_HEADER);
+  const hasAgentId = agentId !== undefined && agentId !== "";
   const value = internalHeaderValue(headers, REQUEST_CLASS_HEADER);
   if (value === undefined) {
-    const agentId = internalHeaderValue(headers, AGENT_ID_HEADER);
-    return agentId === undefined || agentId === "" ? undefined : "subagent";
+    return hasAgentId ? "subagent" : undefined;
   }
   const parsed = RequestClassSchema.safeParse(value);
-  return parsed.success ? parsed.data : "unknown";
+  const stated: RequestClass = parsed.success ? parsed.data : "unknown";
+  return hasAgentId && stated === MAIN_REQUEST_CLASS ? "subagent" : stated;
 }
 
 /**

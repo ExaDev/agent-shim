@@ -639,6 +639,24 @@ describe("a subagent or workflow request follows the provider its main loop is o
   });
 });
 
+describe("a request that states class main but carries an agent id", () => {
+  it("follows the main loop's provider and does not move the record, since a request with an agent id is never the main loop", async () => {
+    const world = await startWorld();
+    try {
+      await send(world, { model: "z/glm-5.3" });
+      expect((await send(world, { model: "claude-haiku-5-5", requestClass: "main", agentId: "agent-1" })).status).toBe(HTTP_STATUS.ok);
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-5.3", Z_HAIKU_MODEL]);
+      expect(world.toAnthropic).toEqual([]);
+      // The record still names z: a later helper follows it there.
+      expect((await send(world, { model: "claude-haiku-5-5", requestClass: "auxiliary" })).status).toBe(HTTP_STATUS.ok);
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-5.3", Z_HAIKU_MODEL, Z_HAIKU_MODEL]);
+      expect(world.toAnthropic).toEqual([]);
+    } finally {
+      await world.close();
+    }
+  });
+});
+
 describe("a session launched before the class header was asked for", () => {
   it("sends a request carrying only an agent id, which Claude Code attaches to every non-main agent's request whatever the header setting, to the main loop's provider", async () => {
     const world = await startWorld();
@@ -753,12 +771,21 @@ describe("the request class header", () => {
     expect(requestClassOf({ "x-claude-code-request-class": "" })).toBe("unknown");
   });
 
-  it("is subagent for a request that names no class but carries an agent id, the one signal of a subagent a launch not asked for the class header still sends, and the stated class wins over it", () => {
+  it("is subagent for a request that names no class but carries an agent id, the one signal of a subagent a launch not asked for the class header still sends", () => {
     expect(requestClassOf({ "x-claude-code-agent-id": "agent-1" })).toBe("subagent");
     expect(requestClassOf({ "X-Claude-Code-Agent-Id": "agent-1" })).toBe("subagent");
     expect(requestClassOf({ "x-claude-code-agent-id": "" })).toBeUndefined();
-    expect(requestClassOf({ "x-claude-code-agent-id": "agent-1", "x-claude-code-request-class": "main" })).toBe("main");
     expect(requestClassOf({ "x-claude-code-agent-id": "agent-1", "x-claude-code-request-class": "workflow" })).toBe("workflow");
+  });
+
+  it("is subagent for a request that states class main but carries an agent id, since Claude Code attaches an agent id to every request from a non-main context and so a request with one is never the main loop, and keeps any other stated class", () => {
+    expect(requestClassOf({ "x-claude-code-agent-id": "agent-1", "x-claude-code-request-class": "main" })).toBe("subagent");
+    expect(requestClassOf({ "X-Claude-Code-Agent-Id": "agent-1", "X-Claude-Code-Request-Class": "main" })).toBe("subagent");
+    expect(requestClassOf({ "x-claude-code-agent-id": "agent-1", "x-claude-code-request-class": "compaction" })).toBe("compaction");
+    expect(requestClassOf({ "x-claude-code-agent-id": "agent-1", "x-claude-code-request-class": "something-new" })).toBe("unknown");
+    // An empty agent id is no agent id: the stated class stands.
+    expect(requestClassOf({ "x-claude-code-agent-id": "", "x-claude-code-request-class": "main" })).toBe("main");
+    expect(requestClassOf({ "x-claude-code-agent-id": "", "x-claude-code-request-class": "workflow" })).toBe("workflow");
   });
 
   it("is unknown for a header sent twice, which Node joins into one string, and never carries the client's own text", () => {
