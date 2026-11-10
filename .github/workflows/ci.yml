@@ -419,6 +419,9 @@ jobs:
     needs: [build-windows-x64]
     runs-on: windows-latest
     steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/actions
       - uses: actions/download-artifact@v8
         with:
           name: agent-shim-windows-x64
@@ -429,6 +432,10 @@ jobs:
           Expand-Archive -Path artifacts/agent-shim-windows-x64.zip -DestinationPath extracted
           & .\extracted\agent-shim.exe --version
           & .\extracted\agent-shim.exe --help | Out-Null
+      # The door's own dial, from a reserved source port, against a loopback listener: Windows refuses a bind inside an excluded port range, which no other platform's run can show.
+      - uses: ./.github/actions/dial-smoke
+        with:
+          binary: extracted\agent-shim.exe
 
   smoke-test-windows-arm64:
     name: Smoke test (Windows arm64)
@@ -436,6 +443,9 @@ jobs:
     needs: [build-windows-arm64]
     runs-on: windows-11-arm
     steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/actions
       - uses: actions/download-artifact@v8
         with:
           name: agent-shim-windows-arm64
@@ -446,6 +456,10 @@ jobs:
           Expand-Archive -Path artifacts/agent-shim-windows-arm64.zip -DestinationPath extracted
           & .\extracted\agent-shim.exe --version
           & .\extracted\agent-shim.exe --help | Out-Null
+      # The door's own dial, from a reserved source port, against a loopback listener: Windows refuses a bind inside an excluded port range, which no other platform's run can show.
+      - uses: ./.github/actions/dial-smoke
+        with:
+          binary: extracted\agent-shim.exe
 
   # Publishes the plain esbuild bundle (not a SEA binary — the npm-installed package runs under whatever Node the installer already has) as the `agent-shim` npm package, so `npx agent-shim` and `npm install -g agent-shim` work alongside the GitHub Release binaries above. Uses npm's OIDC trusted publishing, the same pattern this org's other published packages use — no NPM_TOKEN secret. Trusted publishing itself is configured once, out of band, on the package's own npmjs.com settings page (linking this exact repo/workflow as an authorised publisher); nothing in this workflow can set that up. Stays bespoke rather than using the composite action: registry-url must stay unset (see below) and NODE_AUTH_TOKEN must be explicitly blanked, neither of which fits the generic shape.
   publish-npm:
