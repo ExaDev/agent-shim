@@ -12,7 +12,7 @@ import type { RcDialAnswer, RcEventDial } from "./rcWrites";
 import { buildRcMarkReadBody } from "./rcWrites";
 import type { RcStreamDial } from "./rcStream";
 import { upstreamChunks } from "./server";
-import { createDoorLookup, doorDial, type DialOutcome as DoorDialOutcome, type DoorDialIo } from "./doorDial";
+import { createDoorLookup, doorDial, sourcePortClassifier, type DialOutcome as DoorDialOutcome, type DoorDialIo } from "./doorDial";
 
 /** The exclusive ceiling of the 2xx success class, whose bounds are fixed hundreds (RFC 9110 section 15); named once so a range check never carries a bare literal. */
 const SUCCESS_STATUS_MAX_EXCLUSIVE = 300;
@@ -82,7 +82,7 @@ const realAddressLookup: LookupFunction = createDoorLookup({ isIP: net.isIP, res
 } });
 
 /** The real `net` behind the door's dial, through the door's own lookup. */
-const realDialIo: DoorDialIo<net.Socket> = { connect: (options) => net.connect(options), lookup: realAddressLookup, isIP: net.isIP };
+const realDialIo: DoorDialIo<net.Socket> = { connect: (options) => net.connect(options), lookup: realAddressLookup, isIP: net.isIP, isSourcePortUnusable: sourcePortClassifier(process.platform) };
 
 /** The default port a plain-HTTP dial lands on when the request names none. */
 const HTTP_PORT = 80;

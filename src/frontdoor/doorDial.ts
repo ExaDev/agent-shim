@@ -77,16 +77,29 @@ export interface DoorDialIo<S extends DialSocket> {
   readonly connect: (options: { readonly host: string; readonly port: number; readonly localPort?: number; readonly lookup?: LookupFunction }) => S;
   readonly lookup: LookupFunction;
   readonly isIP: (host: string) => number;
+  /** Whether a failed dial from a reserved source port failed because of that port, so the next port of the rotation is tried: see `sourcePortClassifier`. Injected so the dial reads no platform of its own. */
+  readonly isSourcePortUnusable: (error: NodeJS.ErrnoException) => boolean;
 }
 
-/** A rotation of reserved source ports: the next one to bind, and how many there are. */
+/** A rotation of reserved source ports: the next one to bind, how many there are, and the inclusive range they come from. */
 export interface PortRotation {
   readonly take: () => number;
   readonly count: number;
+  readonly start: number;
+  readonly end: number;
 }
 
 /**
- * One of the door's own upstream dials, settled once its outcome is certain. An address literal is dialled as node's own agents would, from an ephemeral port, since nothing can be resolved or redirected about it. A name is resolved through the door's lookup and bound into the reserved source-port range (the pf exemption an interception deployment loads, keeping a redirected address's traffic from looping into the door's own transparent surface); a reserved port a long-lived sibling already holds (EADDRINUSE, or the EADDRNOTAVAIL a port held at connect time produces) is retried on the next port of the rotation, one attempt per port, so a fully-held range surfaces the last bind error instead of spinning. Every other failure settles as a bare dial's would.
+ * The one classification of "this source port cannot be used, move on" that every rotation of reserved source ports shares, for the operating system named by `platform` (a `process.platform` value, passed in so nothing here reads the host). A port another socket holds (`EADDRINUSE`, or the `EADDRNOTAVAIL` a port held at connect time produces) is unusable everywhere. On `win32`, a port inside an excluded range (Hyper-V, WSL2 and Docker Desktop reserve blocks of ports) is refused with `EACCES` at the bind, which is also unusable; on every other platform `EACCES` is a real error and is not retried. Only a failure of the bind counts for the `EACCES` (node names the bind in the error's `syscall`): an `EACCES` from reaching the destination is never a source-port problem, whatever the platform. It references nothing but its parameters, because the probe's worker embeds its source text.
+ */
+export function sourcePortClassifier(platform: string): (error: NodeJS.ErrnoException) => boolean {
+  const held = ["EADDRINUSE", "EADDRNOTAVAIL"];
+  const excluded = platform === "win32" ? ["EACCES"] : [];
+  return (error) => error.code !== undefined && (held.includes(error.code) || (error.syscall === "bind" && excluded.includes(error.code)));
+}
+
+/**
+ * One of the door's own upstream dials, settled once its outcome is certain. An address literal is dialled as node's own agents would, from an ephemeral port, since nothing can be resolved or redirected about it. A name is resolved through the door's lookup and bound into the reserved source-port range (the pf exemption an interception deployment loads, keeping a redirected address's traffic from looping into the door's own transparent surface); a reserved port that cannot be used (`io.isSourcePortUnusable`: held by a long-lived sibling, or excluded by the operating system) is retried on the next port of the rotation, one attempt per port, so a fully-unusable range surfaces its last bind error instead of spinning, and a range that is excluded throughout surfaces an `EACCES` naming the range and the command that lists the excluded ranges. Every other failure settles as a bare dial's would.
  */
 export function doorDial<S extends DialSocket>(io: DoorDialIo<S>, target: { readonly host: string; readonly port: number }, ports: PortRotation): Promise<DialOutcome<S>> {
   const dialOnce = (options: Parameters<DoorDialIo<S>["connect"]>[0]): Promise<DialOutcome<S>> =>
@@ -103,12 +116,14 @@ export function doorDial<S extends DialSocket>(io: DoorDialIo<S>, target: { read
         if (error.message === "" && Array.isArray(attempts) && attempts.length > 0) {
           const flattened: NodeJS.ErrnoException = new Error(attempts.map((attempt: unknown) => withoutLocalEnd(attempt instanceof Error ? attempt.message : String(attempt))).join("; "));
           flattened.code = error.code;
+          flattened.syscall = error.syscall;
           resolve({ error: flattened, socket });
           return;
         }
         if (withoutLocalEnd(error.message) !== error.message) {
           const trimmed: NodeJS.ErrnoException = new Error(withoutLocalEnd(error.message));
           trimmed.code = error.code;
+          trimmed.syscall = error.syscall;
           resolve({ error: trimmed, socket });
           return;
         }
@@ -124,11 +139,21 @@ export function doorDial<S extends DialSocket>(io: DoorDialIo<S>, target: { read
       if (outcome.error === null) {
         return outcome;
       }
-      const held = outcome.error.code === "EADDRINUSE" || outcome.error.code === "EADDRNOTAVAIL";
-      if (!held || attempt === ports.count - 1) {
+      if (!io.isSourcePortUnusable(outcome.error)) {
         return outcome;
       }
-      return attemptFrom(attempt + 1);
+      if (attempt < ports.count - 1) {
+        return attemptFrom(attempt + 1);
+      }
+      if (outcome.error.code !== "EACCES") {
+        return outcome;
+      }
+      // Every port of the range was refused with EACCES: only an operating system that excludes port ranges does that, so the report names the range and the command that lists what the system excludes.
+      const excluded: NodeJS.ErrnoException = new Error(
+        `every source port of the door's reserved range (${String(ports.start)} to ${String(ports.end)}) was refused with EACCES, which Windows answers for a port inside an excluded range (Hyper-V, WSL2 and Docker Desktop reserve blocks of ports): list the excluded ranges with \`netsh int ipv4 show excludedportrange protocol=tcp\``,
+      );
+      excluded.code = "EACCES";
+      return { error: excluded, socket: outcome.socket };
     });
   return attemptFrom(0);
 }
@@ -180,13 +205,14 @@ export interface AcceptProbeDeps {
   readonly doorDial: typeof doorDial;
   readonly probeAccept: typeof probeAccept;
   readonly SourcePortRange: new (start: number, end: number, first?: number) => PortRotation;
+  readonly sourcePortClassifier: typeof sourcePortClassifier;
 }
 
 /**
  * The accept probe's whole setup, as the worker runs it: the door's lookup over `dns.resolve4` (never the hosts file) and the door's reserved source-port range, handed to the door's own dial. It is the one place the probe's dial is assembled, so a test of it with fake modules pins that the probe dials as the door does.
  */
-export function runAcceptProbe(deps: AcceptProbeDeps, data: { readonly host: string; readonly port: number; readonly portStart: number; readonly portEnd: number; readonly portFirst?: number; readonly timeoutMs: number }, startTimer: StartTimer): Promise<AcceptVerdict> {
+export function runAcceptProbe(deps: AcceptProbeDeps, data: { readonly host: string; readonly port: number; readonly portStart: number; readonly portEnd: number; readonly portFirst?: number; readonly platform: string; readonly timeoutMs: number }, startTimer: StartTimer): Promise<AcceptVerdict> {
   const lookup = deps.createDoorLookup({ isIP: deps.net.isIP, resolve4: (name, callback) => { deps.dns.resolve4(name, callback); } });
-  const io = { connect: (options: Parameters<DoorDialIo<DialSocket>["connect"]>[0]) => deps.net.connect(options), lookup, isIP: deps.net.isIP };
+  const io = { connect: (options: Parameters<DoorDialIo<DialSocket>["connect"]>[0]) => deps.net.connect(options), lookup, isIP: deps.net.isIP, isSourcePortUnusable: deps.sourcePortClassifier(data.platform) };
   return deps.probeAccept(() => deps.doorDial(io, { host: data.host, port: data.port }, new deps.SourcePortRange(data.portStart, data.portEnd, data.portFirst)), data.timeoutMs, startTimer);
 }
