@@ -307,13 +307,26 @@ export function recordOf(details: FrontDoorSessionDetails | undefined): Pick<Fro
 }
 
 /** The durable store a door keeps launches' main-loop routes in: the registry directory, which outlives any door process. */
-export function launchRouteStore(fs: HeadroomFs, sessionsDir: string): { readonly read: (launch: Readonly<FrontDoorLaunch>) => MainLoopRoute | undefined; readonly write: (launch: Readonly<FrontDoorLaunch>, route: MainLoopRoute) => void } {
+export function launchRouteStore(fs: HeadroomFs, sessionsDir: string): MainLoopRouteStore {
   return {
     read: (launch) => readLaunchRoute(fs, sessionsDir, launch),
     write: (launch, route) => {
       writeLaunchRoute(fs, sessionsDir, launch, route);
     },
+    identity: (launch) => {
+      const stat = fs.lstat(path.join(sessionsDir, launchRouteName(launch.pid)));
+      return stat === undefined ? undefined : `${String(stat.mtimeMs)}:${String(stat.sizeBytes)}`;
+    },
   };
+}
+
+/** What a door keeps a launch's main-loop route in. */
+export interface MainLoopRouteStore {
+  /** Where the launch's main loop last went as the store holds it, or undefined for none; throws for a copy that exists and cannot be read. */
+  readonly read: (launch: Readonly<FrontDoorLaunch>) => MainLoopRoute | undefined;
+  readonly write: (launch: Readonly<FrontDoorLaunch>, route: MainLoopRoute) => void;
+  /** What identifies the copy as it is now (its modification time and size), or undefined when there is none: one stat of one file, so a door can tell that another door rewrote it without reading it. */
+  readonly identity: (launch: Readonly<FrontDoorLaunch>) => string | undefined;
 }
 
 /**

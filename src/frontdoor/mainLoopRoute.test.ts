@@ -67,6 +67,7 @@ describe("a provider-less session's helper requests follow its main loop", () =>
       holdsLaunch: () => true,
       stored: {
         read: () => undefined,
+        identity: () => undefined,
         write: () => {
           throw new Error("disk full");
         },

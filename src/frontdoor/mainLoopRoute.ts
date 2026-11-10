@@ -6,7 +6,7 @@ import type { RouteResolution } from "./pipeline";
 import { RequestClassSchema, type RequestClass } from "../usage/schema";
 import { PROVIDER_PATH_PREFIX, internalHeaderValue, parseProviderPath, type RoutedRequest } from "./route";
 import { scanRequestHead } from "./requestScan";
-import { launchKeyOf, type FrontDoorLaunch, type MainLoopRoute } from "./state";
+import { launchKeyOf, type FrontDoorLaunch, type MainLoopRoute, type MainLoopRouteStore } from "./state";
 
 /**
  * The header Claude Code names each request's class in. Read from the strings of Claude Code 2.1.319, which sets it on every API request whose query source it knows, with one of the classes in `REQUEST_CLASSES`; the query source itself is never sent, only this class derived from it (and, for an agent's requests, the agent type in `x-claude-code-agent-type`).
@@ -51,10 +51,7 @@ export interface MainLoopRoutePorts {
   /** Whether a launch is still registered. */
   readonly holdsLaunch: (launch: Readonly<FrontDoorLaunch>) => boolean;
   /** The durable copy, which lives and dies with the launch's registry entry: where a launch's main loop last went, as an earlier door process wrote it. */
-  readonly stored: {
-    readonly read: (launch: Readonly<FrontDoorLaunch>) => MainLoopRoute | undefined;
-    readonly write: (launch: Readonly<FrontDoorLaunch>, route: MainLoopRoute) => void;
-  };
+  readonly stored: MainLoopRouteStore;
   /** Where a failure of the durable copy is reported: the record is best-effort state, so a failed write never reaches the request that recorded it. */
   readonly log: (line: string) => void;
 }
@@ -67,12 +64,18 @@ function sameRoute(a: MainLoopRoute, b: MainLoopRoute): boolean {
 /**
  * Builds the record, bounded by the door's session registry: an entry lives exactly as long as the registry holds its launch. A launch's entry is dropped when a later write or first lookup of another launch finds it ended, so the record never holds more launches than the registry did since then, and a launch is only ever named by a request that presented its live capability.
  *
- * A lookup reads the durable copy once per launch and keeps the answer, a miss included, until the launch's first main-loop request or its end: a launch with nothing stored is not re-read for every helper. A durable copy that exists and cannot be read (corrupt, or written by a newer door) is reported once per launch and counts as a miss. A copy that failed to write is retried on the next lookup as well as the next write, one attempt each, so a helper does not wait for a main-loop request to see the store mended.
+ * A lookup reads the durable copy once and keeps the answer, a miss included, and then watches the copy's identity (its modification time and size, one stat per lookup, on the door's thread) instead of re-reading it: a copy another door rewrote, as the door replacing this one does while this one drains, changes identity, and only then is it read again. A route this door wrote or has in memory unwritten is its own and is not compared. A copy that exists and cannot be read (corrupt, or written by a newer door) is reported and counts as a miss until its identity changes. A copy that failed to write is retried on the next lookup as well as the next write, one attempt each, so a helper does not wait for a main-loop request to see the store mended.
  */
 export function createMainLoopRouteRecord(ports: MainLoopRoutePorts): MainLoopRouteRecord {
-  // `route` is undefined for a cached miss. `persisted` is what the durable copy holds, which differs from `route` after a failed write and until a later write succeeds.
-  const routes = new Map<string, { readonly launch: FrontDoorLaunch; readonly route: MainLoopRoute | undefined; readonly persisted: MainLoopRoute | undefined }>();
-  // The launches whose durable copy failed to write, so a store that keeps failing is reported once per launch until a write succeeds, not once per request. A failure to read is reported once per launch by the cached miss itself.
+  // `route` is undefined for a cached miss. `persisted` is what the durable copy holds, which differs from `route` after a failed write and until a later write succeeds. `identity` is the copy's identity when this door last wrote or read it.
+  interface Entry {
+    readonly launch: FrontDoorLaunch;
+    readonly route: MainLoopRoute | undefined;
+    readonly persisted: MainLoopRoute | undefined;
+    readonly identity: string | undefined;
+  }
+  const routes = new Map<string, Entry>();
+  // The launches whose durable copy failed to write, so a store that keeps failing is reported once per launch until a write succeeds, not once per request. A failure to read is reported once per identity of the copy by the read itself.
   const failed = new Set<string>();
   const dropEnded = (except: string): void => {
     for (const [held, entry] of routes) {
@@ -99,32 +102,51 @@ export function createMainLoopRouteRecord(ports: MainLoopRoutePorts): MainLoopRo
       return persisted;
     }
   };
+  // Reads the durable copy afresh, reporting one that cannot be read and counting it as a miss.
+  const load = (launch: Readonly<FrontDoorLaunch>): Entry => {
+    // The identity is taken before the read, so a copy rewritten in between is read again at the next lookup, never missed.
+    const identity = ports.stored.identity(launch);
+    let stored: MainLoopRoute | undefined;
+    try {
+      stored = ports.stored.read(launch);
+    } catch (error) {
+      ports.log(`front door: could not read where launch ${String(launch.pid)}'s main loop went (${error instanceof Error ? error.message : String(error)}), so its helpers go the route the launch was launched on until its next main-loop request`);
+    }
+    return { launch, route: stored, persisted: stored, identity };
+  };
   return {
     record: (launch, route) => {
       const key = launchKeyOf(launch);
       dropEnded(key);
       // Written only when the durable copy differs: the main loop's every request records, and the route rarely moves.
-      routes.set(key, { launch, route, persisted: persist(launch, key, route, routes.get(key)?.persisted) });
+      const before = routes.get(key);
+      const persisted = persist(launch, key, route, before?.persisted);
+      const written = persisted !== undefined && sameRoute(persisted, route) && (before?.persisted === undefined || !sameRoute(before.persisted, route));
+      routes.set(key, { launch, route, persisted, identity: written ? ports.stored.identity(launch) : before?.identity });
     },
     routeOf: (launch) => {
       const key = launchKeyOf(launch);
       const entry = routes.get(key);
-      if (entry !== undefined) {
-        if (entry.route !== undefined && (entry.persisted === undefined || !sameRoute(entry.persisted, entry.route))) {
-          routes.set(key, { ...entry, persisted: persist(launch, key, entry.route, entry.persisted) });
-        }
+      if (entry === undefined) {
+        // Nothing in memory: this door has not served the launch's main loop, or is not the process that did.
+        dropEnded(key);
+        const loaded = load(launch);
+        routes.set(key, loaded);
+        return loaded.route;
+      }
+      if (entry.route !== undefined && (entry.persisted === undefined || !sameRoute(entry.persisted, entry.route))) {
+        // This door's own main loop is newer than the copy, which it could not write: it keeps its route and tries the write again.
+        const persisted = persist(launch, key, entry.route, entry.persisted);
+        const written = persisted !== undefined && sameRoute(persisted, entry.route);
+        routes.set(key, { ...entry, persisted, identity: written ? ports.stored.identity(launch) : entry.identity });
         return entry.route;
       }
-      // Nothing in memory: this door has not served the launch's main loop, or is not the process that did.
-      dropEnded(key);
-      let stored: MainLoopRoute | undefined;
-      try {
-        stored = ports.stored.read(launch);
-      } catch (error) {
-        ports.log(`front door: could not read where launch ${String(launch.pid)}'s main loop went (${error instanceof Error ? error.message : String(error)}), so its helpers go the route the launch was launched on until its next main-loop request`);
+      if (ports.stored.identity(launch) !== entry.identity) {
+        const loaded = load(launch);
+        routes.set(key, loaded);
+        return loaded.route;
       }
-      routes.set(key, { launch, route: stored, persisted: stored });
-      return stored;
+      return entry.route;
     },
   };
 }

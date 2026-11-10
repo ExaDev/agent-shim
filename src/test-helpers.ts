@@ -497,10 +497,17 @@ export function fakeFrontDoorEnv(identity?: string, extra: Readonly<Record<strin
 /** A durable route store held in memory, standing for the registry directory that outlives a door process. */
 export function inMemoryRouteStore(): MainLoopRoutePorts["stored"] {
   const held = new Map<string, MainLoopRoute>();
+  // A count of the writes of each launch's copy, standing for the modification time a file's identity would carry.
+  const versions = new Map<string, number>();
   return {
     read: (launch) => held.get(launchKeyOf(launch)),
     write: (launch, route) => {
       held.set(launchKeyOf(launch), route);
+      versions.set(launchKeyOf(launch), (versions.get(launchKeyOf(launch)) ?? 0) + 1);
+    },
+    identity: (launch) => {
+      const version = versions.get(launchKeyOf(launch));
+      return version === undefined ? undefined : String(version);
     },
   };
 }

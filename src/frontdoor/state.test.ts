@@ -8,7 +8,7 @@ import * as state from "./state";
 import path from "node:path";
 import { catalogueCachePath } from "../providerCatalogue";
 import { MAX_TCP_PORT } from "../baseUrlDial";
-import { recordOf, listFrontDoorDirectRecords, isSessionRecordName, listFrontDoorSessions, pruneMalformedFrontDoorDirectFiles, pruneDeadFrontDoorSessions, readFrontDoorCodexHome, readFrontDoorCodexRecord, readFrontDoorState, readLaunchRoute, removeFrontDoorSession, writeFrontDoorCodexHome, writeFrontDoorSession, writeFrontDoorState, writeLaunchRoute } from "./state";
+import { recordOf, listFrontDoorDirectRecords, isSessionRecordName, launchRouteStore, listFrontDoorSessions, pruneMalformedFrontDoorDirectFiles, pruneDeadFrontDoorSessions, readFrontDoorCodexHome, readFrontDoorCodexRecord, readFrontDoorState, readLaunchRoute, removeFrontDoorSession, writeFrontDoorCodexHome, writeFrontDoorSession, writeFrontDoorState, writeLaunchRoute } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 
@@ -204,6 +204,20 @@ describe("front-door session registry", () => {
     expect(() => read(JSON.stringify({ startedAt: 1, route: good.route }))).toThrow("is not a route file this door reads");
     expect(() => read(JSON.stringify({ ...good, extra: true }))).toThrow("is not a route file this door reads");
     expect(() => read(JSON.stringify({ ...good, route: { kind: "provider", provider: "" } }))).toThrow("is not a route file this door reads");
+  });
+
+  it("identifies a launch's route file by its modification time and size, so another door's rewrite is seen without a read, and by nothing when there is no file", () => {
+    const fs = createFakeFarmFs({});
+    const dir = paths.frontdoorSessionsDir;
+    writeFrontDoorSession(fs, dir, { pid: LIVE, startedAt: 1, token: "t" });
+    const store = launchRouteStore(fs, dir);
+    expect(store.identity({ pid: LIVE, startedAt: 1 })).toBeUndefined();
+    store.write({ pid: LIVE, startedAt: 1 }, { kind: "anthropic" });
+    const first = store.identity({ pid: LIVE, startedAt: 1 });
+    expect(first).toBeDefined();
+    expect(store.identity({ pid: LIVE, startedAt: 1 })).toBe(first);
+    store.write({ pid: LIVE, startedAt: 1 }, { kind: "provider", provider: "z" });
+    expect(store.identity({ pid: LIVE, startedAt: 1 })).not.toBe(first);
   });
 
   it("does not take a route file's name for a registry record's, so a listing and the live registry never read one as a launch", () => {
