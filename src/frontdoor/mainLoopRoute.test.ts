@@ -526,7 +526,7 @@ describe("the request class header", () => {
 
 describe("followingMainLoop over a resolver that records what it is asked", () => {
   /** A resolver that answers `ok` for any request, serving it from the route its path scopes (a bare path being Anthropic), and records the urls it was asked about. */
-  function fixture(refuseMain = false): { readonly follow: (url: string, requestClass: string | undefined, session?: string) => Promise<RouteResolution>; readonly asked: string[]; readonly record: MainLoopRouteRecord } {
+  function fixture(refuseMain = false): { readonly follow: (url: string, requestClass: string | undefined, session?: string, model?: string) => Promise<RouteResolution>; readonly asked: string[]; readonly record: MainLoopRouteRecord } {
     const asked: string[] = [];
     const record = mainLoopRoutesOfLiveSessions();
     const resolve = async (request: RoutedRequest): Promise<RouteResolution> => {
@@ -537,14 +537,22 @@ describe("followingMainLoop over a resolver that records what it is asked", () =
       if (refuseMain && request.headers["x-claude-code-request-class"] === "main") {
         return Promise.resolve({ ok: false, status: HTTP_STATUS.notFound, message: "refused" });
       }
-      return Promise.resolve({ ok: true, route: { name: "stand-in", headroomEligible: false, headroomUpstream: undefined, serve: async () => Promise.resolve() }, request });
+      // As the real resolver does for a request with a body: it reads the model name and hands back the request it served, with the body replayed.
+      const chunks: Buffer[] = [];
+      for await (const chunk of request.body) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+      }
+      const text = Buffer.concat(chunks).toString("utf8");
+      const parsed: unknown = JSON.parse(text);
+      const requestedModel = typeof parsed === "object" && parsed !== null && "model" in parsed && typeof parsed.model === "string" ? parsed.model : undefined;
+      return { ok: true, route: { name: "stand-in", headroomEligible: false, headroomUpstream: undefined, serve: async () => Promise.resolve() }, request: { ...request, body: Readable.from([Buffer.from(text)]) }, ...(requestedModel === undefined ? {} : { requestedModel }) };
     };
-    const follow = async (url: string, requestClass: string | undefined, session = "s-1"): Promise<RouteResolution> =>
+    const follow = async (url: string, requestClass: string | undefined, session = "s-1", model: string = HAIKU_NAME): Promise<RouteResolution> =>
       await followingMainLoop(resolve, { record, providerMapping: () => ({ model: { kind: "as-is" }, credential: undefined }), loginOf: () => "the launch's login", definesProvider: () => false })({
         method: "POST",
         url,
         headers: requestClass === undefined ? {} : { "x-claude-code-request-class": requestClass },
-        body: Readable.from([Buffer.from(JSON.stringify({ model: HAIKU_NAME, messages: [] }))]),
+        body: Readable.from([Buffer.from(JSON.stringify({ model, messages: [] }))]),
         signal: new AbortController().signal,
         session: { identity: undefined, sessionId: session, provider: undefined, headroom: false, projectId: undefined, launch: launchOfSession(session) },
       });
@@ -581,10 +589,13 @@ describe("followingMainLoop over a resolver that records what it is asked", () =
     expect(asked).toEqual(["/providers/removed/v1/messages"]);
   });
 
-  it("records a request with no class header as a main request, so a launch that was not asked for the header behaves as every request main", async () => {
-    const { follow, record } = fixture();
+  it("counts a request with no class header as a main request, so a launch that was not asked for the header behaves as every request main: it is placed by the context, and moves it only when it chooses a route", async () => {
+    const { follow, asked, record } = fixture();
     record.record(launchOfSession("s-1"), { kind: "provider", provider: "z" });
     await follow("/v1/messages", undefined);
+    expect(record.routeOf(launchOfSession("s-1"))).toMatchObject({ kind: "provider", provider: "z" });
+    expect(asked.at(-1)).toBe("/providers/z/v1/messages");
+    await follow("/v1/messages", undefined, "s-1", `anthropic/${HAIKU_NAME}`);
     expect(record.routeOf(launchOfSession("s-1"))).toMatchObject({ kind: "anthropic" });
   });
 

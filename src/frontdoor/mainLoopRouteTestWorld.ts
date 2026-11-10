@@ -241,7 +241,7 @@ export async function startWorld(
 }
 
 /** Sends one Messages request as a launch's child would: its capability, its session id, and, when given, the class Claude Code states and a launch provider. */
-export async function send(world: World, options: { readonly model: string; readonly session?: string; readonly token?: string; readonly requestClass?: string; readonly agentId?: string; readonly provider?: string; readonly maxTokens?: number }): Promise<{ readonly status: number; readonly text: string }> {
+export async function send(world: World, options: { readonly model: string; /** The body as sent, instead of one built from `model`: for a request with no model field or a body that is no JSON. */ readonly rawBody?: string; readonly session?: string; readonly token?: string; readonly requestClass?: string; readonly agentId?: string; readonly provider?: string; readonly maxTokens?: number }): Promise<{ readonly status: number; readonly text: string }> {
   const response = await fetch(`${world.url}/v1/messages`, {
     method: "POST",
     headers: {
@@ -252,7 +252,7 @@ export async function send(world: World, options: { readonly model: string; read
       ...(options.agentId === undefined ? {} : { "x-claude-code-agent-id": options.agentId }),
       ...(options.provider === undefined ? {} : { [PROVIDER_HEADER]: options.provider }),
     },
-    body: JSON.stringify({ model: options.model, stream: false, max_tokens: options.maxTokens ?? ORDINARY_MAX_TOKENS, messages: [{ role: "user", content: "hi" }] }),
+    body: options.rawBody ?? JSON.stringify({ model: options.model, stream: false, max_tokens: options.maxTokens ?? ORDINARY_MAX_TOKENS, messages: [{ role: "user", content: "hi" }] }),
   });
   return { status: response.status, text: await response.text() };
 }

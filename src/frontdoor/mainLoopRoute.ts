@@ -6,7 +6,7 @@ import type { RouteResolution } from "./pipeline";
 import { RequestClassSchema, type RequestClass } from "../usage/schema";
 import { PROVIDER_PATH_PREFIX, internalHeaderValue, parseProviderPath, type RoutedRequest } from "./route";
 import { scanRequestHead } from "./requestScan";
-import { claudeTierOf } from "../models/tiers";
+import { claudeNameTier } from "../models/tiers";
 import { MAX_CONTEXT_TEXT_LENGTH, launchKeyOf, type FrontDoorLaunch, type MainLoopRouteStore, type RouteContext } from "./state";
 
 /**
@@ -186,7 +186,7 @@ const ANTHROPIC_PREFIX = "anthropic/";
 
 /** Whether a model name is a bare Claude name (`claude-sonnet-5-5`, `opus`): one that selects a tier and names no provider. */
 function isBareClaudeName(model: string): boolean {
-  return !model.includes("/") && claudeTierOf(model) !== undefined;
+  return !model.includes("/") && claudeNameTier(model) !== undefined;
 }
 
 /** The text of a model or credential name, or none when it is too long to keep in the context: a name is a fact about the route, never worth a rejected file. */
@@ -220,7 +220,8 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
 
   /** `base` placed on `provider`, scoped under its path, with its model name mapped through the provider's tier mapping; the head is all the mapping needs, and the rest of the body, a whole conversation for a compaction or a subagent, streams through unread. */
   const toProvider = async (base: RoutedRequest, provider: string, session: RoutedRequest["session"]): Promise<{ readonly resolution: RouteResolution; readonly requested: string | undefined; readonly served: string | undefined; readonly credential: string | undefined }> => {
-    const scan = await scanRequestHead(base);
+    // A body already read to its end (an empty one the resolver scanned) has no head to read again and nothing to rewrite.
+    const scan = base.body.readableEnded ? { model: undefined, headBytes: 0, replayed: undefined } : await scanRequestHead(base);
     const requested = scan.model;
     const { model: choice, credential } = deps.providerMapping(provider, session, requested ?? "");
     if (choice.kind === "refused") {
@@ -266,18 +267,20 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
     }
     const requested = resolution.requestedModel;
     const served = servedProviderOf(resolution.request?.url ?? request.url);
-    if (served === undefined && requested !== undefined && resolution.request !== undefined) {
-      // The resolver left the request on the Anthropic route: the context decides whether that is where it goes.
-      if (requested.startsWith(ANTHROPIC_PREFIX) && !deps.definesProvider("anthropic")) {
-        const placed = await toAnthropic(resolution.request, requested);
+    if (served === undefined) {
+      // The resolver left the request on the Anthropic route, which a request that chose it by `anthropic/<model>` is entitled to; any other goes where the context says. Under a provider context that is the provider, whatever the request names (a name no provider claims and that is no Claude name, a name with a typo, no model at all, a body that is no JSON): it is served as asked, and never by the launch's account.
+      const base = resolution.request ?? request;
+      if (requested?.startsWith(ANTHROPIC_PREFIX) === true && !deps.definesProvider("anthropic")) {
+        const placed = await toAnthropic(base, requested);
         if (placed.resolution.ok) {
           deps.record.record(launch, contextOf({ kind: "anthropic" }, deps.loginOf(request.session), requested, placed.served));
         }
         return placed.resolution;
       }
-      if (current?.kind === "provider" && isBareClaudeName(requested)) {
-        const placed = await toProvider(resolution.request, current.provider, request.session);
-        if (placed.resolution.ok) {
+      if (current?.kind === "provider") {
+        const placed = await toProvider(base, current.provider, request.session);
+        // Only a Claude name asked for on the main loop is a fact about it worth recording, and the route stays what it was: a request that chose no route moves nothing.
+        if (placed.resolution.ok && requested !== undefined && isBareClaudeName(requested)) {
           deps.record.record(launch, contextOf({ kind: "provider", provider: current.provider }, placed.credential, requested, placed.served));
         }
         return placed.resolution;
@@ -287,8 +290,8 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
     const route: RouteOf = served === undefined ? { kind: "anthropic" } : { kind: "provider", provider: served };
     const qualified = served !== undefined && requested?.startsWith(`${served}/`) === true ? requested.slice(served.length + 1) : undefined;
     const servedModel = qualified ?? (served === undefined ? requested : undefined);
-    // The provider's file is read for its credential only when the route moved: the same provider keeps the name already recorded, so a main loop that stays put adds no read.
-    const credential = served === undefined ? deps.loginOf(request.session) : current?.kind === "provider" && current.provider === served ? current.credential : deps.providerMapping(served, request.session, "").credential;
+    // The credential is named from the provider's file as read for this request, which is read for every request anyway, so an edited credential block shows its new name at the next one.
+    const credential = served === undefined ? deps.loginOf(request.session) : deps.providerMapping(served, request.session, "").credential;
     deps.record.record(launch, contextOf(route, credential, requested, servedModel));
     return resolution;
   };

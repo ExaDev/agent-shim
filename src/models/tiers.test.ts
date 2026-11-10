@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { CLAUDE_TIERS } from "../config/schema";
-import { claudeTierOf } from "./tiers";
+import { claudeNameTier, claudeTierOf } from "./tiers";
 
 describe("claudeTierOf", () => {
   it("selects the tier a model name names, case-insensitively", () => {
@@ -27,5 +27,52 @@ describe("claudeTierOf", () => {
     expect(claudeTierOf("opus-sonnet")).toBe("opus");
     expect(claudeTierOf("sonnet-haiku")).toBe("sonnet");
     expect(claudeTierOf("haiku-opus")).toBe("opus");
+  });
+});
+
+describe("claudeNameTier", () => {
+  const NAMES: readonly (readonly [string, string | undefined])[] = [
+    ["claude-opus-5-5", "opus"],
+    ["claude-sonnet-5-5", "sonnet"],
+    ["claude-haiku-5-5", "haiku"],
+    ["claude-fable-5-1", "fable"],
+    ["claude-3-5-haiku-20241022", "haiku"],
+    ["claude-3-opus-20240229", "opus"],
+    ["claude-sonnet-4-5-20250929", "sonnet"],
+    ["Claude-Opus-5-5", "opus"],
+    ["claude-opus-5-5[1m]", "opus"],
+    ["claude-sonnet-5-5[1m]", "sonnet"],
+    ["opus", "opus"],
+    ["sonnet", "sonnet"],
+    ["haiku", "haiku"],
+    ["fable", "fable"],
+    ["Sonnet", "sonnet"],
+    ["opus[1m]", "opus"],
+    ["magnum-opus", undefined],
+    ["opus-magnum", undefined],
+    ["sonnetta", undefined],
+    ["haikuu", undefined],
+    ["gpt-5", undefined],
+    ["claude-sonet-5", undefined],
+    ["claude", undefined],
+    ["claude-3-5", undefined],
+    ["z/glm-5.3", undefined],
+    ["anthropic/claude-opus-5-5", undefined],
+    ["fast", undefined],
+    ["", undefined],
+    ["opusplan", undefined],
+  ];
+
+  it.each(NAMES)("selects the tier of %j as %s", (name, tier) => {
+    expect(claudeNameTier(name)).toBe(tier);
+  });
+
+  it("is never wider than the substring match the translators keep: whatever it selects, claudeTierOf selects the same", () => {
+    for (const [name] of NAMES) {
+      const tier = claudeNameTier(name);
+      if (tier !== undefined) {
+        expect(claudeTierOf(name)).toBe(tier);
+      }
+    }
   });
 });
