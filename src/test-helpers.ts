@@ -416,12 +416,24 @@ const EXISTING_IDENTITIES: Readonly<Record<string, unknown>> = Object.fromEntrie
   ["work", "personal"].map((name) => [`${paths.identitiesDir}/${name}/identity.json`, { name, allowAmbientCredential: false }]),
 );
 
-/** A fake `FsPort` over `files`, layered over `EXISTING_IDENTITIES` so a test only spells out the files it is actually about. */
-export function fakeFs(files: Record<string, unknown>, symlinks: Readonly<Record<string, string>> = {}): FsPort {
-  // The files are the object the test passed, so a test that keeps it can change a file between two reads, as a person editing a provider file does.
-  for (const [name, content] of Object.entries(EXISTING_IDENTITIES)) {
-    files[name] ??= content;
-  }
+/** A fake `FsPort` over `ownFiles`, layered over `EXISTING_IDENTITIES` so a test only spells out the files it is actually about. The files are copied: the caller's object is never changed. */
+export function fakeFs(ownFiles: Record<string, unknown>, symlinks: Readonly<Record<string, string>> = {}): FsPort {
+  return fakeFsOver({ ...EXISTING_IDENTITIES, ...ownFiles }, symlinks);
+}
+
+/** A fake `FsPort` over `ownFiles` whose files a test changes between two reads, as a person editing a provider file does: `set` writes into the filesystem's own copy and leaves the caller's object and every other fake alone. */
+export function editableFakeFs(ownFiles: Record<string, unknown>): { readonly fs: FsPort; readonly set: (filePath: string, content: unknown) => void } {
+  const files: Record<string, unknown> = { ...EXISTING_IDENTITIES, ...ownFiles };
+  return {
+    fs: fakeFsOver(files, {}),
+    set: (filePath, content) => {
+      files[filePath] = content;
+    },
+  };
+}
+
+/** The fake over `files` as given: the one the two helpers above build, so only they decide whether the object is shared. */
+function fakeFsOver(files: Record<string, unknown>, symlinks: Readonly<Record<string, string>>): FsPort {
   // A path as the directory it reaches: absolute and without a trailing separator, with a symlink followed to its target.
   const reached = (target: string): string => {
     const resolved = path.resolve(target);

@@ -6,7 +6,7 @@ import { HTTP_STATUS } from "../codex/http";
 import type { CodexRoutePorts } from "../codex/route";
 import { fakeAuth, fakeResponse, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
 import { type ModelsConfig } from "../config/schema";
-import { FAKE_HOME, fakeAsyncCredentials, fakeFs, followsLaunchFlag, launchOf, mainLoopRoutesOfLiveSessions } from "../test-helpers";
+import { FAKE_HOME, editableFakeFs, fakeAsyncCredentials, followsLaunchFlag, launchOf, mainLoopRoutesOfLiveSessions } from "../test-helpers";
 import { createUsageMiddleware } from "../usage/middleware";
 import type { UsageRecord } from "../usage/schema";
 import { type MainLoopRouteRecord } from "./mainLoopRoute";
@@ -191,7 +191,7 @@ export async function startWorld(
   const gemini = await fakeGeminiBackend();
   const codexFetch = recordingFetch(() => fakeResponse({ events: TEXT_TURN }));
   const codexPorts = codexPortsOver(codexFetch.fetch);
-  const providerFiles: Record<string, unknown> = {
+  const providerFs = editableFakeFs({
       [`${PROVIDERS_DIR}/z.json`]: { displayName: "Z", baseUrl: `http://127.0.0.1:${String(upstream.port)}`, credential: { sources: [{ literal: "z-token" }] }, env: zTierEnv },
       [`${PROVIDERS_DIR}/ag.json`]: { kind: "antigravity", displayName: "Antigravity", credential: { sources: [{ literal: "ag-token" }] }, antigravity: { mode: "cloud", cloud: { endpoint: gemini.endpoint } } },
       [`${PROVIDERS_DIR}/cx.json`]: { kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "placeholder" }] } },
@@ -201,10 +201,10 @@ export async function startWorld(
       [`${PROVIDERS_DIR}/m.json`]: { displayName: "M", baseUrl: `http://127.0.0.1:${String(upstream.port)}`, credential: { sources: [{ literal: "m-token" }] }, routes: [{ when: { kind: "textCompare", op: "matches", left: { kind: "reference", key: "request.model" }, right: { kind: "textLiteral", value: ".*" } }, provider: "z" }] },
       // A provider file that is no valid provider: a helper whose main loop was recorded on it reaches the routing loop's own refusal.
       [`${PROVIDERS_DIR}/bad.json`]: { displayName: 5 },
-  };
+  });
   const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0,
     mainLoopRoutes: record,
-    fs: fakeFs(providerFiles),
+    fs: providerFs.fs,
     providersDir: PROVIDERS_DIR,
     codexPorts,
     directPort: () => OWN_PORT,
@@ -236,7 +236,7 @@ export async function startWorld(
   );
   const handle = await listenFrontDoor(server);
   return { url: `http://127.0.0.1:${String(handle.port)}`, upstream, upstreamPort: upstream.port, codexCalls: codexFetch.calls, generated: gemini.generated, records, toAnthropic, anthropicModels, setProvider: (name, definition) => {
-      providerFiles[`${PROVIDERS_DIR}/${name}.json`] = definition;
+      providerFs.set(`${PROVIDERS_DIR}/${name}.json`, definition);
     }, close: handle.close };
 }
 
