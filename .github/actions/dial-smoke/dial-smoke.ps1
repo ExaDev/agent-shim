@@ -28,7 +28,12 @@ try {
   }
 
   # doctor exits non-zero for findings unrelated to a runner (no Claude Code installed), so its findings are read, not its status.
-  $report = (& $Binary doctor --json) | ConvertFrom-Json
+  $errors = Join-Path $root 'doctor.err'
+  $raw = (& $Binary doctor --json 2> $errors) -join "`n"
+  if ([string]::IsNullOrWhiteSpace($raw)) {
+    throw ('doctor printed no report: ' + (Get-Content -Raw $errors))
+  }
+  $report = $raw | ConvertFrom-Json
   $failed = @($report.findings | Where-Object { $_.section -eq 'provider' -and $_.severity -eq 'fail' })
 
   if (@($failed | Where-Object { $_.subject -eq 'smoke-live' }).Count -ne 0) {
