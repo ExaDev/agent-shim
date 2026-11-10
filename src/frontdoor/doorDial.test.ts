@@ -1,11 +1,11 @@
 import vm from "node:vm";
-import { EventEmitter } from "node:events";
 import * as net from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { probeAddressesAcceptSync } from "./probe";
-import { createDoorLookup, doorDial, probeAccept, runAcceptProbe, sourcePortClassifier, type AcceptVerdict, type DialOutcome, type DialSocket, type DoorDialIo } from "./doorDial";
+import { createDoorLookup, doorDial, probeAccept, runAcceptProbe, sourcePortClassifier, type AcceptVerdict, type DialOutcome, type DoorDialIo } from "./doorDial";
 import { SourcePortRange } from "./connectEffects";
+import { SilentSocket, scriptedDials, unusableOn, type DialOptions } from "./sourcePortRotationTestWorld";
 
 /** A bound short enough that a test waiting it out stays quick. */
 const SHORT_BOUND_MS = 200;
@@ -36,22 +36,6 @@ afterEach(async () => {
     }),
   );
 });
-
-/** A socket that never connects and records what is done to it: the stand-in for a host that never answers the SYN. */
-class SilentSocket extends EventEmitter implements DialSocket {
-  writes = 0;
-  destroyed = false;
-
-  write(): boolean {
-    this.writes += 1;
-    return true;
-  }
-
-  destroy(): this {
-    this.destroyed = true;
-    return this;
-  }
-}
 
 /** A timer the test fires by hand, so the bound is exercised without waiting on any network. */
 function manualTimer(): { readonly start: (callback: () => void, ms: number) => () => void; readonly fire: () => void; readonly cancelled: () => boolean; readonly armedMs: () => number | undefined } {
@@ -142,7 +126,7 @@ describe("probeAccept", () => {
             },
             lookup: createDoorLookup({ isIP: net.isIP, resolve4: () => undefined }),
             isIP: () => 0,
-            isSourcePortUnusable: unusableOn("linux"),
+            sourcePortFailure: unusableOn("linux"),
           },
           { host: "localhost", port: 1 },
           new SourcePortRange(RANGE_START, RANGE_END),
@@ -179,7 +163,7 @@ describe("probeAccept", () => {
               },
               lookup: createDoorLookup({ isIP: net.isIP, resolve4: () => undefined }),
               isIP: () => 0,
-              isSourcePortUnusable: unusableOn("linux"),
+              sourcePortFailure: unusableOn("linux"),
             },
             { host: "localhost", port: 1 },
             new SourcePortRange(RANGE_START, RANGE_END),
@@ -246,7 +230,7 @@ describe("doorDial", () => {
         },
         lookup: createDoorLookup({ isIP: net.isIP, resolve4: () => undefined }),
         isIP: net.isIP,
-        isSourcePortUnusable: unusableOn("linux"),
+        sourcePortFailure: unusableOn("linux"),
       },
       { host: "provider.example", port: 443 },
       ports,
@@ -272,7 +256,7 @@ describe("doorDial", () => {
         },
         lookup: createDoorLookup({ isIP: net.isIP, resolve4: () => undefined }),
         isIP: net.isIP,
-        isSourcePortUnusable: unusableOn("linux"),
+        sourcePortFailure: unusableOn("linux"),
       },
       { host: "127.0.0.1", port: 9 },
       new SourcePortRange(RANGE_START, RANGE_END),
@@ -319,7 +303,7 @@ describe("the door's lookup answers in the shape node asks for", () => {
     net.setDefaultAutoSelectFamily(false);
     try {
       const outcome = await doorDial(
-        { connect: (options) => net.connect(options), lookup, isIP: net.isIP, isSourcePortUnusable: unusableOn("linux") },
+        { connect: (options) => net.connect(options), lookup, isIP: net.isIP, sourcePortFailure: unusableOn("linux") },
         { host: "localhost", port: address.port },
         new SourcePortRange(BINDABLE_RANGE_START, BINDABLE_RANGE_END),
       );
@@ -485,10 +469,10 @@ describe("evaluating each embedded dial function from its source text alone", ()
         },
         lookup: () => undefined,
         isIP: () => 0,
-        isSourcePortUnusable: unusableOn("linux"),
+        sourcePortFailure: unusableOn("linux"),
       },
       { host: "provider.example", port: 8080 },
-      { take: () => RANGE_START, count: 1, start: RANGE_START, end: RANGE_START },
+      { take: () => RANGE_START, exclude: () => undefined, count: 1, start: RANGE_START, end: RANGE_START },
     );
     expect(outcome.error).toBeNull();
     expect(dialledOptions).toMatchObject({
@@ -504,48 +488,13 @@ function isolated<F extends { readonly toString: () => string }>(fn: F): F {
   return vm.runInNewContext(`(${fn.toString()})`, { Promise, Error, String }) as F;
 }
 
-/** The classification the dial is given for `platform`, as the door builds it from `process.platform`. */
-function unusableOn(platform: string): DoorDialIo<SilentSocket>["isSourcePortUnusable"] {
-  return sourcePortClassifier(platform);
-}
-
-type DialOptions = Parameters<DoorDialIo<SilentSocket>["connect"]>[0];
-
-/** A `connect` whose sockets answer from a script, recording the options of every dial: each dial takes the next entry, an error code to fail with or `undefined` to connect. */
-function scriptedDials(script: readonly (string | undefined)[]): { readonly connect: DoorDialIo<SilentSocket>["connect"]; readonly dialled: readonly DialOptions[] } {
-  const dialled: DialOptions[] = [];
-  return {
-    dialled,
-    connect: (options) => {
-      const code = script[dialled.length];
-      dialled.push(options);
-      const socket = new SilentSocket();
-      queueMicrotask(() => {
-        if (code === undefined) {
-          socket.emit("connect");
-          return;
-        }
-        // `CODE@syscall` names the syscall node reports the failure from (`bind` for a source port that cannot be bound, `connect` for the destination), as node does.
-        const [errno, syscall] = code.split("@");
-        const failure: NodeJS.ErrnoException = new Error(`dial failed with ${errno ?? code}`);
-        failure.code = errno ?? code;
-        if (syscall !== undefined) {
-          failure.syscall = syscall;
-        }
-        socket.emit("error", failure);
-      });
-      return socket;
-    },
-  };
-}
-
 describe("every branch of the dial evaluated from its source text alone", () => {
   const isolatedDoorDial = isolated(doorDial);
   const lookup = createDoorLookup({ isIP: net.isIP, resolve4: () => undefined });
 
   async function dial(host: string, script: readonly (string | undefined)[]): Promise<{ readonly outcome: DialOutcome<SilentSocket>; readonly dialled: readonly DialOptions[] }> {
     const dials = scriptedDials(script);
-    const outcome = await isolatedDoorDial({ connect: dials.connect, lookup, isIP: net.isIP, isSourcePortUnusable: isolated(sourcePortClassifier)("linux") }, { host, port: 443 }, new SourcePortRange(RANGE_START, RANGE_END));
+    const outcome = await isolatedDoorDial({ connect: dials.connect, lookup, isIP: net.isIP, sourcePortFailure: isolated(sourcePortClassifier)("linux") }, { host, port: 443 }, new SourcePortRange(RANGE_START, RANGE_END));
     return { outcome, dialled: dials.dialled };
   }
 
@@ -651,117 +600,5 @@ describe("every branch of the dial evaluated from its source text alone", () => 
       expect(verdict).toEqual({ ok: true });
       expect(dialled).toEqual([{ host: "127.0.0.1", port: 443 }]);
     });
-  });
-});
-
-describe("which source-port failures move the rotation on", () => {
-  const BIND_REFUSED = "EACCES@bind";
-  const RANGE_WIDTH = RANGE_END - RANGE_START + 1;
-
-  /** Dials a name over a scripted `connect` for `platform`, returning the outcome and every source port tried. */
-  async function dialOn(platform: string, script: readonly (string | undefined)[]): Promise<{ readonly outcome: DialOutcome<SilentSocket>; readonly ports: readonly (number | undefined)[] }> {
-    const dials = scriptedDials(script);
-    const outcome = await doorDial(
-      { connect: dials.connect, lookup: createDoorLookup({ isIP: net.isIP, resolve4: () => undefined }), isIP: net.isIP, isSourcePortUnusable: unusableOn(platform) },
-      { host: "provider.example", port: 443 },
-      new SourcePortRange(RANGE_START, RANGE_END),
-    );
-    return { outcome, ports: dials.dialled.map((options) => options.localPort) };
-  }
-
-  it.each([
-    ["win32", "EADDRINUSE@bind", true],
-    ["win32", "EADDRNOTAVAIL@connect", true],
-    ["win32", "EACCES@bind", true],
-    ["win32", "EACCES@connect", false],
-    ["win32", "EACCES", false],
-    ["win32", "ECONNREFUSED@connect", false],
-    ["linux", "EADDRINUSE@bind", true],
-    ["linux", "EADDRNOTAVAIL@connect", true],
-    ["linux", "EACCES@bind", false],
-    ["darwin", "EACCES@bind", false],
-    ["darwin", "EACCES@connect", false],
-    ["freebsd", "EACCES@bind", false],
-  ] as const)("on %s a %s failure of a source port is %s", (platform, failure, unusable) => {
-    const [code, syscall] = failure.split("@");
-    const error: NodeJS.ErrnoException = new Error(failure);
-    error.code = code;
-    if (syscall !== undefined) {
-      error.syscall = syscall;
-    }
-    expect(sourcePortClassifier(platform)(error)).toBe(unusable);
-  });
-
-  it("moves past a port Windows excludes (EACCES at the bind) and connects from the next one", async () => {
-    const { outcome, ports } = await dialOn("win32", [BIND_REFUSED, BIND_REFUSED, undefined]);
-    expect(outcome.error).toBeNull();
-    expect(ports).toEqual([RANGE_START, RANGE_START + 1, RANGE_START + 2]);
-  });
-
-  it("fails a bind refused with EACCES at once on a platform that excludes no ranges, since there it is a real error", async () => {
-    for (const platform of ["linux", "darwin"]) {
-      const { outcome, ports } = await dialOn(platform, [BIND_REFUSED, undefined]);
-      expect(outcome.error?.code, platform).toBe("EACCES");
-      expect(ports, platform).toHaveLength(1);
-    }
-  });
-
-  it("never treats a destination's EACCES as a source-port problem, on Windows or anywhere", async () => {
-    for (const platform of ["win32", "linux", "darwin"]) {
-      const { outcome, ports } = await dialOn(platform, ["EACCES@connect", undefined]);
-      expect(outcome.error?.code, platform).toBe("EACCES");
-      expect(ports, platform).toHaveLength(1);
-    }
-  });
-
-  it("stops after one attempt per port when Windows excludes the whole range, and names the range and the command that lists the excluded ranges", async () => {
-    const { outcome, ports } = await dialOn("win32", Array.from({ length: RANGE_WIDTH * 2 }, () => BIND_REFUSED));
-    expect(ports).toHaveLength(RANGE_WIDTH);
-    expect(outcome.error?.code).toBe("EACCES");
-    expect(outcome.error?.message).toContain(`${String(RANGE_START)} to ${String(RANGE_END)}`);
-    expect(outcome.error?.message).toContain("netsh int ipv4 show excludedportrange protocol=tcp");
-  });
-
-  it("stops after one attempt per port when every port is held, surfacing the last bind error as before", async () => {
-    const { outcome, ports } = await dialOn("linux", Array.from({ length: RANGE_WIDTH * 2 }, () => "EADDRINUSE@bind"));
-    expect(ports).toHaveLength(RANGE_WIDTH);
-    expect(outcome.error?.code).toBe("EADDRINUSE");
-  });
-
-  it("keeps the failing syscall through the trimming of node's local-end suffix", async () => {
-    let handed: NodeJS.ErrnoException | undefined;
-    const outcome = await doorDial(
-      {
-        connect: () => {
-          const socket = new SilentSocket();
-          queueMicrotask(() => {
-            const failure: NodeJS.ErrnoException = new Error("bind EACCES 0.0.0.0:48000 - Local (0.0.0.0:48000)");
-            failure.code = "EACCES";
-            failure.syscall = "bind";
-            socket.emit("error", failure);
-          });
-          return socket;
-        },
-        lookup: createDoorLookup({ isIP: net.isIP, resolve4: () => undefined }),
-        isIP: net.isIP,
-        isSourcePortUnusable: (error) => {
-          handed = error;
-          return false;
-        },
-      },
-      { host: "provider.example", port: 443 },
-      new SourcePortRange(RANGE_START, RANGE_END),
-    );
-    expect(outcome.error?.message).not.toContain("Local");
-    expect(handed?.syscall).toBe("bind");
-  });
-
-  it("classifies the same from its source text alone, as the probe's worker runs it", () => {
-    const isolatedClassifier = isolated(sourcePortClassifier);
-    const bind: NodeJS.ErrnoException = new Error("bind");
-    bind.code = "EACCES";
-    bind.syscall = "bind";
-    expect(isolatedClassifier("win32")(bind)).toBe(true);
-    expect(isolatedClassifier("linux")(bind)).toBe(false);
   });
 });
