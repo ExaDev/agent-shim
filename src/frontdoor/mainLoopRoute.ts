@@ -4,7 +4,7 @@ import { Readable } from "node:stream";
 import { HTTP_STATUS } from "../codex/http";
 import type { RouteResolution } from "./pipeline";
 import { RequestClassSchema, type RequestClass } from "../usage/schema";
-import { PROVIDER_PATH_PREFIX, internalHeaderValue, parseProviderPath, type FrontDoorRoute, type RoutedRequest } from "./route";
+import { PROVIDER_PATH_PREFIX, internalHeaderValue, parseProviderPath, type RoutedRequest } from "./route";
 import { scanRequestHead } from "./requestScan";
 import { launchKeyOf, type FrontDoorLaunch, type MainLoopRoute } from "./state";
 
@@ -149,16 +149,6 @@ function servedProviderOf(url: string): string | undefined {
   return parseProviderPath(new URL(url, "http://127.0.0.1").pathname)?.provider;
 }
 
-/** `route` serving `rewritten` in place of whatever request the pipeline hands it: the request the helper routing chose, scoped under its provider. */
-function serving(route: FrontDoorRoute, rewritten: RoutedRequest): FrontDoorRoute {
-  return {
-    ...route,
-    serve: async (request, response) => {
-      await route.serve({ ...request, url: rewritten.url, headers: rewritten.headers, body: rewritten.body }, response);
-    },
-  };
-}
-
 /**
  * Makes a provider-less session's helper requests follow its main loop. A session launched on a provider carries the provider header on every request, helpers included, so it routes exactly as `resolve` does. A session launched without one picks a provider by model name (`/model <provider>/<model>`), which only its main-loop requests carry: its helpers ask for a Claude model name, which no provider claims, and would otherwise reach the Anthropic account the session was launched under.
  *
@@ -198,9 +188,11 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
     if (!resolution.ok) {
       return resolution;
     }
-    // The pipeline serves and hops with the request it received, which names no provider; the scoped helper is substituted for it, both at the route and for the hop, unless resolving it rewrote it again (a provider's own `routes`), whose rewrite then stands.
-    const served = resolution.request ?? helper;
-    return { ...resolution, route: resolution.request === undefined ? serving(resolution.route, helper) : resolution.route, request: served, ...(requested === undefined ? {} : { requestedModel: requested }) };
+    // The pipeline serves and hops with the request it received, which names no provider, unless the resolution carries the request it served: the provider resolver always does for the body-carrying request a helper is, and a resolver that does not breaks the contract this routing stands on, so it is refused rather than served the unscoped request.
+    if (resolution.request === undefined) {
+      return { ok: false, status: HTTP_STATUS.internalServerError, message: "the provider resolver served a helper request without saying which request it served" };
+    }
+    return { ...resolution, request: resolution.request, ...(requested === undefined ? {} : { requestedModel: requested }) };
   };
 }
 
