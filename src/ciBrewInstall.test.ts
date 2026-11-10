@@ -140,6 +140,7 @@ describe("the Homebrew install step", () => {
       "##[error]exadev/agent-shim/agent-shim: Broken pipe",
       "::error::exadev/agent-shim/agent-shim: Broken pipe while fetching",
       "Error: exadev/agent-shim/agent-shim: Broken pipe.",
+      "Broken pipe",
       "agent-shim: Broken pipe",
       "saw exadev/agent-shim/agent-shim: Broken pipe in the output",
       "Error: No available formula",
@@ -244,11 +245,13 @@ describe("the Homebrew install step", () => {
     }
   });
 
-  it("takes the message as a whole line without brew's prefix too, for the tap and for the install", () => {
+  it("does not take the message without brew's prefix, for the tap or the install, since brew never writes it bare", () => {
     const tap = run({ FAKE_TAP_STATUS: "1", FAKE_TAP_OUT: TAP_MESSAGE, FAKE_INSTALLED: EXPECTED });
-    expect(tap.status).toBe(0);
+    expect(tap.status).toBe(1);
     const install = run({ FAKE_INSTALL_STATUS: "1", FAKE_INSTALL_OUT: OFAIL, FAKE_INSTALLED: EXPECTED });
-    expect(install.status).toBe(0);
+    expect(install.status).toBe(1);
+    const bareInstall = run({ FAKE_INSTALL_STATUS: "1", FAKE_INSTALL_OUT: TAP_MESSAGE, FAKE_INSTALLED: EXPECTED });
+    expect(bareInstall.status).toBe(1);
   });
 
   it("takes the bare message for the install too, in each rendering, since the top-level rescue prints it for any command, and still only another formula's prefix is a near miss", () => {

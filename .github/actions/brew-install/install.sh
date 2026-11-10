@@ -38,7 +38,7 @@ broken_pipe_line() {
   local esc message
   esc="$(printf '\033')"
   for message in "$@"; do
-    if sed -e "s/${esc}\\[[0-9;]*m//g" "$log" | awk -v message="$message" '$0 == message || $0 == "::error::" message || $0 == "Error: " message { found = 1 } END { exit !found }'; then
+    if sed -e "s/${esc}\\[[0-9;]*m//g" "$log" | awk -v message="$message" '$0 == "::error::" message || $0 == "Error: " message { found = 1 } END { exit !found }'; then
       return 0
     fi
   done
