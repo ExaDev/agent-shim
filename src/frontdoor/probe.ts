@@ -2,7 +2,7 @@ import { noteBlockingStep, refuseToBlockInRole } from "../processRole";
 import { Worker, type WorkerOptions } from "node:worker_threads";
 
 import { DOOR_SOURCE_PORT_COUNT, DOOR_SOURCE_PORT_END, DOOR_SOURCE_PORT_START, SourcePortRange } from "./connectEffects";
-import { createDoorLookup, doorDial, probeAccept, runAcceptProbe } from "./doorDial";
+import { createDoorLookup, doorDial, probeAccept, runAcceptProbe, sourcePortClassifier } from "./doorDial";
 
 /** The outcome of authenticating the listener a front-door state file names. */
 export type ListenerVerdict = { readonly ok: true } | { readonly ok: false; readonly reason: string };
@@ -156,15 +156,16 @@ export function probeFrontDoorSync(port: number, caPem: string, timeoutMs: numbe
 const ACCEPT_PROBE_SOURCE = probeWorkerSource(`
 const net = require("node:net");
 const dns = require("node:dns");
-const { host, port, portStart, portEnd, portFirst, timeoutMs, ok, failed } = workerData;
+const { host, port, portStart, portEnd, portFirst, platform, timeoutMs, ok, failed } = workerData;
 const finish = finishProbe;
 const SourcePortRange = ${SourcePortRange.toString()};
 const createDoorLookup = ${createDoorLookup.toString()};
+const sourcePortClassifier = ${sourcePortClassifier.toString()};
 const doorDial = ${doorDial.toString()};
 const probeAccept = ${probeAccept.toString()};
 const runAcceptProbe = ${runAcceptProbe.toString()};
 const startTimer = (callback, ms) => { const timer = setTimeout(callback, ms); return () => { clearTimeout(timer); }; };
-runAcceptProbe({ net, dns, createDoorLookup, doorDial, probeAccept, SourcePortRange }, { host, port, portStart, portEnd, portFirst, timeoutMs }, startTimer).then((verdict) => {
+runAcceptProbe({ net, dns, createDoorLookup, doorDial, probeAccept, SourcePortRange, sourcePortClassifier }, { host, port, portStart, portEnd, portFirst, platform, timeoutMs }, startTimer).then((verdict) => {
   finish(verdict.ok ? ok : failed, verdict.ok ? "" : verdict.reason);
 });
 `);
@@ -174,7 +175,7 @@ runAcceptProbe({ net, dns, createDoorLookup, doorDial, probeAccept, SourcePortRa
  */
 export function probeListenerAcceptSync(port: number, timeoutMs: number = PROBE_TIMEOUT_MS, workers: ProbeWorkers = realProbeWorkers): ListenerVerdict {
   refuseToBlockInRole("a synchronous probe of a front door listener");
-  return workers.start(ACCEPT_PROBE_SOURCE, { host: "127.0.0.1", port, portStart: DOOR_SOURCE_PORT_START, portEnd: DOOR_SOURCE_PORT_END }, timeoutMs).verdict();
+  return workers.start(ACCEPT_PROBE_SOURCE, { host: "127.0.0.1", port, portStart: DOOR_SOURCE_PORT_START, portEnd: DOOR_SOURCE_PORT_END, platform: process.platform }, timeoutMs).verdict();
 }
 
 /**
@@ -227,7 +228,7 @@ export function startAddressProbes(targets: readonly { readonly host: string; re
     const portFirst = DOOR_SOURCE_PORT_START + ((base + index * stride) % DOOR_SOURCE_PORT_COUNT);
     // A worker that cannot be started is that target's failed verdict, and the workers already running are still settled, so their threads are ended and the launch or doctor run goes on to say what it found.
     try {
-      const started = workers.start(ACCEPT_PROBE_SOURCE, { host: target.host, port: target.port, portStart: DOOR_SOURCE_PORT_START, portEnd: DOOR_SOURCE_PORT_END, portFirst }, target.timeoutMs);
+      const started = workers.start(ACCEPT_PROBE_SOURCE, { host: target.host, port: target.port, portStart: DOOR_SOURCE_PORT_START, portEnd: DOOR_SOURCE_PORT_END, portFirst, platform: process.platform }, target.timeoutMs);
       running.push({ key: targetKey(target), verdict: started.verdict, cancel: started.cancel });
     } catch (error) {
       const reason = `${PROBE_WORKER_FAILURE_PREFIX}the worker could not be started: ${error instanceof Error ? error.message : String(error)}`;

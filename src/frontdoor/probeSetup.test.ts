@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { DOOR_SOURCE_PORT_COUNT, DOOR_SOURCE_PORT_END, DOOR_SOURCE_PORT_START, SourcePortRange } from "./connectEffects";
-import { createDoorLookup, doorDial, probeAccept, runAcceptProbe, type AcceptProbeDeps, type DialSocket } from "./doorDial";
+import { createDoorLookup, doorDial, probeAccept, runAcceptProbe, sourcePortClassifier, type AcceptProbeDeps, type DialSocket } from "./doorDial";
 import { MAX_CONCURRENT_PROBES, probeAddressesAcceptSync, startAddressProbes, probeListenerAcceptSync, type ProbeWorkers } from "./probe";
 
 const RANGE_START = 47_900;
@@ -62,6 +62,7 @@ function fakeModules(): { readonly deps: AcceptProbeDeps; readonly connects: Par
       doorDial,
       probeAccept,
       SourcePortRange,
+      sourcePortClassifier,
     },
   };
 }
@@ -71,14 +72,14 @@ const noTimer = (): (() => void) => () => undefined;
 describe("the provider probe's setup", () => {
   it("resolves a name through the door's resolver, never the hosts file", async () => {
     const { deps, resolved } = fakeModules();
-    const verdict = await runAcceptProbe(deps, { host: "provider.example", port: PORT, portStart: RANGE_START, portEnd: RANGE_END, timeoutMs: PROBE_BOUND_MS }, noTimer);
+    const verdict = await runAcceptProbe(deps, { host: "provider.example", port: PORT, portStart: RANGE_START, portEnd: RANGE_END, platform: "linux", timeoutMs: PROBE_BOUND_MS }, noTimer);
     expect(verdict).toEqual({ ok: true });
     expect(resolved).toEqual(["provider.example"]);
   });
 
   it("dials a name from the first port of the door's reserved range", async () => {
     const { deps, connects } = fakeModules();
-    await runAcceptProbe(deps, { host: "provider.example", port: PORT, portStart: RANGE_START, portEnd: RANGE_END, timeoutMs: PROBE_BOUND_MS }, noTimer);
+    await runAcceptProbe(deps, { host: "provider.example", port: PORT, portStart: RANGE_START, portEnd: RANGE_END, platform: "linux", timeoutMs: PROBE_BOUND_MS }, noTimer);
     expect(connects).toHaveLength(1);
     expect(connects[0]?.localPort).toBe(RANGE_START);
     expect(connects[0]?.port).toBe(PORT);
@@ -86,13 +87,13 @@ describe("the provider probe's setup", () => {
 
   it("dials a name from the port its rotation is told to start at, wrapping at the end of the range", async () => {
     const { deps, connects } = fakeModules();
-    await runAcceptProbe(deps, { host: "provider.example", port: PORT, portStart: RANGE_START, portEnd: RANGE_END, portFirst: RANGE_START + 2, timeoutMs: PROBE_BOUND_MS }, noTimer);
+    await runAcceptProbe(deps, { host: "provider.example", port: PORT, portStart: RANGE_START, portEnd: RANGE_END, portFirst: RANGE_START + 2, platform: "linux", timeoutMs: PROBE_BOUND_MS }, noTimer);
     expect(connects[0]?.localPort).toBe(RANGE_START + 2);
   });
 
   it("dials an address literal as it is, with no lookup", async () => {
     const { deps, connects, resolved } = fakeModules();
-    await runAcceptProbe(deps, { host: RESOLVED_ADDRESS, port: PORT, portStart: RANGE_START, portEnd: RANGE_END, timeoutMs: PROBE_BOUND_MS }, noTimer);
+    await runAcceptProbe(deps, { host: RESOLVED_ADDRESS, port: PORT, portStart: RANGE_START, portEnd: RANGE_END, platform: "linux", timeoutMs: PROBE_BOUND_MS }, noTimer);
     expect(resolved).toEqual([]);
     expect(connects[0]?.lookup).toBeUndefined();
   });
@@ -377,6 +378,7 @@ describe("probeListenerAcceptSync", () => {
       port: PORT,
       portStart: DOOR_SOURCE_PORT_START,
       portEnd: DOOR_SOURCE_PORT_END,
+      platform: process.platform,
     });
   });
 });
