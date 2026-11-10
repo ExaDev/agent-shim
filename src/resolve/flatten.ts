@@ -1,4 +1,4 @@
-import { isOverridableCategory, type EntryValue, type ModelsConfig, type ModelsLayer, type OverridableCategory } from "../config/schema";
+import { CLAUDE_TIERS, isOverridableCategory, type EntryValue, type ModelsConfig, type ModelsLayer, type OverridableCategory } from "../config/schema";
 import { mergeStatuslineSettings, StatuslineSchema, type StatuslineSettings } from "../config/statusline";
 import { isVacuousWhen } from "./conditions";
 import { canonicaliseEntryKey, compareSpecificity, compileMatcher, EntryKeyError, isExactPattern, literalPrefixOf } from "./match";
@@ -201,7 +201,7 @@ function mergeModels(current: ModelsConfig | undefined, layer: ModelsLayer): Mod
   }
   if (layer.tiers !== undefined) {
     const tiers: NonNullable<ModelsConfig["tiers"]> = {};
-    for (const tier of ["fable", "opus", "sonnet", "haiku"] as const) {
+    for (const tier of CLAUDE_TIERS) {
       const ref = layer.tiers[tier];
       const inherited = current?.tiers?.[tier];
       if (ref !== null && ref !== undefined) {
