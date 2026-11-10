@@ -65,49 +65,65 @@ function sameRoute(a: MainLoopRoute, b: MainLoopRoute): boolean {
 }
 
 /**
- * Builds the record, bounded by the door's session registry: an entry lives exactly as long as the registry holds its launch. Every write drops the entries of launches that have ended, so the record never holds more launches than the registry did since the last write, and a launch is only ever named by a request that presented its live capability.
+ * Builds the record, bounded by the door's session registry: an entry lives exactly as long as the registry holds its launch. A launch's entry is dropped when a later write or first lookup of another launch finds it ended, so the record never holds more launches than the registry did since then, and a launch is only ever named by a request that presented its live capability.
+ *
+ * A lookup reads the durable copy once per launch and keeps the answer, a miss included, until the launch's first main-loop request or its end: a launch with nothing stored is not re-read for every helper. A durable copy that exists and cannot be read (corrupt, or written by a newer door) is reported once per launch and counts as a miss. A copy that failed to write is retried on the next lookup as well as the next write, one attempt each, so a helper does not wait for a main-loop request to see the store mended.
  */
 export function createMainLoopRouteRecord(ports: MainLoopRoutePorts): MainLoopRouteRecord {
-  // `persisted` is what the durable copy holds, which differs from `route` after a failed write and until a later write succeeds.
-  const routes = new Map<string, { readonly launch: FrontDoorLaunch; readonly route: MainLoopRoute; readonly persisted: MainLoopRoute | undefined }>();
-  // The launches whose durable copy failed to write, so a store that keeps failing is reported once per launch until a write succeeds, not once per request.
+  // `route` is undefined for a cached miss. `persisted` is what the durable copy holds, which differs from `route` after a failed write and until a later write succeeds.
+  const routes = new Map<string, { readonly launch: FrontDoorLaunch; readonly route: MainLoopRoute | undefined; readonly persisted: MainLoopRoute | undefined }>();
+  // The launches whose durable copy failed to write, so a store that keeps failing is reported once per launch until a write succeeds, not once per request. A failure to read is reported once per launch by the cached miss itself.
   const failed = new Set<string>();
+  const dropEnded = (except: string): void => {
+    for (const [held, entry] of routes) {
+      if (held !== except && !ports.holdsLaunch(entry.launch)) {
+        routes.delete(held);
+        failed.delete(held);
+      }
+    }
+  };
+  // Writes `route` when the durable copy differs from it, and returns what the copy holds afterwards: a failed write leaves it as it was, to be tried again.
+  const persist = (launch: Readonly<FrontDoorLaunch>, key: string, route: MainLoopRoute, persisted: MainLoopRoute | undefined): MainLoopRoute | undefined => {
+    if (persisted !== undefined && sameRoute(persisted, route)) {
+      return persisted;
+    }
+    try {
+      ports.stored.write(launch, route);
+      failed.delete(key);
+      return route;
+    } catch (error) {
+      if (!failed.has(key)) {
+        failed.add(key);
+        ports.log(`front door: could not record where launch ${String(launch.pid)}'s main loop went, so a door restart would send its helpers to the route last stored: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return persisted;
+    }
+  };
   return {
     record: (launch, route) => {
       const key = launchKeyOf(launch);
-      for (const [held, entry] of routes) {
-        if (held !== key && !ports.holdsLaunch(entry.launch)) {
-          routes.delete(held);
-          failed.delete(held);
-        }
-      }
-      let persisted = routes.get(key)?.persisted;
-      // Written only when the durable copy differs: the main loop's every request records, and the route rarely moves. A failed write leaves the copy stale, so the next request retries it.
-      if (persisted === undefined || !sameRoute(persisted, route)) {
-        try {
-          ports.stored.write(launch, route);
-          persisted = route;
-          failed.delete(key);
-        } catch (error) {
-          if (!failed.has(key)) {
-            failed.add(key);
-            ports.log(`front door: could not record where launch ${String(launch.pid)}'s main loop went, so a door restart would send its helpers to the route last stored: ${error instanceof Error ? error.message : String(error)}`);
-          }
-        }
-      }
-      routes.set(key, { launch, route, persisted });
+      dropEnded(key);
+      // Written only when the durable copy differs: the main loop's every request records, and the route rarely moves.
+      routes.set(key, { launch, route, persisted: persist(launch, key, route, routes.get(key)?.persisted) });
     },
     routeOf: (launch) => {
       const key = launchKeyOf(launch);
       const entry = routes.get(key);
       if (entry !== undefined) {
+        if (entry.route !== undefined && (entry.persisted === undefined || !sameRoute(entry.persisted, entry.route))) {
+          routes.set(key, { ...entry, persisted: persist(launch, key, entry.route, entry.persisted) });
+        }
         return entry.route;
       }
       // Nothing in memory: this door has not served the launch's main loop, or is not the process that did.
-      const stored = ports.stored.read(launch);
-      if (stored !== undefined) {
-        routes.set(key, { launch, route: stored, persisted: stored });
+      dropEnded(key);
+      let stored: MainLoopRoute | undefined;
+      try {
+        stored = ports.stored.read(launch);
+      } catch (error) {
+        ports.log(`front door: could not read where launch ${String(launch.pid)}'s main loop went (${error instanceof Error ? error.message : String(error)}), so its helpers go the route the launch was launched on until its next main-loop request`);
       }
+      routes.set(key, { launch, route: stored, persisted: stored });
       return stored;
     },
   };

@@ -344,7 +344,10 @@ function launchRouteName(pid: number): string {
   return `${String(pid)}.route.json`;
 }
 
-const LaunchRouteFileSchema = z.strictObject({ startedAt: z.number(), route: MainLoopRouteSchema });
+/** The version of the route file this door writes and reads. A file of a higher version was written by a newer door whose format this one cannot judge, so it is reported as unreadable, never taken for "no route". */
+const LAUNCH_ROUTE_FILE_VERSION = 1;
+
+const LaunchRouteFileSchema = z.strictObject({ version: z.literal(LAUNCH_ROUTE_FILE_VERSION), startedAt: z.number(), route: MainLoopRouteSchema });
 
 /**
  * Records where `launch`'s main loop last went, in the registry directory beside the launch's own record, so a restarted or replacing door finds it and the launch's helper requests keep following it. Written only while the launch's record is still on disk: the door admits a request from its cached view of the registry, which can outlive the launch's release by a tick, and a route written after the release would be an orphan nothing but the prune removes. The check reads the record at the write, so the window left is the two synchronous calls between the read and the write.
@@ -354,17 +357,33 @@ export function writeLaunchRoute(fs: HeadroomFs, sessionsDir: string, launch: Re
     return;
   }
   fs.mkdirPrivate(sessionsDir);
-  fs.writeFilePrivate(path.join(sessionsDir, launchRouteName(launch.pid)), `${JSON.stringify({ startedAt: launch.startedAt, route })}\n`);
+  fs.writeFilePrivate(path.join(sessionsDir, launchRouteName(launch.pid)), `${JSON.stringify({ version: LAUNCH_ROUTE_FILE_VERSION, startedAt: launch.startedAt, route })}\n`);
 }
 
-/** Where `launch`'s main loop last went, or undefined when none was recorded, the file is unreadable, or it belongs to an earlier launch under the same pid (a different start time). */
+/**
+ * Where `launch`'s main loop last went, or undefined when none was recorded or the file belongs to an earlier launch under the same pid (a different start time). A file that exists and cannot be read as a route of this door's version (not JSON, not the shape, written by a newer door, or unreadable) throws, naming which: a launch's helpers are then sent down the launch's own route, and that must be reported, not taken for "nothing recorded".
+ */
 export function readLaunchRoute(fs: Pick<HeadroomFs, "readFileUtf8">, sessionsDir: string, launch: Readonly<FrontDoorLaunch>): MainLoopRoute | undefined {
-  try {
-    const parsed = LaunchRouteFileSchema.safeParse(JSON.parse(fs.readFileUtf8(path.join(sessionsDir, launchRouteName(launch.pid))) ?? ""));
-    return parsed.success && parsed.data.startedAt === launch.startedAt ? parsed.data.route : undefined;
-  } catch {
+  const name = launchRouteName(launch.pid);
+  const text = fs.readFileUtf8(path.join(sessionsDir, name));
+  if (text === undefined) {
     return undefined;
   }
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`${name} is not JSON`);
+  }
+  const version = typeof json === "object" && json !== null && "version" in json ? json.version : undefined;
+  if (typeof version === "number" && version > LAUNCH_ROUTE_FILE_VERSION) {
+    throw new Error(`${name} is version ${String(version)}, written by a newer door than this one reads (version ${String(LAUNCH_ROUTE_FILE_VERSION)})`);
+  }
+  const parsed = LaunchRouteFileSchema.safeParse(json);
+  if (!parsed.success) {
+    throw new Error(`${name} is not a route file this door reads`);
+  }
+  return parsed.data.startedAt === launch.startedAt ? parsed.data.route : undefined;
 }
 
 /** What a registry record shows without its capability: the one projection every listing uses, so a token can never ride along into something that prints or serialises a session. */

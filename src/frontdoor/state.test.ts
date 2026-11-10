@@ -8,7 +8,7 @@ import * as state from "./state";
 import path from "node:path";
 import { catalogueCachePath } from "../providerCatalogue";
 import { MAX_TCP_PORT } from "../baseUrlDial";
-import { recordOf, listFrontDoorDirectRecords, listFrontDoorSessions, pruneMalformedFrontDoorDirectFiles, pruneDeadFrontDoorSessions, readFrontDoorCodexHome, readFrontDoorCodexRecord, readFrontDoorState, readLaunchRoute, removeFrontDoorSession, writeFrontDoorCodexHome, writeFrontDoorSession, writeFrontDoorState, writeLaunchRoute } from "./state";
+import { recordOf, listFrontDoorDirectRecords, isSessionRecordName, listFrontDoorSessions, pruneMalformedFrontDoorDirectFiles, pruneDeadFrontDoorSessions, readFrontDoorCodexHome, readFrontDoorCodexRecord, readFrontDoorState, readLaunchRoute, removeFrontDoorSession, writeFrontDoorCodexHome, writeFrontDoorSession, writeFrontDoorState, writeLaunchRoute } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 
@@ -148,7 +148,7 @@ describe("front-door session registry", () => {
     writeFrontDoorSession(fs, paths.frontdoorSessionsDir, { pid: LIVE, startedAt: 0, token: "live-token" });
     writeLaunchRoute(fs, paths.frontdoorSessionsDir, { pid: LIVE, startedAt: 0 }, { kind: "provider", provider: "z" });
     // The orphan is written directly: `writeLaunchRoute` refuses a launch with no record, which is the case the prune backs up.
-    fs.writeFilePrivate(`${paths.frontdoorSessionsDir}/${String(DEAD)}.route.json`, `${JSON.stringify({ startedAt: 0, route: { kind: "provider", provider: "z" } })}\n`);
+    fs.writeFilePrivate(`${paths.frontdoorSessionsDir}/${String(DEAD)}.route.json`, `${JSON.stringify({ version: 1, startedAt: 0, route: { kind: "provider", provider: "z" } })}\n`);
     expect(readLaunchRoute(fs, paths.frontdoorSessionsDir, { pid: DEAD, startedAt: 0 })).toEqual({ kind: "provider", provider: "z" });
     pruneDeadFrontDoorSessions(fs, paths.frontdoorSessionsDir, listFrontDoorSessions(fs, paths.frontdoorSessionsDir), (pid) => pid === LIVE);
     expect(readLaunchRoute(fs, paths.frontdoorSessionsDir, { pid: DEAD, startedAt: 0 })).toBeUndefined();
@@ -189,9 +189,32 @@ describe("front-door session registry", () => {
     expect(fs.readdir(dir)).toEqual([`${String(LIVE)}.json`]);
   });
 
-  it("reads no route from a malformed route file", () => {
-    const fs = createFakeFarmFs({ [`${paths.frontdoorSessionsDir}/${String(LIVE)}.route.json`]: "not json" });
-    expect(readLaunchRoute(fs, paths.frontdoorSessionsDir, { pid: LIVE, startedAt: 1 })).toBeUndefined();
+  it("reads a route file as unreadable, naming why, when it is not JSON, has another shape, an extra field, or a version newer than this door reads, and as no route when there is no file", () => {
+    const file = `${paths.frontdoorSessionsDir}/${String(LIVE)}.route.json`;
+    const read = (text: string | undefined): unknown => {
+      const fs = createFakeFarmFs(text === undefined ? {} : { [file]: text });
+      return readLaunchRoute(fs, paths.frontdoorSessionsDir, { pid: LIVE, startedAt: 1 });
+    };
+    const good = { version: 1, startedAt: 1, route: { kind: "provider", provider: "z" } };
+    expect(read(undefined)).toBeUndefined();
+    expect(read(JSON.stringify(good))).toEqual({ kind: "provider", provider: "z" });
+    expect(() => read("not json")).toThrow("is not JSON");
+    expect(() => read(JSON.stringify({ ...good, version: 2 }))).toThrow("written by a newer door");
+    expect(() => read(JSON.stringify({ ...good, version: 99 }))).toThrow("written by a newer door");
+    expect(() => read(JSON.stringify({ startedAt: 1, route: good.route }))).toThrow("is not a route file this door reads");
+    expect(() => read(JSON.stringify({ ...good, extra: true }))).toThrow("is not a route file this door reads");
+    expect(() => read(JSON.stringify({ ...good, route: { kind: "provider", provider: "" } }))).toThrow("is not a route file this door reads");
+  });
+
+  it("does not take a route file's name for a registry record's, so a listing and the live registry never read one as a launch", () => {
+    expect(isSessionRecordName("123.json")).toBe(true);
+    expect(isSessionRecordName("123.route.json")).toBe(false);
+    expect(isSessionRecordName("0123.json")).toBe(false);
+    expect(isSessionRecordName("abc.json")).toBe(false);
+    const fs = createFakeFarmFs({});
+    writeFrontDoorSession(fs, paths.frontdoorSessionsDir, { pid: LIVE, startedAt: 1, token: "t" });
+    writeLaunchRoute(fs, paths.frontdoorSessionsDir, { pid: LIVE, startedAt: 1 }, { kind: "anthropic" });
+    expect(listFrontDoorSessions(fs, paths.frontdoorSessionsDir).map((session) => session.pid)).toEqual([LIVE]);
   });
 
   it("writes the registry directory owner-only and each capability record owner-only", () => {
