@@ -32,6 +32,7 @@ export class SourcePortRange {
   declare readonly end: number;
   declare readonly count: number;
   declare private next: number;
+  declare private readonly excluded: Set<number>;
 
   /** `first` is the port the rotation hands out first, `start` unless a caller gives its own: several rotations that serve one purpose at once (the probes of a batch) start apart, so they do not all bind the first port of the range and walk up it together. */
   constructor(start: number, end: number, first: number = start) {
@@ -39,13 +40,29 @@ export class SourcePortRange {
     this.end = end;
     this.count = end - start + 1;
     this.next = first;
+    this.excluded = new Set();
   }
 
-  /** The next port in rotation, wrapping from the end back to the start. */
+  /**
+   * The next port in rotation, wrapping from the end back to the start, skipping every port the system has refused to bind (`exclude`) so a dial does not walk a refused block again. A cycle that finds nothing else forgets the refusals and starts over: the exclusions of a host can change while the door runs, and a range refused throughout is then tried again, one pass, not skipped for ever. The memory is a set of ports of the range, so it holds at most `count` entries.
+   */
   take(): number {
+    for (let skipped = 0; skipped < this.count; skipped += 1) {
+      const port = this.next;
+      this.next = this.next === this.end ? this.start : this.next + 1;
+      if (!this.excluded.has(port)) {
+        return port;
+      }
+    }
+    this.excluded.clear();
     const port = this.next;
     this.next = this.next === this.end ? this.start : this.next + 1;
     return port;
+  }
+
+  /** Remembers that the system refuses to bind `port`, so `take` skips it. Only an exclusion belongs here: a port a sibling holds is free again when the sibling closes. */
+  exclude(port: number): void {
+    this.excluded.add(port);
   }
 }
 
@@ -81,8 +98,12 @@ const realAddressLookup: LookupFunction = createDoorLookup({ isIP: net.isIP, res
   dns.resolve4(host, callback);
 } });
 
-/** The real `net` behind the door's dial, through the door's own lookup. */
-const realDialIo: DoorDialIo<net.Socket> = { connect: (options) => net.connect(options), lookup: realAddressLookup, isIP: net.isIP, isSourcePortUnusable: sourcePortClassifier(process.platform) };
+/**
+ * The real `net` behind the door's dial, through the door's own lookup, with the source-port classification of `platform` (this process's by default; a test passes another, and a `connect` that fails as that platform's bind does). The platform is read here, at the edge, and handed down: nothing below reads it.
+ */
+export function realDoorDialIo(platform: string = process.platform, connect: DoorDialIo<net.Socket>["connect"] = (options) => net.connect(options)): DoorDialIo<net.Socket> {
+  return { connect, lookup: realAddressLookup, isIP: net.isIP, sourcePortFailure: sourcePortClassifier(platform) };
+}
 
 /** The default port a plain-HTTP dial lands on when the request names none. */
 const HTTP_PORT = 80;
@@ -103,8 +124,8 @@ function literalDial(target: { readonly host: string; readonly port: number }): 
 }
 
 /** One of the door's own upstream dials for a real name, bound into the reserved source-port range and resolved through the door's lookup: see `doorDial`. */
-async function reservedDial(target: { readonly host: string; readonly port: number }, ports: SourcePortRange): Promise<DialOutcome> {
-  return await doorDial(realDialIo, target, ports);
+async function reservedDial(target: { readonly host: string; readonly port: number }, ports: SourcePortRange, io: DoorDialIo<net.Socket>): Promise<DialOutcome> {
+  return await doorDial(io, target, ports);
 }
 
 /**
@@ -116,7 +137,7 @@ function requestServername(options: http.ClientRequestArgs, fallback: string): s
 
 /** The plain-HTTP sibling; http.Agent and https.Agent each carry their protocol, and one cannot serve the other's requests. */
 export class ExemptHttpAgent extends http.Agent {
-  constructor(private readonly ports: SourcePortRange = DOOR_SOURCE_PORTS) {
+  constructor(private readonly ports: SourcePortRange = DOOR_SOURCE_PORTS, private readonly io: DoorDialIo<net.Socket> = realDoorDialIo()) {
     super(POOLING);
   }
 
@@ -126,7 +147,7 @@ export class ExemptHttpAgent extends http.Agent {
     if (net.isIP(target.host) !== 0) {
       return literalDial(target);
     }
-    void reservedDial(target, this.ports).then((outcome) => {
+    void reservedDial(target, this.ports, this.io).then((outcome) => {
       oncreate?.(outcome.error, outcome.socket);
     });
     return undefined;
@@ -135,7 +156,7 @@ export class ExemptHttpAgent extends http.Agent {
 
 /** The TLS sibling: the door's keep-alive agent for https upstreams, every real-name socket in the pf-exempt source-port range. */
 export class ExemptTlsAgent extends https.Agent {
-  constructor(private readonly ports: SourcePortRange = DOOR_SOURCE_PORTS) {
+  constructor(private readonly ports: SourcePortRange = DOOR_SOURCE_PORTS, private readonly io: DoorDialIo<net.Socket> = realDoorDialIo()) {
     super(POOLING);
   }
 
@@ -145,7 +166,7 @@ export class ExemptTlsAgent extends https.Agent {
     if (net.isIP(target.host) !== 0) {
       return tls.connect({ socket: literalDial(target), servername: requestServername(options, target.host), ...tlsFacts(options) });
     }
-    void reservedDial(target, this.ports).then((outcome) => {
+    void reservedDial(target, this.ports, this.io).then((outcome) => {
       if (outcome.error !== null) {
         oncreate?.(outcome.error, outcome.socket);
         return;
@@ -339,10 +360,10 @@ export function realRcStreamDial(target: RcDialTarget = { host: CONNECT_INTERCEP
 }
 
 /** The real effects, dialling upstream from `ports` (the door's own range unless a test injects a private one). */
-export function realConnectEffects(ports: SourcePortRange = DOOR_SOURCE_PORTS): ConnectEffects {
+export function realConnectEffects(ports: SourcePortRange = DOOR_SOURCE_PORTS, io: DoorDialIo<net.Socket> = realDoorDialIo()): ConnectEffects {
   // Keep-alive on both agents so a client reusing its TLS session gets its forwarded requests served over reused upstream connections too, the way a direct connection would, with every socket in the door's pf-exempt source-port range.
-  const plainAgent = new ExemptHttpAgent(ports);
-  const tlsAgent = new ExemptTlsAgent(ports);
+  const plainAgent = new ExemptHttpAgent(ports, io);
+  const tlsAgent = new ExemptTlsAgent(ports, io);
 
   /** Binds `target` when it is a port, or takes over the listening socket it is (Node's `listen(handle)`), in the same turn either way. */
   const listenOnce = async (target: number | net.Server, onSocket: (socket: net.Socket) => void): Promise<ConnectListenerHandle> =>
@@ -489,7 +510,7 @@ export function realConnectEffects(ports: SourcePortRange = DOOR_SOURCE_PORTS): 
     },
     connectTlsUpstream: async (host, port, clientAlpn) => {
       // The upstream half of a tap session speaks TLS to the real host, offering exactly the protocol the client negotiated with the tap's front (and nothing when the client negotiated nothing), so the channel's protocol is the client's choice, never ours. The raw socket is dialled by `reservedDial`, so it is bound into the door's reserved source-port range (the pf exemption an interception deployment loads) before TLS wraps it, because tls.connect's own options carry no localPort.
-      const dialled = await reservedDial({ host, port }, ports);
+      const dialled = await reservedDial({ host, port }, ports, io);
       if (dialled.error !== null) {
         throw dialled.error;
       }

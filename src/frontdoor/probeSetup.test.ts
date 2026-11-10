@@ -381,4 +381,26 @@ describe("probeListenerAcceptSync", () => {
       platform: process.platform,
     });
   });
+
+  it("hands its worker the platform this process runs on, read when the probe starts and not fixed at load", () => {
+    const original = Object.getOwnPropertyDescriptor(process, "platform");
+    try {
+      for (const platform of ["win32", "linux", "darwin"]) {
+        Object.defineProperty(process, "platform", { value: platform });
+        let startedData: Readonly<Record<string, unknown>> | undefined;
+        const workers: ProbeWorkers = {
+          start: (_source, data) => {
+            startedData = data;
+            return { verdict: () => ({ ok: true }), cancel: () => undefined };
+          },
+        };
+        probeListenerAcceptSync(PORT, PROBE_BOUND_MS, workers);
+        expect(startedData?.platform, platform).toBe(platform);
+      }
+    } finally {
+      if (original !== undefined) {
+        Object.defineProperty(process, "platform", original);
+      }
+    }
+  });
 });

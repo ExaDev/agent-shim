@@ -6,7 +6,7 @@ import * as net from "node:net";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { ExemptHttpAgent, realConnectEffects, SourcePortRange } from "./connectEffects";
+import { ExemptHttpAgent, realConnectEffects, realDoorDialIo, SourcePortRange } from "./connectEffects";
 import { HTTP_OK } from "./connectTestWorld";
 
 /** The status the door answers with when the upstream cannot be reached. */
@@ -374,5 +374,101 @@ describe("the answer to a request whose upstream cannot be reached", () => {
         });
       });
     }
+  });
+});
+
+describe("the platform the door's real dial classifies source-port failures for", () => {
+  const WIDTH = 4;
+  const START = 47960;
+  const TLS_PORT = 443;
+
+  /** A `connect` that refuses the bind of every source port below `usableFrom` the way Windows refuses an excluded one, and connects from the rest; it records each source port tried. */
+  function windowsLikeConnect(usableFrom: number, record: (port: number) => void): (options: { readonly host: string; readonly port: number; readonly localPort?: number }) => net.Socket {
+    return (options) => {
+      record(options.localPort ?? 0);
+      const socket = new net.Socket();
+      queueMicrotask(() => {
+        if ((options.localPort ?? 0) >= usableFrom) {
+          socket.emit("connect");
+          return;
+        }
+        const refusal: NodeJS.ErrnoException = new Error("bind EACCES");
+        refusal.code = "EACCES";
+        refusal.syscall = "bind";
+        socket.emit("error", refusal);
+      });
+      return socket;
+    };
+  }
+
+  /** What an exempt agent's dial of a name settles with over `io`, and every source port it tried. */
+  async function dialOver(io: ReturnType<typeof realDoorDialIo>, tried: readonly number[]): Promise<{ readonly error: Error | null; readonly tried: readonly number[] }> {
+    const agent = new ExemptHttpAgent(new SourcePortRange(START, START + WIDTH - 1), io);
+    const error = await new Promise<Error | null>((resolve) => {
+      agent.createConnection({ host: DIAL_NAME, port: 80 }, (failure) => {
+        resolve(failure);
+      });
+    });
+    agent.destroy();
+    return { error, tried };
+  }
+
+  it("moves past an excluded port when it is built for win32, through the agent the door dials with", async () => {
+    const tried: number[] = [];
+    const settled = await dialOver(realDoorDialIo("win32", windowsLikeConnect(START + 2, (port) => {
+      tried.push(port);
+    })), tried);
+    expect(settled.error).toBeNull();
+    expect(tried).toEqual([START, START + 1, START + 2]);
+  });
+
+  it("fails at the first excluded port when it is built for linux, where EACCES at a bind is a real error", async () => {
+    const tried: number[] = [];
+    const settled = await dialOver(realDoorDialIo("linux", windowsLikeConnect(START + 2, (port) => {
+      tried.push(port);
+    })), tried);
+    expect(settled.error).toHaveProperty("code", "EACCES");
+    expect(tried).toEqual([START]);
+  });
+
+  it("is built for this process's own platform unless it is told another", async () => {
+    const original = Object.getOwnPropertyDescriptor(process, "platform");
+    try {
+      for (const [platform, moves] of [["win32", true], ["linux", false], ["darwin", false]] as const) {
+        Object.defineProperty(process, "platform", { value: platform });
+        const tried: number[] = [];
+        const settled = await dialOver(realDoorDialIo(undefined, windowsLikeConnect(START + 2, (port) => {
+      tried.push(port);
+    })), tried);
+        expect(settled.error === null, platform).toBe(moves);
+      }
+    } finally {
+      if (original !== undefined) {
+        Object.defineProperty(process, "platform", original);
+      }
+    }
+  });
+
+  it("is the dial the connect surface's own effects use for a tap session's upstream", async () => {
+    const tried: number[] = [];
+    const connect = windowsLikeConnect(START + 1, (port) => {
+      tried.push(port);
+    });
+    const dialled = new Promise<void>((resolve) => {
+      const effects = realConnectEffects(
+        new SourcePortRange(START, START + WIDTH - 1),
+        realDoorDialIo("win32", (options) => {
+          const socket = connect(options);
+          if (tried.length === 2) {
+            resolve(undefined);
+          }
+          return socket;
+        }),
+      );
+      // The TLS handshake over the stand-in socket never completes, so the promise is left unsettled: what is checked is the dial, which moved past the refused port.
+      void effects.connectTlsUpstream(DIAL_NAME, TLS_PORT, undefined).catch(() => undefined);
+    });
+    await dialled;
+    expect(tried).toEqual([START, START + 1]);
   });
 });
