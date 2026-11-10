@@ -12,13 +12,13 @@ const COLON = ":";
 const ASCII: readonly string[] = Array.from({ length: ASCII_END }, (_, code) => String.fromCharCode(code));
 
 /** The grammar written a second time as the test's oracle, apart from the implementation: a letter or digit, or one of those with interior hyphens and dots. */
-const ORACLE_SINGLE = /^[a-z]$/i;
-const ORACLE_MIDDLE = /^[a-z0-9.-]$/i;
+const ORACLE_SINGLE = /^[a-z_]$/i;
+const ORACLE_MIDDLE = /^[a-z0-9._-]$/i;
 
 describe("the host grammar of an unbracketed authority", () => {
   const cases = ASCII.filter((character) => character !== COLON);
 
-  it.each(cases.map((character) => [JSON.stringify(character), character] as const))("takes %s alone as a host exactly when it is a letter (a lone digit is a number)", (_name, character) => {
+  it.each(cases.map((character) => [JSON.stringify(character), character] as const))("takes %s alone as a host exactly when it is a letter or an underscore (a lone digit is a number)", (_name, character) => {
     const parsed = parseDialAuthority(`${character}:${String(DEFAULT_PORT)}`, DEFAULT_PORT);
     if (ORACLE_SINGLE.test(character)) {
       expect(parsed).toEqual({ host: character.toLowerCase(), port: DEFAULT_PORT });
@@ -37,8 +37,12 @@ describe("the host grammar of an unbracketed authority", () => {
     }
   });
 
-  it.each(["a\0b", "%25", "host%20x", "host,evil", "*", "a..b", "-a", "a-", ".a", "a..", "a_b", "a\u0007b"])("refuses %j", (host) => {
+  it.each(["a\0b", "%25", "host%20x", "host,evil", "*", "a..b", "-a", "a-", ".a", "a..", "a\u0007b"])("refuses %j", (host) => {
     expect(parseDialAuthority(`${host}:${String(DEFAULT_PORT)}`, DEFAULT_PORT), host).toHaveProperty("refusal");
+  });
+
+  it.each(["my_service", "_x.example", "a_b.c", "_", "__dmarc.example.org", "a-_-b"])("takes the underscore name %s", (host) => {
+    expect(parseDialAuthority(`${host}:${String(DEFAULT_PORT)}`, DEFAULT_PORT)).toEqual({ host, port: DEFAULT_PORT });
   });
 
   it("holds a label to 63 characters and a name to 253", () => {

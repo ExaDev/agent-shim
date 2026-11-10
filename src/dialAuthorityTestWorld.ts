@@ -24,7 +24,6 @@ export const MALFORMED_WITH_MARKER: readonly string[] = [
   `${MARKER}\0`,
   `${MARKER}..x`,
   `${MARKER}-.x`,
-  `${MARKER}_x`,
   `${MARKER}*`,
   `${MARKER}.0x7f.1`,
   `${"a".repeat(MAX_LABEL_LENGTH + 1)}${MARKER}`,

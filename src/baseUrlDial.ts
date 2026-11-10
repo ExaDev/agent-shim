@@ -59,8 +59,8 @@ const IPV4_PARTS = 4;
 /** The largest value of one part of a dotted-decimal IPv4 address. */
 const MAX_OCTET = 255;
 
-/** One label of a reg-name: letters, digits and interior hyphens only. */
-const LDH_LABEL = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+/** One label of a reg-name: letters, digits and underscores (RFC 3986 unreserved, and what compose and Kubernetes service names use), with hyphens only inside. */
+const LABEL = /^[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?$/;
 
 /** A dotted-decimal IPv4 address: four decimal parts of 0 to 255, none with a leading zero. */
 function isDottedDecimal(host: string): boolean {
@@ -77,7 +77,7 @@ function isAscii(text: string): boolean {
 const NUMERIC_LAST_LABEL = /^(?:\d+|0x[0-9a-f]*)$/;
 
 /**
- * The canonical host an unbracketed authority names, or the refusal: lowercased, one trailing root dot removed, an internationalised name converted to its ASCII form, so the same host spelt two ways dials and compares as one. The grammar is positive: a reg-name of letters, digits and interior hyphens in labels of 1 to 63 characters (253 in all), or a dotted-decimal IPv4 address. A numeric shorthand (`127.1`, `0x7f.1`, a decimal or octal integer) is refused rather than read, since the dial would resolve it to an address the authority never wrote. Nothing else is dialled, so a byte `net.connect` would throw on (a NUL, a control character, a percent escape, a comma, a wildcard, an empty label) is refused with the 400 the client is owed instead of an accept followed by a drop.
+ * The canonical host an unbracketed authority names, or the refusal: lowercased, one trailing root dot removed, an internationalised name converted to its ASCII form, so the same host spelt two ways dials and compares as one. The grammar is positive: a reg-name of letters, digits, underscores and interior hyphens in labels of 1 to 63 characters (253 in all), or a dotted-decimal IPv4 address. A numeric shorthand (`127.1`, `0x7f.1`, a decimal or octal integer) is refused rather than read, since the dial would resolve it to an address the authority never wrote. Nothing else is dialled, so a byte `net.connect` would throw on (a NUL, a control character, a percent escape, a comma, a wildcard, an empty label) is refused with the 400 the client is owed instead of an accept followed by a drop.
  */
 function nameOf(host: string): string | DialAuthorityRefusal {
   const rooted = withoutRootDot(host.toLowerCase());
@@ -98,8 +98,8 @@ function nameOf(host: string): string | DialAuthorityRefusal {
   if (labels.some((label) => label.length > MAX_LABEL_LENGTH)) {
     return { refusal: `a host with a label longer than ${String(MAX_LABEL_LENGTH)} characters` };
   }
-  if (!labels.every((label) => LDH_LABEL.test(label))) {
-    return { refusal: "a host that is not letters, digits and interior hyphens in non-empty dot-separated labels" };
+  if (!labels.every((label) => LABEL.test(label))) {
+    return { refusal: "a host that is not letters, digits, underscores and interior hyphens in non-empty dot-separated labels" };
   }
   if (NUMERIC_LAST_LABEL.test(labels[labels.length - 1] ?? "")) {
     return { refusal: "a numeric host that is not a dotted-decimal IPv4 address" };
