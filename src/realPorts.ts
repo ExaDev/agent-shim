@@ -673,7 +673,10 @@ const SOCKET_PERMISSION_BITS = 0o7777;
  * The real `HeadroomSocketTrustPorts`: this process's platform and user id, and an `lstat` that never follows symlinks, so a symlinked socket or socket directory is seen as the symlink it is and refused.
  */
 export const realHeadroomSocketTrust: HeadroomSocketTrustPorts = {
-  platform: process.platform,
+  // Read at each use, not fixed when the module loads, so what the checks do for a platform is testable through the real wiring.
+  get platform() {
+    return process.platform;
+  },
   currentUid: () => {
     if (process.getuid === undefined) {
       throw new Error(`no POSIX user id on ${process.platform}`);
