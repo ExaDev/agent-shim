@@ -368,6 +368,39 @@ describe("two doors over one durable copy", () => {
   });
 });
 
+describe("a launch that ended while only helper lookups arrived", () => {
+  it("drops an ended launch's entry when another launch is first looked up, so the same launch registered again reads the store afresh", () => {
+    const store = inMemoryRouteStore();
+    let reads = 0;
+    const live = new Set<string>(["a", "b"]);
+    const a: FrontDoorLaunch = { pid: 1, startedAt: 1 };
+    const b: FrontDoorLaunch = { pid: 2, startedAt: 1 };
+    const names = new Map<string, string>([[launchKeyOf(a), "a"], [launchKeyOf(b), "b"]]);
+    const record = createMainLoopRouteRecord({
+      holdsLaunch: (held) => live.has(names.get(launchKeyOf(held)) ?? ""),
+      stored: {
+        identity: store.identity,
+        write: store.write,
+        read: (held) => {
+          reads += 1;
+          return store.read(held);
+        },
+      },
+      log: () => undefined,
+    });
+    record.routeOf(a);
+    const afterFirst = reads;
+    live.delete("a");
+    record.routeOf(b);
+    const afterOther = reads;
+    live.add("a");
+    record.routeOf(a);
+    // The other launch read the store once, and the launch that had ended and came back read it afresh.
+    expect(afterOther).toBe(afterFirst + 1);
+    expect(reads).toBe(afterOther + 1);
+  });
+});
+
 describe("the route file of a launch whose registry record is gone", () => {
   const SESSIONS_DIR = `${FAKE_HOME}/.agent-shim/frontdoor/sessions`;
   const launch: FrontDoorLaunch = { pid: 4242, startedAt: 7 };
