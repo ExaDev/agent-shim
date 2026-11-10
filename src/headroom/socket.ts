@@ -194,6 +194,10 @@ export function reportableAllowlistFileProblem(allowlistFile: string, ports: Hea
 }
 
 export function verifyAllowlistFile(allowlistFile: string, ports: HeadroomSocketTrustPorts): AllowlistFileProblem | undefined {
+  // Where headroom cannot be served at all (Windows has no POSIX user id to hold the file to either), nothing reads the allowlist, so no rule is judged: asking for the user id would end `doctor` there.
+  if (platformRefusal(ports.platform) !== undefined) {
+    return undefined;
+  }
   const uid = ports.currentUid();
   const directories = pathDirectories(allowlistFile, ports);
   if (typeof directories === "string") {
