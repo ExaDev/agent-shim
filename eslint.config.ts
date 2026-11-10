@@ -37,7 +37,7 @@ export default defineConfig([
     ignores: ["src/**/*.test.ts", "src/**/*TestWorld.ts"],
     plugins: { dial: dialPlugin },
     rules: {
-      // The code that turns an authority or a URL into a dial target never cuts one at a colon itself.
+      // The code that turns an authority or a URL into a dial target never cuts one at a colon itself. The rule covers the code that dials (the front door, the base-URL and provider modules): elsewhere in src, string and pattern cuts at a colon parse times, headers, credential pairs and JSON keys, none an authority, so applying it there would only add allowances.
       "dial/no-colon-split": ["error", { allow: [
         // The shared authority parser itself.
         { file: "src/baseUrlDial.ts", within: ["parseDialAuthority"] },
@@ -47,6 +47,11 @@ export default defineConfig([
         { file: "src/frontdoor/rcStream.ts", within: ["createSseParser"] },
         // The groups of an IPv6 address already cut out of any authority, which carry no port.
         { file: "src/frontdoor/x509.ts", within: ["ipv6Groups"] },
+        // Patterns whose colon is not an authority's: a JSON key's, an RFC 5280 time's, a flag's `question:selection` separator, an IPv6 address's groups already cut out of any authority.
+        { file: "src/frontdoor/requestScan.ts", within: ["scanRequestHead"] },
+        { file: "src/frontdoor/x509.ts", within: ["time"] },
+        { file: "src/frontdoor/rcCommands.ts", within: ["parseRcChoiceFlags"] },
+        { file: "src/frontdoor/rcWebFetch.ts", within: ["isPrivateAddress"] },
       ] }],
     },
   },
