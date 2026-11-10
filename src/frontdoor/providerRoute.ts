@@ -28,7 +28,7 @@ import type { TargetObservation } from "../selection/signals";
 import type { UsageSnapshot } from "../usage/schema";
 import { PROVIDER_PATH_PREFIX, directOrigin, parseProviderPath, type FrontDoorRoute, type ModelChoice, type RoutedRequest } from "./route";
 import { followingMainLoop, withModel, type MappedModel, type MainLoopRouteRecord } from "./mainLoopRoute";
-import { TIER_ENV_VARIABLES, claudeTierOf } from "../models/tiers";
+import { TIER_ENV_VARIABLES, claudeNameTier } from "../models/tiers";
 import { scanRequestHead } from "./requestScan";
 
 /** How often the door logs that one upstream could not be connected to, while it stays down. */
@@ -586,7 +586,7 @@ export function createProviderRouteResolver(deps: {
       return { model: asIs, credential: undefined };
     }
     const credential = isRouterProvider(definition) ? undefined : describeCredential(definition.credential);
-    const tier = requested.includes("/") ? undefined : claudeTierOf(requested);
+    const tier = requested.includes("/") ? undefined : claudeNameTier(requested);
     if (tier === undefined) {
       return { model: asIs, credential };
     }

@@ -8,6 +8,15 @@ export function claudeTierOf(model: string): ClaudeTier | undefined {
   return CLAUDE_TIERS.find((tier) => lower.includes(tier));
 }
 
+/**
+ * The tier of a Claude model name as Claude Code sends one, which is narrower than `claudeTierOf`'s substring match: `claude-` followed by hyphen-separated parts one of which is a tier (`claude-sonnet-5-5`, `claude-3-5-haiku-20241022`), or a tier alone (`opus`), either with the context marker `[1m]` Claude Code appends. A name that merely contains a tier word (`magnum-opus`) is no Claude name and selects none. This is the test for whether a request asks for Claude, so that is what follows a session's context; the translators of the providers that map by tier themselves keep `claudeTierOf`.
+ */
+export function claudeNameTier(model: string): ClaudeTier | undefined {
+  const name = model.toLowerCase().replace(/\[1m\]$/, "");
+  const parts = name.split("-");
+  return parts[0] === "claude" ? CLAUDE_TIERS.find((tier) => parts.includes(tier)) : CLAUDE_TIERS.find((tier) => name === tier);
+}
+
 /** The environment variable an `http` provider's own `env` block uses to name the model a tier reaches: the variable Claude Code itself reads for that tier's model. */
 export const TIER_ENV_VARIABLES: Readonly<Record<ClaudeTier, string>> = Object.freeze({
   fable: "ANTHROPIC_DEFAULT_FABLE_MODEL",

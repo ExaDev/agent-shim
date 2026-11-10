@@ -1,14 +1,10 @@
-import { Readable } from "node:stream";
-
 import { describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
 import { ANTIGRAVITY_DEFAULT_TIER_MODELS, CODEX_DEFAULT_TIER_MODELS } from "../config/schema";
-import { FAKE_HOME, createFakeFarmFs, mainLoopRoutesOfLiveSessions } from "../test-helpers";
-import { createMainLoopRouteRecord, followingMainLoop } from "./mainLoopRoute";
+import { FAKE_HOME, createFakeFarmFs } from "../test-helpers";
+import { createMainLoopRouteRecord } from "./mainLoopRoute";
 import { HAIKU_NAME, PROVIDERS_DIR, launchOfSession, send, startWorld, Z_HAIKU_MODEL, Z_OPUS_MODEL, Z_SONNET_MODEL } from "./mainLoopRouteTestWorld";
-import type { RouteResolution } from "./pipeline";
-import type { RoutedRequest } from "./route";
 import { MAX_CONTEXT_TEXT_LENGTH, launchRouteStore, writeFrontDoorSession } from "./state";
 
 const SONNET_NAME = "claude-sonnet-5-5";
@@ -258,6 +254,19 @@ describe("the route context the door keeps for a launch", () => {
     }
   });
 
+  it("names the credential from the provider's file as read for each request, so an edited credential block shows its new name at the next one", async () => {
+    const { fs, world, pid } = await recordedWorld();
+    try {
+      await send(world, { model: "z/glm-5.3", requestClass: "main" });
+      expect(JSON.stringify(onDisk(fs, pid).facts)).toContain("literal");
+      world.setProvider("z", { displayName: "Z", baseUrl: `http://127.0.0.1:${String(world.upstreamPort)}`, credential: { sources: [{ env: "Z_RENAMED_TOKEN" }, { literal: "z-token" }] }, env: { ANTHROPIC_DEFAULT_SONNET_MODEL: Z_SONNET_MODEL } });
+      await send(world, { model: SONNET_NAME, requestClass: "main" });
+      expect(JSON.stringify(onDisk(fs, pid).facts)).toContain("Z_RENAMED_TOKEN");
+    } finally {
+      await world.close();
+    }
+  });
+
   it("records the Anthropic route with the session's login and no provider", async () => {
     const { fs, world, pid } = await recordedWorld();
     try {
@@ -315,45 +324,5 @@ describe("the route context the door keeps for a launch", () => {
     } finally {
       await world.close();
     }
-  });
-});
-
-describe("what the decision reads from a provider's file", () => {
-  /** A resolver standing for one that serves every request on `served` (a provider path) under `requested`, and the decision over it with a counted provider mapping. */
-  function counted(served: string): { readonly follow: (model: string) => Promise<RouteResolution>; readonly mappings: string[] } {
-    const mappings: string[] = [];
-    const record = mainLoopRoutesOfLiveSessions();
-    const resolve = async (request: RoutedRequest): Promise<RouteResolution> =>
-      await Promise.resolve({ ok: true, route: { name: "stand-in", headroomEligible: false, headroomUpstream: undefined, serve: async () => Promise.resolve() }, request: { ...request, url: `/providers/${served}${request.url}` }, requestedModel: `${served}/glm-5.3` });
-    const follow = followingMainLoop(resolve, {
-      record,
-      providerMapping: (provider, _session, requested) => {
-        mappings.push(`${provider}:${requested}`);
-        return { model: { kind: "as-is" }, credential: "bearer from env Z_API_TOKEN" };
-      },
-      loginOf: () => "the launch's login",
-      definesProvider: () => false,
-    });
-    return {
-      mappings,
-      follow: async (model) =>
-        await follow({
-          method: "POST",
-          url: "/v1/messages",
-          headers: { "x-claude-code-request-class": "main" },
-          body: Readable.from([Buffer.from(JSON.stringify({ model, messages: [] }))]),
-          signal: new AbortController().signal,
-          session: { identity: undefined, sessionId: "s-1", provider: undefined, headroom: false, projectId: undefined, launch: launchOfSession("s-1") },
-        }),
-    };
-  }
-
-  it("reads the provider's file for its credential when the route moves to it, and not again while the main loop stays on it", async () => {
-    const { follow, mappings } = counted("z");
-    await follow("z/glm-5.3");
-    expect(mappings).toEqual(["z:"]);
-    await follow("z/glm-5.3");
-    await follow("z/glm-5.3");
-    expect(mappings).toEqual(["z:"]);
   });
 });
