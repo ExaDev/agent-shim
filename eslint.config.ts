@@ -45,6 +45,8 @@ export default defineConfig([
         { file: "src/frontdoor/capability.ts", within: ["capabilityFromProxyAuthorization"] },
         { file: "src/frontdoor/connect.ts", within: ["proxyAuthorizationOf"] },
         { file: "src/frontdoor/rcStream.ts", within: ["createSseParser"] },
+        // The groups of an IPv6 address already cut out of any authority, which carry no port.
+        { file: "src/frontdoor/x509.ts", within: ["ipv6Groups"] },
       ] }],
     },
   },
