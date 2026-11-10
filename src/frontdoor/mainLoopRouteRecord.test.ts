@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { FAKE_HOME, createFakeFarmFs, inMemoryRouteStore } from "../test-helpers";
 import { createMainLoopRouteRecord, type MainLoopRoutePorts } from "./mainLoopRoute";
-import { launchKeyOf, launchRouteStore, removeFrontDoorSession, writeFrontDoorSession, type FrontDoorLaunch } from "./state";
+import { launchKeyOf, launchRouteStore, type MainLoopRoute, removeFrontDoorSession, writeFrontDoorSession, type FrontDoorLaunch } from "./state";
 
 describe("the main-loop route record", () => {
   /** A registry whose launches the test starts and ends. */
@@ -161,6 +161,121 @@ describe("a main-loop record whose store fails", () => {
     live.add(first);
     record.record(first, { kind: "provider", provider: "z" });
     expect(lines.map((line) => /launch (\d+)'s/.exec(line)?.[1])).toEqual(["1", "2", "1"]);
+  });
+});
+
+describe("a main-loop record over a durable copy that fails", () => {
+  const launch: FrontDoorLaunch = { pid: 9, startedAt: 1 };
+  const z: MainLoopRoute = { kind: "provider", provider: "z" };
+
+  /** A store that fails its writes while `failing.writes` and its reads while `failing.reads`, counting every call. */
+  function flaky(): { readonly ports: MainLoopRoutePorts; readonly failing: { writes: boolean; reads: boolean }; readonly lines: string[]; readonly calls: { reads: number; writes: number }; readonly store: ReturnType<typeof inMemoryRouteStore> } {
+    const store = inMemoryRouteStore();
+    const failing = { writes: false, reads: false };
+    const lines: string[] = [];
+    const calls = { reads: 0, writes: 0 };
+    return {
+      failing,
+      lines,
+      calls,
+      store,
+      ports: {
+        holdsLaunch: () => true,
+        stored: {
+          read: (held) => {
+            calls.reads += 1;
+            if (failing.reads) {
+              throw new Error("route file is version 2");
+            }
+            return store.read(held);
+          },
+          write: (held, route) => {
+            calls.writes += 1;
+            if (failing.writes) {
+              throw new Error("disk full");
+            }
+            store.write(held, route);
+          },
+        },
+        log: (line) => {
+          lines.push(line);
+        },
+      },
+    };
+  }
+
+  it("retries the durable write on a helper's lookup too, not only on the next main-loop request, and stops once it has succeeded", () => {
+    const world = flaky();
+    const record = createMainLoopRouteRecord(world.ports);
+    world.failing.writes = true;
+    record.record(launch, z);
+    expect(world.store.read(launch)).toBeUndefined();
+    world.failing.writes = false;
+    expect(record.routeOf(launch)).toEqual(z);
+    expect(world.store.read(launch)).toEqual(z);
+    const writes = world.calls.writes;
+    record.routeOf(launch);
+    record.routeOf(launch);
+    expect(world.calls.writes).toBe(writes);
+  });
+
+  it("makes at most one attempt per lookup while the store keeps failing, and reports once", () => {
+    const world = flaky();
+    world.failing.writes = true;
+    const record = createMainLoopRouteRecord(world.ports);
+    record.record(launch, z);
+    const afterRecord = world.calls.writes;
+    record.routeOf(launch);
+    record.routeOf(launch);
+    expect(world.calls.writes).toBe(afterRecord + 2);
+    expect(world.lines).toHaveLength(1);
+  });
+
+  it("reports a failure again after the store recovered and failed afresh", () => {
+    const world = flaky();
+    const record = createMainLoopRouteRecord(world.ports);
+    world.failing.writes = true;
+    record.record(launch, z);
+    world.failing.writes = false;
+    record.record(launch, { kind: "anthropic" });
+    world.failing.writes = true;
+    record.record(launch, z);
+    expect(world.lines).toHaveLength(2);
+  });
+
+  it("reports an unreadable durable copy once per launch, counts it as no route, and does not read it again for every helper", () => {
+    const world = flaky();
+    world.failing.reads = true;
+    const record = createMainLoopRouteRecord(world.ports);
+    expect(record.routeOf(launch)).toBeUndefined();
+    expect(record.routeOf(launch)).toBeUndefined();
+    expect(record.routeOf(launch)).toBeUndefined();
+    expect(world.calls.reads).toBe(1);
+    expect(world.lines).toHaveLength(1);
+    expect(world.lines[0]).toContain("version 2");
+  });
+
+  it("reads the durable copy once per launch, a miss included, until the launch's first main-loop request", () => {
+    const world = flaky();
+    const record = createMainLoopRouteRecord(world.ports);
+    expect(record.routeOf(launch)).toBeUndefined();
+    expect(record.routeOf(launch)).toBeUndefined();
+    expect(world.calls.reads).toBe(1);
+    record.record(launch, z);
+    expect(record.routeOf(launch)).toEqual(z);
+    expect(world.calls.reads).toBe(1);
+  });
+
+  it("caches a stored route it read back, and does not rewrite it when the main loop records the same route", () => {
+    const world = flaky();
+    world.store.write(launch, z);
+    const writes = world.calls.writes;
+    const record = createMainLoopRouteRecord(world.ports);
+    expect(record.routeOf(launch)).toEqual(z);
+    expect(record.routeOf(launch)).toEqual(z);
+    expect(world.calls.reads).toBe(1);
+    record.record(launch, z);
+    expect(world.calls.writes).toBe(writes);
   });
 });
 
