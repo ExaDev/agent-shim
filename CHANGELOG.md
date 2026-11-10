@@ -1,3 +1,11 @@
+## [14.0.4](https://github.com/ExaDev/agent-shim/compare/v14.0.3...v14.0.4) (2026-11-10)
+
+### Bug Fixes
+
+* **ci:** accept the bare broken pipe message for brew install too ([baedc74](https://github.com/ExaDev/agent-shim/commit/baedc7455679bece2455edc8801d8386cc6e9a19))
+* **ci:** refuse an unprefixed broken pipe line from brew ([c58382c](https://github.com/ExaDev/agent-shim/commit/c58382ccb6f06e27aaf4d7571060814ef51cf5e8))
+* **ci:** tolerate brew tap's broken pipe when the tap is in place ([54c876b](https://github.com/ExaDev/agent-shim/commit/54c876b8b9c25b238bb923e3faec642e5e04dd8a))
+
 ## [14.0.3](https://github.com/ExaDev/agent-shim/compare/v14.0.2...v14.0.3) (2026-11-10)
 
 ### Bug Fixes
