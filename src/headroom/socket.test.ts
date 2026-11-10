@@ -78,6 +78,18 @@ describe("pruneStaleHeadroomSockets", () => {
   });
 });
 
+describe("verifyAllowlistFile where headroom cannot be served", () => {
+  it("judges no rule and never asks for a user id, which Windows has none of", () => {
+    const trust = { ...fakeSocketTrust(createFakeFarmFs({})), platform: "win32", currentUid: () => { throw new Error("no POSIX user id on win32"); } };
+    expect(verifyAllowlistFile(paths.headroomAllowlistFile, trust)).toBeUndefined();
+  });
+
+  it("still asks for it where headroom can be served", () => {
+    const trust = { ...fakeSocketTrust(createFakeFarmFs({})), platform: "linux", currentUid: () => { throw new Error("asked"); } };
+    expect(() => verifyAllowlistFile(paths.headroomAllowlistFile, trust)).toThrow("asked");
+  });
+});
+
 describe("verifyAllowlistFile", () => {
   const FILE = paths.headroomAllowlistFile;
   const HOME = "/home/testuser";
