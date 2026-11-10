@@ -224,6 +224,18 @@ describe("a main-loop record over a durable copy that fails", () => {
     expect(world.calls.writes).toBe(writes);
   });
 
+  it("does not read back the copy a retried write made itself", () => {
+    const world = flaky();
+    const record = createMainLoopRouteRecord(world.ports);
+    world.failing.writes = true;
+    record.record(launch, z);
+    world.failing.writes = false;
+    expect(record.routeOf(launch)).toEqual(z);
+    expect(record.routeOf(launch)).toEqual(z);
+    expect(record.routeOf(launch)).toEqual(z);
+    expect(world.calls.reads).toBe(0);
+  });
+
   it("makes at most one attempt per lookup while the store keeps failing, and reports once", () => {
     const world = flaky();
     world.failing.writes = true;
