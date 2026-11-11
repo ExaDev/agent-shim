@@ -72,10 +72,12 @@ export function isInvokedAsClaude(invokedName: string): boolean {
 
 /** How much of a candidate is read to decide whether it is a launcher script: a wrapper is a few lines, and a native binary never starts with a shebang, so the bound only keeps a large file from being read whole. */
 const SCRIPT_HEAD_BYTES = 4096;
-/** A shell command line that runs this tool's launcher: `agent-shim run` (or its former name `claude-use run`) as a command word, after `exec`, a path, a quote or the start of a line. */
-const LAUNCHER_INVOCATION = /(^|[\s;&|("'`/])(agent-shim|claude-use)\s+run(\s|$)/m;
+/** The names this tool's launcher goes by, current and former. */
+const LAUNCHER_NAME = /\b(agent-shim|claude-use)\b/;
+/** A line that hands the process to `run` with the caller's arguments, which is how a wrapper reaches the launcher whether it spells the command or resolves it into a variable first (`exec "$bin" run "$@"`). */
+const EXEC_RUN = /^\s*exec\s[^\n#]*\brun\b/m;
 
-/** True when `candidate` is an interpreter script whose text runs `agent-shim run`, as a dotfiles `claude` wrapper does: spawning it would start this launcher again, forever. Read, never run, so it is safe where the event loop must not block (the front door plans launches too). A native binary, an unreadable file and a script that does not name the launcher are not this tool. */
+/** True when `candidate` is an interpreter script that names this tool and execs its `run` command, as a dotfiles `claude` wrapper does: spawning it would start this launcher again, forever. Read, never run, so it is safe where the event loop must not block (the front door plans launches too). A native binary, an unreadable file and a script that does not name the launcher are not this tool. */
 function isLauncherScript(candidate: string): boolean {
   let head: string;
   try {
@@ -92,7 +94,7 @@ function isLauncherScript(candidate: string): boolean {
     }
     throw error;
   }
-  return head.startsWith("#!") && LAUNCHER_INVOCATION.test(head);
+  return head.startsWith("#!") && LAUNCHER_NAME.test(head) && EXEC_RUN.test(head);
 }
 
 /**
