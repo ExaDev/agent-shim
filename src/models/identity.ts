@@ -15,6 +15,11 @@ export function withoutContextMarker(model: string): string {
   return model.toLowerCase().endsWith(CONTEXT_MARKER_1M) ? model.slice(0, -CONTEXT_MARKER_1M.length) : model;
 }
 
+/** Whether `value` names a model once its context marker is taken off: not empty or whitespace. A provider's `env` model variable that does not is refused when the provider's file is loaded (an empty one is allowed and passed over), so no request is sent upstream with a nameless model. */
+export function namesAModel(value: string): boolean {
+  return withoutContextMarker(value).trim() !== "";
+}
+
 /** A date stamp Anthropic family names may carry (`claude-haiku-4-5-20251001`): part of the release name, not the model. */
 const DATE_STAMP_RE = /-(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])$/;
 

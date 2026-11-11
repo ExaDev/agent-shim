@@ -30,6 +30,8 @@ import {
   ProviderCatalogueSchema,
   type PickerModel,
   type ProviderCatalogue,
+  SERVER_TOOLS_MODES,
+  type ServerToolsMode,
   type Provider,
   isRouterProvider,
 } from "./config/schema";
@@ -182,6 +184,7 @@ function catalogueFromOptions(options: CatalogueOptions, existing: ProviderCatal
 /** Options `provider add` accepts. */
 interface ProviderAddOptions extends CodexOptions, AntigravityOptions, CatalogueOptions {
   readonly json?: boolean;
+  readonly serverTools?: ServerToolsMode;
   readonly kind?: ProviderKind;
   readonly displayName: string;
   readonly baseUrl?: string;
@@ -221,6 +224,7 @@ function codexConfigFromOptions(options: CodexOptions): CodexProviderConfig | un
 /** Options `provider set` accepts. */
 interface ProviderSetOptions extends CodexOptions, AntigravityOptions, CatalogueOptions, CredentialCacheOptions {
   readonly json?: boolean;
+  readonly serverTools?: ServerToolsMode;
   readonly displayName?: string;
   readonly baseUrl?: string;
   readonly connectTimeout?: number;
@@ -266,6 +270,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       .option("--catalogue-include <glob>", "http providers: list only catalogue models whose id matches this glob (repeatable).", collectRepeated)
       .option("--catalogue-exclude <glob>", "http providers: leave out catalogue models whose id matches this glob (repeatable; wins over --catalogue-include).", collectRepeated)
       .option("--catalogue-url <url>", "http providers: the catalogue endpoint, when it is not /v1/models under the base URL or under its host.")
+      .addOption(new Option("--server-tools <mode>", "http providers: the server-tools setting kept on the provider, forward (the default) or drop.").choices(SERVER_TOOLS_MODES))
       .option("--codex-default-model <model>", "Codex providers: the codex model a request maps to when no tier matches.")
       .option("--codex-model <tier=model>", "Codex providers: the codex model one tier (fable, opus, sonnet or haiku) maps to (repeatable).", collectStringPair)
       .addOption(new Option("--codex-effort <effort>", "Codex providers: the reasoning effort when a request asks for none the backend accepts.").choices(CODEX_EFFORTS))
@@ -296,6 +301,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           ...(options.env === undefined ? {} : { env: options.env }),
           ...(options.pickerModel === undefined ? {} : { pickerModels: pickerModelsFromOption(options.pickerModel) }),
           ...(catalogue === undefined ? {} : { catalogue }),
+          ...(options.serverTools === undefined ? {} : { serverTools: options.serverTools }),
           ...(codex === undefined ? {} : { codex }),
           ...(antigravity === undefined ? {} : { antigravity }),
         });
@@ -341,6 +347,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       .option("--catalogue-exclude <glob>", "http providers: leave out catalogue models whose id matches this glob (repeatable; wins over --catalogue-include).", collectRepeated)
       .option("--catalogue-url <url>", "http providers: the catalogue endpoint, when it is not /v1/models under the base URL or under its host.")
       .option("--unset-catalogue", "http providers: stop listing the provider's catalogue in /model.")
+      .addOption(new Option("--server-tools <mode>", "http providers: the server-tools setting kept on the provider, forward (the default) or drop.").choices(SERVER_TOOLS_MODES))
       .option("--codex-default-model <model>", "Codex providers: replace the model a request maps to when no tier matches.")
       .option("--codex-model <tier=model>", "Codex providers: set the codex model one tier maps to (repeatable; other tiers are kept).", collectStringPair)
       .addOption(new Option("--codex-effort <effort>", "Codex providers: replace the default reasoning effort.").choices(CODEX_EFFORTS))
@@ -364,7 +371,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         const { json, ...options } = allOptions;
         if (Object.entries(allOptions).every(([key, value]) => key === "json" || value === undefined)) {
           throw new UsageError(
-            "Nothing to change: pass --display-name, --base-url, --connect-timeout, --unset-connect-timeout, --credential, --credential-target, a --credential-cache option, --env, --unset-env, --picker-model, --unset-picker-model, a --catalogue option, --unset-catalogue, or codex/antigravity settings.",
+            "Nothing to change: pass --display-name, --base-url, --connect-timeout, --unset-connect-timeout, --credential, --credential-target, a --credential-cache option, --env, --unset-env, --picker-model, --unset-picker-model, a --catalogue option, --unset-catalogue, --server-tools, or codex/antigravity settings.",
           );
         }
         const codex = codexConfigFromOptions(options);
@@ -393,6 +400,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           ...(options.pickerModel === undefined ? {} : { pickerModels: pickerModelsFromOption(options.pickerModel) }),
           ...(options.unsetPickerModel === undefined ? {} : { unsetPickerModels: options.unsetPickerModel }),
           ...(catalogue === undefined ? {} : { catalogue }),
+          ...(options.serverTools === undefined ? {} : { serverTools: options.serverTools }),
         });
         reportMutation(json, { action: "updated", kind: "provider", name, value: toProviderView(name, updated, aliasesOf(readProviderAliases(paths), name), displayBaseUrl) }, () => {
           console.log(`Updated provider "${name}" (${describeProviderEndpoint(updated)}${isRouterProvider(updated) ? "" : `, credential ${describeCredential(updated.credential)}`}).`);
@@ -406,6 +414,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       "agent-shim provider set anthropic-api --credential-target apiKey",
       "agent-shim provider set codex --codex-model haiku=gpt-5.6-terra",
       "agent-shim provider set agy --antigravity-model haiku=gemini-2.5-flash",
+      "agent-shim provider set spark --server-tools drop",
       "agent-shim provider set o --picker-model deepseek/deepseek-r1=opus --picker-model qwen/qwen3-coder=sonnet",
     ],
   );
@@ -481,6 +490,9 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         console.log(`Environment: ${env.length === 0 ? "(none)" : env.map(([key, value]) => `${key}=${value}`).join(", ")}`);
         if (!isRouterProvider(found) && found.pickerModels !== undefined) {
           console.log(`Picker models: ${found.pickerModels.map((entry) => `${entry.model} (${entry.tier})`).join(", ")}`);
+        }
+        if (!isCodexProvider(found) && !isAntigravityProvider(found) && !isRouterProvider(found) && found.serverTools !== undefined) {
+          console.log(`Server tools: ${found.serverTools}`);
         }
         if (!isCodexProvider(found) && !isAntigravityProvider(found) && !isRouterProvider(found) && found.catalogue !== undefined) {
           const { tier, include, exclude, url } = found.catalogue;

@@ -334,6 +334,13 @@
             ],
             "additionalProperties": false
           }
+        },
+        "serverTools": {
+          "type": "string",
+          "enum": [
+            "forward",
+            "drop"
+          ]
         }
       },
       "required": [
