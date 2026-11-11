@@ -1,4 +1,4 @@
-import http from "node:http";
+import http, { type IncomingHttpHeaders } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
@@ -7,8 +7,10 @@ import { HTTP_STATUS } from "../codex/http";
 import type { CodexRoutePorts } from "../codex/route";
 import { fakeAuth, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
 import type { ModelsConfig } from "../config/schema";
+import type { CatalogueFetch } from "../providerCatalogue";
 import { realCatalogueFetch } from "../realCatalogueRefresh";
 import { FAKE_HOME, admitLaunchToken, fakeAsyncCredentials, fakeFs, followsLaunchFlag, mainLoopRoutesOfLiveSessions } from "../test-helpers";
+import { CONNECT_LIMITS } from "./connect";
 import { createProviderRouteResolver } from "./providerRoute";
 import { serveRouted } from "./pipeline";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
@@ -157,7 +159,7 @@ const codexFile = { kind: "codex", displayName: "Codex", credential: { sources: 
 const antigravityFile = (antigravity?: Record<string, unknown>): Record<string, unknown> => ({ kind: "antigravity", displayName: "Antigravity", credential: { sources: [{ literal: "placeholder" }] }, ...(antigravity === undefined ? {} : { antigravity }) });
 const routerFile = { kind: "router", displayName: "Router" };
 
-function resolverOver(files: Record<string, unknown>, options: { readonly fs?: (base: ReturnType<typeof fakeFs>) => ReturnType<typeof fakeFs>; readonly models?: ModelsConfig; readonly targets?: readonly string[]; readonly log?: (message: string) => void; readonly catalogue?: readonly { readonly id: string }[] } = {}): ReturnType<typeof createProviderRouteResolver> {
+function resolverOver(files: Record<string, unknown>, options: { readonly fs?: (base: ReturnType<typeof fakeFs>) => ReturnType<typeof fakeFs>; readonly models?: ModelsConfig; readonly targets?: readonly string[]; readonly log?: (message: string) => void; readonly catalogue?: readonly { readonly id: string }[]; readonly catalogueFetch?: CatalogueFetch } = {}): ReturnType<typeof createProviderRouteResolver> {
   const entries = Object.fromEntries(Object.entries(files).map(([name, file]) => [`${PROVIDERS_DIR}/${name}.json`, file]));
   return createProviderRouteResolver({
     fs: options.fs === undefined ? fakeFs(entries) : options.fs(fakeFs(entries)),
@@ -166,7 +168,7 @@ function resolverOver(files: Record<string, unknown>, options: { readonly fs?: (
     directPort: () => OWN_PORT,
     env: {},
     credentials: fakeAsyncCredentials(),
-    catalogueFetch: realCatalogueFetch,
+    catalogueFetch: options.catalogueFetch ?? realCatalogueFetch,
     ...(options.models === undefined ? {} : { models: () => options.models }),
     ...(options.targets === undefined ? {} : { targets: () => options.targets ?? [] }),
     log: options.log ?? (() => undefined),
@@ -294,10 +296,77 @@ describe("a bare provider name selects that provider's default model on any sess
     }
   });
 
+  const ENCODED: readonly (readonly [string, IncomingHttpHeaders])[] = [["gzip", { "content-encoding": "gzip" }], ["a list with a coding other than identity", { "content-encoding": "identity, zstd" }]];
+  it.each(ENCODED)("refuses a Messages request whose body is encoded (%s) with a 415 naming the encoding, before any scan", async (_label, headers) => {
+    const request = { ...resolverRequest("spark/auto"), headers };
+    const resolution = await resolverOver({ spark: httpFile("http://127.0.0.1:1") })(request);
+    expect(resolution.ok).toBe(false);
+    if (!resolution.ok) {
+      expect(resolution.status).toBe(HTTP_STATUS.unsupportedMediaType);
+      expect(resolution.message).toContain("Content-Encoding");
+    }
+  });
+
+  it("leaves a request that is no Messages request alone whatever its encoding, as it forwards its body unread", async () => {
+    const request = { ...resolverRequest("spark/auto"), url: "/v1/files", headers: { "content-encoding": "gzip" } };
+    const resolution = await resolverOver({ spark: httpFile("http://127.0.0.1:1") })(request);
+    if (!resolution.ok) {
+      expect(resolution.status).not.toBe(HTTP_STATUS.unsupportedMediaType);
+    }
+  });
+
+  it("reads a Messages request whose Content-Encoding is identity as it reads any other", async () => {
+    const request = { ...resolverRequest("spark/auto"), headers: { "content-encoding": "Identity" } };
+    const resolution = await resolverOver({ spark: httpFile("http://127.0.0.1:1") })(request);
+    if (!resolution.ok) {
+      expect(resolution.status).not.toBe(HTTP_STATUS.unsupportedMediaType);
+    }
+  });
+
   it("records the model `auto` as the served model of `spark/auto` when the server's list cannot be read", async () => {
     const resolution = await resolverOver({ spark: httpFile("http://127.0.0.1:1") })(resolverRequest("spark/auto"));
     expect(resolution.ok).toBe(true);
     expect(resolution.ok && resolution.servedModel).toBe("auto");
+  });
+
+  it.each([["a context marker alone", "[1m]"], ["whitespace", "   "], ["whitespace and a marker", " [1M]"]])("refuses a provider file whose model variable is %s as invalid, naming the provider, and sends nothing upstream", async (_label, value) => {
+    const upstream = await standIn("served");
+    const door = await startDoor(resolverOver({ spark: httpFile(upstream.baseUrl, { env: { ANTHROPIC_DEFAULT_SONNET_MODEL: value } }) }));
+    try {
+      const answered = await post(door, "/v1/messages", messages("spark"));
+      expect(answered.status).toBe(HTTP_STATUS.badRequest);
+      expect(parseSent(answered.text).error?.message).toContain('provider "spark" cannot be used because its file is invalid');
+      expect(upstream.posts()).toEqual([]);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it.each([["bare", "/v1/messages/batches"], ["scoped", "/providers/z/v1/messages/batches"]])("leaves a batch request naming a provider alone (%s path): it is no Messages request, so its body is never read and its model never resolved", async (_label, url) => {
+    const body = Readable.from([Buffer.from(JSON.stringify(messages("spark")))]);
+    const request: RoutedRequest = { ...resolverRequest("spark"), url, body };
+    const resolution = await resolverOver({ spark: httpFile("http://127.0.0.1:9"), z: httpFile("http://127.0.0.1:10") })(request);
+    expect(resolution.ok).toBe(true);
+    expect(resolution.ok && resolution.route.name).toBe(url.startsWith("/providers/z") ? "http:z" : "anthropic");
+    // The resolution says which request it serves, as the caller that places a request on a provider requires, and that request is the one that arrived: its body is the very stream, unread.
+    expect(resolution.ok && resolution.request?.body).toBe(body);
+    expect(resolution.ok && resolution.request?.url).toBe(url);
+    expect(body.readableFlowing).toBeNull();
+  });
+
+  it("serves a provider-scoped request whose model names another provider at the path the target is served under, without the first provider's prefix", async () => {
+    const z = await standIn("served");
+    const spark = await standIn("served");
+    const door = await startDoor(resolverOver({ z: httpFile(z.baseUrl), spark: httpFile(spark.baseUrl, { env: { ANTHROPIC_DEFAULT_SONNET_MODEL: "spark-main" } }) }));
+    try {
+      const answered = await post(door, "/providers/z/v1/messages", messages("spark"));
+      expect(answered.status).toBeLessThan(HTTP_STATUS.internalServerError);
+      expect(z.posts()).toEqual([]);
+      expect(modelsSeen(spark)).toEqual(["spark-main"]);
+      expect(spark.posts().map((seen) => seen.url)).toEqual(["/v1/messages"]);
+    } finally {
+      await door.close();
+    }
   });
 
   it("refuses a router provider's bare name, saying it has no default model", async () => {
@@ -348,46 +417,6 @@ describe("a bare provider name selects that provider's default model on any sess
     expect(!scopedSpelt.ok && scopedSpelt.status).toBe(HTTP_STATUS.notFound);
     const sessionSpelt = await resolve(resolverRequest("claude-sonnet-5-5", "Spark"));
     expect(sessionSpelt.ok).toBe(false);
-  });
-
-  it.each([["a context marker alone", "[1m]"], ["whitespace", "   "], ["whitespace and a marker", " [1M]"]])("refuses a provider file whose model variable is %s as invalid, naming the provider, and sends nothing upstream", async (_label, value) => {
-    const upstream = await standIn("served");
-    const door = await startDoor(resolverOver({ spark: httpFile(upstream.baseUrl, { env: { ANTHROPIC_DEFAULT_SONNET_MODEL: value } }) }));
-    try {
-      const answered = await post(door, "/v1/messages", messages("spark"));
-      expect(answered.status).toBe(HTTP_STATUS.badRequest);
-      expect(parseSent(answered.text).error?.message).toContain('provider "spark" cannot be used because its file is invalid');
-      expect(upstream.posts()).toEqual([]);
-    } finally {
-      await door.close();
-    }
-  });
-
-  it.each([["bare", "/v1/messages/batches"], ["scoped", "/providers/z/v1/messages/batches"]])("leaves a batch request naming a provider alone (%s path): it is no Messages request, so its body is never read and its model never resolved", async (_label, url) => {
-    const body = Readable.from([Buffer.from(JSON.stringify(messages("spark")))]);
-    const request: RoutedRequest = { ...resolverRequest("spark"), url, body };
-    const resolution = await resolverOver({ spark: httpFile("http://127.0.0.1:9"), z: httpFile("http://127.0.0.1:10") })(request);
-    expect(resolution.ok).toBe(true);
-    expect(resolution.ok && resolution.route.name).toBe(url.startsWith("/providers/z") ? "http:z" : "anthropic");
-    // The resolution says which request it serves, as the caller that places a request on a provider requires, and that request is the one that arrived: its body is the very stream, unread.
-    expect(resolution.ok && resolution.request?.body).toBe(body);
-    expect(resolution.ok && resolution.request?.url).toBe(url);
-    expect(body.readableFlowing).toBeNull();
-  });
-
-  it("serves a provider-scoped request whose model names another provider at the path the target is served under, without the first provider's prefix", async () => {
-    const z = await standIn("served");
-    const spark = await standIn("served");
-    const door = await startDoor(resolverOver({ z: httpFile(z.baseUrl), spark: httpFile(spark.baseUrl, { env: { ANTHROPIC_DEFAULT_SONNET_MODEL: "spark-main" } }) }));
-    try {
-      const answered = await post(door, "/providers/z/v1/messages", messages("spark"));
-      expect(answered.status).toBeLessThan(HTTP_STATUS.internalServerError);
-      expect(z.posts()).toEqual([]);
-      expect(modelsSeen(spark)).toEqual(["spark-main"]);
-      expect(spark.posts().map((seen) => seen.url)).toEqual(["/v1/messages"]);
-    } finally {
-      await door.close();
-    }
   });
 
   it("does not apply a provider's routes to another spelling of its name on a file system that ignores case", async () => {
@@ -606,6 +635,111 @@ describe("the model auto on an http provider", () => {
       const refused = await post(door, "/v1/messages", messages("spark/auto"));
       expect(refused.status).toBe(HTTP_STATUS.notFound);
       expect(refused.text).toContain("does not exist");
+    } finally {
+      await door.close();
+    }
+  });
+});
+
+describe("server tools", () => {
+  const tools = [
+    { name: "Bash", description: "run", input_schema: { type: "object", properties: {} } },
+    { type: "web_search_20250305", name: "web_search" },
+  ];
+
+  it("are forwarded untouched by default, and the server's refusal is the answer", async () => {
+    const upstream = await standIn("m");
+    const door = await startDoor(resolverOver({ spark: httpFile(upstream.baseUrl) }));
+    try {
+      const body = JSON.stringify(messages("m", { tools }));
+      const answered = await post(door, "/providers/spark/v1/messages", body);
+      expect(answered.status).toBe(HTTP_STATUS.badRequest);
+      expect(upstream.posts()[0]?.body).toBe(body);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("log once for each of as many sessions as the door has tunnels, and again for the oldest once one more has been seen", async () => {
+    const upstream = await standIn("m");
+    const logs: string[] = [];
+    const resolve = resolverOver({ spark: httpFile(upstream.baseUrl, { serverTools: "drop" }) }, { log: (message) => { logs.push(message); } });
+    const dropLogs = (): number => logs.filter((line) => line.includes("web_search")).length;
+    const sendAs = async (sessionId: string): Promise<void> => {
+      const base = resolverRequest("m", "spark");
+      const body = Buffer.from(JSON.stringify(messages("m", { tools })));
+      const request: RoutedRequest = { ...base, url: "/v1/messages", body: Readable.from([body]), session: { ...base.session, sessionId } };
+      const resolution = await resolve(request);
+      if (!resolution.ok) throw new Error(resolution.message);
+      const chunks: Buffer[] = [];
+      await resolution.route.serve(resolution.request ?? request, { headersSent: false, start: () => undefined, flush: () => undefined, write: async (chunk) => { chunks.push(Buffer.from(chunk)); await Promise.resolve(); }, end: () => undefined, destroy: () => undefined });
+    };
+    for (let session = 0; session < CONNECT_LIMITS.maxTunnels; session += 1) {
+      await sendAs(`s${String(session)}`);
+    }
+    expect(dropLogs()).toBe(CONNECT_LIMITS.maxTunnels);
+    await sendAs("s0");
+    expect(dropLogs()).toBe(CONNECT_LIMITS.maxTunnels);
+    await sendAs("one-more");
+    expect(dropLogs()).toBe(CONNECT_LIMITS.maxTunnels + 1);
+    await sendAs("s0");
+    expect(dropLogs()).toBe(CONNECT_LIMITS.maxTunnels + 2);
+  });
+
+  it("are dropped when the provider says drop, keeping the client tools, and logged once per session", async () => {
+    const upstream = await standIn("m");
+    const logs: string[] = [];
+    const door = await startDoor(resolverOver({ spark: httpFile(upstream.baseUrl, { serverTools: "drop" }) }, { log: (message) => { logs.push(message); } }));
+    try {
+      expect((await post(door, "/providers/spark/v1/messages", messages("m", { tools }))).status).toBe(HTTP_STATUS.ok);
+      expect((await post(door, "/providers/spark/v1/messages", messages("m", { tools }))).status).toBe(HTTP_STATUS.ok);
+      for (const seen of upstream.posts()) {
+        expect(parseSent(seen.body).tools).toEqual([tools[0]]);
+      }
+      expect(logs.filter((line) => line.includes("web_search"))).toHaveLength(1);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("leave no tool_choice behind when every tool was a server tool", async () => {
+    const upstream = await standIn("m");
+    const door = await startDoor(resolverOver({ spark: httpFile(upstream.baseUrl, { serverTools: "drop" }) }));
+    try {
+      expect((await post(door, "/providers/spark/v1/messages", messages("m", { tools: [tools[1]], tool_choice: { type: "auto" } }))).status).toBe(HTTP_STATUS.ok);
+      const sent = parseSent(upstream.posts()[0]?.body ?? "");
+      expect(sent).not.toHaveProperty("tools");
+      expect(sent).not.toHaveProperty("tool_choice");
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("lose a tool_choice that names a dropped tool, and keep one that names a kept tool", async () => {
+    const upstream = await standIn("m");
+    const door = await startDoor(resolverOver({ spark: httpFile(upstream.baseUrl, { serverTools: "drop" }) }));
+    try {
+      await post(door, "/providers/spark/v1/messages", messages("m", { tools, tool_choice: { type: "tool", name: "web_search" } }));
+      await post(door, "/providers/spark/v1/messages", messages("m", { tools, tool_choice: { type: "tool", name: "Bash" } }));
+      await post(door, "/providers/spark/v1/messages", messages("m", { tools, tool_choice: { type: "any" } }));
+      const sent = upstream.posts().map((seen) => parseSent(seen.body));
+      expect(sent[0]).not.toHaveProperty("tool_choice");
+      expect(sent[1]).toHaveProperty("tool_choice", { type: "tool", name: "Bash" });
+      expect(sent[2]).toHaveProperty("tool_choice", { type: "any" });
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("never touch a request that carries none, even under drop", async () => {
+    const upstream = await standIn("m");
+    const logs: string[] = [];
+    const door = await startDoor(resolverOver({ spark: httpFile(upstream.baseUrl, { serverTools: "drop" }) }, { log: (message) => { logs.push(message); } }));
+    try {
+      const body = `{"model":"m",   "max_tokens":16,"tools":[${JSON.stringify(tools[0])}],"messages":[]}`;
+      expect((await post(door, "/providers/spark/v1/messages", body)).status).toBe(HTTP_STATUS.ok);
+      expect(upstream.posts()[0]?.body).toBe(body);
+      expect(logs).toEqual([]);
     } finally {
       await door.close();
     }

@@ -55,7 +55,7 @@ interface StreamState {
 }
 
 /** A door whose only route is the editing wrapper over a stand-in for the provider's route: the pipeline hands the wrapper the connection's own request stream, exactly as a request that reaches it unscanned would, so what the wrapper does to that stream is what the test sees. */
-async function door(upstream: { readonly requests: () => void; readonly bytes?: (count: number) => void }, onAnswer: (state: StreamState) => void): Promise<string> {
+async function door(serverTools: "drop" | undefined, upstream: { readonly requests: () => void; readonly bytes?: (count: number) => void }, onAnswer: (state: StreamState) => void): Promise<string> {
   const stand: FrontDoorRoute = {
     name: "http:spark",
     headroomEligible: true,
@@ -77,9 +77,11 @@ async function door(upstream: { readonly requests: () => void; readonly bytes?: 
   };
   const route = editingHttpRequest(stand, {
     provider: "spark",
-    definition: { baseUrl: "http://127.0.0.1:1" },
+    definition: { baseUrl: "http://127.0.0.1:1", ...(serverTools === undefined ? {} : { serverTools }) },
     served: { resolve: async () => await Promise.resolve({ ok: true, model: "served" } as const) },
     credential: async () => await Promise.resolve({ ok: false, message: "unused" } as const),
+    droppedLogged: new Set<string>(),
+    droppedLoggedLimit: 1,
     log: () => undefined,
     bodyLimitBytes: CAP_BYTES,
   });
@@ -166,12 +168,14 @@ async function upload(url: string, options: { readonly declareLength: boolean; r
 
 describe("a Messages body past the cap the door reads whole", () => {
   it.each([
-    ["chunked, naming the model auto", false, '{"model":"auto","pad":"'],
-    ["declared past the cap, naming the model auto", true, '{"model":"auto","pad":"'],
-  ])("is answered 413 to the client, never reset, and the upload does not hang: %s", async (_label, declareLength, head) => {
+    ["chunked, with serverTools drop", "drop" as const, false, '{"model":"claude-sonnet-5-5","pad":"'],
+    ["declared past the cap, with serverTools drop", "drop" as const, true, '{"model":"claude-sonnet-5-5","pad":"'],
+    ["chunked, naming the model auto", undefined, false, '{"model":"auto","pad":"'],
+    ["declared past the cap, naming the model auto", undefined, true, '{"model":"auto","pad":"'],
+  ])("is answered 413 to the client, never reset, and the upload does not hang: %s", async (_label, serverTools, declareLength, head) => {
     let reached = 0;
     const observed: StreamState[] = [];
-    const url = await door({ requests: () => { reached += 1; } }, (state) => {
+    const url = await door(serverTools, { requests: () => { reached += 1; } }, (state) => {
       observed.push(state);
     });
     const outcome = await upload(url, { declareLength, head });
@@ -191,7 +195,7 @@ describe("a Messages body past the cap whose head shows a model other than auto"
   it.each([["chunked", false], ["declared past the cap", true]])("is forwarded without reading its remainder, byte for byte, never refused and never held whole: %s", async (_label, declareLength) => {
     let received = 0;
     const observed: StreamState[] = [];
-    const url = await door({ requests: () => undefined, bytes: (count) => { received += count; } }, (state) => {
+    const url = await door(undefined, { requests: () => undefined, bytes: (count) => { received += count; } }, (state) => {
       observed.push(state);
     });
     const outcome = await upload(url, { declareLength, head: '{"model":"other-model","pad":"' });

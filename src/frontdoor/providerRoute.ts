@@ -36,9 +36,11 @@ import { TIER_ENV_VARIABLES, claudeNameTier } from "../models/tiers";
 import { scanRequestHead, type RequestScan } from "./requestScan";
 import type { CatalogueFetch, CatalogueModel } from "../providerCatalogue";
 import { catalogueReadFault } from "../storedCatalogue";
+import { CONNECT_LIMITS } from "./connect";
 import { editingHttpRequest } from "./httpRequestEdits";
 import { abandonBody } from "./cappedBody";
 import { MESSAGES_BODY_LIMIT_BYTES, bodyTooLargeMessage, isMessagesRequest } from "./messagesBodyLimit";
+import { encodedRequestMessage } from "./requestEncoding";
 import { createServedModels } from "./servedModel";
 
 /** How often the door logs that one upstream could not be connected to, while it stays down. */
@@ -420,12 +422,20 @@ export function createProviderRouteResolver(deps: {
   const messagesBodyLimitBytes = deps.messagesBodyLimitBytes ?? MESSAGES_BODY_LIMIT_BYTES;
   /** A scan of `request`'s head, or of the whole body under `messagesBodyLimitBytes` when `whole`: both whole-body scans of the resolver go through it, so neither can hold more of a body than the limit. */
   const scanUnderLimit = async (request: RoutedRequest, whole: boolean): ReturnType<typeof scanRequestHead> => await scanRequestHead(request, whole, undefined, whole ? messagesBodyLimitBytes : undefined);
+  /** The bytes a whole-body scan kept: a scan made with `whole` always holds them, so their absence is a defect of the scan, never a state to carry on from. */
+  const wholeBytesOf = (scan: Readonly<RequestScan>): Buffer => {
+    if (scan.bytes === undefined) {
+      throw new Error("a whole-body scan keeps the bytes it read");
+    }
+    return scan.bytes();
+  };
   /** The 413 for a whole-body scan that stopped at the limit; the rest of the upload drains instead of stalling the client. */
   const refusedAsTooLarge = (scan: Readonly<{ readonly replayed: RoutedRequest }>, limitBytes: number, provider: string | undefined): RouteResolution => {
     abandonBody(scan.replayed.body);
     return { ok: false, status: HTTP_STATUS.payloadTooLarge, message: bodyTooLargeMessage(limitBytes, provider) };
   };
   const servedModels = deps.catalogueFetch === undefined ? undefined : createServedModels({ fetch: deps.catalogueFetch, now: deps.now });
+  const droppedToolsLogged = new Set<string>();
   // The routing memory a by-name session keeps its last chosen member in, and the rotation counter that keeps `spread` turning, both held by the resolver for the same reason: the route is mounted afresh for every request.
   const routingMemory = new Map<string, string>();
   const rotations = new Map<string, number>();
@@ -595,8 +605,10 @@ export function createProviderRouteResolver(deps: {
           definition: httpProvider,
           served: servedModels,
           credential: async () => await resolveCredential({ credential: httpProvider.credential, env: deps.env, port: deps.credentials, subject: `provider ${provider}` }),
+          droppedLogged: droppedToolsLogged,
           log: deps.log,
           bodyLimitBytes: messagesBodyLimitBytes,
+          droppedLoggedLimit: CONNECT_LIMITS.maxTunnels,
           servedModelSent: (model) => {
             report?.listener?.(model);
           },
@@ -651,6 +663,14 @@ export function createProviderRouteResolver(deps: {
       // A router resolves each request's model name through the models block to a target provider, whose own kind handling and credential then serve it: the same one-scan, one-rewrite shape the `routes` list below uses. A qualified model name (a slash whose first segment names a defined provider) is resolved on every session, whatever it launched on: the picker offers every provider's models qualified, and a session that selects one is routed to the provider that serves it. Bare names are resolved everywhere, except a name the session's own provider serves itself, which stays that provider's. The Remote Control family of paths is never a provider's to serve.
       // Only a Messages request carries a model to resolve, and only its body is read whole (under the Messages limit): any other request (a file upload, a batch) is forwarded as it arrives.
       const isMessages = isMessagesRequest(current.method, path);
+      if (isMessages) {
+        // Every scan below reads the body as JSON text, which an encoded body is not: refused here once, before any of them, as the editing wrapper refuses it for a request it reads itself.
+        const encoded = encodedRequestMessage(current.headers, providerName);
+        if (encoded !== undefined) {
+          abandonBody(current.body);
+          return { ok: false, status: HTTP_STATUS.unsupportedMediaType, message: encoded };
+        }
+      }
       const resolvesNames = !nameResolved && !isRcSelfHostPath(path) && isMessages;
       if (resolvesNames) {
         // Whole-body, because a resolved name is served under its target's own model name: the qualified or virtual name the session sent is rewritten in the one copy of the body this scan holds, exactly as a `routes` entry that names a model is.
@@ -700,7 +720,7 @@ export function createProviderRouteResolver(deps: {
               return { ok: false, status: HTTP_STATUS.badRequest, message: AMBIGUOUS_MODEL_MESSAGE };
             }
             // The target receives exactly the request that matched, with exactly its model field changed.
-            replay = withModel(replay, scan.bytes?.() ?? Buffer.alloc(0), requested, routed.model);
+            replay = withModel(replay, wholeBytesOf(scan), requested, routed.model);
           }
           if (routed.provider !== providerName) {
             const scopedPrefix = providerName === undefined ? undefined : `${PROVIDER_PATH_PREFIX}${encodeURIComponent(providerName)}`;

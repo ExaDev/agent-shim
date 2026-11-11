@@ -67,7 +67,7 @@ function toProviderView(name: string, provider: Provider, formerNames: readonly 
       ? (provider.antigravity === undefined ? {} : { antigravity: provider.antigravity })
       : isRouterProvider(provider)
       ? {}
-      : { baseUrl: baseUrlOf(provider.baseUrl), ...(provider.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: provider.connectTimeoutMs }) }),
+      : { baseUrl: baseUrlOf(provider.baseUrl), ...(provider.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: provider.connectTimeoutMs }), ...(provider.serverTools === undefined ? {} : { serverTools: provider.serverTools }) }),
     ...(isRouterProvider(provider) ? {} : { credential: summariseCredential(provider.credential) }),
     ...(!isRouterProvider(provider) && provider.env !== undefined ? { env: provider.env } : {}),
     ...(!isRouterProvider(provider) && provider.pickerModels !== undefined ? { pickerModels: provider.pickerModels } : {}),
@@ -284,7 +284,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       .option("--catalogue-include <glob>", "http providers: list only catalogue models whose id matches this glob (repeatable).", collectRepeated)
       .option("--catalogue-exclude <glob>", "http providers: leave out catalogue models whose id matches this glob (repeatable; wins over --catalogue-include).", collectRepeated)
       .option("--catalogue-url <url>", "http providers: the catalogue endpoint, when it is not /v1/models under the base URL or under its host.")
-      .addOption(new Option("--server-tools <mode>", "http providers: the server-tools setting kept on the provider, forward (the default) or drop.").choices(SERVER_TOOLS_MODES))
+      .addOption(new Option("--server-tools <mode>", "http providers: what the front door does with tools that have no input_schema (a type and no schema, such as web search) in a request it forwards: forward sends them as they are (the default), drop removes them, for a backend such as vLLM that rejects them.").choices(SERVER_TOOLS_MODES))
       .option("--codex-default-model <model>", "Codex providers: the codex model a request maps to when no tier matches.")
       .option("--codex-model <tier=model>", "Codex providers: the codex model one tier (fable, opus, sonnet or haiku) maps to (repeatable).", collectStringPair)
       .addOption(new Option("--codex-effort <effort>", "Codex providers: the reasoning effort when a request asks for none the backend accepts.").choices(CODEX_EFFORTS))
@@ -361,7 +361,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       .option("--catalogue-exclude <glob>", "http providers: leave out catalogue models whose id matches this glob (repeatable; wins over --catalogue-include).", collectRepeated)
       .option("--catalogue-url <url>", "http providers: the catalogue endpoint, when it is not /v1/models under the base URL or under its host.")
       .option("--unset-catalogue", "http providers: stop listing the provider's catalogue in /model.")
-      .addOption(new Option("--server-tools <mode>", "http providers: the server-tools setting kept on the provider, forward (the default) or drop.").choices(SERVER_TOOLS_MODES))
+      .addOption(new Option("--server-tools <mode>", "http providers: what the front door does with tools that have no input_schema (a type and no schema, such as web search) in a request it forwards: forward sends them as they are (the default), drop removes them, for a backend such as vLLM that rejects them.").choices(SERVER_TOOLS_MODES))
       .option("--codex-default-model <model>", "Codex providers: replace the model a request maps to when no tier matches.")
       .option("--codex-model <tier=model>", "Codex providers: set the codex model one tier maps to (repeatable; other tiers are kept).", collectStringPair)
       .addOption(new Option("--codex-effort <effort>", "Codex providers: replace the default reasoning effort.").choices(CODEX_EFFORTS))

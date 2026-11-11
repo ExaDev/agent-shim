@@ -13,7 +13,7 @@ const silent: RoutedResponse = { headersSent: false, start: () => undefined, flu
 const END_TO_END_TIMEOUT_MS = 60_000;
 
 /** The route the wrapper serves with, which reads the whole of what it is handed, and the request the test sends it. */
-async function serveWith(chunks: readonly Buffer[]): Promise<void> {
+async function serveWith(serverTools: "drop" | undefined, chunks: readonly Buffer[]): Promise<void> {
   const inner: FrontDoorRoute = {
     name: "http:spark",
     headroomEligible: true,
@@ -26,9 +26,11 @@ async function serveWith(chunks: readonly Buffer[]): Promise<void> {
   };
   const route = editingHttpRequest(inner, {
     provider: "spark",
-    definition: { baseUrl: "http://127.0.0.1:1" },
+    definition: { baseUrl: "http://127.0.0.1:1", ...(serverTools === undefined ? {} : { serverTools }) },
     served: { resolve: async () => await Promise.resolve({ ok: true, model: "served" } as const) },
     credential: async () => await Promise.resolve({ ok: false, message: "unused" } as const),
+    droppedLogged: new Set<string>(),
+    droppedLoggedLimit: 1,
     log: () => undefined,
     bodyLimitBytes: MESSAGES_BODY_LIMIT_BYTES,
   });
@@ -44,14 +46,14 @@ afterEach(() => {
 const WRAPPER_COPIES = { concat: 1, decode: 1, from: 0 };
 
 /** What a body costs the editing wrapper is the number of times it is copied, which does not depend on its size: counted at two sizes, never timed. */
-describe("the copies of a body the editing wrapper makes", () => {
+describe.each([["without drop", undefined], ["with drop", "drop"]] as const)("the copies of a body the editing wrapper makes %s", (_label, serverTools) => {
   it("is the same at every body size: the read of it and its one-byte-per-character view, and no copy for an edit", async () => {
     const counted = [];
     for (const size of SIZES_BYTES) {
       const chunks = bodyOf(size);
       const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
       counted.push(await copiesDuring(total, async () => {
-        await serveWith(chunks);
+        await serveWith(serverTools, chunks);
       }));
     }
     expect(counted).toEqual(SIZES_BYTES.map(() => WRAPPER_COPIES));

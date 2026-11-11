@@ -99,7 +99,7 @@ agent-shim provider set <name> [--credential-cache] [--credential-cache-ttl <ttl
 agent-shim provider add|set <name> [--picker-model <model=tier>]...   # models /model lists beside the tier models; set also takes [--unset-picker-model <model>]...
 agent-shim provider add|set <name> [--connect-timeout <duration>]   # http providers: bound on opening a connection to the base URL (default: the first SYN and two retransmissions); set also takes [--unset-connect-timeout]
 agent-shim provider add|set <name> [--catalogue-tier <tier>] [--catalogue-include <glob>]... [--catalogue-exclude <glob>]... [--catalogue-url <url>]   # http providers: list the provider's own catalogue in /model; set also takes [--unset-catalogue]
-agent-shim provider add|set <name> [--server-tools forward|drop]   # http providers: the server-tools setting kept on the provider: forward (the default) or drop
+agent-shim provider add|set <name> [--server-tools forward|drop]   # http providers: drop the tools with a type and no input_schema (web search and kin) before forwarding, for a backend such as vLLM that rejects them; forward (the default) sends them
 agent-shim provider models <name> [--refresh] [--json]   # the catalogue last fetched, and which of its models /model lists
 agent-shim provider list [--json]
 agent-shim provider show <name> [--json]
@@ -198,6 +198,8 @@ claude @<identity> ...                      # the same, once `agent-shim shim en
 ```
 
 `provider add` and `provider rename` refuse a name that is a bare model name (a Claude tier name such as `opus`, one of the aliases Claude Code resolves itself, `default`, `best` and `opusplan`, a full Claude id, or `auto`): such a name keeps following the session's route, so a provider called by it would never be selected by the bare name. An existing provider file called one stays reachable as `<name>/<model>` (for example `opus/<model>`) and `doctor` warns of it; a new one, or a rename to one, is refused.
+
+`provider add|set --server-tools drop` makes the front door remove the tools that carry a type and no `input_schema` from a Messages request to that provider, for example `agent-shim provider add spark --display-name Spark --base-url http://127.0.0.1:18080 --credential literal:placeholder --server-tools drop`.
 
 `identity add` refuses, on macOS, when the Keychain already holds a Claude Code login filed for the directory the new identity would be created in (left by an identity stored there that was moved with `identity rename --move` or removed), because the new identity would start signed in as that account; the message names the entry and the `security delete-generic-password` command that removes it. `--keep-keychain-login` creates the identity signed in as that account on purpose, and if another identity holds that login the two share it.
 

@@ -439,7 +439,7 @@ const HttpBaseUrlSchema = z.url().superRefine((value, ctx) => {
   }
 });
 
-/** The values of an `http` provider's server-tools setting. */
+/** What the door does with tools that carry a `type` and no `input_schema` (such as web search, which Anthropic runs for a native session) when it forwards a request to an `http` provider: `forward` sends them as they are, `drop` removes them. */
 export const SERVER_TOOLS_MODES = ["forward", "drop"] as const;
 export type ServerToolsMode = (typeof SERVER_TOOLS_MODES)[number];
 
@@ -458,7 +458,7 @@ const HttpProviderSchema = z.strictObject({
   catalogue: ProviderCatalogueSchema.optional(),
   /** Per-request routing: when present, each request this provider would serve is matched against the list in order, and the first definite match is sent to that entry's provider instead (itself resolved exactly as a directly dialled request would be). Unmatched requests stay on this provider. */
   routes: z.array(ProviderRouteSchema).optional(),
-  /** The server-tools setting stored on this provider: `forward` or `drop`. */
+  /** What happens to tools with no `input_schema` (a `type` and no schema, such as web search) in a request this provider serves. A property of the provider because only its server knows whether it can take them: a backend that implements the Messages API with client tools only (vLLM, SGLang) answers 400 `input_schema: Field required` and fails the whole request, while Anthropic itself and gateways that run them need them forwarded. `forward` (the default) changes nothing for any provider; `drop` removes every tool object with no `input_schema` member before the request is forwarded, which also takes any Anthropic-defined client tool that is given by `type` alone. */
   serverTools: z.enum(SERVER_TOOLS_MODES).optional(),
 });
 export type HttpProvider = z.infer<typeof HttpProviderSchema>;

@@ -264,7 +264,7 @@ export interface AddProviderInput {
   readonly catalogue?: ProviderCatalogue;
   /** An http provider's bound on opening a connection to its base URL, in milliseconds; absent keeps the derived default. */
   readonly connectTimeoutMs?: number;
-  /** The http provider's server-tools setting; see `HttpProvider.serverTools`. */
+  /** What an http provider's route does with tools that have no `input_schema` in a request; see `HttpProvider.serverTools`. */
   readonly serverTools?: ServerToolsMode;
   readonly codex?: CodexProviderConfig;
   readonly antigravity?: AntigravityProviderConfig;

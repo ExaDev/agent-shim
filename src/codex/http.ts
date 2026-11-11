@@ -8,6 +8,7 @@ export const HTTP_STATUS = {
   methodNotAllowed: 405,
   conflict: 409,
   payloadTooLarge: 413,
+  unsupportedMediaType: 415,
   tooManyRequests: 429,
   /** Not sent to anyone: the client is gone. Recorded for a response abandoned because the client disconnected, following the convention nginx uses for the same case. */
   clientClosedRequest: 499,
