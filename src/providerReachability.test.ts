@@ -17,6 +17,7 @@ import {
   type StartBaseUrlProbe,
 } from "./providerReachability";
 import { dialTargetOf } from "./baseUrlDial";
+import { closedLoopbackPort } from "./test-ports";
 import { displayBaseUrl } from "./baseUrlDisplay";
 import type { ProbeWorkers } from "./frontdoor/probe";
 
@@ -51,21 +52,6 @@ async function listeningPort(): Promise<number> {
     server.listen(0, "127.0.0.1", resolve);
   });
   return portOf(server);
-}
-
-/** A loopback port nothing listens on: bound and released, so a connect to it is refused at once. */
-async function closedPort(): Promise<number> {
-  const server = http.createServer();
-  await new Promise<void>((resolve) => {
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  const port = portOf(server);
-  await new Promise<void>((resolve) => {
-    server.close(() => {
-      resolve(undefined);
-    });
-  });
-  return port;
 }
 
 /** A provider's own connect timeout, distinct from the default so a probe given the default would be caught. */
@@ -120,7 +106,7 @@ describe("realBaseUrlProbe", () => {
   });
 
   it("fails a base URL whose port refuses the connection, with the refusal as the reason", async () => {
-    const verdict = realBaseUrlProbe(`http://127.0.0.1:${String(await closedPort())}`, DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS);
+    const verdict = realBaseUrlProbe(`http://127.0.0.1:${String(await closedLoopbackPort())}`, DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS);
     if (verdict.ok) {
       throw new Error("expected the probe to fail");
     }
@@ -129,7 +115,7 @@ describe("realBaseUrlProbe", () => {
 
   it("answers a batch in the order it was given", async () => {
     const open = `http://127.0.0.1:${String(await listeningPort())}`;
-    const closed = `http://127.0.0.1:${String(await closedPort())}`;
+    const closed = `http://127.0.0.1:${String(await closedLoopbackPort())}`;
     const [refused, accepted, ...rest] = realBaseUrlBatchProbe([
       { baseUrl: closed, timeoutMs: DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS },
       { baseUrl: open, timeoutMs: DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS },
@@ -143,7 +129,7 @@ describe("realBaseUrlProbe", () => {
   });
 
   it("gives a reason for a closed localhost port, for the probe and for the line doctor and the door report, never an empty one", async () => {
-    const port = await closedPort();
+    const port = await closedLoopbackPort();
     const [verdict] = realBaseUrlBatchProbe([{ baseUrl: `http://localhost:${String(port)}`, timeoutMs: DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS }]);
     if (verdict === undefined || verdict.ok) {
       throw new Error("expected the refused localhost port to fail the probe");

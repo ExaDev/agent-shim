@@ -11,7 +11,6 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as http from "node:http";
-import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as readline from "node:readline";
@@ -19,6 +18,7 @@ import * as readline from "node:readline";
 import { z } from "zod";
 
 import { settingsArgs, settingsEnv, type HeadroomSettings } from "../src/headroom/settings";
+import { closedLoopbackPort } from "../src/test-ports";
 import {
   buildRequests,
   CACHE_READ_RATIO_DEFAULT,
@@ -316,21 +316,6 @@ async function startFakeUpstream(): Promise<FakeUpstream> {
   };
 }
 
-async function freePort(): Promise<number> {
-  const server = net.createServer();
-  await new Promise<void>((resolve) => {
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  const address = server.address();
-  const port = address !== null && typeof address !== "string" ? address.port : 0;
-  await new Promise<void>((resolve) => {
-    server.close(() => {
-      resolve();
-    });
-  });
-  return port;
-}
-
 interface Daemon {
   readonly port: number;
   readonly warmupMs: number;
@@ -397,7 +382,7 @@ async function waitReady(port: number, child: ChildProcess): Promise<void> {
 }
 
 async function startDaemon(variant: Variant, upstream: FakeUpstream, scratch: string, warmup: Readonly<Record<string, unknown>>): Promise<Daemon> {
-  const port = await freePort();
+  const port = await closedLoopbackPort();
   const workspace = fs.mkdtempSync(path.join(scratch, "ws-"));
   const child = spawn(headroomBinary(), ["proxy", "--host", "127.0.0.1", "--port", String(port), "--no-rate-limit", ...settingsArgs(variant.settings)], {
     env: daemonEnv(workspace, upstream.port, variant.settings),
