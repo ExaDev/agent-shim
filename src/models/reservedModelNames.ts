@@ -2,8 +2,8 @@ import { InvalidProviderNameError } from "../config/names";
 import { withoutContextMarker } from "./identity";
 import { claudeNameTier } from "./tiers";
 
-/** The model name `auto`, which a provider may not be called by (see `reservedProviderNameReason`). */
-const AUTO_MODEL = "auto";
+/** The model name that means "whichever model the provider's server serves right now". */
+export const AUTO_MODEL = "auto";
 
 /** The model aliases Claude Code resolves itself that name no tier: `default` (the session's default model), `best` (the most capable model) and `opusplan` (Opus in plan mode, Sonnet otherwise). Read from the strings of Claude Code 2.1.309's build, which holds each as a bare alias beside the tier names. */
 const CLAUDE_CODE_ALIASES: ReadonlySet<string> = new Set(["default", "best", "opusplan"]);
@@ -15,7 +15,7 @@ export function reservedProviderNameReason(name: string): string | undefined {
   // A trailing context-window marker is no part of a model name (the door reads `auto[1m]` as `auto`), so the same names are reserved with it.
   const bare = withoutContextMarker(name);
   if (bare === AUTO_MODEL) {
-    return `"${AUTO_MODEL}" is a model name that follows the session's route`;
+    return `"${AUTO_MODEL}" is the model name that follows the server's live model`;
   }
   if (CLAUDE_CODE_ALIASES.has(bare.toLowerCase())) {
     return `"${name}" is a model alias Claude Code resolves itself`;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
-import { mainLoopRoutesOfLiveSessions } from "../test-helpers";
+import { errorWithCode, mainLoopRoutesOfLiveSessions } from "../test-helpers";
 import { HAIKU_NAME, send, startWorld, type ModelPorts, type World } from "./mainLoopRouteTestWorld";
 
 const SONNET_NAME = "claude-sonnet-5-5";
@@ -115,6 +115,16 @@ describe("a provider file that is listed and invalid", () => {
     }
   });
 
+  it("is no reason to refuse a qualified name with nothing after its slash, which names no provider's model", async () => {
+    const world = await startWorld(mainLoopRoutesOfLiveSessions());
+    try {
+      world.setProvider("broken", { displayName: 5 });
+      expect((await send(world, { model: "broken/", requestClass: "main", provider: "z" })).status).toBe(HTTP_STATUS.ok);
+    } finally {
+      await world.close();
+    }
+  });
+
   it("is no reason to refuse a name that no file has, however it is spelt", async () => {
     const world = await startWorld(mainLoopRoutesOfLiveSessions());
     try {
@@ -217,6 +227,62 @@ describe("the work a Claude name costs the tier mapping of an http provider", ()
       expect((await send(world, { model: HAIKU_NAME, requestClass: "auxiliary" })).status).toBe(HTTP_STATUS.ok);
       expect(sentModels(world)).toEqual(["s-model", "h-model"]);
       expect(catalogueReads).toBe(0);
+    } finally {
+      await world.close();
+    }
+  });
+});
+
+describe("a stored catalogue of a provider that cannot be read", () => {
+  const SECRET_PATH = "/home/someone/.agent-shim/catalogues/spark.json";
+  /** A read failure as the system raises one, with its code and a message naming the path. */
+  const unreadable = (): never => {
+    throw errorWithCode(`EACCES: permission denied, open '${SECRET_PATH}'`, "EACCES");
+  };
+
+  it("leaves a Claude name its tier mapping, which asks the catalogue whether the provider serves the name itself, and falls back to the provider's default", async () => {
+    const world = await worldWith("spark", { ANTHROPIC_MODEL: "s-model" }, { catalogue: { tier: "sonnet" } }, { catalogueModelsOf: unreadable });
+    try {
+      expect((await send(world, { model: "spark", requestClass: "main" })).status).toBe(HTTP_STATUS.ok);
+      expect((await send(world, { model: SONNET_NAME, requestClass: "auxiliary" })).status).toBe(HTTP_STATUS.ok);
+      expect(sentModels(world)).toEqual(["s-model", "s-model"]);
+    } finally {
+      await world.close();
+    }
+  });
+
+  it.each([
+    ["with a code", unreadable, "(EACCES)"],
+    [
+      "with no code",
+      (): never => {
+        throw new Error(`boom at ${SECRET_PATH}`);
+      },
+      "(Error)",
+    ],
+  ])("refuses a bare provider name that needs a default from it, naming the provider and the fault class %s and never the path", async (_label, failure, fault) => {
+    const world = await worldWith("spark", {}, { catalogue: { tier: "sonnet" } }, { catalogueModelsOf: failure });
+    try {
+      const answered = await send(world, { model: "spark", requestClass: "main" });
+      expect(answered.status).toBe(HTTP_STATUS.badRequest);
+      expect(answered.text).toContain('provider \\"spark\\"');
+      expect(answered.text).toContain(fault);
+      expect(answered.text).not.toContain(SECRET_PATH);
+      expect(answered.text).not.toContain("someone");
+    } finally {
+      await world.close();
+    }
+  });
+});
+
+describe("the model auto of a door that has no way to read a provider's model list", () => {
+  it("is refused with a 400 saying so, and the request is not sent", async () => {
+    const world = await worldWith("spark", { [SONNET]: "s-model" }, {}, { catalogueFetch: undefined });
+    try {
+      const answered = await send(world, { model: "spark/auto", requestClass: "main" });
+      expect(answered.status).toBe(HTTP_STATUS.badRequest);
+      expect(answered.text).toContain("needs the provider's model list, which this front door cannot read");
+      expect(sentModels(world)).toEqual([]);
     } finally {
       await world.close();
     }

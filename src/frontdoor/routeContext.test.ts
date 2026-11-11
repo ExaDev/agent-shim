@@ -281,7 +281,7 @@ describe("the route context the door keeps for a launch", () => {
     }
   });
 
-  it("names no served model for a virtual model, whose member the resolution does not carry", async () => {
+  it("names the member a virtual model selected as the served model", async () => {
     const fs = createFakeFarmFs();
     const launch = launchOfSession("s-1");
     writeFrontDoorSession(fs, SESSIONS_DIR, { pid: launch.pid, startedAt: launch.startedAt, token: "t" });
@@ -290,8 +290,7 @@ describe("the route context the door keeps for a launch", () => {
     try {
       await send(world, { model: "fast", requestClass: "main" });
       const { facts } = onDisk(fs, launch.pid);
-      expect(facts).toMatchObject({ facts: { requestedModel: "fast" } });
-      expect(JSON.stringify(facts)).not.toContain("servedModel");
+      expect(facts).toMatchObject({ facts: { requestedModel: "fast", servedModel: "glm-5.3" } });
     } finally {
       await world.close();
     }

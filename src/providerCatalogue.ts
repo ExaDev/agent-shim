@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { displayBaseUrl, redactUrlIn } from "./baseUrlDisplay";
 import { within } from "./elapsedWindow";
+import { holdsUnsafeCharacter } from "./frontdoor/loggedText";
 import { canonicalJson } from "./canonicalJson";
 import type { ResolvedCredential } from "./credential";
 import type { HttpProvider, ProviderCatalogue } from "./config/schema";
@@ -162,9 +163,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** The longest a model id a catalogue lists may be, in characters: a bound no real id comes near (aggregator ids are a few dozen characters) that keeps one a server made up from being cached, logged and written into every request body at any length. */
 export const CATALOGUE_MODEL_ID_MAX_CHARS = 256;
 
-/** Whether `id` can be a model id: non-empty, within `CATALOGUE_MODEL_ID_MAX_CHARS`, and free of control characters, which no model id holds and which could start a line of a log or an error message. */
+/** Whether `id` can be a model id: non-empty, within `CATALOGUE_MODEL_ID_MAX_CHARS`, and free of the characters `quotedForLog` escapes (control characters, separators, format characters), which no model id holds and which could start a line of a log or an error message or move a terminal's cursor. */
 function isModelId(id: string): boolean {
-  return id !== "" && id.length <= CATALOGUE_MODEL_ID_MAX_CHARS && !/\p{Cc}/u.test(id);
+  return id !== "" && id.length <= CATALOGUE_MODEL_ID_MAX_CHARS && !holdsUnsafeCharacter(id);
 }
 
 /** One catalogue entry as a model, or `undefined` when it names none: a bare id string, or an object with an `id` and optionally a `display_name` (Anthropic's shape) or `name`. */

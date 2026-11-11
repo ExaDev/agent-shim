@@ -87,6 +87,12 @@ describe("providerModelRows", () => {
     ]);
   });
 
+  it("lists the model auto as one row when every tier entry is auto, and a routed session offers it qualified", () => {
+    const provider = http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "auto", ANTHROPIC_DEFAULT_SONNET_MODEL: "auto", ANTHROPIC_DEFAULT_HAIKU_MODEL: "auto" });
+    expect(providerModelRows(provider).map((row) => row.model)).toEqual(["auto"]);
+    expect(routedModelRows({}, [["spark", provider, []]]).map((row) => row.model)).toEqual(["spark/auto"]);
+  });
+
   it("offers nothing for an http provider that names no tier model", () => {
     expect(providerModelRows(http())).toEqual([]);
     expect(providerModelRows(http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "" }))).toEqual([]);

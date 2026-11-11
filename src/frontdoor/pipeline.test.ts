@@ -103,6 +103,31 @@ function deps(resolution: RouteResolution, observers: readonly ResponseObserver[
 }
 
 describe("createRoutedResponse", () => {
+  describe("the model a request was sent under, in the head of a response to the headroom hop", () => {
+    const FORGED_HEAD = { "Content-Type": "application/json", "X-Agent-Shim-Served-Model": "forged", "x-agent-shim-served-model": "forged-too" };
+
+    /** The head written for a response whose route reported `reported` (when it did), by a pipeline that answers the hop or one that does not. */
+    function headWritten(answersHeadroomHop: boolean, reported: string | undefined): Record<string, string> | undefined {
+      const response = new FakeServerResponse();
+      const base = deps({ ok: true, route: recordingRoute() }).deps;
+      const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: { ...base, answersHeadroomHop }, servedPath: "/v1/messages", session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined }, requestedModel: { value: undefined }, clientSessionId: undefined, requestClass: undefined }, servedModel: { value: reported } });
+      routed.start(HTTP_STATUS.ok, FORGED_HEAD);
+      return response.writtenHead?.headers;
+    }
+
+    it("is written, encoded, by the pipeline that answers the hop, replacing every copy a route's head carried whatever its case", () => {
+      expect(headWritten(true, "modèle é")).toEqual({ "Content-Type": "application/json", "x-agent-shim-served-model": "mod%C3%A8le%20%C3%A9" });
+    });
+
+    it("is not written when the route reported none, and every copy a route's head carried is dropped", () => {
+      expect(headWritten(true, undefined)).toEqual({ "Content-Type": "application/json" });
+    });
+
+    it("is never written by a pipeline that does not answer the hop, even when a model was reported", () => {
+      expect(headWritten(false, "reported")).toEqual({ "Content-Type": "application/json" });
+    });
+  });
+
   it("applies backpressure: a write that the socket refuses waits for its drain", async () => {
     const response = new FakeServerResponse(true);
     const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, servedPath: "/v1/messages", session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined }, requestedModel: { value: undefined }, clientSessionId: undefined, requestClass: undefined } });

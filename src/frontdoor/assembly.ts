@@ -86,6 +86,7 @@ export function createDoorPipelines(deps: DoorPipelineDeps): { readonly clientFa
       resolveRoute: deps.resolveRoute,
       responseObservers: [],
       admit: admitHop(deps.hopSecret, deps.custody),
+      answersHeadroomHop: true,
       headroomDecision: deps.headroomDecision,
       canonicalProvider: deps.canonicalProvider,
       now: deps.now,

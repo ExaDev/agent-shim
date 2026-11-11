@@ -11,6 +11,11 @@ const NEAR_HUNDRED_VERSION = 99;
 const HUNDRED_VERSION = 100;
 const NEWER_VERSIONS: readonly number[] = [NEXT_VERSION, THIRD_VERSION, NEAR_HUNDRED_VERSION, HUNDRED_VERSION];
 
+/** The tickets a launch is handed, in order. */
+const FIRST = 1;
+const SECOND = 2;
+const THIRD = 3;
+
 describe("the main-loop route record", () => {
   /** A registry whose launches the test starts and ends. */
   function registryOf(stored: MainLoopRoutePorts["stored"] = inMemoryRouteStore()): MainLoopRoutePorts & { readonly start: (launch: Readonly<FrontDoorLaunch>) => void; readonly end: (launch: Readonly<FrontDoorLaunch>) => void } {
@@ -41,6 +46,63 @@ describe("the main-loop route record", () => {
     live.add(a);
     expect(record.routeOf(a)).toBeUndefined();
     expect(record.routeOf(b)).toEqual({ kind: "anthropic" });
+  });
+
+  it("records nothing for a launch that is not registered, in memory or in the store", () => {
+    const writes: string[] = [];
+    const base = inMemoryRouteStore();
+    const registry = registryOf({ ...base, write: (launch, route) => { writes.push(JSON.stringify(route)); base.write(launch, route); } });
+    const record = createMainLoopRouteRecord(registry);
+    registry.start(a);
+    record.record(a, { kind: "provider", provider: "z" });
+    registry.end(a);
+    record.record(a, { kind: "provider", provider: "late" });
+    expect(writes).toEqual([JSON.stringify({ kind: "provider", provider: "z" })]);
+    registry.start(a);
+    expect(record.routeOf(a)).toEqual({ kind: "provider", provider: "z" });
+  });
+
+  it("drops a record under a ticket lower than the latest recorded, and keeps one under the same or a higher ticket", () => {
+    const registry = registryOf();
+    const record = createMainLoopRouteRecord(registry);
+    registry.start(a);
+    const first = record.begin(a);
+    const second = record.begin(a);
+    expect(second).toBeGreaterThan(first);
+    record.record(a, { kind: "provider", provider: "newer" }, second);
+    record.record(a, { kind: "provider", provider: "older" }, first);
+    expect(record.routeOf(a)).toEqual({ kind: "provider", provider: "newer" });
+    record.record(a, { kind: "provider", provider: "newer-again" }, second);
+    expect(record.routeOf(a)).toEqual({ kind: "provider", provider: "newer-again" });
+    record.record(a, { kind: "provider", provider: "untracked" });
+    expect(record.routeOf(a)).toEqual({ kind: "provider", provider: "untracked" });
+  });
+
+  it("numbers each launch's requests on its own, and never prunes a live launch's counter because another launch asked", () => {
+    const registry = registryOf();
+    const record = createMainLoopRouteRecord(registry);
+    registry.start(a);
+    registry.start(b);
+    expect([record.begin(a), record.begin(a), record.begin(b), record.begin(a)]).toEqual([FIRST, SECOND, FIRST, THIRD]);
+  });
+
+  it("drops an ended launch's counters, so a launch registered afresh starts again, and nothing recorded under its old tickets survives", () => {
+    const registry = registryOf();
+    const record = createMainLoopRouteRecord(registry);
+    registry.start(a);
+    registry.start(b);
+    const old = record.begin(a);
+    record.begin(a);
+    record.record(a, { kind: "provider", provider: "high" }, 2);
+    expect(old).toBe(1);
+    registry.end(a);
+    // Another launch's request is what finds `a` ended and drops its entries.
+    record.begin(b);
+    registry.start(a);
+    expect(record.begin(a)).toBe(1);
+    // The recorded-under counter went too: a record under ticket 1 is not dropped for the ended launch's ticket 2.
+    record.record(a, { kind: "provider", provider: "fresh" }, 1);
+    expect(record.routeOf(a)).toEqual({ kind: "provider", provider: "fresh" });
   });
 
   it("gives a launch registered again under the same pid, and so a new start time, nothing recorded", () => {

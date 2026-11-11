@@ -1,6 +1,7 @@
 import type { HttpProvider } from "../config/schema";
 import type { LayoutPaths } from "../paths";
 import { realFarmFs, realFsPort } from "../realPorts";
+import { realCatalogueFetch } from "../realCatalogueRefresh";
 import type { createProviderRouteResolver } from "./providerRoute";
 import { catalogueMatchesSettings, filterCatalogue, parseCatalogueCache, parseCatalogueSettings, type CatalogueDigest, type CatalogueModel } from "../providerCatalogue";
 import { StoredCatalogue, TolerantReader, raiseUnreadableCatalogue } from "../storedCatalogue";
@@ -32,7 +33,7 @@ export function cachingCatalogueModels(stored: StoredCatalogue, revisionOf: (fil
   };
 }
 
-/** The port the route resolver reads a provider's stored catalogue through, for the first model a bare provider name falls back to. */
-export function storedCatalogueModelsPort(paths: LayoutPaths): Pick<Parameters<typeof createProviderRouteResolver>[0], "catalogueModelsOf"> {
-  return { catalogueModelsOf: cachingCatalogueModels(new StoredCatalogue(paths, new TolerantReader((file) => realFarmFs.readFileUtf8(file), raiseUnreadableCatalogue)), (file) => realFsPort.fileRevision?.(file)) };
+/** The ports the route resolver reads a provider's models through: the live list for the model `auto`, the stored catalogue for a bare provider name, and the door's log. */
+export function servedModelPorts(paths: LayoutPaths, log: (message: string) => void): Pick<Parameters<typeof createProviderRouteResolver>[0], "catalogueFetch" | "catalogueModelsOf" | "log"> {
+  return { catalogueFetch: realCatalogueFetch, catalogueModelsOf: cachingCatalogueModels(new StoredCatalogue(paths, new TolerantReader((file) => realFarmFs.readFileUtf8(file), raiseUnreadableCatalogue)), (file) => realFsPort.fileRevision?.(file)), log };
 }
