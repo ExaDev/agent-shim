@@ -615,3 +615,30 @@ describe("the route file of a launch whose registry record is gone", () => {
     expect(store.read(launch)).toEqual({ kind: "provider", provider: "z" });
   });
 });
+
+describe("a context that changes only in the models it names", () => {
+  const launch: FrontDoorLaunch = { pid: 9, startedAt: 1 };
+
+  it.each([["the model asked for", "requestedModel"], ["the model served", "servedModel"]] as const)("is written again when %s changed, and not when it did not", (_label, field) => {
+    const writes: (string | undefined)[] = [];
+    const base = inMemoryRouteStore();
+    const record = createMainLoopRouteRecord({
+      holdsLaunch: () => true,
+      stored: {
+        read: base.read,
+        identity: base.identity,
+        write: (held, route) => {
+          writes.push(route[field]);
+          base.write(held, route);
+        },
+      },
+      log: () => undefined,
+    });
+    const route = { kind: "provider", provider: "z" } as const;
+    record.record(launch, { ...route, [field]: "model-a" });
+    record.record(launch, { ...route, [field]: "model-a" });
+    record.record(launch, { ...route, [field]: "model-b" });
+    record.record(launch, { ...route, [field]: "model-b" });
+    expect(writes).toEqual(["model-a", "model-b"]);
+  });
+});

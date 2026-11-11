@@ -74,9 +74,6 @@ describe("scanRequestHead when the client aborts the body", () => {
     const pending = scanRequestHead(requestOver(body));
     body.write(Buffer.from('{"model":"claude-test",'));
     const replayed = (await pending).replayed;
-    if (replayed === undefined) {
-      throw new Error("expected a replayed request");
-    }
     body.destroy(abortError());
     await expect(replayed.body.toArray()).rejects.toThrow("aborted");
     expect(uncaught).toEqual([]);
@@ -89,7 +86,7 @@ describe("scanRequestHead over a body that was already read to its end", () => {
     const request = requestOver(body);
     body.end(JSON.stringify({ model: "m", messages: [] }));
     const scanned = await scanRequestHead(request);
-    scanned.replayed?.body.resume();
+    scanned.replayed.body.resume();
     await drainTicks();
     expect(body.readableEnded).toBe(true);
     await expect(scanRequestHead(request)).rejects.toThrow("already read to its end");

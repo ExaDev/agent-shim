@@ -179,6 +179,9 @@ export interface World {
   readonly close: () => Promise<void>;
 }
 
+/** The ports the door reads the models the providers serve through. */
+export type ModelPorts = Readonly<Pick<Parameters<typeof createProviderRouteResolver>[0], "targets" | "catalogueModelsOf">>;
+
 /** A door serving an `http` provider `z` (whose tier environment maps haiku) and a `codex` provider `cx`, with the usage middleware recording into `records`. */
 export async function startWorld(
   record: MainLoopRouteRecord = mainLoopRoutesOfLiveSessions(),
@@ -186,6 +189,8 @@ export async function startWorld(
   models?: ModelsConfig,
   zTierEnv: Readonly<Record<string, string>> = { ANTHROPIC_DEFAULT_HAIKU_MODEL: Z_HAIKU_MODEL, ANTHROPIC_DEFAULT_SONNET_MODEL: Z_SONNET_MODEL, ANTHROPIC_DEFAULT_OPUS_MODEL: Z_OPUS_MODEL },
   admit: PipelineDeps["admit"] = admitLaunchPerSession,
+  /** The ports the door reads the models the providers serve through, for a test that counts or steers what is read. */
+  modelPorts: ModelPorts = {},
 ): Promise<World> {
   const upstream = await fakeUpstream(upstreamStatus);
   const gemini = await fakeGeminiBackend();
@@ -211,6 +216,7 @@ export async function startWorld(
     env: {},
     credentials: fakeAsyncCredentials(),
     ...(models === undefined ? {} : { models: () => models }),
+    ...modelPorts,
   });
   const records: UsageRecord[] = [];
   const toAnthropic: string[] = [];
