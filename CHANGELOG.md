@@ -1,3 +1,9 @@
+## [14.2.1](https://github.com/ExaDev/agent-shim/compare/v14.2.0...v14.2.1) (2026-11-11)
+
+### Bug Fixes
+
+* end a launch with the identity-creating command when the picker has nothing to offer ([5ec361f](https://github.com/ExaDev/agent-shim/commit/5ec361fd2c9a60926d69e511e71072b559c4194b))
+
 ## [14.2.0](https://github.com/ExaDev/agent-shim/compare/v14.1.0...v14.2.0) (2026-11-10)
 
 ### Features
