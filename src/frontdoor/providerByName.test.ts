@@ -7,6 +7,7 @@ import { HTTP_STATUS } from "../codex/http";
 import type { CodexRoutePorts } from "../codex/route";
 import { fakeAuth, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
 import type { ModelsConfig } from "../config/schema";
+import { realCatalogueFetch } from "../realCatalogueRefresh";
 import { FAKE_HOME, admitLaunchToken, fakeAsyncCredentials, fakeFs, followsLaunchFlag, mainLoopRoutesOfLiveSessions } from "../test-helpers";
 import { createProviderRouteResolver } from "./providerRoute";
 import { serveRouted } from "./pipeline";
@@ -16,6 +17,10 @@ import { AUTH_HEADER, type RoutedRequest } from "./route";
 const PROVIDERS_DIR = `${FAKE_HOME}/.agent-shim/providers`;
 const OWN_PORT = 4100;
 const TOKEN = "launch-token-for-tests";
+/** The model-list reads a refused `auto` request costs: the first lookup and the refresh after the refusal. */
+const REFRESHED_LISTS = 2;
+/** Bytes of padding that put a body's model field past the 64 KiB a head scan reads. */
+const PAD_PAST_HEAD_BYTES = 300_000;
 
 /** What the stand-in provider saw of one POST. */
 interface SeenPost {
@@ -161,6 +166,7 @@ function resolverOver(files: Record<string, unknown>, options: { readonly fs?: (
     directPort: () => OWN_PORT,
     env: {},
     credentials: fakeAsyncCredentials(),
+    catalogueFetch: realCatalogueFetch,
     ...(options.models === undefined ? {} : { models: () => options.models }),
     ...(options.targets === undefined ? {} : { targets: () => options.targets ?? [] }),
     log: options.log ?? (() => undefined),
@@ -275,6 +281,25 @@ describe("a bare provider name selects that provider's default model on any sess
     expect((await bodyOf(alias.request)).model).toBe("auto");
   });
 
+  it("never takes the model auto as a provider's default from its catalogue", async () => {
+    const upstream = await standIn("served");
+    const door = await startDoor(resolverOver({ spark: httpFile(upstream.baseUrl) }, { catalogue: [{ id: "auto" }, { id: "second" }] }));
+    try {
+      const answered = await post(door, "/v1/messages", messages("spark"));
+      // The stand-in serves only its own model, so the request for "second" is answered 404: what is checked is the model the door sent, which `auto` would have made the one the server serves.
+      expect(answered.status).toBe(HTTP_STATUS.notFound);
+      expect(modelsSeen(upstream)).toEqual(["second"]);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("records the model `auto` as the served model of `spark/auto` when the server's list cannot be read", async () => {
+    const resolution = await resolverOver({ spark: httpFile("http://127.0.0.1:1") })(resolverRequest("spark/auto"));
+    expect(resolution.ok).toBe(true);
+    expect(resolution.ok && resolution.servedModel).toBe("auto");
+  });
+
   it("refuses a router provider's bare name, saying it has no default model", async () => {
     const resolution = await resolverOver({ rt: routerFile })(resolverRequest("rt"));
     expect(resolution.ok).toBe(false);
@@ -290,7 +315,7 @@ describe("a bare provider name selects that provider's default model on any sess
     try {
       const answered = await post(door, "/v1/messages", messages("spark"));
       expect(answered.status).toBe(HTTP_STATUS.badRequest);
-      expect(parseSent(answered.text).error?.message).toContain('provider "spark" has no default model');
+      expect(parseSent(answered.text).error?.message).toContain('provider "spark" has no default model: give its env ANTHROPIC_DEFAULT_SONNET_MODEL, or opt it into a catalogue');
       expect(upstream.posts()).toEqual([]);
       expect(upstream.lists()).toBe(0);
     } finally {
@@ -325,12 +350,6 @@ describe("a bare provider name selects that provider's default model on any sess
     expect(sessionSpelt.ok).toBe(false);
   });
 
-  it("leaves a name that is no provider's with the route it had before", async () => {
-    const resolution = await resolverOver({ spark: httpFile("http://127.0.0.1:9") })(resolverRequest("claude-sonnet-5-5"));
-    if (!resolution.ok) throw new Error(resolution.message);
-    expect(resolution.route.name).toBe("anthropic");
-  });
-
   it.each([["a context marker alone", "[1m]"], ["whitespace", "   "], ["whitespace and a marker", " [1M]"]])("refuses a provider file whose model variable is %s as invalid, naming the provider, and sends nothing upstream", async (_label, value) => {
     const upstream = await standIn("served");
     const door = await startDoor(resolverOver({ spark: httpFile(upstream.baseUrl, { env: { ANTHROPIC_DEFAULT_SONNET_MODEL: value } }) }));
@@ -342,6 +361,18 @@ describe("a bare provider name selects that provider's default model on any sess
     } finally {
       await door.close();
     }
+  });
+
+  it.each([["bare", "/v1/messages/batches"], ["scoped", "/providers/z/v1/messages/batches"]])("leaves a batch request naming a provider alone (%s path): it is no Messages request, so its body is never read and its model never resolved", async (_label, url) => {
+    const body = Readable.from([Buffer.from(JSON.stringify(messages("spark")))]);
+    const request: RoutedRequest = { ...resolverRequest("spark"), url, body };
+    const resolution = await resolverOver({ spark: httpFile("http://127.0.0.1:9"), z: httpFile("http://127.0.0.1:10") })(request);
+    expect(resolution.ok).toBe(true);
+    expect(resolution.ok && resolution.route.name).toBe(url.startsWith("/providers/z") ? "http:z" : "anthropic");
+    // The resolution says which request it serves, as the caller that places a request on a provider requires, and that request is the one that arrived: its body is the very stream, unread.
+    expect(resolution.ok && resolution.request?.body).toBe(body);
+    expect(resolution.ok && resolution.request?.url).toBe(url);
+    expect(body.readableFlowing).toBeNull();
   });
 
   it("serves a provider-scoped request whose model names another provider at the path the target is served under, without the first provider's prefix", async () => {
@@ -357,6 +388,23 @@ describe("a bare provider name selects that provider's default model on any sess
     } finally {
       await door.close();
     }
+  });
+
+  it("does not apply a provider's routes to another spelling of its name on a file system that ignores case", async () => {
+    const ignoringCase = (base: ReturnType<typeof fakeFs>): ReturnType<typeof fakeFs> => ({ ...base, readConfigFile: (file) => base.readConfigFile(file.toLowerCase()), readFileUtf8: (file) => base.readFileUtf8(file.toLowerCase()) });
+    const everything = { kind: "textCompare", op: "matches", left: { kind: "reference", key: "request.model" }, right: { kind: "textLiteral", value: ".*" } };
+    const resolve = resolverOver({ spark: httpFile("http://127.0.0.1:9", { routes: [{ when: everything, provider: "other" }] }), other: httpFile("http://127.0.0.1:10") }, { fs: ignoringCase });
+    const exact = await resolve({ ...resolverRequest("claude-sonnet-5-5"), url: "/providers/spark/v1/messages" });
+    expect(exact.ok && exact.route.name).toBe("http:other");
+    const spelt = await resolve({ ...resolverRequest("claude-sonnet-5-5"), url: "/providers/Spark/v1/messages" });
+    expect(spelt.ok).toBe(false);
+    expect(!spelt.ok && spelt.status).toBe(HTTP_STATUS.notFound);
+  });
+
+  it("leaves a name that is no provider's with the route it had before", async () => {
+    const resolution = await resolverOver({ spark: httpFile("http://127.0.0.1:9") })(resolverRequest("claude-sonnet-5-5"));
+    if (!resolution.ok) throw new Error(resolution.message);
+    expect(resolution.route.name).toBe("anthropic");
   });
 
   it("lets a virtual model named like a provider win", async () => {
@@ -378,6 +426,223 @@ describe("a bare provider name selects that provider's default model on any sess
     const resolution = await resolverOver({ spark: httpFile("http://127.0.0.1:9", { env: { ANTHROPIC_DEFAULT_SONNET_MODEL: "m" } }), z: httpFile("http://127.0.0.1:10") })(resolverRequest("spark", "z"));
     if (!resolution.ok) throw new Error(resolution.message);
     expect(resolution.route.name).toBe("http:spark");
+  });
+});
+
+describe("a name rewrite of a body with two top-level model fields", () => {
+  it.each([["a bare provider name", "spark"], ["a qualified name", "spark/chosen"]])("is refused for %s, forwarding nothing", async (_label, name) => {
+    const upstream = await standIn("tier-model");
+    const door = await startDoor(resolverOver({ spark: httpFile(upstream.baseUrl, { env: { ANTHROPIC_DEFAULT_SONNET_MODEL: "tier-model" } }) }));
+    try {
+      const answered = await post(door, "/v1/messages", `{"model":"${name}","model":"other","max_tokens":16,"messages":[]}`);
+      expect(answered.status).toBe(HTTP_STATUS.badRequest);
+      expect(answered.text).toContain("more than one top-level model field");
+      expect(upstream.posts()).toHaveLength(0);
+    } finally {
+      await door.close();
+    }
+  });
+});
+
+describe("a route's model rewrite of a body with two top-level model fields", () => {
+  it("is refused, forwarding nothing to either provider", async () => {
+    const upstream = await standIn("other-model");
+    const route = { when: { kind: "textCompare", op: "matches", left: { kind: "reference", key: "request.model" }, right: { kind: "textLiteral", value: ".*sonnet.*" } }, provider: "other", model: "rewritten" };
+    const door = await startDoor(resolverOver({ main: httpFile(upstream.baseUrl, { routes: [route] }), other: httpFile(upstream.baseUrl) }));
+    try {
+      const answered = await post(door, "/providers/main/v1/messages", '{"model":"claude-sonnet-4-5","model":"x","max_tokens":16,"messages":[]}');
+      expect(answered.status).toBe(HTTP_STATUS.badRequest);
+      expect(answered.text).toContain("more than one top-level model field");
+      expect(upstream.posts()).toHaveLength(0);
+    } finally {
+      await door.close();
+    }
+  });
+});
+
+describe("the model auto on an http provider", () => {
+  it("is rewritten to the served model for spark/auto, and follows a swap without a restart", async () => {
+    const upstream = await standIn("model-one");
+    const logs: string[] = [];
+    const door = await startDoor(resolverOver({ spark: httpFile(upstream.baseUrl) }, { log: (message) => { logs.push(message); } }));
+    try {
+      expect((await post(door, "/v1/messages", messages("spark/auto"))).status).toBe(HTTP_STATUS.ok);
+      upstream.serve("model-two");
+      const swapped = await post(door, "/v1/messages", messages("spark/auto"));
+      expect(swapped.status).toBe(HTTP_STATUS.ok);
+      // The second request went out under the cached name, was answered as unknown, and was served once more under the new one.
+      expect(modelsSeen(upstream)).toEqual(["model-one", "model-one", "model-two"]);
+      expect(logs.filter((line) => line.includes('"model-one" as an unknown model')).length).toBe(1);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("does not refresh or retry on a context-overflow 400 that merely mentions the model", async () => {
+    const upstream = await standIn("model-one");
+    const door = await startDoor(resolverOver({ spark: httpFile(upstream.baseUrl) }));
+    try {
+      await post(door, "/v1/messages", messages("spark/auto"));
+      upstream.serve("model-two");
+      upstream.fail("overflow");
+      const answered = await post(door, "/v1/messages", messages("spark/auto"));
+      expect(answered.status).toBe(HTTP_STATUS.badRequest);
+      expect(modelsSeen(upstream)).toEqual(["model-one", "model-one"]);
+      expect(upstream.lists()).toBe(1);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("retries exactly once when the retry is refused too", async () => {
+    const upstream = await standIn("model-one");
+    const door = await startDoor(resolverOver({ spark: httpFile(upstream.baseUrl) }));
+    try {
+      await post(door, "/v1/messages", messages("spark/auto"));
+      upstream.serve("model-two");
+      upstream.fail("missing");
+      const answered = await post(door, "/v1/messages", messages("spark/auto"));
+      expect(answered.status).toBe(HTTP_STATUS.notFound);
+      expect(modelsSeen(upstream)).toEqual(["model-one", "model-one", "model-two"]);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("serves the answer as it is when the refreshed list names the very model that was refused", async () => {
+    const upstream = await standIn("model-one");
+    const door = await startDoor(resolverOver({ spark: httpFile(upstream.baseUrl) }));
+    try {
+      await post(door, "/v1/messages", messages("spark/auto"));
+      upstream.fail("missing");
+      const answered = await post(door, "/v1/messages", messages("spark/auto"));
+      expect(answered.status).toBe(HTTP_STATUS.notFound);
+      expect(modelsSeen(upstream)).toEqual(["model-one", "model-one"]);
+      expect(upstream.lists()).toBe(REFRESHED_LISTS);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("answers 502 naming the provider when its credential does not resolve, without reaching its server", async () => {
+    const upstream = await standIn("model-one");
+    const door = await startDoor(resolverOver({ spark: httpFile(upstream.baseUrl, { credential: { sources: [{ env: "SPARK_TOKEN_NOT_SET" }] } }) }));
+    try {
+      const answered = await post(door, "/v1/messages", messages("spark/auto"));
+      expect(answered.status).toBe(HTTP_STATUS.badGateway);
+      expect(answered.text).toContain(String.raw`the model \"auto\" follows the model provider \"spark\"'s server serves, but its live model list could not be read because the provider's credential did not resolve`);
+      expect(upstream.posts()).toHaveLength(0);
+      expect(upstream.lists()).toBe(0);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("resolves the model auto when the model field sits past the head the scan reads, as the resolver in front of the route decides on the whole body", async () => {
+    const upstream = await standIn("model-one");
+    const door = await startDoor(resolverOver({ spark: httpFile(upstream.baseUrl) }));
+    try {
+      const answered = await post(door, "/providers/spark/v1/messages", `{"pad":"${"x".repeat(PAD_PAST_HEAD_BYTES)}","model":"auto","max_tokens":16,"messages":[]}`);
+      expect(answered.status).toBe(HTTP_STATUS.ok);
+      expect(modelsSeen(upstream)).toEqual(["model-one"]);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("forwards, byte for byte, a request whose model field sits past the head and is not auto", async () => {
+    const upstream = await standIn("other-model");
+    const door = await startDoor(resolverOver({ spark: httpFile(upstream.baseUrl) }));
+    try {
+      const body = `{"pad":"${"x".repeat(PAD_PAST_HEAD_BYTES)}","model":"other-model","max_tokens":16,"messages":[]}`;
+      expect((await post(door, "/providers/spark/v1/messages", body)).status).toBe(HTTP_STATUS.ok);
+      expect(upstream.posts().map((seen) => seen.body)).toEqual([body]);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("rewrites only the top-level model value, every other byte of the body as it arrived", async () => {
+    const upstream = await standIn("served-now");
+    const door = await startDoor(resolverOver({ spark: httpFile(upstream.baseUrl) }));
+    try {
+      const body = '{ "big":12345678901234567890,"f":1.0,"s":"a\\u00e9 \\"model\\":\\"auto\\"","nested":{"model":"auto"},  "model" : "auto" ,"messages":[]}';
+      expect((await post(door, "/providers/spark/v1/messages", body)).status).toBe(HTTP_STATUS.ok);
+      expect(upstream.posts()[0]?.body).toBe(body.replace('"model" : "auto"', '"model" : "served-now"'));
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("reads the list once for requests inside the cache lifetime", async () => {
+    const upstream = await standIn("model-one");
+    const door = await startDoor(resolverOver({ spark: httpFile(upstream.baseUrl) }));
+    try {
+      await post(door, "/v1/messages", messages("spark/auto"));
+      await post(door, "/v1/messages", messages("spark/auto"));
+      expect(upstream.lists()).toBe(1);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("is what a tier entry set to auto resolves to on the provider's own session", async () => {
+    const upstream = await standIn("served-now");
+    const door = await startDoor(resolverOver({ spark: httpFile(upstream.baseUrl, { env: { ANTHROPIC_DEFAULT_SONNET_MODEL: "auto" } }) }));
+    try {
+      expect((await post(door, "/providers/spark/v1/messages", messages("auto"))).status).toBe(HTTP_STATUS.ok);
+      expect(modelsSeen(upstream)).toEqual(["served-now"]);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("answers the server's own refusal when a retry has no newer model to try", async () => {
+    const upstream = await standIn("model-one");
+    const door = await startDoor(resolverOver({ spark: httpFile(upstream.baseUrl) }));
+    try {
+      await post(door, "/v1/messages", messages("spark/auto"));
+      upstream.serve(undefined);
+      const refused = await post(door, "/v1/messages", messages("spark/auto"));
+      expect(refused.status).toBe(HTTP_STATUS.notFound);
+      expect(refused.text).toContain("does not exist");
+    } finally {
+      await door.close();
+    }
+  });
+});
+
+/** Spellings of the name `spark/auto` a JSON encoder may write, and of a body naming it twice: the resolver and the wrapper must decide the same on each. */
+const SPELLINGS: readonly (readonly [label: string, model: string])[] = [
+  ["plain", "spark/auto"],
+  ["with an escaped slash", "spark\\/auto"],
+  ["with a \\u-escaped letter", "\\u0073park/auto"],
+  ["with an escaped letter in the model part", "spark/\\u0061uto"],
+];
+
+describe("one decision for every spelling of a model name, through the resolver and the wrapper", () => {
+  it.each(SPELLINGS)("routes the name %s to the served model", async (_label, spelled) => {
+    const upstream = await standIn("model-one");
+    const door = await startDoor(resolverOver({ spark: httpFile(upstream.baseUrl) }));
+    try {
+      const answered = await post(door, "/v1/messages", `{"model":"${spelled}","max_tokens":16,"messages":[]}`);
+      expect(answered.status).toBe(HTTP_STATUS.ok);
+      expect(modelsSeen(upstream)).toEqual(["model-one"]);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it.each(SPELLINGS)("refuses the name %s when the body names its model twice", async (_label, spelled) => {
+    const upstream = await standIn("model-one");
+    const door = await startDoor(resolverOver({ spark: httpFile(upstream.baseUrl) }));
+    try {
+      const answered = await post(door, "/v1/messages", `{"model":"${spelled}","model":"other","max_tokens":16,"messages":[]}`);
+      expect(answered.status).toBe(HTTP_STATUS.badRequest);
+      expect(upstream.posts()).toHaveLength(0);
+    } finally {
+      await door.close();
+    }
   });
 });
 

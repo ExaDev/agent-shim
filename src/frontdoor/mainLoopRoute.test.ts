@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { HTTP_STATUS } from "../codex/http";
 import { ANTIGRAVITY_DEFAULT_TIER_MODELS, CODEX_DEFAULT_TIER_MODELS } from "../config/schema";
 import { FAKE_HOME, createFakeFarmFs, fakeAsyncCredentials, fakeFs, followsLaunchFlag, inMemoryRouteStore, mainLoopRoutesOfLiveSessions } from "../test-helpers";
-import { createMainLoopRouteRecord, followingMainLoop, requestClassOf, withModelInHead, type MainLoopRouteRecord } from "./mainLoopRoute";
+import { createMainLoopRouteRecord, followingMainLoop, requestClassOf, withModel, withModelInHead, type MainLoopRouteRecord } from "./mainLoopRoute";
 import { admitLaunch } from "./assembly";
 import { createLiveSessionRegistry } from "./liveSessionRegistry";
 import { serveRouted, type RouteResolution } from "./pipeline";
@@ -559,6 +559,33 @@ describe("followingMainLoop over a resolver that records what it is asked", () =
     return { follow, asked, record };
   }
 
+  it("places a main request whose body a resolver already read to its end on the provider the context names, without scanning it again", async () => {
+    const record = mainLoopRoutesOfLiveSessions();
+    record.record(launchOfSession("s-1"), { kind: "provider", provider: "z" });
+    const seen: string[] = [];
+    const resolve = async (request: RoutedRequest): Promise<RouteResolution> => {
+      request.body.resume();
+      seen.push(request.url);
+      return await Promise.resolve({ ok: true, route: { name: "stand-in", headroomEligible: false, headroomUpstream: undefined, serve: async () => Promise.resolve() }, request });
+    };
+    const body = Readable.from([]);
+    await new Promise<void>((done) => {
+      body.on("end", done);
+      body.resume();
+    });
+    expect(body.readableEnded).toBe(true);
+    const resolution = await followingMainLoop(resolve, { record, providerMapping: () => ({ model: { kind: "mapped", model: "glm-5.3" }, credential: undefined }), loginOf: () => "the launch's login", definesProvider: () => false })({
+      method: "POST",
+      url: "/v1/messages",
+      headers: { "x-claude-code-request-class": "main" },
+      body,
+      signal: new AbortController().signal,
+      session: { identity: undefined, sessionId: "s-1", provider: undefined, headroom: false, projectId: undefined, launch: launchOfSession("s-1") },
+    });
+    expect(resolution.ok).toBe(true);
+    expect(seen).toEqual(["/v1/messages", "/providers/z/v1/messages"]);
+  });
+
   it("refuses a helper whose resolver served it without saying which request, rather than serving the unscoped one", async () => {
     const record = mainLoopRoutesOfLiveSessions();
     record.record(launchOfSession("s-1"), { kind: "provider", provider: "z" });
@@ -631,15 +658,51 @@ describe("rewriting the model field in a body's head", () => {
     return Buffer.concat(out);
   }
 
+  it.each(["Content-Length", "content-length", "CONTENT-LENGTH"])("drops the framing header of a rewritten head whatever the case of its name (%s)", (name) => {
+    const body = Buffer.from('{"model":"' + HAIKU_NAME + '"}', "utf8");
+    const request: RoutedRequest = { method: "POST", url: "/v1/messages", headers: { [name]: String(body.length), "x-kept": "1" }, body: Readable.from([body]), signal: new AbortController().signal, session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, projectId: undefined } };
+    expect(withModelInHead(request, body.length, HAIKU_NAME, "glm-4.5-air").headers).toEqual({ "x-kept": "1" });
+    expect(withModel(request, body, HAIKU_NAME, "glm-4.5-air").headers).toEqual({ "x-kept": "1" });
+  });
+
+  it("rewrites the model field of a head that names it with non-ASCII characters, matched by the name it spells", async () => {
+    const body = Buffer.from('{"model":"\u65e5\u672c","messages":[]}', "utf8");
+    const out = await rewrittenBytes([body], body.length, "\u65e5\u672c", "glm-4.5-air");
+    expect(out.toString("utf8")).toBe('{"model":"glm-4.5-air","messages":[]}');
+    const untouched = await rewrittenBytes([body], body.length, "other", "glm-4.5-air");
+    expect(untouched.toString("utf8")).toBe(body.toString("utf8"));
+  });
+
+  it("releases a head that ends exactly on a chunk boundary before the next chunk has arrived", async () => {
+    const head = Buffer.from('{"model":"' + HAIKU_NAME + '"', "utf8");
+    let open: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    async function* chunks(): AsyncGenerator<Buffer> {
+      yield head;
+      await gate;
+      yield Buffer.from(',"messages":[]}');
+    }
+    const request: RoutedRequest = { method: "POST", url: "/v1/messages", headers: {}, body: Readable.from(chunks()), signal: new AbortController().signal, session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, projectId: undefined } };
+    const rewritten = withModelInHead(request, head.length, HAIKU_NAME, "glm-4.5-air");
+    const iterator = rewritten.body[Symbol.asyncIterator]();
+    const first = await iterator.next();
+    expect(first.done).toBe(false);
+    expect(Buffer.isBuffer(first.value) ? first.value.toString("utf8") : undefined).toBe('{"model":"glm-4.5-air"');
+    open();
+    await iterator.return?.();
+  });
+
   it("rewrites a model key written with whitespace before its colon, as the scan finds it, changing the value alone", async () => {
     const body = Buffer.from('{"model" : "' + HAIKU_NAME + '", "messages": []}', "utf8");
     const out = await rewrittenBytes([body], body.length, HAIKU_NAME, "glm-4.5-air");
     expect(out.toString("utf8")).toBe('{"model" : "glm-4.5-air", "messages": []}');
   });
 
-  it("rewrites a model value written with an escaped quote whole, as the scan reads it", async () => {
+  it("rewrites a model value written with an escaped quote whole, matched by the name it spells", async () => {
     const body = Buffer.from('{"model":"a\\"b","messages":[]}', "utf8");
-    const out = await rewrittenBytes([body], body.length, 'a\\"b', "glm-4.5-air");
+    const out = await rewrittenBytes([body], body.length, 'a"b', "glm-4.5-air");
     expect(out.toString("utf8")).toBe('{"model":"glm-4.5-air","messages":[]}');
   });
 

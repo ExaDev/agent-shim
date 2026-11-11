@@ -2,7 +2,7 @@ import { holdFrom } from "../elapsedWindow";
 import { createAgyCredentialResolver } from "../antigravity/agyCredential";
 import { ConfigFileNotJsonError, ConfigValidationError } from "../config/load";
 import { InvalidProviderNameError, isFileName, providerFilePath } from "../config/names";
-import { isAntigravityProvider, isCodexProvider, isHttpProvider, type AntigravityProvider, type CodexProvider, type HttpProvider, type Provider, type Credential, isRouterProvider, type ModelsConfig } from "../config/schema";
+import { OTHER_MODEL_ENV_VARIABLES, TIER_MODEL_ENV_VARIABLES, isAntigravityProvider, isCodexProvider, isHttpProvider, type AntigravityProvider, type CodexProvider, type HttpProvider, type Provider, type Credential, isRouterProvider, type ModelsConfig } from "../config/schema";
 import { HTTP_STATUS } from "../codex/http";
 import type { CodexRoutePorts } from "../codex/route";
 import { resolveCodexConfig } from "../codex/translate";
@@ -18,7 +18,7 @@ import { createAntigravityRouteMount } from "./antigravityMount";
 import { CONNECT_INTERCEPT_HOST, HTTPS_PORT } from "./connect";
 import { restoreCredentials } from "./custody";
 import { createPassthroughRoute } from "./passthrough";
-import type { RouteResolution } from "./pipeline";
+import type { RouteResolution, ServedModelReport } from "./pipeline";
 import { evaluateWhen, referencesFact, type ConditionContext } from "../resolve/conditions";
 import { quotaFactsOf } from "../usage/quotaFacts";
 import { expandMembers } from "../modelsStore";
@@ -29,12 +29,17 @@ import { withoutContextMarker } from "../models/identity";
 import type { TargetObservation } from "../selection/signals";
 import type { UsageSnapshot } from "../usage/schema";
 import { PROVIDER_PATH_PREFIX, directOrigin, parseProviderPath, type FrontDoorRoute, type ModelChoice, type RoutedRequest } from "./route";
-import { reservedProviderNameReason } from "../models/reservedModelNames";
+import { AMBIGUOUS_MODEL_MESSAGE } from "./topLevelModel";
+import { AUTO_MODEL, reservedProviderNameReason } from "../models/reservedModelNames";
 import { followingMainLoop, withModel, type MappedModel, type MainLoopRouteRecord } from "./mainLoopRoute";
 import { TIER_ENV_VARIABLES, claudeNameTier } from "../models/tiers";
-import { scanRequestHead } from "./requestScan";
-import type { CatalogueModel } from "../providerCatalogue";
+import { scanRequestHead, type RequestScan } from "./requestScan";
+import type { CatalogueFetch, CatalogueModel } from "../providerCatalogue";
 import { catalogueReadFault } from "../storedCatalogue";
+import { editingHttpRequest } from "./httpRequestEdits";
+import { abandonBody } from "./cappedBody";
+import { MESSAGES_BODY_LIMIT_BYTES, bodyTooLargeMessage, isMessagesRequest } from "./messagesBodyLimit";
+import { createServedModels } from "./servedModel";
 
 /** How often the door logs that one upstream could not be connected to, while it stays down. */
 export const COULD_NOT_CONNECT_LOG_INTERVAL_MS = 60_000;
@@ -73,14 +78,8 @@ function targetModelsOf(deps: Readonly<Pick<RoutedModelDeps, "targets">>, provid
   return (deps.targets?.() ?? []).flatMap((ref) => (ref.startsWith(prefix) ? [ref.slice(prefix.length)] : []));
 }
 
-/** The other variables an http provider's `env` block names a model with: names that provider serves for a session launched on it, though they are not a tier a bare provider name defaults to. */
-const OTHER_MODEL_VARIABLES: readonly string[] = ["ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL"];
-
-/** The environment variables an http provider's own `env` block names its main tier's model with, in the order a bare provider name takes the first set one: Sonnet is the tier Claude Code's default model is, then the larger and the smaller. */
-const TIER_MODEL_VARIABLES: readonly string[] = ["ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"];
-
-/** The variables whose value is the model a bare provider name selects on an `http` provider, in order: `ANTHROPIC_MODEL`, the model Claude Code runs a session on when it is set and so the provider's own default, then the tier variables. */
-const DEFAULT_MODEL_VARIABLES: readonly string[] = ["ANTHROPIC_MODEL", ...TIER_MODEL_VARIABLES];
+/** The variables whose value is the model a bare provider name selects on an `http` provider, in order: `ANTHROPIC_MODEL`, the model Claude Code runs a session on when it is set and so the provider's own default, then the tiers (`TIER_MODEL_ENV_VARIABLES`). */
+const DEFAULT_MODEL_VARIABLES: readonly string[] = ["ANTHROPIC_MODEL", ...TIER_MODEL_ENV_VARIABLES];
 
 /** What a request's model name resolves to when it routes by name: the provider that serves it, the model name that provider serves it under (a qualified name loses its qualifier, a virtual model resolves to the member its mode chose), and the member ref the choice landed on, for the stickiness the next request of the same session reads. A virtual model or family selection also carries the name the session asked for and the distinct providers its members span, so the response can tell the middleware a choice among alternatives happened. */
 interface RoutedModel {
@@ -113,6 +112,23 @@ interface RoutedModelDeps {
   readonly usageSnapshotOf?: (identity: string | undefined) => UsageSnapshot | undefined;
   readonly observations?: (target: string) => TargetObservation | undefined;
   readonly targets?: () => readonly string[];
+}
+
+/** The request facts that are read off the text of the body, so only a whole body can say they are absent: a route that names one makes the scan of a Messages request whole, and on a request whose body is not read whole each is undecided unless the head matched. `isCountTokens` is read off the path and `model` is found by the structural walk, so neither is among them. */
+const WHOLE_BODY_FACTS = ["hasImage", "toolsPresent", "thinking", "maxTokens"] as const;
+
+/** The whole-body facts a scan decided: all it found of a whole-body scan, and of a head only the ones that matched (`true`, or a `max_tokens` number), never an absence. */
+function wholeBodyFactsOf(scan: Readonly<Pick<RequestScan, "whole" | "hasImage" | "toolsPresent" | "thinking" | "maxTokens">>): Readonly<Pick<RequestScan, "hasImage" | "toolsPresent" | "thinking" | "maxTokens">> {
+  const decided = (value: boolean | undefined): boolean | undefined => (scan.whole === true || value === true ? value : undefined);
+  const hasImage = decided(scan.hasImage);
+  const toolsPresent = decided(scan.toolsPresent);
+  const thinking = decided(scan.thinking);
+  return {
+    ...(hasImage === undefined ? {} : { hasImage }),
+    ...(toolsPresent === undefined ? {} : { toolsPresent }),
+    ...(thinking === undefined ? {} : { thinking }),
+    ...(scan.maxTokens === undefined ? {} : { maxTokens: scan.maxTokens }),
+  };
 }
 
 /** How many characters of a request body are taken to be one token when the size of the context a switch would re-send is estimated: the common rule of thumb for English text and code, an estimate and never a measurement. */
@@ -246,6 +262,10 @@ export function createProviderRouteResolver(deps: {
   readonly now: () => number;
   /** Where each provider-less session's latest main-loop request was served, which its helper requests follow (see `followingMainLoop`): the door's one record, bounded by its session registry. */
   readonly mainLoopRoutes: MainLoopRouteRecord;
+  /** Reads one URL of a provider's model list: what the model name `auto` is resolved from. Absent when the embedding cannot make the request, in which case `auto` is refused with that reason. */
+  readonly catalogueFetch?: CatalogueFetch;
+  /** The most bytes of a Messages request body an `http` provider's route reads whole to edit it; absent means the documented maximum request size (`MESSAGES_BODY_LIMIT_BYTES`). Injected so a test can cross the cap with a small body. */
+  readonly messagesBodyLimitBytes?: number;
   /** The models of a provider's cached catalogue, after its own filters, or none: where a bare name takes the model it selects when the provider's env names no tier model. */
   readonly catalogueModelsOf?: (name: string, provider: HttpProvider) => readonly CatalogueModel[];
 }): (request: RoutedRequest) => Promise<RouteResolution> {
@@ -356,7 +376,7 @@ export function createProviderRouteResolver(deps: {
     try {
       const definition = providerOf(name);
       const env = definition === undefined || isRouterProvider(definition) ? undefined : definition.env;
-      return [...TIER_MODEL_VARIABLES, ...OTHER_MODEL_VARIABLES].flatMap((variable) => env?.[variable] ?? []).filter((value) => value !== "");
+      return [...TIER_MODEL_ENV_VARIABLES, ...OTHER_MODEL_ENV_VARIABLES].flatMap((variable) => env?.[variable] ?? []);
     } catch {
       return [];
     }
@@ -381,8 +401,12 @@ export function createProviderRouteResolver(deps: {
       return { refusal: `provider "${name}" is a router and has no default model of its own: name a model, as ${name}/<model>` };
     }
     const mainTier = DEFAULT_MODEL_VARIABLES.map((variable) => definition.env?.[variable]).find((value) => value !== undefined && value !== "");
-    const model = mainTier ?? deps.catalogueModelsOf?.(name, definition)[0]?.id;
-    return model === undefined ? { refusal: `provider "${name}" has no default model: give its env ${TIER_MODEL_VARIABLES[0] ?? ""}, or opt it into a catalogue with \`agent-shim provider set ${name} --catalogue-tier <tier>\`, or name a model as ${name}/<model>` } : { model };
+    const catalogue = mainTier === undefined ? catalogueModels(name, definition) : undefined;
+    if (catalogue?.fault !== undefined) {
+      return { refusal: `provider "${name}" has no default model: its stored catalogue cannot be read (${catalogue.fault}); fix the file's permissions or run \`agent-shim provider models ${name} --refresh\`` };
+    }
+    const model = mainTier ?? catalogue?.models.find((entry) => entry.id !== AUTO_MODEL)?.id;
+    return model === undefined ? { refusal: `provider "${name}" has no default model: give its env ${TIER_MODEL_ENV_VARIABLES[0]}, or opt it into a catalogue with \`agent-shim provider set ${name} --catalogue-tier <tier>\`, or name a model as ${name}/<model> (${name}/auto is the model its server serves)` } : { model };
   };
   /** What a bare provider name selects: the provider's default model, a refusal when its file is invalid or it has no default, or `undefined` when no provider file has that name. */
   const defaultModelOf = (name: string): ProviderDefault | undefined => {
@@ -392,6 +416,16 @@ export function createProviderRouteResolver(deps: {
     }
     return found.kind === "absent" ? undefined : defaultModelFor(name, found.definition);
   };
+  // The most a Messages body is read whole under: the same bound the editing wrapper reads under, so neither of the resolver's whole-body scans holds more of a body than that.
+  const messagesBodyLimitBytes = deps.messagesBodyLimitBytes ?? MESSAGES_BODY_LIMIT_BYTES;
+  /** A scan of `request`'s head, or of the whole body under `messagesBodyLimitBytes` when `whole`: both whole-body scans of the resolver go through it, so neither can hold more of a body than the limit. */
+  const scanUnderLimit = async (request: RoutedRequest, whole: boolean): ReturnType<typeof scanRequestHead> => await scanRequestHead(request, whole, undefined, whole ? messagesBodyLimitBytes : undefined);
+  /** The 413 for a whole-body scan that stopped at the limit; the rest of the upload drains instead of stalling the client. */
+  const refusedAsTooLarge = (scan: Readonly<{ readonly replayed: RoutedRequest }>, limitBytes: number, provider: string | undefined): RouteResolution => {
+    abandonBody(scan.replayed.body);
+    return { ok: false, status: HTTP_STATUS.payloadTooLarge, message: bodyTooLargeMessage(limitBytes, provider) };
+  };
+  const servedModels = deps.catalogueFetch === undefined ? undefined : createServedModels({ fetch: deps.catalogueFetch, now: deps.now });
   // The routing memory a by-name session keeps its last chosen member in, and the rotation counter that keeps `spread` turning, both held by the resolver for the same reason: the route is mounted afresh for every request.
   const routingMemory = new Map<string, string>();
   const rotations = new Map<string, number>();
@@ -460,7 +494,7 @@ export function createProviderRouteResolver(deps: {
   };
 
   /** The resolution itself is synchronous: reading one provider file needs no await, and keeping it sync is what lets the async wrapper stay honest about its one await. */
-  const resolve = (request: RoutedRequest): RouteResolution => {
+  const resolve = (request: RoutedRequest, report?: Readonly<ServedModelReport>): RouteResolution => {
     const path = new URL(request.url, "http://127.0.0.1").pathname;
     const scoped = parseProviderPath(path);
     if (scoped === undefined) {
@@ -545,15 +579,28 @@ export function createProviderRouteResolver(deps: {
     const httpProvider: HttpProvider = definition;
     return {
       ok: true,
-      route: attachingProviderCredential(
-        passthroughFor(`http:${provider}`, {
-          baseUrl: httpProvider.baseUrl,
-          stripPrefix: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(provider)}`,
-          headroomUpstream: directOrigin(deps.directPort()),
-          subject: `provider ${provider}`,
-          connectTimeoutMs: providerConnectTimeoutMs(httpProvider),
-        }),
-        { provider, credential: httpProvider.credential, env: deps.env, port: deps.credentials, resolve: resolveCredential },
+      route: editingHttpRequest(
+        attachingProviderCredential(
+          passthroughFor(`http:${provider}`, {
+            baseUrl: httpProvider.baseUrl,
+            stripPrefix: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(provider)}`,
+            headroomUpstream: directOrigin(deps.directPort()),
+            subject: `provider ${provider}`,
+            connectTimeoutMs: providerConnectTimeoutMs(httpProvider),
+          }),
+          { provider, credential: httpProvider.credential, env: deps.env, port: deps.credentials, resolve: resolveCredential },
+        ),
+        {
+          provider,
+          definition: httpProvider,
+          served: servedModels,
+          credential: async () => await resolveCredential({ credential: httpProvider.credential, env: deps.env, port: deps.credentials, subject: `provider ${provider}` }),
+          log: deps.log,
+          bodyLimitBytes: messagesBodyLimitBytes,
+          servedModelSent: (model) => {
+            report?.listener?.(model);
+          },
+        },
       ),
     };
   };
@@ -571,7 +618,7 @@ export function createProviderRouteResolver(deps: {
   });
 
   /** The routing loop, which hands `noteRequestedModel` the model name the request's body carried each time a scan reads it, the first name first. */
-  const resolveByName = async (request: RoutedRequest, noteRequestedModel: (model: string | undefined) => void, noteServedModel: (provider: string, model: string) => void, noteRouted: (provider: string, model: string) => void): Promise<RouteResolution> => {
+  const resolveByName = async (request: RoutedRequest, noteRequestedModel: (model: string | undefined) => void, noteServedModel: (provider: string, model: string) => void, noteRouted: (provider: string, model: string) => void, report: Readonly<ServedModelReport>): Promise<RouteResolution> => {
     // A provider session arrives believing it is talking to Claude Code's own API (that belief is load-bearing: the CLI's Remote Control activation gate admits only that host, with no override), so its inference rides a bare /v1/ path. The rewrite to the session's provider scoped path happens here, before anything else, because the whole pipeline must see it: the body scan, the resolution and above all the route that serves, since a translating route re-derives its provider from the scoped path and a bare path would leave it unrouted. The Remote Control family never takes this branch, whichever surface serves it, because a provider serves inference, not the CCR session protocol.
     const scopedRequest = scopeSessionProviderPath(request);
     const serveScoped = (resolution: { ok: true; route: FrontDoorRoute }): { ok: true; route: FrontDoorRoute } =>
@@ -602,10 +649,15 @@ export function createProviderRouteResolver(deps: {
         routes = undefined;
       }
       // A router resolves each request's model name through the models block to a target provider, whose own kind handling and credential then serve it: the same one-scan, one-rewrite shape the `routes` list below uses. A qualified model name (a slash whose first segment names a defined provider) is resolved on every session, whatever it launched on: the picker offers every provider's models qualified, and a session that selects one is routed to the provider that serves it. Bare names are resolved everywhere, except a name the session's own provider serves itself, which stays that provider's. The Remote Control family of paths is never a provider's to serve.
-      const resolvesNames = !nameResolved && !isRcSelfHostPath(path);
+      // Only a Messages request carries a model to resolve, and only its body is read whole (under the Messages limit): any other request (a file upload, a batch) is forwarded as it arrives.
+      const isMessages = isMessagesRequest(current.method, path);
+      const resolvesNames = !nameResolved && !isRcSelfHostPath(path) && isMessages;
       if (resolvesNames) {
         // Whole-body, because a resolved name is served under its target's own model name: the qualified or virtual name the session sent is rewritten in the one copy of the body this scan holds, exactly as a `routes` entry that names a model is.
-        const scan = await scanRequestHead(current, true);
+        const scan = await scanUnderLimit(current, true);
+        if (scan.tooLarge === true) {
+          return refusedAsTooLarge(scan, messagesBodyLimitBytes, providerName);
+        }
         noteRequestedModel(scan.model);
         replay = scan.replayed;
         // An `acct:` member is served by relaunch, never by a route: one login per process. The door asks the session's supervisor to move it (when one is watching) and answers the request with what is happening, so the turn ends cleanly rather than hanging or 502-ing.
@@ -632,22 +684,23 @@ export function createProviderRouteResolver(deps: {
         }
         if (routed !== undefined) {
           routingMemory.set(current.session.sessionId ?? "", routed.ref);
-          // A name that chose its provider and its model itself (a qualified name, or a bare provider name taking its default) is served under that model; a virtual model's or a family's choice among members is recorded as a choice, not as a served model.
-          if (routed.requested === undefined) {
-            noteServedModel(routed.provider, routed.model);
-          }
+          // The provider and the model the name chose: a qualified name's, a bare provider name's default, or the member a virtual model or family selected. That is the model the provider is sent unless a `routes` entry rewrites it (`noteRouted`) or the model is `auto`, which the route's report replaces with the one it sends.
+          noteServedModel(routed.provider, routed.model);
           // A virtual model's or family's selection is a choice among alternatives, unlike a qualified name the session picked itself: only that choice is recorded for the response middleware.
           if (routed.requested !== undefined) {
             modelChoice = { requested: routed.requested, providers: routed.providers ?? [routed.provider] };
           }
           if (requested !== undefined && routed.provider === providerName && routed.model === requested) {
             // The name points back at the provider the session is already on under the name it serves: nothing to rewrite, serve it here.
-            const resolution = resolve(current);
+            const resolution = resolve(current, report);
             return resolution.ok ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url }, ...(modelChoice === undefined ? {} : { modelChoice }) } : resolution;
           }
           if (requested !== undefined && routed.model !== requested) {
+            if (scan.hasSeveralModelFields()) {
+              return { ok: false, status: HTTP_STATUS.badRequest, message: AMBIGUOUS_MODEL_MESSAGE };
+            }
             // The target receives exactly the request that matched, with exactly its model field changed.
-            replay = withModel(replay, scan.text ?? "", requested, routed.model);
+            replay = withModel(replay, scan.bytes?.() ?? Buffer.alloc(0), requested, routed.model);
           }
           if (routed.provider !== providerName) {
             const scopedPrefix = providerName === undefined ? undefined : `${PROVIDER_PATH_PREFIX}${encodeURIComponent(providerName)}`;
@@ -659,20 +712,21 @@ export function createProviderRouteResolver(deps: {
             continue;
           }
           // Same provider, renamed model: serve the rewritten body here, on the provider the session is already on.
-          const resolution = resolve(current);
+          const resolution = resolve(current, report);
           return resolution.ok ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url }, ...(modelChoice === undefined ? {} : { modelChoice }) } : resolution;
         }
       }
       if (routes === undefined || routes.length === 0) {
-        const resolution = resolve(current);
+        const resolution = resolve(current, report);
         return resolution.ok && replay !== undefined
           ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url }, ...(modelChoice === undefined ? {} : { modelChoice }) }
           : resolution.ok
-            ? serveScoped(resolution)
+            ? // Nothing read this request's body (it carries no model, or no scan was needed), so the request it is served as is the scoped one with its body as it arrived: the resolution says so, which the caller that places the request on a provider requires.
+              { ...serveScoped(resolution), request: current }
             : resolution;
       }
       // How far this request must be read: the head suffices for the model field, but a condition that names the image fact needs the whole conversation (an image anywhere is the fact, and the newest turn sits at the body's end), and so does a route that rewrites the model name. The route author's own predicate chooses the cost.
-      const whole = routes.some((entry) => entry.model !== undefined || referencesFact(entry.when, "request.hasImage"));
+      const whole = routes.some((entry) => entry.model !== undefined || WHOLE_BODY_FACTS.some((fact) => referencesFact(entry.when, `request.${fact}`)));
       // The targets' quota facts, from this identity's snapshot: a route's condition names them to skip an exhausted target. A provider the snapshot has never recorded carries no facts, so a condition naming its windows is undecided and falls through, never routing onto it by accident.
       const snapshot = deps.usageSnapshotOf?.(current.session.identity);
       const providerQuota = Object.fromEntries(
@@ -680,15 +734,16 @@ export function createProviderRouteResolver(deps: {
           return [[entry.provider, quotaFactsOf(snapshot?.providers[entry.provider]?.rateLimit?.unified, Date.now())]];
         }),
       );
-      const scan = await scanRequestHead(current, whole);
+      const scan = await scanUnderLimit(current, whole && isMessages);
+      if (scan.tooLarge === true) {
+        return refusedAsTooLarge(scan, messagesBodyLimitBytes, providerName);
+      }
       noteRequestedModel(scan.model);
       replay = scan.replayed;
       const requestFacts = {
         ...(scan.model === undefined ? {} : { model: scan.model }),
-        ...(scan.hasImage === undefined ? {} : { hasImage: scan.hasImage }),
-        ...(scan.toolsPresent === undefined ? {} : { toolsPresent: scan.toolsPresent }),
-        ...(scan.thinking === undefined ? {} : { thinking: scan.thinking }),
-        ...(scan.maxTokens === undefined ? {} : { maxTokens: scan.maxTokens }),
+        // One rule for every fact read off the text of the body: decided from a whole body, and from a head only when the head matched (a head that shows no image, tools, thinking or `max_tokens` says nothing about the rest of the body).
+        ...wholeBodyFactsOf(scan),
         ...(scan.isCountTokens === undefined ? {} : { isCountTokens: scan.isCountTokens }),
       };
       const context: ConditionContext = { nowMs: Date.now(), env: deps.env, providerQuota, ...(Object.keys(requestFacts).length === 0 ? {} : { request: requestFacts }) };
@@ -701,12 +756,15 @@ export function createProviderRouteResolver(deps: {
         }
       }
       if (matched === undefined) {
-        const resolution = resolve(current);
+        const resolution = resolve(current, report);
         return resolution.ok ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url }, ...(modelChoice === undefined ? {} : { modelChoice }) } : resolution;
       }
-      if (matched.model !== undefined && scan.text !== undefined && scan.model !== undefined) {
+      if (matched.model !== undefined && scan.bytes !== undefined && scan.model !== undefined) {
+        if (scan.hasSeveralModelFields()) {
+          return { ok: false, status: HTTP_STATUS.badRequest, message: AMBIGUOUS_MODEL_MESSAGE };
+        }
         // The target receives exactly the request that matched, with exactly its model field changed.
-        replay = withModel(replay, scan.text, scan.model, matched.model);
+        replay = withModel(replay, scan.bytes(), scan.model, matched.model);
       }
       // The model the target is sent is the one it serves the request under, whatever name first chose the provider: the match's own model when it rewrites, else the name the body already carries. A later match in a chain replaces an earlier one, since the last target is where the request is served.
       const sentModel = matched.model ?? scan.model;
@@ -769,6 +827,7 @@ export function createProviderRouteResolver(deps: {
       // The first scan reads the body as the client sent it; a later one reads a target's rewrite, which is not what the session asked for.
       let requestedModel: string | undefined;
       let served: { readonly provider: string; readonly model: string } | undefined;
+      const report: ServedModelReport = {};
       const resolution = await resolveByName(
         request,
         (model) => {
@@ -780,12 +839,12 @@ export function createProviderRouteResolver(deps: {
         (provider, model) => {
           served = { provider, model };
         },
+        report,
       );
       if (!resolution.ok) {
         return resolution;
       }
-      const servedModel = served === undefined ? undefined : served.model;
-      return { ...resolution, ...(requestedModel === undefined ? {} : { requestedModel }), ...(servedModel === undefined ? {} : { servedModel }) };
+      return { ...resolution, servedModelReport: report, ...(requestedModel === undefined ? {} : { requestedModel }), ...(served === undefined ? {} : { servedModel: served.model }) };
     },
     { record: deps.mainLoopRoutes, providerMapping, loginOf, definesProvider },
   );

@@ -67,7 +67,7 @@ import { serveRouted, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
 import { createMainLoopRouteRecord } from "./mainLoopRoute";
 import { readModels } from "../modelsStore";
-import { storedCatalogueModelsPort } from "./cachedCatalogue";
+import { servedModelPorts } from "./cachedCatalogue";
 import { FRONTDOOR_START_TIMEOUT_MS } from "./ensure";
 import type { ListenSource, Predecessor } from "./handover";
 import { predecessorOfThisProcess, realHandOverListeners } from "./realHandover";
@@ -323,7 +323,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       observations: (target) => observations.observation(target),
       accountMoves: async (sessionId, to, model) => await requestAccountMove({ fs: realFarmFs, paths, runningAmong: realRunningAmong, idOf: (name) => identityIdOf(paths, name), now: () => Date.now() }, sessionId, to, model),
       ...(rcSelfHostSurface === undefined ? {} : { rcSelfHostRoute: rcSelfHostSurface.route }),
-      ...storedCatalogueModelsPort(paths), log, now: () => Date.now(), mainLoopRoutes: createMainLoopRouteRecord({ holdsLaunch: sessionRegistry.holdsLaunch, stored: launchRouteStore(realFarmFs, paths.frontdoorSessionsDir, log), log }),
+      ...servedModelPorts(paths, log), log, now: () => Date.now(), mainLoopRoutes: createMainLoopRouteRecord({ holdsLaunch: sessionRegistry.holdsLaunch, stored: launchRouteStore(realFarmFs, paths.frontdoorSessionsDir, log), log }),
     }),
     rcTracker,
     rcHub,

@@ -6,6 +6,7 @@ import { HTTP_STATUS } from "../codex/http";
 import type { CodexRoutePorts } from "../codex/route";
 import { fakeAuth, fakeResponse, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
 import { type ModelsConfig } from "../config/schema";
+import { realCatalogueFetch } from "../realCatalogueRefresh";
 import { FAKE_HOME, editableFakeFs, fakeAsyncCredentials, followsLaunchFlag, launchOf, mainLoopRoutesOfLiveSessions } from "../test-helpers";
 import { createUsageMiddleware } from "../usage/middleware";
 import type { UsageRecord } from "../usage/schema";
@@ -43,6 +44,8 @@ export const HAIKU_NAME = "claude-haiku-5-5";
 export const Z_HAIKU_MODEL = "glm-4.5-air";
 export const Z_SONNET_MODEL = "glm-4.7";
 export const Z_OPUS_MODEL = "glm-5.3-pro";
+/** The one model the stand-in upstream lists on `GET /v1/models`, which the model `auto` follows. */
+export const LIVE_SERVED_MODEL = "live-served-model";
 /** The models an http provider serves per tier, as the tier environment names them. */
 export const Z_TIER_MODELS = { haiku: Z_HAIKU_MODEL, sonnet: Z_SONNET_MODEL, opus: Z_OPUS_MODEL } as const;
 
@@ -77,14 +80,21 @@ afterEach(async () => {
 const UNPARSEABLE_BODY = "(the body was not JSON)";
 
 /** An Anthropic-compatible upstream that records each request's path and model, answering `status`, and answering 400 to a body that is not JSON. */
-async function fakeUpstream(status: number = HTTP_STATUS.ok): Promise<{ readonly port: number; readonly seen: UpstreamSeen[] }> {
+async function fakeUpstream(status: number = HTTP_STATUS.ok): Promise<{ readonly port: number; readonly seen: UpstreamSeen[]; readonly serveOnly: (model: string | undefined) => void }> {
   const seen: UpstreamSeen[] = [];
+  // The one model the server serves when a test sets it: its list names it and a request for any other is answered as an unknown model; unset, the list names `LIVE_SERVED_MODEL` and every request is served.
+  let only: string | undefined;
   const server = http.createServer((incoming, response) => {
     const chunks: Buffer[] = [];
     incoming.on("data", (chunk: Buffer) => {
       chunks.push(chunk);
     });
     incoming.on("end", () => {
+      if (incoming.method === "GET" && incoming.url === "/v1/models") {
+        response.writeHead(HTTP_STATUS.ok, { "content-type": "application/json" });
+        response.end(JSON.stringify({ data: [{ id: only ?? LIVE_SERVED_MODEL }] }));
+        return;
+      }
       let parsed: unknown;
       try {
         parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
@@ -95,6 +105,11 @@ async function fakeUpstream(status: number = HTTP_STATUS.ok): Promise<{ readonly
         return;
       }
       seen.push({ url: incoming.url ?? "", model: typeof parsed === "object" && parsed !== null && "model" in parsed ? parsed.model : undefined });
+      if (only !== undefined && typeof parsed === "object" && parsed !== null && "model" in parsed && parsed.model !== only) {
+        response.writeHead(HTTP_STATUS.notFound, { "content-type": "application/json" });
+        response.end(JSON.stringify({ type: "error", error: { type: "not_found_error", message: `The model \`${String(parsed.model)}\` does not exist.` } }));
+        return;
+      }
       response.writeHead(status, { "content-type": "application/json" });
       response.end(status === HTTP_STATUS.ok ? JSON.stringify({ type: "message", model: Z_HAIKU_MODEL, usage: { input_tokens: 1, output_tokens: 1 } }) : JSON.stringify({ type: "error", error: { type: "rate_limit_error", message: "slow down" } }));
     });
@@ -107,7 +122,7 @@ async function fakeUpstream(status: number = HTTP_STATUS.ok): Promise<{ readonly
   if (address === null || typeof address === "string") {
     throw new Error("upstream has no TCP address");
   }
-  return { port: (address satisfies AddressInfo).port, seen };
+  return { port: (address satisfies AddressInfo).port, seen, serveOnly: (model) => { only = model; } };
 }
 
 /** The codex translator's ports over `fetch`, with the fixed-token auth store. */
@@ -163,7 +178,7 @@ export function standingInForAnthropic(resolve: (request: RoutedRequest) => Prom
 
 export interface World {
   readonly url: string;
-  readonly upstream: { readonly seen: UpstreamSeen[] };
+  readonly upstream: { readonly seen: UpstreamSeen[]; readonly serveOnly: (model: string | undefined) => void };
   /** The port of the `http` provider `z`'s upstream, for a test that rewrites the provider's file. */
   readonly upstreamPort: number;
   readonly codexCalls: readonly { readonly init: { readonly body?: string } }[];
@@ -180,7 +195,7 @@ export interface World {
 }
 
 /** The ports the door reads the models the providers serve through. */
-export type ModelPorts = Readonly<Pick<Parameters<typeof createProviderRouteResolver>[0], "targets" | "catalogueModelsOf">>;
+export type ModelPorts = Readonly<Pick<Parameters<typeof createProviderRouteResolver>[0], "targets" | "catalogueModelsOf" | "catalogueFetch">>;
 
 /** A door serving an `http` provider `z` (whose tier environment maps haiku) and a `codex` provider `cx`, with the usage middleware recording into `records`. */
 export async function startWorld(
@@ -215,6 +230,7 @@ export async function startWorld(
     directPort: () => OWN_PORT,
     env: {},
     credentials: fakeAsyncCredentials(),
+    catalogueFetch: realCatalogueFetch,
     ...(models === undefined ? {} : { models: () => models }),
     ...modelPorts,
   });

@@ -2,11 +2,14 @@ import type { IncomingHttpHeaders } from "node:http";
 import { Readable } from "node:stream";
 
 import { HTTP_STATUS } from "../codex/http";
-import type { RouteResolution } from "./pipeline";
+import type { RouteResolution, ServedModelReport } from "./pipeline";
 import { RequestClassSchema, type RequestClass } from "../usage/schema";
+import { AUTO_MODEL } from "../models/reservedModelNames";
 import { PROVIDER_PATH_PREFIX, internalHeaderValue, parseProviderPath, type RoutedRequest } from "./route";
-import { scanRequestHead } from "./requestScan";
-import { topLevelModel } from "./topLevelModel";
+import { withoutContentLength } from "./contentLength";
+import { REQUEST_SCAN_CAP_BYTES, type RequestScan, scanRequestHead } from "./requestScan";
+import { isMessagesInferencePath, isMessagesRequest } from "./messagesBodyLimit";
+import { AMBIGUOUS_MODEL_MESSAGE, topLevelModel } from "./topLevelModel";
 import { claudeNameTier } from "../models/tiers";
 import { MAX_CONTEXT_TEXT_LENGTH, launchKeyOf, type FrontDoorLaunch, type MainLoopRouteStore, type RouteContext } from "./state";
 
@@ -42,8 +45,10 @@ export function requestClassOf(headers: Readonly<IncomingHttpHeaders>): RequestC
  * What the door remembers about each launch's main loop: where its most recent main-loop request was served, so the launch's helper requests (hook judges, titles, compaction summaries, subagents, side replies) follow it there. Keyed on the launch (its pid and start time) that the request's capability identifies, never on the session id: a `--resume` or an account-move relaunch carries the same session id, and two launches can be live under one id (`--resume` or `--continue` twice in one directory), each with its own main loop. Persisted beside the launch's registry record, so a restarted or replacing door keeps a session's helpers on the provider its main loop is on.
  */
 export interface MainLoopRouteRecord {
-  /** Records where `launch`'s latest main-loop request was served. */
-  readonly record: (launch: Readonly<FrontDoorLaunch>, route: RouteContext) => void;
+  /** Records where `launch`'s latest main-loop request was served; a launch that is not registered records nothing. */
+  readonly record: (launch: Readonly<FrontDoorLaunch>, route: RouteContext, ticket?: number) => void;
+  /** Starts a main-loop request of `launch`: the ticket it records under. Tickets rise in the order requests start, and a record under a ticket lower than the latest one recorded is dropped, so a request that started earlier and finishes later never overwrites a newer request's context. */
+  readonly begin: (launch: Readonly<FrontDoorLaunch>) => number;
   /** Where `launch`'s latest main-loop request was served, or undefined when none has been recorded. */
   readonly routeOf: (launch: Readonly<FrontDoorLaunch>) => RouteContext | undefined;
 }
@@ -77,6 +82,9 @@ export function createMainLoopRouteRecord(ports: MainLoopRoutePorts): MainLoopRo
     readonly identity: string | undefined;
   }
   const routes = new Map<string, Entry>();
+  // `issued` holds the latest ticket handed out for each launch, with the launch it was handed to (which is what tells that it has ended): its entry appears when the launch's first request begins, before any route is recorded. `recordedUnder` holds the latest ticket a route was recorded under: its entry appears at the first record, so a launch whose requests all began and none recorded has no entry. Both go together, when a request of another launch finds the launch no longer registered.
+  const issued = new Map<string, { readonly launch: FrontDoorLaunch; readonly ticket: number }>();
+  const recordedUnder = new Map<string, number>();
   // The launches whose durable copy failed to write, so a store that keeps failing is reported once per launch until a write succeeds, not once per request. A failure to read is reported once per identity of the copy by the read itself.
   const failed = new Set<string>();
   const dropEnded = (except: string): void => {
@@ -84,6 +92,12 @@ export function createMainLoopRouteRecord(ports: MainLoopRoutePorts): MainLoopRo
       if (held !== except && !ports.holdsLaunch(entry.launch)) {
         routes.delete(held);
         failed.delete(held);
+      }
+    }
+    for (const [held, entry] of issued) {
+      if (held !== except && !ports.holdsLaunch(entry.launch)) {
+        issued.delete(held);
+        recordedUnder.delete(held);
       }
     }
   };
@@ -117,9 +131,26 @@ export function createMainLoopRouteRecord(ports: MainLoopRoutePorts): MainLoopRo
     return { launch, route: stored, persisted: stored, identity };
   };
   return {
-    record: (launch, route) => {
+    begin: (launch) => {
       const key = launchKeyOf(launch);
       dropEnded(key);
+      const ticket = (issued.get(key)?.ticket ?? 0) + 1;
+      issued.set(key, { launch: { pid: launch.pid, startedAt: launch.startedAt }, ticket });
+      return ticket;
+    },
+    record: (launch, route, ticket) => {
+      // A launch that has ended holds no slot: a late write, such as the report of a request that outlived it, must not make an entry or a context file for it.
+      if (!ports.holdsLaunch(launch)) {
+        return;
+      }
+      const key = launchKeyOf(launch);
+      dropEnded(key);
+      if (ticket !== undefined) {
+        if (ticket < (recordedUnder.get(key) ?? 0)) {
+          return;
+        }
+        recordedUnder.set(key, ticket);
+      }
       // Written only when the durable copy differs: the main loop's every request records, and the route rarely moves.
       const before = routes.get(key);
       const persisted = persist(launch, key, route, before?.persisted);
@@ -153,11 +184,6 @@ export function createMainLoopRouteRecord(ports: MainLoopRoutePorts): MainLoopRo
       return entry.route;
     },
   };
-}
-
-/** Whether a path is a Messages API inference call (`/v1/messages` or one of its sub-resources, `count_tokens` among them): the only requests a session's model choice governs, and so the only ones that record or follow it. */
-function isInferencePath(path: string): boolean {
-  return path === "/v1/messages" || path.startsWith("/v1/messages/");
 }
 
 /** What a provider does with a Claude model name a session asks for while its main loop is on that provider: serves it as it is, serves it under another name, or has no model for it and the request is refused with the reason. */
@@ -210,10 +236,30 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
     return { ...route, ...facts };
   };
 
+  /**
+   * Records the context of a main-loop request served by `resolution` under the request's `ticket`, and keeps it true of what the route finally sends: a route that learns the model it sends only when it serves (the model `auto` read from the server's list, a retry under the model a refreshed list names) reports it through `resolution.servedModelReport`, and the context is recorded again with it. Every record goes under the ticket the request took when it started, so neither a late report nor a request that finishes late overwrites the context of a request that started after it, and a launch that has ended records nothing. Every main-loop record of a request that can send a model through the editing wrapper goes through here, so none can be left reporting to nobody.
+   */
+  const recordServing = (launch: Readonly<FrontDoorLaunch>, ticket: number, resolution: Readonly<{ readonly servedModelReport?: ServedModelReport }>, contextFor: (servedModel: string | undefined) => RouteContext, servedModel: string | undefined): void => {
+    deps.record.record(launch, contextFor(servedModel), ticket);
+    if (resolution.servedModelReport !== undefined) {
+      resolution.servedModelReport.listener = (sent) => {
+        deps.record.record(launch, contextFor(sent), ticket);
+      };
+    }
+  };
+
+  /** The model a provider route is recorded as sent before the route has reported one: `auto` asks the server to name the model, so it is no model that was sent, and nothing is recorded until the route says which. */
+  const unlessAuto = (model: string | undefined): string | undefined => (model === AUTO_MODEL ? undefined : model);
+
   /** `base` placed on the Anthropic route under its bare model name, for a request that asked for `requested` as `anthropic/<model>`. */
   const toAnthropic = async (base: RoutedRequest, requested: string): Promise<{ readonly resolution: RouteResolution; readonly served: string }> => {
     const served = requested.slice(ANTHROPIC_PREFIX.length);
-    const scan = await scanRequestHead(base);
+    // The rewrite below changes only the first of two model fields, so the head is inspected for a second one first: this site always rewrites, so it always inspects those bytes (the whole body when it ends sooner).
+    const found = await scanRequestHead(base);
+    const scan = await scanRequestHead(found.replayed, false, REQUEST_SCAN_CAP_BYTES);
+    if (scan.hasSeveralModelFields()) {
+      return { resolution: { ok: false, status: HTTP_STATUS.badRequest, message: AMBIGUOUS_MODEL_MESSAGE }, served };
+    }
     const rewritten = withModelInHead(scan.replayed, scan.headBytes, requested, served);
     const resolution = await resolve({ ...rewritten, url: base.url });
     return { resolution: resolution.ok ? { ...resolution, requestedModel: requested } : resolution, served };
@@ -221,21 +267,28 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
 
   /** `base` placed on `provider`, scoped under its path, with its model name mapped through the provider's tier mapping; the head is all the mapping needs, and the rest of the body, a whole conversation for a compaction or a subagent, streams through unread. */
   const toProvider = async (base: RoutedRequest, provider: string, session: RoutedRequest["session"]): Promise<{ readonly resolution: RouteResolution; readonly requested: string | undefined; readonly served: string | undefined; readonly credential: string | undefined }> => {
-    // A body already read to its end (an empty one the resolver scanned) has no head to read again and nothing to rewrite.
-    const scan = base.body.readableEnded ? { model: undefined, headBytes: 0, replayed: undefined } : await scanRequestHead(base);
+    // Only a Messages request carries a model to map, and only its head is read: any other request on a Messages sub-resource (a batch, its results, a listing, a GET) is placed on the provider with its body untouched, as it arrived. A body already read to its end (an empty one the resolver scanned) has no head to read again and nothing to rewrite.
+    const carriesModel = isMessagesRequest(base.method, new URL(base.url, "http://127.0.0.1").pathname);
+    const scan: RequestScan = base.body.readableEnded || !carriesModel ? { model: undefined, headBytes: 0, hasSeveralModelFields: () => false, replayed: undefined } : await scanRequestHead(base);
     const requested = scan.model;
     const { model: choice, credential } = deps.providerMapping(provider, session, requested ?? "");
     if (choice.kind === "refused") {
       return { resolution: { ok: false, status: HTTP_STATUS.badRequest, message: choice.message }, requested, served: undefined, credential };
     }
-    const replayed = scan.replayed ?? base;
-    const body = choice.kind === "as-is" || requested === undefined ? replayed : withModelInHead(replayed, scan.headBytes, requested, choice.model);
+    // A request that is forwarded as it is never waits for more of its body than the scan needed to find its model. A rewrite changes only the first of two model fields, so before it the head is inspected for a second one: only a rewrite waits for those bytes, and a request that names the field twice is refused where it would be rewritten.
+    const rewriting = choice.kind === "mapped" && requested !== undefined;
+    const inspected = rewriting && scan.replayed !== undefined ? await scanRequestHead(scan.replayed, false, REQUEST_SCAN_CAP_BYTES) : scan;
+    if (rewriting && inspected.hasSeveralModelFields()) {
+      return { resolution: { ok: false, status: HTTP_STATUS.badRequest, message: AMBIGUOUS_MODEL_MESSAGE }, requested, served: undefined, credential };
+    }
+    const replayed = inspected.replayed ?? base;
+    const body = choice.kind === "as-is" || requested === undefined ? replayed : withModelInHead(replayed, inspected.headBytes, requested, choice.model);
     const scoped: RoutedRequest = { ...body, url: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(provider)}${base.url}` };
     const resolution = await resolve(scoped);
     if (!resolution.ok) {
       return { resolution, requested, served: undefined, credential };
     }
-    // The pipeline serves and hops with the request it received, which names no provider, unless the resolution carries the request it served: the provider resolver always does for the body-carrying request this is, and a resolver that does not breaks the contract this routing stands on, so it is refused rather than served the unscoped request.
+    // The pipeline serves and hops with the request it received, which names no provider, unless the resolution carries the request it served: the provider resolver always does, for a request whose body it scanned (the replay) and for any other (the scoped request, its body untouched), and a resolver that does not breaks the contract this routing stands on, so it is refused rather than served the unscoped request.
     if (resolution.request === undefined) {
       return { resolution: { ok: false, status: HTTP_STATUS.internalServerError, message: "the provider resolver served a request without saying which request it served" }, requested, served: undefined, credential };
     }
@@ -245,16 +298,17 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
   return async (request) => {
     const { launch, provider } = request.session;
     const path = new URL(request.url, "http://127.0.0.1").pathname;
-    if (launch === undefined || provider !== undefined || !isInferencePath(path)) {
+    if (launch === undefined || provider !== undefined || !isMessagesInferencePath(path)) {
       return await resolve(request);
     }
     const requestClass = requestClassOf(request.headers);
+    const ticket = deps.record.begin(launch);
     const current = deps.record.routeOf(launch);
     if (requestClass !== undefined && requestClass !== MAIN_REQUEST_CLASS) {
-      // A helper is placed by the context before anything resolves it.
-      const scan = await scanRequestHead(request);
-      const helper = scan.replayed;
-      if (scan.model?.startsWith(ANTHROPIC_PREFIX) === true && !deps.definesProvider("anthropic")) {
+      // A helper is placed by the context before anything resolves it. Only a Messages request carries a model, so only its head is read: any other request on a Messages sub-resource goes on with its body untouched.
+      const scan = isMessagesRequest(request.method, path) ? await scanRequestHead(request) : undefined;
+      const helper = scan?.replayed ?? request;
+      if (scan?.model?.startsWith(ANTHROPIC_PREFIX) === true && !deps.definesProvider("anthropic")) {
         return (await toAnthropic(helper, scan.model)).resolution;
       }
       if (current === undefined || current.kind === "anthropic") {
@@ -274,45 +328,60 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
       if (requested?.startsWith(ANTHROPIC_PREFIX) === true && !deps.definesProvider("anthropic")) {
         const placed = await toAnthropic(base, requested);
         if (placed.resolution.ok) {
-          deps.record.record(launch, contextOf({ kind: "anthropic" }, deps.loginOf(request.session), requested, placed.served));
+          recordServing(launch, ticket, placed.resolution, (servedModel) => contextOf({ kind: "anthropic" }, deps.loginOf(request.session), requested, servedModel), placed.served);
         }
         return placed.resolution;
       }
       if (current?.kind === "provider") {
         const placed = await toProvider(base, current.provider, request.session);
         // Only a Claude name asked for on the main loop is a fact about it worth recording, and the route stays what it was: a request that chose no route moves nothing.
-        if (placed.resolution.ok && requested !== undefined && isBareClaudeName(requested)) {
-          deps.record.record(launch, contextOf({ kind: "provider", provider: current.provider }, placed.credential, requested, placed.served));
+        if (placed.resolution.ok && requested !== undefined && (isBareClaudeName(requested) || requested === AUTO_MODEL)) {
+          recordServing(launch, ticket, placed.resolution, (servedModel) => contextOf({ kind: "provider", provider: current.provider }, placed.credential, requested, servedModel), unlessAuto(placed.served));
         }
         return placed.resolution;
       }
     }
-    // Served where the resolver put it. A virtual model's or a family's served name is the member's, which the resolution does not carry, so only a model the resolution says it served (a qualified name, a bare provider name's default, the live model of `auto`) or an unchanged name is recorded as served.
+    // Only a Messages request is a turn of the main loop: any other request (a batch, its results, a listing) is served where the resolver put it and is a fact about no turn, so it leaves the context, and the model and credential recorded for the last turn, as they were.
+    if (!isMessagesRequest(request.method, path)) {
+      return resolution;
+    }
+    // Served where the resolver put it, and recorded with the model the resolution says it is sent: a qualified name's, a bare provider name's default, the member a virtual model or family selected, the one a `routes` entry rewrote it to, or, for the model `auto`, none until the route's report names the one it sent. A request that left the Anthropic route is recorded under the name it asked for.
     const route: RouteOf = served === undefined ? { kind: "anthropic" } : { kind: "provider", provider: served };
-    const qualified = served !== undefined && requested?.startsWith(`${served}/`) === true ? requested.slice(served.length + 1) : undefined;
-    const servedModel = resolution.servedModel ?? qualified ?? (served === undefined ? requested : undefined);
+    const servedModel = resolution.servedModel ?? (served === undefined ? requested : undefined);
     // The credential is named from the provider's file as read for this request, which is read for every request anyway, so an edited credential block shows its new name at the next one.
     const credential = served === undefined ? deps.loginOf(request.session) : deps.providerMapping(served, request.session, "").credential;
-    deps.record.record(launch, contextOf(route, credential, requested, servedModel));
+    recordServing(launch, ticket, resolution, (model) => contextOf(route, credential, requested, model), served === undefined ? servedModel : unlessAuto(servedModel));
     return resolution;
   };
 }
 
-/** The text of `value` as the bytes of its UTF-8 encoding, one character per byte, so a pattern over it matches bytes and a rewrite can be turned back into exactly the bytes it came from. */
-function asBytes(value: string): string {
-  return Buffer.from(value, "utf8").toString("latin1");
+/** The name the model field at `span` of `head` spells: the literal's bytes read as the UTF-8 text they are and decoded, so a name spelt with escapes or non-ASCII characters is compared as the name it is. */
+function decodedSpan(head: Buffer, span: Readonly<{ readonly start: number; readonly end: number }>): string | undefined {
+  try {
+    const decoded: unknown = JSON.parse(head.subarray(span.start, span.end).toString("utf8"));
+    return typeof decoded === "string" ? decoded : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `bytes` as the slices of it a rewrite of the model field would join: the bytes before the field, the new name, the bytes after (views of `bytes`, never copies of it), or `bytes` whole when the field does not spell `from`. */
+function rewritingModelSegments(bytes: Buffer, from: string, to: string): readonly Buffer[] {
+  const found = topLevelModel(bytes.toString("latin1"));
+  return found !== undefined && decodedSpan(bytes, found) === from ? [bytes.subarray(0, found.start), Buffer.from(JSON.stringify(to), "utf8"), bytes.subarray(found.end)] : [bytes];
+}
+
+/** `bytes` with the span of its top-level model field replaced by `to`, when the field spells the name `from`; every other byte, whatever it is (text that is not UTF-8 included), as it came. `bytes` is viewed one character per byte for the walk, which looks only at ASCII structure, so the offsets it finds are byte offsets. */
+function rewritingModelBytes(bytes: Buffer, from: string, to: string): Buffer {
+  const segments = rewritingModelSegments(bytes, from, to);
+  return segments.length === 1 ? bytes : Buffer.concat(segments);
 }
 
 /**
  * `request` with the model field in the first `headBytes` bytes of its body changed from `from` to `to`, and every other byte, the head's and the rest's, passed through exactly as it came: the rest streams on under the replay's backpressure and is never held. Unlike `withModel` it needs no copy of the body, which is what lets a helper that carries a whole conversation be rewritten without reading it. The framing header goes, because the new name is a different length.
  */
 export function withModelInHead(request: RoutedRequest, headBytes: number, from: string, to: string): RoutedRequest {
-  // The head's bytes viewed one character each: `topLevelModel` looks only at ASCII structure, so the offsets it finds are byte offsets.
-  const rewriteHead = (head: Buffer): Buffer => {
-    const text = head.toString("latin1");
-    const found = topLevelModel(text);
-    return found?.value === asBytes(from) ? Buffer.from(`${text.slice(0, found.start)}${asBytes(JSON.stringify(to))}${text.slice(found.end)}`, "latin1") : head;
-  };
+  const rewriteHead = (head: Buffer): Buffer => rewritingModelBytes(head, from, to);
   async function* rewritten(): AsyncGenerator<Buffer> {
     let held = Buffer.alloc(0);
     let headDone = false;
@@ -336,16 +405,15 @@ export function withModelInHead(request: RoutedRequest, headBytes: number, from:
       yield rewriteHead(held);
     }
   }
-  const headers = Object.fromEntries(Object.entries(request.headers).filter(([name]) => name.toLowerCase() !== "content-length"));
+  const headers = withoutContentLength(request.headers);
   return { ...request, headers, body: Readable.from(rewritten()) };
 }
 
 /**
- * `request` with its body's model field changed from `from` to `to`, rewritten in the one copy of the body a whole-body scan holds (`text`), exactly one field changed. The framing header goes, because the new name is a different length and the forward re-frames the body itself.
+ * `request` with its body's model field changed from `from` to `to`, rewritten by span in the bytes a whole-body scan read (`bytes`), exactly one field changed and every other byte as it came. The framing header goes, because the new name is a different length and the forward re-frames the body itself.
  */
-export function withModel(request: RoutedRequest, text: string, from: string, to: string): RoutedRequest {
-  const found = topLevelModel(text);
-  const rewritten = found?.value === from ? `${text.slice(0, found.start)}${JSON.stringify(to)}${text.slice(found.end)}` : text;
-  const headers = Object.fromEntries(Object.entries(request.headers).filter(([name]) => name.toLowerCase() !== "content-length"));
-  return { ...request, headers, body: Readable.from([Buffer.from(rewritten, "utf8")]) };
+export function withModel(request: RoutedRequest, bytes: Buffer, from: string, to: string): RoutedRequest {
+  const headers = withoutContentLength(request.headers);
+  // The three slices are streamed as they are: joining them would copy the whole body once more for nothing.
+  return { ...request, headers, body: Readable.from(rewritingModelSegments(bytes, from, to)) };
 }

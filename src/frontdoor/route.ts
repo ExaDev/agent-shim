@@ -66,6 +66,11 @@ export const HOP_SECRET_HEADER = "x-agent-shim-hop";
  */
 export const HOP_ID_HEADER = "x-agent-shim-hop-id";
 
+/**
+ * The model a request was finally sent under, carried back from the direct listener to the client-facing hop over the response head, URI-encoded (a model id may hold characters a header value cannot). Set only by a pipeline that answers the hop (`PipelineDeps.answersHeadroomHop`), from what its own route reported; every pipeline drops any copy of it from a head its route supplies, so an upstream server that sends one is never believed and no head the client receives carries one, and the client-facing hop reads it from the head the direct listener answered with. A request that carries the header is never read for it: it is a response header.
+ */
+export const SERVED_MODEL_HEADER = "x-agent-shim-served-model";
+
 
 /** What the identity step learned about one request from the launcher-injected headers. */
 export interface SessionIdentity {

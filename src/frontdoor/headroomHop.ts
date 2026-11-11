@@ -7,7 +7,7 @@ import { HTTP_STATUS } from "../codex/http";
 import type { HeadroomSocketTarget } from "../headroom/socket";
 import { forwardableHeaders } from "./connect";
 import type { CredentialCustody } from "./custody";
-import { HEADROOM_BASE_URL_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, CLIENT_SESSION_HEADER, PROJECT_ID_HEADER, PROVIDER_HEADER, parseProviderPath, type RoutedRequest, type RoutedResponse } from "./route";
+import { HEADROOM_BASE_URL_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, SERVED_MODEL_HEADER, CLIENT_SESSION_HEADER, PROJECT_ID_HEADER, PROVIDER_HEADER, parseProviderPath, type RoutedRequest, type RoutedResponse } from "./route";
 import { lineageOf, type Lineage } from "./lineage";
 import { upstreamChunks } from "./server";
 
@@ -27,6 +27,19 @@ export interface HeadroomHopDeps {
   /** Holds a provider session's real credentials while its request crosses headroom; the direct listener redeems them by the hop id. */
   readonly custody: CredentialCustody;
   readonly log: (line: string) => void;
+}
+
+/** The model the direct listener reported sending, from the head of the hop's response (`SERVED_MODEL_HEADER`, URI-encoded; the pipeline drops the header from the head forwarded to the client), or undefined when the response carries none, carries it more than once, or carries what does not decode to a name. */
+function servedModelOf(headers: Readonly<IncomingHttpHeaders>): string | undefined {
+  const value = headers[SERVED_MODEL_HEADER];
+  if (typeof value !== "string" || value === "") {
+    return undefined;
+  }
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -54,7 +67,7 @@ export interface HopFacts {
   readonly requestedModel: string | undefined;
 }
 
-export async function applyHeadroomHop(request: RoutedRequest, response: RoutedResponse, upstream: string | undefined, deps: HeadroomHopDeps, onFacts: (facts: HopFacts) => void): Promise<void> {
+export async function applyHeadroomHop(request: RoutedRequest, response: RoutedResponse, upstream: string | undefined, deps: HeadroomHopDeps, onFacts: (facts: HopFacts) => void, onServedModel: (model: string) => void): Promise<void> {
   const target = deps.headroomSocket();
   if (target === undefined) {
     await answerBadGateway(response, "agent-shim front door: the headroom daemon is restarting");
@@ -94,7 +107,7 @@ export async function applyHeadroomHop(request: RoutedRequest, response: RoutedR
   }
   headers[HOP_SECRET_HEADER] = deps.hopSecret;
   try {
-    await forwardThroughHeadroom(request, response, { socketPath, headers, log: deps.log, onFacts });
+    await forwardThroughHeadroom(request, response, { socketPath, headers, log: deps.log, onFacts, onServedModel });
   } finally {
     // The hop is over (answered, failed, or abandoned by the client): its custody id stops redeeming, so a copy of it seen anywhere along the way is worthless from here on.
     if (hopId !== undefined) {
@@ -250,7 +263,7 @@ function hopFactsOf(body: Buffer): HopFacts {
 async function forwardThroughHeadroom(
   request: RoutedRequest,
   response: RoutedResponse,
-  target: { readonly socketPath: string; readonly headers: Readonly<Record<string, string | string[] | undefined>>; readonly log: (line: string) => void; readonly onFacts: (facts: HopFacts) => void },
+  target: { readonly socketPath: string; readonly headers: Readonly<Record<string, string | string[] | undefined>>; readonly log: (line: string) => void; readonly onFacts: (facts: HopFacts) => void; readonly onServedModel: (model: string) => void },
 ): Promise<void> {
   const collected = await collectBody(request.body);
   if (collected.kind === "failed") {
@@ -278,13 +291,17 @@ async function forwardThroughHeadroom(
 async function hopOnce(
   request: RoutedRequest,
   response: RoutedResponse,
-  target: { readonly socketPath: string; readonly headers: Readonly<Record<string, string | string[] | undefined>>; readonly log: (line: string) => void },
+  target: { readonly socketPath: string; readonly headers: Readonly<Record<string, string | string[] | undefined>>; readonly log: (line: string) => void; readonly onServedModel: (model: string) => void },
   body: Buffer,
   mayRetry: boolean,
 ): Promise<"settled" | "retry"> {
   const { socketPath, headers } = target;
   return await new Promise<"settled" | "retry">((resolve) => {
     const onUpstreamResponse = (upstreamResponse: IncomingMessage): void => {
+      const servedModel = servedModelOf(upstreamResponse.headers);
+      if (servedModel !== undefined) {
+        target.onServedModel(servedModel);
+      }
       response.start(upstreamResponse.statusCode ?? HTTP_BAD_GATEWAY, responseHeaders(upstreamResponse.headers));
       // Headers go out before the first body byte: a streaming (SSE) response must reach the client as its chunks arrive, not when it completes.
       response.flush();

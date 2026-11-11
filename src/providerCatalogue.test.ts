@@ -299,6 +299,12 @@ describe("a model id a catalogue lists", () => {
   it.each([
     ["one made of control characters", "a\nfront door: forged"],
     ["one that holds a tab", "a\tb"],
+    ["one that holds DEL", "a\u007fb"],
+    ["one that holds a C1 control", "a\u009bb"],
+    ["one that holds a line separator", "a\u2028b"],
+    ["one that holds a paragraph separator", "a\u2029b"],
+    ["one that holds a zero-width joiner", "a\u200db"],
+    ["one that holds a bidirectional override", "a\u202eb"],
     ["one past the bound", "x".repeat(CATALOGUE_MODEL_ID_MAX_CHARS + 1)],
   ])("is not taken: %s, as a bare id or as an object's id", (_label, id) => {
     expect(parseCatalogueBody({ data: [id, { id }, { id: "kept" }] })).toEqual([{ id: "kept" }]);

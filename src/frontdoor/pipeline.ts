@@ -7,7 +7,7 @@ import { applyHeadroomHop, headroomReady, type HeadroomHopDeps } from "./headroo
 import { requestClassOf } from "./mainLoopRoute";
 import type { Lineage } from "./lineage";
 import type { FrontDoorLaunch } from "./state";
-import { CLIENT_SESSION_HEADER, identifyRequest, withCanonicalProviderTarget, type FrontDoorRoute, type ModelChoice, type RoutedRequest, type RoutedResponse, type SessionIdentity } from "./route";
+import { CLIENT_SESSION_HEADER, SERVED_MODEL_HEADER, identifyRequest, withCanonicalProviderTarget, type FrontDoorRoute, type ModelChoice, type RoutedRequest, type RoutedResponse, type SessionIdentity } from "./route";
 
 /** What one routed response looked like as it started back to the client: the typed event response middleware observes. */
 export interface RoutedResponseEvent {
@@ -56,9 +56,14 @@ export interface ResponseBodyObserver {
  */
 export type ResponseObserver = (event: RoutedResponseEvent) => ResponseBodyObserver | undefined;
 
+/** The channel a route reports the model it sends over (see `RouteResolution.servedModelReport`): a holder the resolver creates and the route's consumer fills in, since the route is built before anything has said who listens. */
+export interface ServedModelReport {
+  listener?: (model: string) => void;
+}
+
 /** The outcome of resolving a request's target to a route. */
 export type RouteResolution =
-  | { readonly ok: true; readonly route: FrontDoorRoute; /** The request this resolution serves, when resolving it rewrote the original (a routed request carries a body the route's own scan replayed): consumers that read the body again, the headroom hop above all, must read this one, because the original's remainder is teed into the replay and stalls once the replay's buffer fills. Absent when the resolution serves the original request as received. */ readonly request?: RoutedRequest; /** The model choice this resolution made, when resolving the request's model name chose among alternatives (a virtual model's or a family's selection through its mode) and served it under a member's own name. */ readonly modelChoice?: ModelChoice; /** The model name the request's own body carried, when resolving it read the body: the name the session asked for, before any rewrite. */ readonly requestedModel?: string; /** The model the provider is served under when resolving the request's name chose that provider and that model itself (a qualified name, or a bare provider name taking its default); for the model `auto`, the model the provider's server serves at that moment. Absent when a virtual model or a family chose among alternatives, or the request chose no model. */ readonly servedModel?: string }
+  | { readonly ok: true; readonly route: FrontDoorRoute; /** The request this resolution serves, when resolving it rewrote the original (a routed request carries a body the route's own scan replayed): consumers that read the body again, the headroom hop above all, must read this one, because the original's remainder is teed into the replay and stalls once the replay's buffer fills. Absent when the resolution serves the original request as received. */ readonly request?: RoutedRequest; /** The model choice this resolution made, when resolving the request's model name chose among alternatives (a virtual model's or a family's selection through its mode) and served it under a member's own name. */ readonly modelChoice?: ModelChoice; /** The model name the request's own body carried, when resolving it read the body: the name the session asked for, before any rewrite. */ readonly requestedModel?: string; /** The model the provider the request is routed to is sent, as far as resolving it can tell: the one a qualified name, a bare provider name's default or the member a virtual model or family selected names, or the one a `routes` entry rewrote it to. The model `auto` is named as `auto` here, which is no sent model: the route's `servedModelReport` carries the one it sends. Absent when the request chose no model. */ readonly servedModel?: string; /** Where the model an `http` provider's route finally sends is reported, once it is known: for the model `auto` the route reads the server's list when it serves the request, and serves a retry under another model when the server refuses the first, so what was sent is known only then. The consumer that records the resolution sets `listener`; the route calls it with each model it sends. Absent when no route of the resolution reports one. */ readonly servedModelReport?: ServedModelReport }
   | { readonly ok: false; readonly status: number; readonly message: string };
 
 /** Everything the ordered pipeline depends on, injected so it runs against fakes in tests. */
@@ -73,6 +78,8 @@ export interface PipelineDeps {
   readonly headroom?: HeadroomHopDeps;
   /** Decides per session whether a request crosses the hop, keeping a session's choice while its prompt cache could be warm. The session's launch flag is only the choice it asks for. */
   readonly headroomDecision: HeadroomDecision;
+  /** Whether this pipeline's responses go to this door's own headroom hop (the direct listener's do, and nothing else's): it then carries the model its route reported sending in the response head (`SERVED_MODEL_HEADER`), which the client-facing pipeline's hop reads, since the client-facing resolution that has a listener for it is not the route that sends. */
+  readonly answersHeadroomHop?: boolean;
   /** The provider a name stands for, so a session launched under a provider's former name is served by the provider now called something else: applied to the session's provider and to a provider-scoped target before anything is routed, so every later step, the usage records included, sees the current name. */
   readonly canonicalProvider: (name: string) => string;
   /** The clock response middleware times requests by, in epoch milliseconds. */
@@ -130,6 +137,8 @@ function errorTypeFor(status: number): string {
       return "permission_error";
     case HTTP_STATUS.notFound:
       return "not_found_error";
+    case HTTP_STATUS.payloadTooLarge:
+      return "request_too_large";
     case HTTP_STATUS.tooManyRequests:
       return "rate_limit_error";
     default:
@@ -137,7 +146,8 @@ function errorTypeFor(status: number): string {
   }
 }
 
-function errorBody(status: number, message: string): string {
+/** The body of an Anthropic-shaped error answer for `status`: the shape the pipeline answers its own refusals with, which the Messages-path edit wrapper answers its refusals with too. */
+export function errorBody(status: number, message: string): string {
   return JSON.stringify({ type: "error", error: { type: errorTypeFor(status), message } });
 }
 
@@ -182,7 +192,7 @@ function describeThrown(error: unknown): string {
  */
 export function createRoutedResponse(
   response: ServerResponse,
-  context: { readonly deps: PipelineDeps; readonly session: SessionIdentity; readonly route: string; readonly request: ObservedRequest; readonly servedPath: string },
+  context: { readonly deps: PipelineDeps; readonly session: SessionIdentity; readonly route: string; readonly request: ObservedRequest; readonly servedPath: string; /** The model the route reported sending, filled before the head is written: a retry under a refreshed model replaces it, so the head carries the last. */ readonly servedModel?: { value: string | undefined } },
 ): RoutedResponse {
   const { deps, session, route, request } = context;
   let headersSent = false;
@@ -242,7 +252,10 @@ export function createRoutedResponse(
           deps.log(`front door: response observer threw for ${route}: ${describeThrown(error)}`);
         }
       }
-      response.writeHead(status, headers);
+      // No response this door writes carries `SERVED_MODEL_HEADER` it did not set itself: a copy from an upstream server is dropped, whatever its case.
+      const written = Object.fromEntries(Object.entries(headers).filter(([name]) => name.toLowerCase() !== SERVED_MODEL_HEADER));
+      const reported = deps.answersHeadroomHop === true ? context.servedModel?.value : undefined;
+      response.writeHead(status, reported === undefined ? written : { ...written, [SERVED_MODEL_HEADER]: encodeURIComponent(reported) });
       headersSent = true;
     },
     noteModelChoice: (choice) => {
@@ -317,6 +330,13 @@ export async function serveRouted(incoming: PipelineRequest, deps: PipelineDeps)
     return;
   }
   const { headroom } = deps;
+  // The direct pipeline answers this door's own hop: what its route reports sending is carried back in the response head, since the resolution that has a listener for it is the client-facing one.
+  const servedModel: { value: string | undefined } = { value: undefined };
+  if (deps.answersHeadroomHop === true && resolution.servedModelReport !== undefined) {
+    resolution.servedModelReport.listener = (model) => {
+      servedModel.value = model;
+    };
+  }
   // The resolution's model choice reaches the observers the same way a serving route's does: stashed on the observed request before any head is written.
   if (resolution.modelChoice !== undefined) {
     observed.modelChoice.value = resolution.modelChoice;
@@ -330,13 +350,15 @@ export async function serveRouted(incoming: PipelineRequest, deps: PipelineDeps)
     headroom !== undefined &&
     (await deps.headroomDecision.decide(identified.session.sessionId, identified.session.headroom, deps.now(), async () => await headroomReady(headroom, request.signal)));
   const viaHeadroom = wantsHeadroom && resolution.route.headroomEligible && deps.headroom !== undefined;
-  const response = createRoutedResponse(request.response, { deps, session: identified.session, route: resolution.route.name, request: { ...observed, viaHeadroom }, servedPath: pathOf(resolution.request?.url ?? request.url) });
+  const response = createRoutedResponse(request.response, { deps, session: identified.session, route: resolution.route.name, request: { ...observed, viaHeadroom }, servedPath: pathOf(resolution.request?.url ?? request.url), servedModel });
   try {
     if (viaHeadroom) {
       // The ordering the whole design turns on: headroom first, on the Anthropic-shaped request, then the route (a translator receives what headroom compressed). A route that opts out, or a listener that serves routes directly, falls through to serving.
       await applyHeadroomHop(resolution.request ?? routed, response, resolution.route.headroomUpstream, deps.headroom, (facts) => {
         observed.thread.lineage = facts.lineage;
         observed.requestedModel.value = facts.requestedModel;
+      }, (model) => {
+        resolution.servedModelReport?.listener?.(model);
       });
     } else {
       await resolution.route.serve(routed, response);
