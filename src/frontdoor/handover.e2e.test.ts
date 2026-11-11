@@ -17,7 +17,8 @@ import { realFrontDoorPort } from "./realFrontDoorPort";
 import { catalogueCachePath, parseCatalogueCache } from "../providerCatalogue";
 import { providerModelRows } from "../launcher/modelPicker";
 import { readProvider } from "../providersStore";
-import { listDrainingFrontDoors, readCatalogueStatus, readFrontDoorCodexRecord, readFrontDoorState } from "./state";
+import { listDrainingFrontDoors, readFrontDoorCodexRecord, readFrontDoorState } from "./state";
+import { readCatalogueStatus } from "./catalogueState";
 
 /** The capability the test registers for itself as a live launch: what the CONNECT surface demands of a tunnel. */
 const CAPABILITY = "handover-e2e-capability";

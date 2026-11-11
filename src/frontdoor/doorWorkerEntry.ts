@@ -29,13 +29,13 @@ async function runTask(task: DoorWorkerTaskName, input: unknown, env: NodeJS.Pro
   }
 }
 
-/** The failure a worker posts for an error: its class name and code if they are identifiers, never its message. */
+/** The failure a worker posts for an error: its class name and code if they are identifiers, and whether it says a catalogue read met a redirect, never its message. */
 function failureOf(error: unknown): DoorWorkerMessage {
   return { kind: "failed", ...identifiedFailure(error) };
 }
 
 /**
- * Runs the task a front door asked of this worker and posts its answer once. Called by the command line entry point when it is evaluated as a worker thread with door worker data; every blocking step the task takes beats the shared heartbeat the door's watchdog reads, and a task that throws answers `failed` with the error's class name and code, never its message or stack.
+ * Runs the task a front door asked of this worker and posts its answer once. Called by the command line entry point when it is evaluated as a worker thread with door worker data; every blocking step the task takes beats the shared heartbeat the door's watchdog reads, and a task that throws answers `failed` with the error's class name, its code and whether it says a catalogue read met a redirect, never its message or stack.
  */
 export async function runDoorWorkerEntry(): Promise<void> {
   if (parentPort === null || !isDoorWorkerData(workerData)) {

@@ -4,7 +4,7 @@ import path from "node:path";
 import { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { catalogueCachePath } from "./providerCatalogue";
+import { catalogueCachePath, catalogueSettingsFingerprint, catalogueSettingsPath, catalogueSettingsText } from "./providerCatalogue";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { registerProviderCommand } from "./providers";
 import { describeProviderEndpoint, readProvider } from "./providersStore";
@@ -99,6 +99,8 @@ describe("a provider's base URL in the JSON views and the catalogue report", () 
     await run("add", "local", "--display-name", "Local", "--base-url", SECRET_BASE_URL, "--credential", "literal:dummy", "--catalogue-tier", "sonnet");
     fs.mkdirSync(paths.catalogueDir, { recursive: true });
     fs.writeFileSync(catalogueCachePath(paths, "local"), JSON.stringify({ fetchedAt: 1, url: SECRET_BASE_URL, models: [{ id: "m" }] }));
+    fs.mkdirSync(path.dirname(catalogueSettingsPath(paths, "local")), { recursive: true });
+    fs.writeFileSync(catalogueSettingsPath(paths, "local"), catalogueSettingsText(catalogueSettingsFingerprint({ baseUrl: SECRET_BASE_URL, catalogue: { tier: "sonnet" }, credential: { sources: [{ literal: "dummy" }] } }), 1));
   }
 
   it("redacts it in provider list --json, which many consumers read", async () => {

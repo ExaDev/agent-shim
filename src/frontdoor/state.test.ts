@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 
 import type { HeadroomFs } from "../headroom/state";
 import { buildLayoutPaths } from "../paths";
-import { createFakeFarmFs } from "../test-helpers";
+import { createFakeFarmFs, errorWithCode } from "../test-helpers";
 import { createLiveSessionRegistry } from "./liveSessionRegistry";
-import * as state from "./state";
+import * as catalogueState from "./catalogueState";
 import { MAX_CONTEXT_TEXT_LENGTH } from "./state";
 import path from "node:path";
 import { catalogueCachePath } from "../providerCatalogue";
@@ -31,11 +31,11 @@ it("isolates catalogue status by supervisor generation", () => {
   const fs = createFakeFarmFs({});
   const first = "10000000-0000-4000-8000-000000000001";
   const second = "10000000-0000-4000-8000-000000000002";
-  if ("writeCatalogueStatus" in state && typeof state.writeCatalogueStatus === "function" && "readCatalogueStatus" in state && typeof state.readCatalogueStatus === "function") {
-    state.writeCatalogueStatus(fs, paths, LIVE, first, "codex", "running");
-    state.writeCatalogueStatus(fs, paths, LIVE, second, "codex", "failed");
-    expect(state.readCatalogueStatus(fs, paths, LIVE, first, "codex")?.status).toBe("running");
-    expect(state.readCatalogueStatus(fs, paths, LIVE, second, "codex")?.status).toBe("failed");
+  if ("writeCatalogueStatus" in catalogueState && typeof catalogueState.writeCatalogueStatus === "function" && "readCatalogueStatus" in catalogueState && typeof catalogueState.readCatalogueStatus === "function") {
+    catalogueState.writeCatalogueStatus(fs, paths, LIVE, first, "codex", "running");
+    catalogueState.writeCatalogueStatus(fs, paths, LIVE, second, "codex", "failed");
+    expect(catalogueState.readCatalogueStatus(fs, paths, LIVE, first, "codex")?.status).toBe("running");
+    expect(catalogueState.readCatalogueStatus(fs, paths, LIVE, second, "codex")?.status).toBe("failed");
   } else {
     expect(undefined).toBe("running");
   }
@@ -44,31 +44,88 @@ it("isolates catalogue status by supervisor generation", () => {
 it("stores the account fingerprint with a catalogue status", () => {
   const fs = createFakeFarmFs({});
   const generation = "10000000-0000-4000-8000-000000000001";
-  state.writeCatalogueStatus(fs, paths, LIVE, generation, "codex", "failed", "fingerprint");
+  catalogueState.writeCatalogueStatus(fs, paths, LIVE, generation, "codex", "failed", "fingerprint");
   const file = path.join(path.dirname(catalogueCachePath(paths, "codex", LIVE, generation)), "codex.status.json");
   expect(JSON.parse(fs.readFileUtf8(file) ?? "null")).toEqual({ status: "failed", fingerprint: "fingerprint" });
+});
+
+it("keeps the status file as an older launcher reads it, and records why a refresh failed beside it", () => {
+  const fs = createFakeFarmFs({});
+  const generation = "10000000-0000-4000-8000-000000000001";
+  catalogueState.writeCatalogueStatus(fs, paths, LIVE, generation, "spark", "failed", undefined, 1);
+  catalogueState.writeCatalogueFailureReason(fs, paths, LIVE, generation, "spark", "no catalogue from http://x.example/v1/models: status 308");
+  const statusFile = path.join(path.dirname(catalogueCachePath(paths, "spark", LIVE, generation)), "spark.status.json");
+  expect(JSON.parse(fs.readFileUtf8(statusFile) ?? "null")).toEqual({ status: "failed", recordedAt: 1 });
+  expect(catalogueState.readCatalogueFailure(fs, paths, LIVE, generation, "spark")?.reason).toBe("no catalogue from http://x.example/v1/models: status 308");
+});
+
+it("cuts a failure reason to its bound, and clears it when the refresh did not fail", () => {
+  const fs = createFakeFarmFs({});
+  const generation = "10000000-0000-4000-8000-000000000001";
+  catalogueState.writeCatalogueFailureReason(fs, paths, LIVE, generation, "long", "x".repeat(catalogueState.CATALOGUE_FAILURE_REASON_MAX_CHARS * 2));
+  expect(catalogueState.readCatalogueFailure(fs, paths, LIVE, generation, "long")?.reason).toHaveLength(catalogueState.CATALOGUE_FAILURE_REASON_MAX_CHARS);
+  catalogueState.writeCatalogueFailureReason(fs, paths, LIVE, generation, "long", undefined);
+  expect(catalogueState.readCatalogueFailure(fs, paths, LIVE, generation, "long")?.reason).toBeUndefined();
+});
+
+it("keeps the failure reason of a provider apart from the catalogue cache of one named like its file", () => {
+  const fs = createFakeFarmFs({});
+  const generation = "10000000-0000-4000-8000-000000000001";
+  const cacheOfOther = catalogueCachePath(paths, "foo.failure", LIVE, generation);
+  fs.mkdirp(path.dirname(cacheOfOther));
+  fs.writeFilePrivate(cacheOfOther, "the cache of provider foo.failure");
+  for (const [status, reason] of [["failed", "why"], ["running", undefined], ["failed", "again"], ["ready", undefined]] as const) {
+    catalogueState.catalogueStatusPublisher(fs, paths, LIVE, generation, () => 1)("foo", status, undefined, reason);
+    expect(fs.readFileUtf8(cacheOfOther), `${status} ${String(reason)}`).toBe("the cache of provider foo.failure");
+  }
+  expect(catalogueState.readCatalogueFailure(fs, paths, LIVE, generation, "foo")?.reason).toBeUndefined();
+  catalogueState.writeCatalogueFailureReason(fs, paths, LIVE, generation, "foo.failure", "the reason of provider foo.failure");
+  expect(catalogueState.readCatalogueFailure(fs, paths, LIVE, generation, "foo")?.reason).toBeUndefined();
+  expect(fs.readFileUtf8(cacheOfOther)).toBe("the cache of provider foo.failure");
+});
+
+it("reads no reason longer than the bound a release writes, as it does from a file that is not one it wrote", () => {
+  const fs = createFakeFarmFs({});
+  const generation = "10000000-0000-4000-8000-000000000001";
+  const file = path.join(path.dirname(catalogueCachePath(paths, "spark", LIVE, generation)), "failures", "spark.json");
+  fs.mkdirp(path.dirname(file));
+  fs.writeFilePrivate(file, JSON.stringify({ reason: "x".repeat(catalogueState.CATALOGUE_FAILURE_REASON_MAX_CHARS) }));
+  expect(catalogueState.readCatalogueFailure(fs, paths, LIVE, generation, "spark")?.reason).toHaveLength(catalogueState.CATALOGUE_FAILURE_REASON_MAX_CHARS);
+  fs.writeFilePrivate(file, JSON.stringify({ reason: "x".repeat(catalogueState.CATALOGUE_FAILURE_REASON_MAX_CHARS + 1) }));
+  expect(catalogueState.readCatalogueFailure(fs, paths, LIVE, generation, "spark")?.reason).toBeUndefined();
+});
+
+it("reads no reason from a file that is not one this release wrote", () => {
+  const fs = createFakeFarmFs({});
+  const generation = "10000000-0000-4000-8000-000000000001";
+  catalogueState.writeCatalogueFailureReason(fs, paths, LIVE, generation, "spark", "why");
+  const file = path.join(path.dirname(catalogueCachePath(paths, "spark", LIVE, generation)), "failures", "spark.json");
+  fs.writeFilePrivate(file, JSON.stringify({ reason: "why", other: 1 }));
+  expect(catalogueState.readCatalogueFailure(fs, paths, LIVE, generation, "spark")?.reason).toBeUndefined();
+  fs.writeFilePrivate(file, "{ not json");
+  expect(catalogueState.readCatalogueFailure(fs, paths, LIVE, generation, "spark")?.reason).toBeUndefined();
 });
 
 it("reads a catalogue status that contains an account fingerprint", () => {
   const fs = createFakeFarmFs({});
   const generation = "10000000-0000-4000-8000-000000000001";
-  state.writeCatalogueStatus(fs, paths, LIVE, generation, "codex", "failed", "fingerprint");
-  expect(state.readCatalogueStatus(fs, paths, LIVE, generation, "codex")?.status).toBe("failed");
+  catalogueState.writeCatalogueStatus(fs, paths, LIVE, generation, "codex", "failed", "fingerprint");
+  expect(catalogueState.readCatalogueStatus(fs, paths, LIVE, generation, "codex")?.status).toBe("failed");
 });
 
 it("returns the account fingerprint alongside catalogue status", () => {
   const fs = createFakeFarmFs({});
   const generation = "10000000-0000-4000-8000-000000000001";
-  state.writeCatalogueStatus(fs, paths, LIVE, generation, "codex", "failed", "fingerprint");
-  expect(state.readCatalogueStatus(fs, paths, LIVE, generation, "codex")).toEqual({ status: "failed", fingerprint: "fingerprint" });
+  catalogueState.writeCatalogueStatus(fs, paths, LIVE, generation, "codex", "failed", "fingerprint");
+  expect(catalogueState.readCatalogueStatus(fs, paths, LIVE, generation, "codex")).toEqual({ status: "failed", fingerprint: "fingerprint" });
 });
 
 it("stores when the catalogue status was recorded", () => {
   const fs = createFakeFarmFs({});
   const generation = "10000000-0000-4000-8000-000000000001";
   const recordedAt = 123;
-  state.writeCatalogueStatus(fs, paths, LIVE, generation, "codex", "failed", "fingerprint", recordedAt);
-  expect(state.readCatalogueStatus(fs, paths, LIVE, generation, "codex")).toEqual({ status: "failed", fingerprint: "fingerprint", recordedAt });
+  catalogueState.writeCatalogueStatus(fs, paths, LIVE, generation, "codex", "failed", "fingerprint", recordedAt);
+  expect(catalogueState.readCatalogueStatus(fs, paths, LIVE, generation, "codex")).toEqual({ status: "failed", fingerprint: "fingerprint", recordedAt });
 });
 /** A recognisable capability, so an assertion can search every serialised output for it. */
 const SECRET_CAPABILITY = "capability-that-must-never-be-listed";
@@ -86,6 +143,11 @@ it("records the unique generation alongside a supervisor's Codex home", () => {
   const generation = "10000000-0000-4000-8000-000000000001";
   writeFrontDoorCodexHome(fs, paths.frontdoorDir, LIVE, "/accounts/first", generation);
   expect(readFrontDoorCodexRecord(fs, paths.frontdoorDir, LIVE)).toEqual({ codexHome: "/accounts/first", generation });
+});
+
+it("reads no Codex record, instead of throwing, when the supervisor's record cannot be read", () => {
+  const unreadable = { readFileUtf8: (): never => { throw errorWithCode("EACCES: permission denied", "EACCES"); } };
+  expect(readFrontDoorCodexRecord(unreadable, paths.frontdoorDir, LIVE)).toBeUndefined();
 });
 
 it("does not accept a supervisor record without a generation", () => {

@@ -3,29 +3,7 @@ import { z } from "zod";
 
 import { ModelsConfigSchema, type ModelsConfig } from "../config/schema";
 import type { HeadroomFs } from "../headroom/state";
-import type { LayoutPaths } from "../paths";
 import { MAX_TCP_PORT } from "../baseUrlDial";
-import { catalogueCachePath } from "../providerCatalogue";
-
-/** Stores one provider's refresh state within the supervisor generation that owns it. */
-export function writeCatalogueStatus(fs: HeadroomFs, paths: LayoutPaths, pid: number, generation: string, name: string, status: "running" | "ready" | "failed", fingerprint?: string, recordedAt?: number): void {
-  const dir = path.dirname(catalogueCachePath(paths, name, pid, generation));
-  fs.mkdirp(dir);
-  fs.writeFilePrivate(path.join(dir, `${name}.status.json`), JSON.stringify({ status, ...(fingerprint === undefined ? {} : { fingerprint }), ...(recordedAt === undefined ? {} : { recordedAt }) }));
-}
-
-/** Reads the refresh state recorded for a provider in a supervisor generation. */
-export function readCatalogueStatus(fs: Pick<HeadroomFs, "readFileUtf8">, paths: LayoutPaths, pid: number, generation: string, name: string): { readonly status: "running" | "ready" | "failed"; readonly fingerprint?: string; readonly recordedAt?: number } | undefined {
-  const file = path.join(path.dirname(catalogueCachePath(paths, name, pid, generation)), `${name}.status.json`);
-  const raw = fs.readFileUtf8(file);
-  if (raw === undefined) return undefined;
-  try {
-    const value = z.strictObject({ status: z.enum(["running", "ready", "failed"]), fingerprint: z.string().min(1).optional(), recordedAt: z.number().optional() }).safeParse(JSON.parse(raw));
-    return value.success ? value.data : undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 /**
  * The launcher-to-door wire protocol this release speaks: the headers a launch's child presents, the capability registry's record format, and the routes. Bump it when a change would stop a door of this release serving launches made by an older one, or an older door serving this release's launches.
@@ -42,9 +20,11 @@ export function readCatalogueStatus(fs: Pick<HeadroomFs, "readFileUtf8">, paths:
  *
  * Protocol 8: a launch's registry record names the identity the launch runs as, so the door attributes a request that carries no identity header (Remote Control's calls ride the capability the tunnel supplies) to the launch's identity. The record's schema is strict, so a protocol 7 door cannot read a record with the new field and would refuse the launch; it is replaced rather than joined.
  *
+ * Protocol 9: a catalogue the door stores has a digest of the settings it was fetched under in a file beside it, and a launcher uses a stored list only when that digest equals the provider's own, which also decides whether a recorded refresh failure still applies to the provider. A protocol 8 door stores lists with no digest, so this launcher would take every one of them as fetched under other settings: it would wait out the whole refresh deadline on every launch, and list no models for an `http` provider; it is replaced rather than joined.
+ *
  * The rule that makes a bump safe: a door accepts every lower protocol's launches (protocol 1 accepts the former `x-claude-use-*` header names), and a launcher replaces a door whose protocol is lower than its own, never one that is higher. Replacing is safe because restarts are what the door is designed for: the capability registry is on disk and the listeners keep their sticky ports, so launches already running reach the replacement on the addresses they froze at launch.
  */
-export const FRONT_DOOR_PROTOCOL = 8;
+export const FRONT_DOOR_PROTOCOL = 9;
 
 /** The first protocol whose door hands its listeners over on `SIGUSR2` (see protocol 6 above): a launcher sends that request only to a door recording this protocol or a later one. */
 export const FRONT_DOOR_HANDOVER_PROTOCOL = 6;
@@ -122,9 +102,14 @@ export function writeFrontDoorCodexHome(fs: HeadroomFs, frontdoorDir: string, pi
   fs.writeFilePrivate(path.join(directory, `${String(pid)}.json`), `${JSON.stringify({ codexHome, generation })}\n`);
 }
 
-/** Reads the recorded Codex home and generation for one supervisor. */
+/** Reads the recorded Codex home and generation for one supervisor: none when it is absent, malformed or cannot be read, like the state file beside it (the model listing every request may ask for reads it, and one unreadable record must not fail them). */
 export function readFrontDoorCodexRecord(fs: Pick<HeadroomFs, "readFileUtf8">, frontdoorDir: string, pid: number): { readonly codexHome: string; readonly generation: string } | undefined {
-  const raw = fs.readFileUtf8(path.join(frontdoorDir, "codex-homes", `${String(pid)}.json`));
+  let raw: string | undefined;
+  try {
+    raw = fs.readFileUtf8(path.join(frontdoorDir, "codex-homes", `${String(pid)}.json`));
+  } catch {
+    return undefined;
+  }
   if (raw === undefined) return undefined;
   try {
     const parsed = z.strictObject({ codexHome: z.string().min(1), generation: z.uuid() }).safeParse(JSON.parse(raw));

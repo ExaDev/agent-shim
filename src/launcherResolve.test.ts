@@ -4,7 +4,7 @@ import type { Pool } from "./config/schema";
 import { catalogueCredentialFingerprint } from "./codex/catalogueCredential";
 import { prepareLaunch, resolveLaunch, type PrepareLaunchParams } from "./launcher";
 import { catalogueBindingPath, catalogueCachePath } from "./providerCatalogue";
-import { FAKE_NOW_MS, createFakeFarmFs, discovered, fakeCredentials, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, paths } from "./test-helpers";
+import { FAKE_NOW_MS, createFakeFarmFs, discovered, errorWithCode, fakeCredentials, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, paths } from "./test-helpers";
 
 const HOUR_MS = 3_600_000;
 const SIX_DAYS_MS = 518_400_000;
@@ -158,6 +158,25 @@ describe("resolveLaunch", () => {
     };
     const { params } = ports({ argv: ["@work", "--print"], env: { CODEX_HOME: home }, files });
     expect(JSON.stringify(resolveLaunch({ ...params, proc: { ...params.proc, isProcessAlive: () => false } }).args)).toContain("local-model");
+  });
+
+  it("offers none of a Codex catalogue whose binding cannot be read, and resolves the launch", () => {
+    const home = "/launcher/codex";
+    const fingerprint = catalogueCredentialFingerprint(true, "local-token", "workspace");
+    const bindingFile = `${paths.catalogueDir}/codex.binding.json`;
+    const files = {
+      [`${paths.providersDir}/codex.json`]: { kind: "codex", displayName: "Codex", credential: { sources: [{ env: "CODEX_TOKEN" }] } },
+      [paths.frontdoorStateFile]: JSON.stringify({ supervisorPid: 123, port: 456 }),
+      [`${paths.catalogueDir}/codex.json`]: JSON.stringify({ fetchedAt: 1, url: "https://example.test", models: [{ id: "local-model" }], credentialFingerprint: fingerprint }),
+      [bindingFile]: JSON.stringify({ fingerprint, source: `${home}/auth.json`, revision: "current" }),
+      [`${home}/auth.json.revision`]: "current",
+    };
+    const { params } = ports({ argv: ["@work", "--print"], env: { CODEX_HOME: home }, files });
+    const unreadable = { ...params, proc: { ...params.proc, isProcessAlive: () => false }, fs: { ...params.fs, readFileUtf8: (file: string) => {
+      if (file === bindingFile) throw errorWithCode(`EACCES: permission denied, open '${file}'`, "EACCES");
+      return params.fs.readFileUtf8(file);
+    } } };
+    expect(JSON.stringify(resolveLaunch(unreadable).args)).not.toContain("local-model");
   });
 
   it("uses the front door returned by ensure when it replaces the recorded door", () => {

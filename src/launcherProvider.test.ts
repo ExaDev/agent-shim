@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import { CREDENTIAL_UNAVAILABLE_EXIT } from "./credential";
 import { catalogueCredentialFingerprint } from "./codex/catalogueCredential";
+import { catalogueSettingsFingerprint, catalogueSettingsText } from "./providerCatalogue";
 import { prepareLaunch, type RunLauncherParams } from "./launcher";
+import type { FsPort } from "./launcher/ports";
 import type { SupervisedLaunch } from "./launcher/claudeSession";
 import type { BaseUrlProbe, StartBaseUrlProbe } from "./providerReachability";
 import {
-  createFakeFarmFs, discovered, FAKE_HOME, fakeCredentials, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv,
+  createFakeFarmFs, discovered, errorWithCode, FAKE_HOME, fakeCredentials, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv,
   reportedRow,
 } from "./test-helpers";
 
@@ -672,8 +674,19 @@ describe("runLauncher /model picker", () => {
     credential: { sources: [{ env: "Z_API_TOKEN" }] },
   };
 
+  /** `base` with each of `files` failing to read the way a file without permission does, its message naming the path. */
+  function unreadable(base: FsPort, files: readonly string[]): FsPort {
+    return {
+      ...base,
+      readFileUtf8: (filePath) => {
+        if (files.includes(filePath)) throw errorWithCode(`EACCES: permission denied, open '${filePath}'`, "EACCES");
+        return base.readFileUtf8(filePath);
+      },
+    };
+  }
+
   /** The arguments claude is spawned with, and what the launcher logged, for a launch through `provider` with `argv`. */
-  function spawnedWith(provider: object, argv: readonly string[], supervised?: SupervisedLaunch, extraFiles: Record<string, unknown> = {}): { readonly args: readonly string[] | undefined; readonly infos: readonly string[] } {
+  function spawnedWith(provider: object, argv: readonly string[], supervised?: SupervisedLaunch, extraFiles: Record<string, unknown> = {}, unreadableFiles: readonly string[] = []): { readonly args: readonly string[] | undefined; readonly infos: readonly string[] } {
     const spawn = fakeSpawn();
     const log = fakeLog();
     const codexFiles = "kind" in provider && provider.kind === "codex" ? {
@@ -683,7 +696,7 @@ describe("runLauncher /model picker", () => {
     } : {};
     launch({
       paths,
-      fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/p.json`]: provider, ...codexFiles, ...extraFiles }),
+      fs: unreadable(fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/p.json`]: provider, ...codexFiles, ...extraFiles }), unreadableFiles),
       spawn,
       proc: fakeProc({ CODEX_TOKEN: "tok", Z_API_TOKEN: "tok", CODEX_HOME: `${FAKE_HOME}/.codex` }, ["--provider", "p", ...argv]),
       log,
@@ -718,9 +731,33 @@ describe("runLauncher /model picker", () => {
     const cacheFile = `${FAKE_HOME}/.agent-shim/catalogues/p.json`;
     const codexCacheFile = `${FAKE_HOME}/.agent-shim/catalogues/supervisors/500/${TEST_CATALOGUE_GENERATION}/p.json`;
     const cache = JSON.stringify({ fetchedAt: 1, url: "https://api.z.ai/api/anthropic/v1/models", models: [{ id: "glm-5" }, { id: "glm-air" }, { id: "glm-4" }] });
+    const settingsFile = `${FAKE_HOME}/.agent-shim/catalogues/settings/p.json`;
+    /** The digest file of a catalogue fetched from `baseUrl` by the provider of these tests. */
+    const digestFor = (baseUrl: string): string => catalogueSettingsText(catalogueSettingsFingerprint({ ...plainProvider, catalogue: { tier: "sonnet" }, baseUrl }), 1);
+
+    it("lists none of the models of a catalogue fetched before the provider's base URL changed", () => {
+      const before = JSON.stringify({ fetchedAt: 1, url: "https://old.example/v1/models", models: [{ id: "glm-5" }] });
+      const { args } = spawnedWith(catalogued, ["--print"], undefined, { [cacheFile]: before, [settingsFile]: digestFor("https://old.example") });
+
+      expect(JSON.stringify(settingsIn(args) ?? {})).not.toContain("p/glm-5");
+    });
+
+    it.each([["catalogue", cacheFile], ["digest", settingsFile]])("lists the provider's own models and none of its catalogue's when its %s cannot be read, and the launch goes on", (_label, file) => {
+      const own = { ...catalogued, pickerModels: [{ model: "own", tier: "sonnet" }] };
+      const { args } = spawnedWith(own, ["--print"], undefined, { [cacheFile]: cache, [settingsFile]: digestFor(plainProvider.baseUrl) }, [file]);
+
+      expect(settingsIn(args)).toMatchObject({ modelPicker: { options: [{ model: "p/own" }] } });
+      expect(JSON.stringify(settingsIn(args))).not.toContain("p/glm-5");
+    });
+
+    it("lists none of the models of a catalogue with no digest, as an older door stores it", () => {
+      const { args } = spawnedWith(catalogued, ["--print"], undefined, { [cacheFile]: cache });
+
+      expect(JSON.stringify(settingsIn(args) ?? {})).not.toContain("p/glm-5");
+    });
 
     it("lists the models the door last fetched, after the provider's own filters", () => {
-      const { args } = spawnedWith(catalogued, ["--print"], undefined, { [cacheFile]: cache });
+      const { args } = spawnedWith(catalogued, ["--print"], undefined, { [cacheFile]: cache, [settingsFile]: digestFor(plainProvider.baseUrl) });
 
       expect(settingsIn(args)).toMatchObject({ modelPicker: { replaceBuiltInOptions: true, options: [{ model: "p/glm-4" }, { model: "p/glm-5" }] } });
     });
@@ -739,6 +776,11 @@ describe("runLauncher /model picker", () => {
       const signinAuth = JSON.stringify({ grant: { clientId: "client", sub: "subject", idToken: "id-token", accessToken: "different-account", refreshToken: "refresh", scopes: ["chatgpt.tokens.use.direct"], expiresAt: 1 } });
       const { args } = spawnedWith(signin, ["--print"], undefined, { [codexCacheFile]: stale, [`${FAKE_HOME}/.codex/auth.json`]: auth, [paths.chatgptSignInFile]: signinAuth });
       expect(settingsIn(args)).toBeUndefined();
+    });
+
+    it.each([["login file", `${FAKE_HOME}/.codex/auth.json`], ["catalogue file", codexCacheFile]])("offers no Codex models, and goes on with the launch, when the %s cannot be read", (_label, file) => {
+      const { args } = spawnedWith(codexProvider, ["--print"], undefined, {}, [file]);
+      expect(args).toEqual(["--print"]);
     });
 
     it("does not offer unverified Codex models when the selected account has no credentials", () => {

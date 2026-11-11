@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { catalogueCredentialFingerprint } from "../codex/catalogueCredential";
 import { writeFrontDoorCodexHome, writeFrontDoorState } from "../frontdoor/state";
 import { buildLayoutPaths } from "../paths";
-import { catalogueCachePath, parseCatalogueCache } from "../providerCatalogue";
+import { catalogueCachePath, catalogueSettingsFingerprint, catalogueSettingsPath, catalogueSettingsText, parseCatalogueCache } from "../providerCatalogue";
 import { realFarmFs } from "../realPorts";
 import { providerModels } from "./targets";
 
@@ -98,4 +98,22 @@ it("uses the serving door's Codex account when the launch environment names anot
   writeFrontDoorState(realFarmFs, paths.frontdoorStateFile, { supervisorPid: process.pid, port: 4100 });
 
   expect(providerModels(paths)).toContainEqual({ provider: "c", model: "door-model" });
+});
+
+it("offers the models of an http catalogue only while it was fetched under the provider's current settings", () => {
+  const paths = buildLayoutPaths(root);
+  const credential = { sources: [{ literal: "unused" }] };
+  fs.mkdirSync(paths.providersDir, { recursive: true });
+  fs.mkdirSync(paths.catalogueDir, { recursive: true });
+  fs.writeFileSync(path.join(paths.providersDir, "h.json"), JSON.stringify({ displayName: "H", baseUrl: "https://new.example", credential, catalogue: { tier: "sonnet" } }));
+  /** Stores a catalogue that `baseUrl` served, with the digest of the settings the provider had then. */
+  const store = (baseUrl: string): void => {
+    fs.writeFileSync(catalogueCachePath(paths, "h"), JSON.stringify({ fetchedAt: 1, url: `${baseUrl}/v1/models`, models: [{ id: "served" }] }));
+    fs.mkdirSync(path.dirname(catalogueSettingsPath(paths, "h")), { recursive: true });
+    fs.writeFileSync(catalogueSettingsPath(paths, "h"), catalogueSettingsText(catalogueSettingsFingerprint({ baseUrl, catalogue: { tier: "sonnet" }, credential }), 1));
+  };
+  store("https://old.example");
+  expect(providerModels(paths)).not.toContainEqual({ provider: "h", model: "served" });
+  store("https://new.example");
+  expect(providerModels(paths)).toContainEqual({ provider: "h", model: "served" });
 });

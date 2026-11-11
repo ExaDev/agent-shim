@@ -1,8 +1,10 @@
 import picomatch from "picomatch";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { z } from "zod";
 
 import { displayBaseUrl, redactUrlIn } from "./baseUrlDisplay";
+import { canonicalJson } from "./canonicalJson";
 import type { ResolvedCredential } from "./credential";
 import type { HttpProvider, ProviderCatalogue } from "./config/schema";
 import type { LayoutPaths } from "./paths";
@@ -18,6 +20,15 @@ const MS_PER_HOUR = SECONDS_PER_HOUR * MS_PER_SECOND;
 const HOURS_BETWEEN_RETRIES = 1;
 const HTTP_OK = 200;
 const HTTP_MULTIPLE_CHOICES = 300;
+/** The statuses that name another address to ask: 300 (a choice) and 304 (not modified) do not, and are plain failures of the read. */
+const HTTP_MOVED_PERMANENTLY = 301;
+const HTTP_FOUND = 302;
+const HTTP_SEE_OTHER = 303;
+const HTTP_TEMPORARY_REDIRECT = 307;
+const HTTP_PERMANENT_REDIRECT = 308;
+const REDIRECT_STATUSES: ReadonlySet<number> = new Set([HTTP_MOVED_PERMANENTLY, HTTP_FOUND, HTTP_SEE_OTHER, HTTP_TEMPORARY_REDIRECT, HTTP_PERMANENT_REDIRECT]);
+const HTTP_UNAUTHORIZED = 401;
+const HTTP_FORBIDDEN = 403;
 
 /**
  * How long a fetched catalogue is used before the door fetches it again. A provider adds and retires models on a release timescale, so a day-old list is current enough, and a refresh costs one request per provider per day.
@@ -29,12 +40,24 @@ export const CATALOGUE_MAX_AGE_MS = HOURS_PER_DAY * MS_PER_HOUR;
  */
 export const CATALOGUE_RETRY_MS = HOURS_BETWEEN_RETRIES * MS_PER_HOUR;
 
+/** What a failed catalogue read says of a redirect it did not follow: the refresh outcome the door records and `doctor` recognises it by. */
+export const CATALOGUE_REDIRECT_NOTE = "a redirect, which is not followed";
+
 /** How long one catalogue request may take before it is abandoned and the next candidate URL is tried. */
 const CATALOGUE_REQUEST_SECONDS = 10;
 const CATALOGUE_REQUEST_TIMEOUT_MS = CATALOGUE_REQUEST_SECONDS * MS_PER_SECOND;
 
 /** How long one catalogue fetch may take: the two candidate URLs a provider without a configured one is asked, each for up to the request limit. */
 export const CATALOGUE_REFRESH_TIMEOUT_MS = DEFAULT_CANDIDATE_URLS * CATALOGUE_REQUEST_TIMEOUT_MS;
+
+/** The number of models a provider's list is taken to have at most, from which the body limit below is derived: a very large aggregator lists a few thousand, so ten thousand leaves room well past that. The count is not enforced on its own: it is the byte bound that stops a read, so a list of more, smaller entries that still fits that bound is read in full. */
+const CATALOGUE_MAX_MODELS = 10_000;
+
+/** The bytes one model's entry is taken to take in a list, the other factor of the body limit below (an id, a display name and a few capability fields, well under a kibibyte for any real list). */
+const CATALOGUE_ENTRY_MAX_BYTES = 1024;
+
+/** The most bytes of a model-list response that are read: the list bound above times the entry bound. A larger body is not a model list, and a server must not be able to make the door buffer it. */
+export const CATALOGUE_BODY_LIMIT_BYTES = CATALOGUE_MAX_MODELS * CATALOGUE_ENTRY_MAX_BYTES;
 
 /** What a refresh needs beyond the fetch itself: the worker thread starting and evaluating the bundle (`DOOR_WORKER_START_ALLOWANCE_MS`), resolving the provider's credential (a credential command, which may take its whole timeout) and, for a Codex provider, asking the Codex CLI its version. */
 export const CATALOGUE_WORKER_ALLOWANCE_MS = DOOR_WORKER_START_ALLOWANCE_MS + BLOCKING_STEP_TIMEOUTS_MS.credentialCommand + BLOCKING_STEP_TIMEOUTS_MS.codexVersion;
@@ -55,6 +78,35 @@ export function catalogueCachePath(paths: LayoutPaths, name: string, supervisorP
   if ((supervisorPid === undefined) !== (generation === undefined)) throw new Error("A supervisor cache needs both its PID and generation");
   const directory = supervisorPid === undefined || generation === undefined ? paths.catalogueDir : catalogueGenerationDir(paths, supervisorPid, generation);
   return providerFilePath(directory, name);
+}
+
+/**
+ * Where the digest of the settings `name`'s catalogue was fetched under is stored: a file of its own in a `settings` directory beside the catalogue, not a key of the catalogue, since an older release reads a catalogue file with a closed schema and would take one with a new key for none. Only an `http` provider's catalogue has one (a codex provider's is tied to its account instead). The writer removes the digest, stores the catalogue and then stores the digest, so a reader that finds no digest (a refresh that stopped in between, or a catalogue an older door wrote) uses no list, and a digest never describes a list fetched under other settings.
+ */
+export function catalogueSettingsPath(paths: LayoutPaths, name: string): string {
+  return path.join(path.dirname(catalogueCachePath(paths, name)), "settings", `${name}.json`);
+}
+
+/** What a digest file holds: the digest of the settings the catalogue was fetched under and the `fetchedAt` of that catalogue, which binds the two. A release before the digest rewrites a catalogue and never touches this file, so a catalogue it rewrote has another `fetchedAt` and its older digest, which could match the settings again after an edit and revert, no longer does. */
+const CatalogueDigestSchema = z.strictObject({ settings: z.string().min(1), fetchedAt: z.number() });
+export type CatalogueDigest = z.infer<typeof CatalogueDigestSchema>;
+
+/** The text a digest file holds for a catalogue fetched at `fetchedAt` under the settings of `settings`. */
+export function catalogueSettingsText(settings: string, fetchedAt: number): string {
+  return JSON.stringify({ settings, fetchedAt } satisfies CatalogueDigest);
+}
+
+/** The digest a digest file holds, or `undefined` when the text is not one (missing, unparsable or of another shape, such as one written before the file named its catalogue). */
+export function parseCatalogueSettings(text: string | undefined): CatalogueDigest | undefined {
+  if (text === undefined) {
+    return undefined;
+  }
+  try {
+    const parsed = CatalogueDigestSchema.safeParse(JSON.parse(text));
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The catalogue directory owned by one supervisor generation. */
@@ -106,15 +158,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** The longest a model id a catalogue lists may be, in characters: a bound no real id comes near (aggregator ids are a few dozen characters) that keeps one a server made up from being cached, logged and written into every request body at any length. */
+export const CATALOGUE_MODEL_ID_MAX_CHARS = 256;
+
+/** Whether `id` can be a model id: non-empty, within `CATALOGUE_MODEL_ID_MAX_CHARS`, and free of control characters, which no model id holds and which could start a line of a log or an error message. */
+function isModelId(id: string): boolean {
+  return id !== "" && id.length <= CATALOGUE_MODEL_ID_MAX_CHARS && !/\p{Cc}/u.test(id);
+}
+
 /** One catalogue entry as a model, or `undefined` when it names none: a bare id string, or an object with an `id` and optionally a `display_name` (Anthropic's shape) or `name`. */
 function modelOf(entry: unknown): CatalogueModel | undefined {
   if (typeof entry === "string") {
-    return entry.trim() === "" ? undefined : { id: entry.trim() };
+    return isModelId(entry.trim()) ? { id: entry.trim() } : undefined;
   }
   if (isRecord(entry) && typeof entry.slug === "string" && "visibility" in entry) {
     return entry.visibility === "list" ? modelOf({ id: entry.slug, display_name: entry.display_name }) : undefined;
   }
-  if (!isRecord(entry) || typeof entry.id !== "string" || entry.id.trim() === "") {
+  if (!isRecord(entry) || typeof entry.id !== "string" || !isModelId(entry.id.trim())) {
     return undefined;
   }
   const label = typeof entry.display_name === "string" ? entry.display_name : typeof entry.name === "string" ? entry.name : undefined;
@@ -154,7 +214,7 @@ export function catalogueHeaders(credential: Readonly<Pick<ResolvedCredential, "
 }
 
 /** What a catalogue request needs from the network: one GET returning its status and parsed JSON body, or throwing. */
-export type CatalogueFetch = (url: string, headers: Readonly<Record<string, string>>, timeoutMs: number) => Promise<{ readonly status: number; readonly body: unknown }>;
+export type CatalogueFetch = (url: string, headers: Readonly<Record<string, string>>, timeoutMs: number) => Promise<{ readonly status: number; readonly body: unknown; /** Whether the answer carried a `Location` header; absent when the fetch cannot tell, which is read as it did. */ readonly located?: boolean }>;
 
 /** Inputs to `fetchCatalogue`. */
 export interface FetchCatalogueParams {
@@ -165,11 +225,35 @@ export interface FetchCatalogueParams {
   readonly now: () => number;
 }
 
+/**
+ * What the list `fetchCatalogue` reads from an `http` provider depends on, as a SHA-256 digest (hex) of a canonical JSON form of: whether the provider has a catalogue at all, the base URL, the catalogue's own URL and the whole credential block (every source with its whole command line, path, variable or item, the target and the cache settings). The tier and the filters are not in it: they are applied over the stored list when it is read, so an edit to them changes neither what is fetched nor how a fetch fails. Only the digest is compared and stored (the base URL can carry userinfo and the credential block names its sources), so nothing it was made from leaves the provider file. A failure recorded, and a list stored, under one fingerprint say nothing about a provider whose fingerprint has since changed.
+ */
+export function catalogueSettingsFingerprint(provider: Readonly<Pick<HttpProvider, "baseUrl" | "catalogue" | "credential">>): string {
+  return createHash("sha256").update(canonicalJson([provider.baseUrl, provider.catalogue === undefined ? false : (provider.catalogue.url ?? null), provider.credential])).digest("hex");
+}
+
+/** Whether `cache` was fetched under the settings `provider` has now, given the digest stored beside it (`recorded`, `undefined` when there is none): one fetched under another base URL, catalogue URL or credential block lists the models of another server, one whose digest names another catalogue (`fetchedAt`) was rewritten since it was stored, and one with no digest cannot be told from either, so none is used for the provider as it is. */
+export function catalogueMatchesSettings(recorded: CatalogueDigest | undefined, cache: Readonly<Pick<CatalogueCache, "fetchedAt">>, provider: Readonly<Parameters<typeof catalogueSettingsFingerprint>[0]>): boolean {
+  return recorded?.fetchedAt === cache.fetchedAt && recorded.settings === catalogueSettingsFingerprint(provider);
+}
+
+/** Whether `error` says a catalogue read met a redirect: a `CatalogueFetchError` in the thread that made the read, or the `DoorWorkerFailedError` the door raises for a read made in a worker, which carries the same fact beside its text because nothing else of the worker's error crosses the thread. */
+export function isRedirectedFailure(error: unknown): boolean {
+  return error instanceof Error && "redirected" in error && error.redirected === true;
+}
+
 /** Raised when no candidate URL returned a catalogue; the message names each URL (as `displayBaseUrl` shows it, without userinfo or query) and what it answered, never the credential. */
 export class CatalogueFetchError extends Error {
-  constructor(message: string) {
+  /** Whether a candidate URL answered with a redirect, which the read never follows: a fact about the failure carried beside its message, so nothing decides it by searching a message that may have been cut. */
+  readonly redirected: boolean;
+  /** Whether every candidate URL that failed refused the provider's credential (a 401 or a 403): the failure is then the credential's and ends when the credential is fixed. A candidate that failed another way (a timeout, a server error) makes it the server's failure, which ends with the server's own recovery. */
+  readonly unauthorised: boolean;
+
+  constructor(message: string, flags: Readonly<{ readonly redirected?: boolean; readonly unauthorised?: boolean }> = {}) {
     super(message);
     this.name = "CatalogueFetchError";
+    this.redirected = flags.redirected === true;
+    this.unauthorised = flags.unauthorised === true;
   }
 }
 
@@ -179,6 +263,9 @@ export class CatalogueFetchError extends Error {
 export async function fetchCatalogue(params: Readonly<FetchCatalogueParams>): Promise<CatalogueCache> {
   const headers = catalogueHeaders(params.credential);
   const outcomes: string[] = [];
+  let redirected = false;
+  let failedCandidates = 0;
+  let refusedCandidates = 0;
   for (const url of catalogueUrls(params.provider, params.catalogue)) {
     try {
       const response = await params.fetch(url, headers, CATALOGUE_REQUEST_TIMEOUT_MS);
@@ -187,10 +274,18 @@ export async function fetchCatalogue(params: Readonly<FetchCatalogueParams>): Pr
       if (models.length > 0) {
         return { fetchedAt: params.now(), url: displayBaseUrl(url), models: [...models] };
       }
-      outcomes.push(`${displayBaseUrl(url)}: ${succeeded ? "no models listed" : `status ${String(response.status)}`}`);
+      // A redirect is named as one: the read never follows it, since its request carries the provider's credential and a redirect target is another origin. Its `Location` is not repeated, because it can carry a credential of its own.
+      const redirect = REDIRECT_STATUSES.has(response.status);
+      redirected ||= redirect;
+      failedCandidates += 1;
+      refusedCandidates += response.status === HTTP_UNAUTHORIZED || response.status === HTTP_FORBIDDEN ? 1 : 0;
+      // The advice names an address to set, so it is given only for an answer that carried a `Location`.
+      const refused = redirect ? `status ${String(response.status)}, ${CATALOGUE_REDIRECT_NOTE}${response.located === false ? " (with no Location)" : ": set the provider's base URL (or its catalogue.url) to the address it redirects to"}` : `status ${String(response.status)}`;
+      outcomes.push(`${displayBaseUrl(url)}: ${succeeded ? "no models listed" : refused}`);
     } catch (error) {
+      failedCandidates += 1;
       outcomes.push(`${displayBaseUrl(url)}: ${redactUrlIn(error instanceof Error ? error.message : String(error), url)}`);
     }
   }
-  throw new CatalogueFetchError(`no catalogue from ${outcomes.join("; ")}`);
+  throw new CatalogueFetchError(`no catalogue from ${outcomes.join("; ")}`, { redirected, unauthorised: refusedCandidates === failedCandidates });
 }

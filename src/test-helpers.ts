@@ -789,3 +789,18 @@ export function fakeSocketTrust(
     },
   };
 }
+
+/** An error as the system raises one: a message and the `code` a failed system call carries (`EACCES`, `ENOENT`), which is what a reader that classifies a failure reads. */
+class SystemError extends Error {
+  readonly code: unknown;
+
+  constructor(message: string, code: unknown) {
+    super(message);
+    this.code = code;
+  }
+}
+
+/** A `SystemError` of `code` whose message is `message`. */
+export function errorWithCode(message: string, code: unknown): Error {
+  return new SystemError(message, code);
+}

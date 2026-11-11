@@ -26,7 +26,8 @@ import type { Candidate } from "./usage/pick";
 import { decisionRows, farmRow, noteRow, pinnedVersionRow, routingRows, type BillingFacts, type LastRanAs } from "./launcher/launchReport";
 import { modelPickerSettingsFromRows, routedModelRows } from "./launcher/modelPicker";
 import { readFrontDoorCodexRecord, readFrontDoorState } from "./frontdoor/state";
-import { catalogueBindingPath, catalogueCachePath, parseCatalogueCache, type CatalogueModel } from "./providerCatalogue";
+import { catalogueMatchesSettings, parseCatalogueCache, parseCatalogueSettings, type CatalogueModel } from "./providerCatalogue";
+import { StoredCatalogue, TolerantReader, skipUnreadableCatalogue } from "./storedCatalogue";
 import { listProviderNames, loadProvider } from "./providersStore";
 import type { ModelsConfig, Provider } from "./config/schema";
 import { memberProviderResolver } from "./launcher/memberProvider";
@@ -39,7 +40,7 @@ import { resolveProvider, resolveRoutedProviderCredentials, selectProvider, type
 import { loadConfigFile } from "./config/load";
 import { flattenLayers } from "./resolve/flatten";
 import { assembleCascade } from "./resolve/walk";
-import { CREDENTIAL_TARGET_VARS, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type LaunchFlags, type Pool, type UpdateMode, isRouterProvider } from "./config/schema";
+import { CREDENTIAL_TARGET_VARS, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type LaunchFlags, type Pool, type UpdateMode, isHttpProvider, isRouterProvider } from "./config/schema";
 import { startProviderReachability, type StartBaseUrlProbe, type StartedProviderReachability } from "./providerReachability";
 import { GlobalConfigSchema } from "./config/schema";
 import { CREDENTIAL_UNAVAILABLE_EXIT, credentialVariables, describeSource, identityCacheKey, resolveCredential, summariseCredential, type CredentialPort, type CredentialSummary, type ResolvedCredential } from "./credential";
@@ -607,25 +608,28 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean, onRecorded
     const doorHome = doorRecord?.codexHome;
     const catalogueEnv = doorHome === undefined ? env : { ...env, CODEX_HOME: doorHome };
     // The provider list is read through the launch's own filesystem port (a broken file lists no rows rather than failing the launch; `doctor` is where a broken file is reported), never the process's real one, so a test's fake filesystem is what decides.
+    // A stored catalogue file or login the launch cannot read leaves that one provider with its own rows and none from a catalogue: the launch goes on.
+    const reader = new TolerantReader((file) => params.fs.readFileUtf8(file), skipUnreadableCatalogue);
+    const stored = new StoredCatalogue(paths, reader);
     const listedProviders = listProviderNames(fs.readdir, paths.providersDir).flatMap((name): readonly [string, Provider, readonly CatalogueModel[]][] => {
       try {
         const definition = loadProvider(paths.providersDir, name, fs);
         if (definition === undefined) return [];
-        const catalogueOwner = definition.kind === "codex" ? doorPid : undefined;
-        const generation = definition.kind === "codex" ? doorRecord?.generation : undefined;
-        const cache = parseCatalogueCache(params.fs.readFileUtf8(catalogueCachePath(paths, name, catalogueOwner, generation)));
+        const owner = definition.kind === "codex" && doorPid !== undefined && doorRecord !== undefined ? { pid: doorPid, generation: doorRecord.generation } : undefined;
+        const cache = parseCatalogueCache(stored.cacheText(name, owner));
         if (definition.kind === "codex" && cache !== undefined && cache.supervisorPid !== doorPid) return [];
         if (definition.kind === "codex" && doorPid !== undefined && doorRecord === undefined) return [];
         if (definition.kind === "codex" && readOnly && cache !== undefined) {
-          const binding = parseCatalogueBinding(params.fs.readFileUtf8(catalogueBindingPath(paths, name, catalogueOwner, generation)));
+          const binding = parseCatalogueBinding(stored.bindingText(name, owner));
           const configuredHome = catalogueEnv.CODEX_HOME;
           const home = configuredHome === undefined || configuredHome === "" ? path.join(os.homedir(), ".codex") : configuredHome;
           const source = definition.codex?.login === "chatgpt-sign-in" ? paths.chatgptSignInFile : path.resolve(home, "auth.json");
           const revision = params.fs.fileRevision?.(source);
           if (binding === undefined || binding.fingerprint !== cache.credentialFingerprint || binding.source !== source || revision === undefined || revision !== binding.revision) return [];
         }
-        const fingerprint = definition.kind === "codex" && !readOnly ? savedCatalogueFingerprint(definition, paths, catalogueEnv, os.homedir(), params.fs.readFileUtf8) : undefined;
+        const fingerprint = definition.kind === "codex" && !readOnly ? savedCatalogueFingerprint(definition, paths, catalogueEnv, os.homedir(), reader) : undefined;
         if (definition.kind === "codex" && !readOnly && cache !== undefined && (fingerprint === undefined || cache.credentialFingerprint !== fingerprint)) return [];
+        if (isHttpProvider(definition) && cache !== undefined && !catalogueMatchesSettings(parseCatalogueSettings(stored.digestText(name)), cache, definition)) return [[name, definition, []]];
         return [[name, definition, cache?.models ?? []]];
       } catch {
         return [];

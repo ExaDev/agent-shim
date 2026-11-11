@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DoorWorkerMessage } from "./doorWorkerProtocol";
 import { buildLayoutPaths } from "../paths";
+import { CatalogueFetchError } from "../providerCatalogue";
 
 const GENERATION = "10000000-0000-4000-8000-000000000001";
 const SUPERVISOR_PID = 123;
@@ -62,6 +63,19 @@ describe("the door worker entry", () => {
     const message = await postedFor("refresh-catalogue", { root: "/shim", name: "c", supervisorPid: SUPERVISOR_PID, generation: GENERATION });
     expect(message).toEqual({ kind: "failed", name: "TypeError", code: "ECONNRESET" });
     expect(JSON.stringify(message)).not.toContain("TOPSECRET");
+  });
+
+  it("posts that a catalogue read met a redirect as a boolean beside the class name, whichever message the error has, and no other field of the error", async () => {
+    mocks.refresh.mockRejectedValue(errorWith(new CatalogueFetchError("no catalogue from https://u:TOPSECRET@x.example: status 308", { redirected: true }), { token: "TOPSECRET" }));
+    const message = await postedFor("refresh-catalogue", { root: "/shim", name: "c", supervisorPid: SUPERVISOR_PID, generation: GENERATION });
+    expect(message).toEqual({ kind: "failed", name: "CatalogueFetchError", redirected: true });
+    mocks.refresh.mockRejectedValue(new CatalogueFetchError("no catalogue: status 500"));
+    expect(await postedFor("refresh-catalogue", { root: "/shim", name: "c", supervisorPid: SUPERVISOR_PID, generation: GENERATION })).toEqual({ kind: "failed", name: "CatalogueFetchError" });
+  });
+
+  it("posts no redirect flag for a thrown value that is not an error, whatever it holds", async () => {
+    mocks.refresh.mockRejectedValue({ redirected: true, name: "CatalogueFetchError" });
+    expect(await postedFor("refresh-catalogue", { root: "/shim", name: "c", supervisorPid: SUPERVISOR_PID, generation: GENERATION })).toEqual({ kind: "failed", name: "Error" });
   });
 
   it("posts a generic class name for an error whose name or code is not a short identifier", async () => {

@@ -36,11 +36,11 @@ import {
   isRouterProvider,
 } from "./config/schema";
 import { UsageError } from "./cliError";
-import { catalogueCachePath, filterCatalogue, parseCatalogueCache } from "./providerCatalogue";
+import { catalogueMatchesSettings, filterCatalogue, parseCatalogueCache, parseCatalogueSettings } from "./providerCatalogue";
+import { StoredCatalogue, TolerantReader } from "./storedCatalogue";
 import { refreshCatalogueForReal } from "./realCatalogueRefresh";
 import { readFrontDoorCodexRecord, readFrontDoorState } from "./frontdoor/state";
 import { providerModelRows } from "./launcher/modelPicker";
-import fs from "node:fs";
 import os from "node:os";
 import { describeCredential, summariseCredential } from "./credential";
 import { aliasesOf, readProviderAliases, removeProviderAlias } from "./providerAliases";
@@ -153,6 +153,20 @@ interface CatalogueOptions {
   readonly catalogueInclude?: readonly string[];
   readonly catalogueExclude?: readonly string[];
   readonly catalogueUrl?: string;
+}
+
+/** What `provider models <name>` does with a stored catalogue file it cannot read: it stops, naming the provider and the fault (`EACCES`), never the path, and says how to fix it. */
+function unreadableCatalogue(name: string): (fault: string) => never {
+  return (fault) => {
+    throw new UsageError(`The stored catalogue of "${name}" cannot be read (${fault}); fix the permissions of the file or run \`agent-shim provider models ${name} --refresh\`.`);
+  };
+}
+
+/** What `provider models <name>` does with the login file of a Codex provider it cannot read: it stops, naming the provider and the fault, never the path. */
+function unreadableLogin(name: string): (fault: string) => never {
+  return (fault) => {
+    throw new UsageError(`The login of the Codex provider "${name}" cannot be read (${fault}); fix the permissions of its file.`);
+  };
 }
 
 /** Whether any catalogue option was given. */
@@ -522,7 +536,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           const generation = record?.generation;
           if (pid !== undefined && record === undefined) throw new UsageError("The serving front door's Codex home or catalogue generation is unavailable.");
           const env = home === undefined ? process.env : { ...process.env, CODEX_HOME: home };
-          const cache = options.refresh === true ? await (pid === undefined || record === undefined ? refreshCatalogueForReal(paths, name, env) : refreshCatalogueForReal(paths, name, env, pid, record.generation)) : parseCatalogueCache(realFsPort.readFileUtf8(catalogueCachePath(paths, name, pid, generation)));
+          const cache = options.refresh === true ? await (pid === undefined || record === undefined ? refreshCatalogueForReal(paths, name, env) : refreshCatalogueForReal(paths, name, env, pid, record.generation)) : parseCatalogueCache(new StoredCatalogue(paths, new TolerantReader((file) => realFsPort.readFileUtf8(file), unreadableCatalogue(name))).cacheText(name, pid === undefined || record === undefined ? undefined : { pid, generation: record.generation }));
           if (options.refresh === true) {
             const currentDoor = readFrontDoorState(realFarmFs, paths.frontdoorStateFile);
             const recordedCurrentPid = currentDoor?.port === undefined ? undefined : currentDoor.supervisorPid;
@@ -532,7 +546,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           }
           if (cache === undefined) throw new UsageError(`No catalogue has been fetched for "${name}" yet; run \`agent-shim provider models ${name} --refresh\`.`);
           if (options.refresh !== true && cache.supervisorPid !== pid) throw new UsageError(`The catalogue for "${name}" belongs to a different front door; refresh it before reading.`);
-          const fingerprint = options.refresh === true ? undefined : savedCatalogueFingerprint(found, paths, env, os.homedir(), realFsPort.readFileUtf8);
+          const fingerprint = options.refresh === true ? undefined : savedCatalogueFingerprint(found, paths, env, os.homedir(), new TolerantReader((file) => realFsPort.readFileUtf8(file), unreadableLogin(name)));
           if (options.refresh !== true && (fingerprint === undefined || cache.credentialFingerprint !== fingerprint)) throw new UsageError(`The catalogue for "${name}" belongs to a different Codex account; refresh it before reading.`);
           const listed = providerModelRows(found, cache.models).map((row) => row.model);
           if (options.json === true) {
@@ -547,7 +561,13 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           throw new UsageError(`Provider "${name}" has no catalogue setting. Set one with \`agent-shim provider set ${name} --catalogue-tier <tier>\`.`);
         }
         const catalogueSetting = found.catalogue;
-        const cache = options.refresh === true ? await refreshCatalogueForReal(paths, name, process.env) : parseCatalogueCache(fs.existsSync(catalogueCachePath(paths, name)) ? fs.readFileSync(catalogueCachePath(paths, name), "utf8") : undefined);
+        const httpFiles = new StoredCatalogue(paths, new TolerantReader((file) => realFsPort.readFileUtf8(file), unreadableCatalogue(name)));
+        const cache = options.refresh === true ? await refreshCatalogueForReal(paths, name, process.env) : parseCatalogueCache(httpFiles.cacheText(name));
+        const digest = parseCatalogueSettings(httpFiles.digestText(name));
+        if (cache !== undefined && options.refresh !== true && !catalogueMatchesSettings(digest, cache, found)) {
+          // A catalogue with no digest was stored by a release that did not write one; one whose digest differs was fetched under other settings (or rewritten since): neither says which settings its models came from.
+          throw new UsageError(digest === undefined ? `The catalogue stored for "${name}" has no record of the settings it was fetched under (it was stored by a release that did not keep one); the front door fetches it again shortly, or run \`agent-shim provider models ${name} --refresh\`.` : `The catalogue stored for "${name}" was fetched under a base URL, catalogue URL or credential other than the provider's current ones; the front door fetches it again shortly, or run \`agent-shim provider models ${name} --refresh\`.`);
+        }
         if (cache === undefined) {
           throw new UsageError(`No catalogue has been fetched for "${name}" yet: the front door fetches it shortly after it starts, or run \`agent-shim provider models ${name} --refresh\`.`);
         }

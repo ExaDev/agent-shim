@@ -1,21 +1,27 @@
+import { z } from "zod";
 import { describe, expect, it, vi } from "vitest";
 
 import { refreshProviderCatalogue, type RefreshCatalogueDeps } from "./catalogueRefresh";
 import { catalogueCredentialFingerprint } from "./codex/catalogueCredential";
 import { reportFatalError } from "./cliReport";
 import { resolveCredential } from "./credential";
-import type { Provider } from "./config/schema";
+import type { HttpProvider } from "./config/schema";
 import { buildLayoutPaths } from "./paths";
-import { CatalogueFetchError, catalogueCachePath, type CatalogueCache } from "./providerCatalogue";
+import { CatalogueFetchError, catalogueCachePath, catalogueSettingsFingerprint, catalogueSettingsPath, type CatalogueCache } from "./providerCatalogue";
 import { fakeCredentials } from "./test-helpers";
 
 const paths = buildLayoutPaths("/home/test/.agent-shim");
+/** How far the clock moves at each reading, so the fetch and the writes happen at different instants. */
+const CLOCK_STEP_MS = 1000;
 const NOW = Date.parse("2026-01-01T00:00:00Z");
 const CREDENTIAL = { sources: [{ env: "TOKEN" }] };
-const catalogued: Provider = { displayName: "A", baseUrl: "https://a.example/api", credential: CREDENTIAL, catalogue: { tier: "sonnet" } };
+const catalogued: HttpProvider = { displayName: "A", baseUrl: "https://a.example/api", credential: CREDENTIAL, catalogue: { tier: "sonnet" } };
 
 function deps(overrides: Partial<RefreshCatalogueDeps> = {}) {
-  const write = vi.fn<(filePath: string, cache: CatalogueCache) => void>();
+  const calls: string[] = [];
+  const write = vi.fn<(filePath: string, cache: CatalogueCache) => void>(() => { calls.push("catalogue"); });
+  const writeSettings = vi.fn<RefreshCatalogueDeps["writeSettings"]>(() => { calls.push("settings"); });
+  const removeSettings = vi.fn<RefreshCatalogueDeps["removeSettings"]>(() => { calls.push("remove settings"); });
   const fetch = vi.fn<RefreshCatalogueDeps["fetch"]>().mockResolvedValue({ status: 200, body: { data: [{ id: "m1" }] } });
   const all: RefreshCatalogueDeps = {
     paths,
@@ -24,21 +30,44 @@ function deps(overrides: Partial<RefreshCatalogueDeps> = {}) {
     fetch,
     now: () => NOW,
     write,
+    writeSettings,
+    removeSettings,
     writeBinding: vi.fn<RefreshCatalogueDeps["writeBinding"]>(),
     ...overrides,
   };
-  return { all, write, fetch };
+  return { all, write, writeSettings, removeSettings, fetch, calls };
 }
 
 describe("refreshProviderCatalogue", () => {
   it("fetches with the provider's credential and stores the result in the provider's cache file", async () => {
-    const { all, write, fetch } = deps();
+    const { all, write, writeSettings, fetch, calls } = deps();
 
     const cache = await refreshProviderCatalogue("a", all);
 
     expect(cache).toEqual({ fetchedAt: NOW, url: "https://a.example/api/v1/models", models: [{ id: "m1" }] });
     expect(write).toHaveBeenCalledWith(catalogueCachePath(paths, "a"), cache);
+    // The digest is removed before the catalogue is written and stored after it, so no stop in between leaves an earlier digest over another catalogue.
+    expect(writeSettings).toHaveBeenCalledWith(catalogueSettingsPath(paths, "a"), catalogueSettingsFingerprint(catalogued), cache.fetchedAt);
+    expect(calls).toEqual(["remove settings", "catalogue", "settings"]);
     expect(fetch.mock.calls[0]?.[1]).toMatchObject({ authorization: "Bearer tok" });
+  });
+
+  it("records in the digest the fetchedAt of the catalogue it stores, though the clock moves between the fetch and the writes", async () => {
+    let now = NOW;
+    const { all, write, writeSettings } = deps({ now: () => (now += CLOCK_STEP_MS) });
+    await refreshProviderCatalogue("a", all);
+    const stored = write.mock.calls[0]?.[1];
+    expect(stored?.fetchedAt).toBeGreaterThan(NOW);
+    expect(writeSettings.mock.calls[0]?.[2]).toBe(stored?.fetchedAt);
+  });
+
+  it("stores a catalogue the previous release's closed schema still reads, with the digest in a file of its own", async () => {
+    // The shape of a stored catalogue in the release before the digest: a closed object, which takes a catalogue with any other key for none.
+    const PreviousCatalogueSchema = z.strictObject({ fetchedAt: z.number(), url: z.string().min(1), models: z.array(z.strictObject({ id: z.string().min(1), name: z.string().min(1).optional() })), credentialFingerprint: z.string().optional(), supervisorPid: z.number().int().positive().optional() });
+    const { all, write } = deps();
+    await refreshProviderCatalogue("a", all);
+    const stored: unknown = JSON.parse(JSON.stringify(write.mock.calls[0]?.[1]));
+    expect(PreviousCatalogueSchema.safeParse(stored).success).toBe(true);
   });
 
   it("fetches the signed-in account's visible models using its own grant", async () => {

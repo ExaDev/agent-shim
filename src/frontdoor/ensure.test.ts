@@ -236,6 +236,16 @@ describe("ensureFrontDoor", () => {
     expect(world.spawns).toEqual([REPLACEMENT_PID]);
   });
 
+  it("replaces a door of the protocol before catalogues recorded the settings they were fetched under, which stores lists this launcher would take as another server's", () => {
+    const world = makeWorld({ spawnedPid: REPLACEMENT_PID });
+    const protocolBeforeSettingsDigest = 8;
+    expect(protocolBeforeSettingsDigest).toBeLessThan(FRONT_DOOR_PROTOCOL);
+    world.writeReadyState(PORT, SUPERVISOR_PID, protocolBeforeSettingsDigest);
+    ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
+    expect(world.stops).toEqual([SUPERVISOR_PID]);
+    expect(world.spawns).toEqual([REPLACEMENT_PID]);
+  });
+
   it("replaces a door of the current protocol when asked to, once, and the replacement comes up on the same port", () => {
     const world = makeWorld({ spawnedPid: REPLACEMENT_PID, spawnedPort: PORT });
     world.writeReadyState(PORT, SUPERVISOR_PID, FRONT_DOOR_PROTOCOL);

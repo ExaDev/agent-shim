@@ -5,7 +5,7 @@ import { Command } from "commander";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { buildLayoutPaths } from "./paths";
-import { catalogueCachePath } from "./providerCatalogue";
+import { catalogueCachePath, catalogueSettingsFingerprint, catalogueSettingsPath, catalogueSettingsText } from "./providerCatalogue";
 import { catalogueCredentialFingerprint } from "./codex/catalogueCredential";
 import { writeFrontDoorCodexHome, writeFrontDoorState } from "./frontdoor/state";
 import { registerProviderCommand } from "./providers";
@@ -191,4 +191,31 @@ it("rejects a refreshed catalogue when the serving door changes during the fetch
   const program = new Command().exitOverride();
   registerProviderCommand(program, fakeCommandDeps(paths));
   await expect(program.parseAsync(["provider", "models", "c", "--refresh", "--json"], { from: "user" })).rejects.toThrow("front door changed during catalogue refresh");
+});
+
+it("refuses to show an http catalogue fetched before the provider's base URL changed, and shows one fetched under its settings", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-provider-models-http-"));
+  roots.push(root);
+  const paths = buildLayoutPaths(root);
+  const credential = { sources: [{ literal: "unused" }] };
+  fs.mkdirSync(paths.providersDir, { recursive: true });
+  fs.mkdirSync(paths.catalogueDir, { recursive: true });
+  fs.writeFileSync(path.join(paths.providersDir, "h.json"), JSON.stringify({ displayName: "H", baseUrl: "https://new.example", credential, catalogue: { tier: "sonnet" } }));
+  /** Stores a catalogue that `baseUrl` served, with the digest of the settings the provider had then. */
+  const store = (baseUrl: string): void => {
+    fs.writeFileSync(catalogueCachePath(paths, "h"), JSON.stringify({ fetchedAt: 1, url: `${baseUrl}/v1/models`, models: [{ id: "served" }] }));
+    fs.mkdirSync(path.dirname(catalogueSettingsPath(paths, "h")), { recursive: true });
+    fs.writeFileSync(catalogueSettingsPath(paths, "h"), catalogueSettingsText(catalogueSettingsFingerprint({ baseUrl, catalogue: { tier: "sonnet" }, credential }), 1));
+  };
+  const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+  const program = new Command().exitOverride();
+  registerProviderCommand(program, fakeCommandDeps(paths));
+  store("https://old.example");
+  await expect(program.parseAsync(["provider", "models", "h", "--json"], { from: "user" })).rejects.toThrow("fetched under a base URL, catalogue URL or credential other than the provider's current ones");
+  // A catalogue with no digest, as a release that kept none stores it, says so in its own words.
+  fs.rmSync(catalogueSettingsPath(paths, "h"));
+  await expect(program.parseAsync(["provider", "models", "h", "--json"], { from: "user" })).rejects.toThrow("has no record of the settings it was fetched under");
+  store("https://new.example");
+  await program.parseAsync(["provider", "models", "h", "--json"], { from: "user" });
+  expect(String(log.mock.calls[0]?.[0])).toContain("served");
 });

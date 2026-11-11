@@ -8,7 +8,7 @@ import { writeJsonAtomic } from "./config/store";
 import type { CachedCredential, CredentialCachePort } from "./credentialCache";
 import { addIdentity, readIdentity, setIdentityProvider } from "./identityStore";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
-import { catalogueBindingPath, catalogueCachePath } from "./providerCatalogue";
+import { catalogueBindingPath, catalogueCachePath, catalogueSettingsPath, catalogueSettingsText, parseCatalogueSettings } from "./providerCatalogue";
 import { readProviderAliases } from "./providerAliases";
 import { renameModelRefs, renameProvider, type ProviderRenamePorts } from "./providerRename";
 import { InvalidProviderNameError } from "./config/names";
@@ -158,14 +158,28 @@ describe("renameProvider", () => {
     writeJsonAtomic(path.join(paths.providersDir, "z.json"), { displayName: "z.ai", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z_API_TOKEN" }], cache: { store: "file" } } });
     fs.mkdirSync(paths.catalogueDir, { recursive: true });
     fs.writeFileSync(path.join(paths.catalogueDir, "z.json"), "{}");
+    fs.mkdirSync(path.dirname(catalogueSettingsPath(paths, "z")), { recursive: true });
+    fs.writeFileSync(catalogueSettingsPath(paths, "z"), catalogueSettingsText("digest-of-z", 1));
     const entry: CachedCredential = { token: "synthetic-token", fetchedAt: 1, source: { env: "Z_API_TOKEN" } };
     cache.set("file:provider z", entry);
     const report = renameProvider(paths, "z", "zai", ports);
     expect(fs.existsSync(path.join(paths.catalogueDir, "z.json"))).toBe(false);
     expect(fs.existsSync(path.join(paths.catalogueDir, "zai.json"))).toBe(true);
+    // The digest the catalogue was fetched under goes with it, so the renamed provider keeps listing the models it listed.
+    expect(fs.existsSync(catalogueSettingsPath(paths, "z"))).toBe(false);
+    expect(parseCatalogueSettings(fs.readFileSync(catalogueSettingsPath(paths, "zai"), "utf8"))).toEqual({ settings: "digest-of-z", fetchedAt: 1 });
     expect(cache.get("file:provider zai")).toEqual(entry);
     expect(cache.has("file:provider z")).toBe(false);
-    expect(report.updated).toEqual(["catalogue", "credential cache"]);
+    expect(report.updated).toEqual(["catalogue", "catalogue digest", "credential cache"]);
+  });
+
+  it("reports a digest that moved on its own as what it is, and no catalogue", () => {
+    writeJsonAtomic(path.join(paths.providersDir, "z.json"), { displayName: "z.ai", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z_API_TOKEN" }] } });
+    fs.mkdirSync(path.dirname(catalogueSettingsPath(paths, "z")), { recursive: true });
+    fs.writeFileSync(catalogueSettingsPath(paths, "z"), catalogueSettingsText("digest-of-z", 1));
+    const report = renameProvider(paths, "z", "zai", ports);
+    expect(report.updated).toEqual(["catalogue digest"]);
+    expect(fs.existsSync(catalogueSettingsPath(paths, "zai"))).toBe(true);
   });
 
   it("moves supervisor-scoped catalogues and bindings with a renamed Codex provider", () => {

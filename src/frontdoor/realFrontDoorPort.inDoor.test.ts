@@ -13,12 +13,24 @@ import { declareThisProcessTheFrontDoor, resetFrontDoorDeclarationForTests } fro
 import { FRONT_DOOR_PROTOCOL, writeFrontDoorState } from "./state";
 import { realFarmFs } from "../realPorts";
 import { catalogueCredentialFingerprint } from "../codex/catalogueCredential";
-import { CATALOGUE_REFRESH_DEADLINE_MS, CATALOGUE_REFRESH_TIMEOUT_MS, CATALOGUE_RETRY_MS, catalogueCachePath } from "../providerCatalogue";
-import { writeCatalogueStatus, writeFrontDoorCodexHome } from "./state";
+import { CATALOGUE_REFRESH_DEADLINE_MS, CATALOGUE_REFRESH_TIMEOUT_MS, CATALOGUE_RETRY_MS, catalogueCachePath, catalogueSettingsFingerprint, catalogueSettingsText } from "../providerCatalogue";
+import { writeFrontDoorCodexHome } from "./state";
+import { writeCatalogueFailureReason, writeCatalogueStatus } from "./catalogueState";
 
+/** The settings every `http` provider these tests write has, which a stored catalogue records so the door takes it for the provider as it is. */
+const HTTP_SETTINGS = catalogueSettingsFingerprint({ baseUrl: "https://example.test", catalogue: { tier: "sonnet" }, credential: { sources: [{ env: "TOKEN" }] } });
 const POLLS_BEFORE_CACHE = 3;
 const SERVING_PORT = 4100;
 const SERVING_CONNECT_PORT = 4300;
+
+/** Stores a catalogue file of provider `file` (such as `http.json`) fetched at `fetchedAt`, and the digest file beside it holding `digest` (the settings of these tests' providers by default, another server's settings, or none). */
+function storeCatalogue(paths: ReturnType<typeof buildLayoutPaths>, file: string, fetchedAt: number, digest: "own" | "other" | "none" = "own"): void {
+  fs.writeFileSync(path.join(paths.catalogueDir, file), JSON.stringify({ fetchedAt, url: "https://example.test/v1/models", models: [{ id: "model" }] }));
+  if (digest !== "none") {
+    fs.mkdirSync(path.join(paths.catalogueDir, "settings"), { recursive: true });
+    fs.writeFileSync(path.join(paths.catalogueDir, "settings", file), catalogueSettingsText(digest === "own" ? HTTP_SETTINGS : "settings-of-another-server", fetchedAt));
+  }
+}
 
 describe("a launch the front door plans for itself", () => {
   let root: string;
@@ -62,9 +74,37 @@ describe("a launch the front door plans for itself", () => {
     fs.mkdirSync(paths.providersDir, { recursive: true });
     fs.mkdirSync(paths.catalogueDir, { recursive: true });
     fs.writeFileSync(path.join(paths.providersDir, "http.json"), JSON.stringify({ displayName: "HTTP", baseUrl: "https://example.test", credential: { sources: [{ env: "TOKEN" }] }, catalogue: { tier: "sonnet" } }));
-    fs.writeFileSync(path.join(paths.catalogueDir, "http.json"), JSON.stringify({ fetchedAt: Date.now(), url: "https://example.test/v1/models", models: [{ id: "model" }] }));
+    storeCatalogue(paths, "http.json", Date.now());
     const port = realFrontDoorPort(paths, () => { throw new Error("unexpected daemon"); });
     expect(() => { port.waitForCatalogues?.(process.pid); }).not.toThrow();
+  });
+
+  it("waits for a fresh HTTP catalogue that was fetched under settings other than the provider's current ones, until one fetched under its own is published", () => {
+    const paths = buildLayoutPaths(root);
+    fs.mkdirSync(paths.providersDir, { recursive: true });
+    fs.mkdirSync(paths.catalogueDir, { recursive: true });
+    fs.writeFileSync(path.join(paths.providersDir, "http.json"), JSON.stringify({ displayName: "HTTP", baseUrl: "https://example.test", credential: { sources: [{ env: "TOKEN" }] }, catalogue: { tier: "sonnet" } }));
+    storeCatalogue(paths, "http.json", Date.now(), "other");
+    const sleep = vi.spyOn(realPorts, "realSleepSync").mockImplementation(() => {
+      storeCatalogue(paths, "http.json", Date.now());
+    });
+    const port = realFrontDoorPort(paths, () => { throw new Error("unexpected daemon"); });
+    port.waitForCatalogues?.(process.pid + 1);
+    expect(sleep).toHaveBeenCalledOnce();
+  });
+
+  it("waits for a fresh HTTP catalogue with no digest, as an older door stores it, until one with a digest is published", () => {
+    const paths = buildLayoutPaths(root);
+    fs.mkdirSync(paths.providersDir, { recursive: true });
+    fs.mkdirSync(paths.catalogueDir, { recursive: true });
+    fs.writeFileSync(path.join(paths.providersDir, "http.json"), JSON.stringify({ displayName: "HTTP", baseUrl: "https://example.test", credential: { sources: [{ env: "TOKEN" }] }, catalogue: { tier: "sonnet" } }));
+    storeCatalogue(paths, "http.json", Date.now(), "none");
+    const sleep = vi.spyOn(realPorts, "realSleepSync").mockImplementation(() => {
+      storeCatalogue(paths, "http.json", Date.now());
+    });
+    const port = realFrontDoorPort(paths, () => { throw new Error("unexpected daemon"); });
+    port.waitForCatalogues?.(process.pid + 1);
+    expect(sleep).toHaveBeenCalledOnce();
   });
 
   it("waits for a missing HTTP catalogue to be published", () => {
@@ -73,7 +113,7 @@ describe("a launch the front door plans for itself", () => {
     fs.mkdirSync(paths.catalogueDir, { recursive: true });
     fs.writeFileSync(path.join(paths.providersDir, "http.json"), JSON.stringify({ displayName: "HTTP", baseUrl: "https://example.test", credential: { sources: [{ env: "TOKEN" }] }, catalogue: { tier: "sonnet" } }));
     const sleep = vi.spyOn(realPorts, "realSleepSync").mockImplementation(() => {
-      fs.writeFileSync(path.join(paths.catalogueDir, "http.json"), JSON.stringify({ fetchedAt: Date.now(), url: "https://example.test/v1/models", models: [{ id: "model" }] }));
+      storeCatalogue(paths, "http.json", Date.now());
     });
     const port = realFrontDoorPort(paths, () => { throw new Error("unexpected daemon"); });
     port.waitForCatalogues?.(process.pid + 1);
@@ -94,7 +134,7 @@ describe("a launch the front door plans for itself", () => {
       now += CATALOGUE_REFRESH_TIMEOUT_MS / 2;
       monotonic += CATALOGUE_REFRESH_TIMEOUT_MS / 2;
       sleeps++;
-      if (sleeps === POLLS_BEFORE_CACHE) fs.writeFileSync(path.join(paths.catalogueDir, "http.json"), JSON.stringify({ fetchedAt: now, url: "https://example.test/v1/models", models: [{ id: "model" }] }));
+      if (sleeps === POLLS_BEFORE_CACHE) storeCatalogue(paths, "http.json", now);
     });
     const port = realFrontDoorPort(paths, () => { throw new Error("unexpected daemon"); });
     expect(port.waitForCatalogues?.(process.pid + 1)).toBeUndefined();
@@ -143,7 +183,7 @@ describe("a launch the front door plans for itself", () => {
       now += CATALOGUE_REFRESH_TIMEOUT_MS * 2;
       sleeps += 1;
       if (sleeps === POLLS_BEFORE_CACHE) {
-        fs.writeFileSync(path.join(paths.catalogueDir, "http.json"), JSON.stringify({ fetchedAt: now, url: "https://example.test/v1/models", models: [{ id: "model" }] }));
+        storeCatalogue(paths, "http.json", now);
       }
     });
     const port = realFrontDoorPort(paths, () => { throw new Error("unexpected daemon"); });
@@ -204,7 +244,7 @@ describe("a launch the front door plans for itself", () => {
     fs.writeFileSync(path.join(paths.providersDir, "http.json"), JSON.stringify({ displayName: "HTTP", baseUrl: "https://example.test", credential: { sources: [{ env: "TOKEN" }] }, catalogue: { tier: "sonnet" } }));
     vi.spyOn(realPorts, "realSleepSync").mockImplementation(() => {
       writeFrontDoorState(realFarmFs, paths.frontdoorStateFile, { protocol: FRONT_DOOR_PROTOCOL, supervisorPid: pid + 1, port: SERVING_PORT, connectPort: SERVING_CONNECT_PORT });
-      fs.writeFileSync(path.join(paths.catalogueDir, "http.json"), JSON.stringify({ fetchedAt: Date.now(), url: "https://example.test/v1/models", models: [{ id: "model" }] }));
+      storeCatalogue(paths, "http.json", Date.now());
     });
     const port = realFrontDoorPort(paths, () => { throw new Error("unexpected daemon"); });
     expect(port.waitForCatalogues?.(pid)).toContain("front door changed");
@@ -262,11 +302,58 @@ describe("a launch the front door plans for itself", () => {
     writeFrontDoorCodexHome(realFarmFs, paths.frontdoorDir, pid, root, generation);
     writeCatalogueStatus(realFarmFs, paths, pid, generation, "first", "failed", undefined, Date.now());
     vi.spyOn(realPorts, "realSleepSync").mockImplementation(() => {
-      for (const name of ["first", "second"]) fs.writeFileSync(path.join(paths.catalogueDir, `${name}.json`), JSON.stringify({ fetchedAt: Date.now(), url: "https://example.test/v1/models", models: [{ id: "model" }] }));
+      for (const name of ["first", "second"]) storeCatalogue(paths, `${name}.json`, Date.now());
       writeCatalogueStatus(realFarmFs, paths, pid, generation, "first", "ready", undefined, Date.now());
     });
     const warning = realFrontDoorPort(paths, () => { throw new Error("unexpected daemon"); }).waitForCatalogues?.(pid);
     expect(warning).toBeUndefined();
+  });
+
+  /** A launch's wait with `http` failed a moment ago under `recordedSettings` (none for a failure file that records none, `null` for no failure file), the provider as the file holds it now, and a refresh that publishes a catalogue under the current settings when the wait sleeps: whether the launch slept, and what it warned. */
+  function waitAfterFailureRecordedUnder(recordedSettings: string | null | undefined): { readonly slept: number; readonly warning: string | undefined } {
+    const paths = buildLayoutPaths(root);
+    const pid = process.pid + 1;
+    const generation = "10000000-0000-4000-8000-000000000001";
+    fs.mkdirSync(paths.providersDir, { recursive: true });
+    fs.mkdirSync(paths.catalogueDir, { recursive: true });
+    fs.writeFileSync(path.join(paths.providersDir, "http.json"), JSON.stringify({ displayName: "HTTP", baseUrl: "https://example.test", credential: { sources: [{ env: "TOKEN" }] }, catalogue: { tier: "sonnet" } }));
+    writeFrontDoorCodexHome(realFarmFs, paths.frontdoorDir, pid, root, generation);
+    writeCatalogueStatus(realFarmFs, paths, pid, generation, "http", "failed", undefined, Date.now());
+    if (recordedSettings !== null) {
+      writeCatalogueFailureReason(realFarmFs, paths, pid, generation, "http", "no catalogue: status 500", recordedSettings === undefined ? {} : { settings: recordedSettings });
+    }
+    const sleep = vi.spyOn(realPorts, "realSleepSync").mockImplementation(() => {
+      storeCatalogue(paths, "http.json", Date.now());
+    });
+    const port = realFrontDoorPort(paths, () => { throw new Error("unexpected daemon"); });
+    const warning = port.waitForCatalogues?.(pid);
+    return { slept: sleep.mock.calls.length, warning };
+  }
+
+  it("treats a failure recorded under the provider's current settings, or one that records none, as final for the launch", () => {
+    expect(waitAfterFailureRecordedUnder(HTTP_SETTINGS)).toEqual({ slept: 0, warning: "Catalogue refresh failed for http" });
+    expect(waitAfterFailureRecordedUnder(undefined)).toEqual({ slept: 0, warning: "Catalogue refresh failed for http" });
+    expect(waitAfterFailureRecordedUnder(null)).toEqual({ slept: 0, warning: "Catalogue refresh failed for http" });
+  });
+
+  it("carries no warning of a failure recorded for a provider that has no catalogue now, and does not wait for it", () => {
+    const paths = buildLayoutPaths(root);
+    const pid = process.pid + 1;
+    const generation = "10000000-0000-4000-8000-000000000001";
+    fs.mkdirSync(paths.providersDir, { recursive: true });
+    fs.mkdirSync(paths.catalogueDir, { recursive: true });
+    fs.writeFileSync(path.join(paths.providersDir, "http.json"), JSON.stringify({ displayName: "HTTP", baseUrl: "https://example.test", credential: { sources: [{ env: "TOKEN" }] } }));
+    writeFrontDoorCodexHome(realFarmFs, paths.frontdoorDir, pid, root, generation);
+    writeCatalogueStatus(realFarmFs, paths, pid, generation, "http", "failed", undefined, Date.now());
+    writeCatalogueFailureReason(realFarmFs, paths, pid, generation, "http", "no catalogue: status 308", { redirected: true, settings: catalogueSettingsFingerprint({ baseUrl: "https://example.test", credential: { sources: [{ env: "TOKEN" }] } }) });
+    const sleep = vi.spyOn(realPorts, "realSleepSync").mockImplementation(() => { throw new Error("unexpected wait"); });
+    const port = realFrontDoorPort(paths, () => { throw new Error("unexpected daemon"); });
+    expect(port.waitForCatalogues?.(pid)).toBeUndefined();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("waits for the refresh of a provider edited since its refresh failed, and carries no warning of the failure", () => {
+    expect(waitAfterFailureRecordedUnder("settings-of-the-provider-before-it-was-edited")).toEqual({ slept: 1, warning: undefined });
   });
 
   it("waits for a refresh after a failure's retry window expires", () => {
@@ -279,7 +366,7 @@ describe("a launch the front door plans for itself", () => {
     writeFrontDoorCodexHome(realFarmFs, paths.frontdoorDir, pid, root, generation);
     writeCatalogueStatus(realFarmFs, paths, pid, generation, "http", "failed", undefined, Date.now() - CATALOGUE_RETRY_MS);
     const sleep = vi.spyOn(realPorts, "realSleepSync").mockImplementation(() => {
-      fs.writeFileSync(path.join(paths.catalogueDir, "http.json"), JSON.stringify({ fetchedAt: Date.now(), url: "https://example.test/v1/models", models: [{ id: "model" }] }));
+      storeCatalogue(paths, "http.json", Date.now());
     });
     const port = realFrontDoorPort(paths, () => { throw new Error("unexpected daemon"); });
     port.waitForCatalogues?.(pid);
@@ -295,7 +382,7 @@ describe("a launch the front door plans for itself", () => {
     fs.writeFileSync(path.join(paths.providersDir, "http.json"), JSON.stringify({ displayName: "HTTP", baseUrl: "https://example.test", credential: { sources: [{ env: "TOKEN" }] }, catalogue: { tier: "sonnet" } }));
     writeFrontDoorCodexHome(realFarmFs, paths.frontdoorDir, pid, root, generation);
     writeCatalogueStatus(realFarmFs, paths, pid, generation, "http", "failed");
-    const sleep = vi.spyOn(realPorts, "realSleepSync").mockImplementation(() => { fs.writeFileSync(path.join(paths.catalogueDir, "http.json"), JSON.stringify({ fetchedAt: Date.now(), url: "https://example.test/v1/models", models: [{ id: "model" }] })); });
+    const sleep = vi.spyOn(realPorts, "realSleepSync").mockImplementation(() => { storeCatalogue(paths, "http.json", Date.now()); });
     realFrontDoorPort(paths, () => { throw new Error("unexpected daemon"); }).waitForCatalogues?.(pid);
     expect(sleep).toHaveBeenCalledOnce();
   });
@@ -309,9 +396,57 @@ describe("a launch the front door plans for itself", () => {
     fs.writeFileSync(path.join(paths.providersDir, "http.json"), JSON.stringify({ displayName: "HTTP", baseUrl: "https://example.test", credential: { sources: [{ env: "TOKEN" }] }, catalogue: { tier: "sonnet" } }));
     writeFrontDoorCodexHome(realFarmFs, paths.frontdoorDir, pid, root, generation);
     writeCatalogueStatus(realFarmFs, paths, pid, generation, "http", "failed", undefined, Date.now() + CATALOGUE_RETRY_MS);
-    const sleep = vi.spyOn(realPorts, "realSleepSync").mockImplementation(() => { fs.writeFileSync(path.join(paths.catalogueDir, "http.json"), JSON.stringify({ fetchedAt: Date.now(), url: "https://example.test/v1/models", models: [{ id: "model" }] })); });
+    const sleep = vi.spyOn(realPorts, "realSleepSync").mockImplementation(() => { storeCatalogue(paths, "http.json", Date.now()); });
     realFrontDoorPort(paths, () => { throw new Error("unexpected daemon"); }).waitForCatalogues?.(pid);
     expect(sleep).toHaveBeenCalledOnce();
+  });
+
+  /** How old a recorded failure is, in ms, and whether a launch takes it as final (and so reports it) rather than waiting for the refresh the door starts: only an age from nothing up to, not including, the retry window counts, so an age of exactly the window and a failure stamped by a clock that has since stepped back do not. */
+  const FAILURE_AGES: readonly (readonly [string, number, boolean])[] = [
+    ["a moment ago", 0, true],
+    ["one millisecond short of the retry window", CATALOGUE_RETRY_MS - 1, true],
+    ["exactly the retry window", CATALOGUE_RETRY_MS, false],
+    ["after the clock has stepped back behind it", -1, false],
+  ];
+  const FROZEN_NOW_MS = 4_000_000_000_000;
+
+  it.each(FAILURE_AGES)("takes an http provider's refresh failure recorded %s as final: %s", (_label, age, final) => {
+    vi.spyOn(Date, "now").mockReturnValue(FROZEN_NOW_MS);
+    const paths = buildLayoutPaths(root);
+    const pid = process.pid + 1;
+    const generation = "10000000-0000-4000-8000-000000000001";
+    fs.mkdirSync(paths.providersDir, { recursive: true });
+    fs.mkdirSync(paths.catalogueDir, { recursive: true });
+    fs.writeFileSync(path.join(paths.providersDir, "http.json"), JSON.stringify({ displayName: "HTTP", baseUrl: "https://example.test", credential: { sources: [{ env: "TOKEN" }] }, catalogue: { tier: "sonnet" } }));
+    writeFrontDoorCodexHome(realFarmFs, paths.frontdoorDir, pid, root, generation);
+    writeCatalogueStatus(realFarmFs, paths, pid, generation, "http", "failed", undefined, FROZEN_NOW_MS - age);
+    const sleep = vi.spyOn(realPorts, "realSleepSync").mockImplementation(() => {
+      storeCatalogue(paths, "http.json", FROZEN_NOW_MS);
+    });
+    const warning = realFrontDoorPort(paths, () => { throw new Error("unexpected daemon"); }).waitForCatalogues?.(pid);
+    expect(sleep).toHaveBeenCalledTimes(final ? 0 : 1);
+    expect(warning === undefined).toBe(!final);
+  });
+
+  it.each(FAILURE_AGES)("takes a Codex provider's refresh failure recorded %s as final: %s", (_label, age, final) => {
+    vi.spyOn(Date, "now").mockReturnValue(FROZEN_NOW_MS);
+    const paths = buildLayoutPaths(root);
+    const home = path.join(root, "codex");
+    const pid = process.pid + 1;
+    const generation = "10000000-0000-4000-8000-000000000001";
+    fs.mkdirSync(paths.providersDir, { recursive: true });
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(path.join(paths.providersDir, "codex.json"), JSON.stringify({ kind: "codex", displayName: "Codex", credential: { sources: [{ env: "TOKEN" }] } }));
+    fs.writeFileSync(path.join(home, "auth.json"), JSON.stringify({ tokens: { access_token: "token", account_id: "workspace" } }));
+    writeFrontDoorCodexHome(realFarmFs, paths.frontdoorDir, pid, home, generation);
+    const fingerprint = catalogueCredentialFingerprint(true, "token", "workspace");
+    writeCatalogueStatus(realFarmFs, paths, pid, generation, "codex", "failed", fingerprint, FROZEN_NOW_MS - age);
+    const sleep = vi.spyOn(realPorts, "realSleepSync").mockImplementation(() => {
+      fs.writeFileSync(catalogueCachePath(paths, "codex", pid, generation), JSON.stringify({ fetchedAt: FROZEN_NOW_MS, url: "https://example.test", models: [{ id: "gpt" }], credentialFingerprint: fingerprint, supervisorPid: pid }));
+    });
+    const warning = realFrontDoorPort(paths, () => { throw new Error("unexpected daemon"); }).waitForCatalogues?.(pid);
+    expect(sleep).toHaveBeenCalledTimes(final ? 0 : 1);
+    expect(warning === undefined).toBe(!final);
   });
 
   it("does not apply an unbound Codex failure to a new account", () => {
@@ -409,7 +544,7 @@ describe("a launch the front door plans for itself", () => {
     fs.writeFileSync(path.join(paths.providersDir, "z-http.json"), JSON.stringify({ displayName: "HTTP", baseUrl: "https://example.test", credential: { sources: [{ env: "TOKEN" }] }, catalogue: { tier: "sonnet" } }));
     fs.writeFileSync(path.join(home, "auth.json"), "not json");
     writeFrontDoorCodexHome(realFarmFs, paths.frontdoorDir, pid, home, generation);
-    const sleep = vi.spyOn(realPorts, "realSleepSync").mockImplementation(() => { fs.writeFileSync(path.join(paths.catalogueDir, "z-http.json"), JSON.stringify({ fetchedAt: Date.now(), url: "https://example.test/v1/models", models: [{ id: "model" }] })); });
+    const sleep = vi.spyOn(realPorts, "realSleepSync").mockImplementation(() => { storeCatalogue(paths, "z-http.json", Date.now()); });
     const warning = realFrontDoorPort(paths, () => { throw new Error("unexpected daemon"); }).waitForCatalogues?.(pid);
     expect(sleep).toHaveBeenCalledOnce();
     expect(warning).toContain("invalid Codex login file");

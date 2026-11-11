@@ -1,16 +1,31 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 
 import * as esbuild from "esbuild";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { cliBundleOptions } from "../../scripts/bundle-options.mts";
+import { createCatalogueKeeper } from "../catalogueKeeper";
 import { CheckReportJsonSchema } from "../checkReportSchema";
+import { collectDoctorReport } from "../doctorReport";
+import { buildLayoutPaths } from "../paths";
+import { isHttpProvider } from "../config/schema";
+import { catalogueCachePath, catalogueSettingsFingerprint, catalogueSettingsPath, parseCatalogueCache, parseCatalogueSettings } from "../providerCatalogue";
+import { listProviders } from "../providersStore";
+import { realFarmFs } from "../realPorts";
 import { DoctorRunOutputSchema } from "./controlSchemas";
 import { createDoorWorkerHost } from "./doorWorker";
+import { writeFrontDoorCodexHome, writeFrontDoorState } from "./state";
+import { catalogueStatusPublisher, writeCatalogueFailureReason, writeCatalogueStatus } from "./catalogueState";
+
+/** The status the stand-in upstream answers every read with: a redirect the read never follows. */
+const FOUND_STATUS = 302;
+/** The status the stand-in listing answers with. */
+const OK_STATUS = 200;
 
 /** The longest a test waits for the real worker to evaluate the bundle and answer: a bound a loaded machine does not reach, since the wait is on the worker's answer and not on a clock. */
 const REAL_WORKER_TEST_BUDGET_MS = 120_000;
@@ -112,9 +127,120 @@ describe("a door worker running the real bundle", () => {
         for (const text of seen) {
           expect(text).not.toContain(marker);
         }
-        expect(seen[0]).toContain("agent-shim provider models --refresh");
+        expect(seen[0]).toContain("agent-shim provider models <name> --refresh");
       } finally {
         host.stop();
+      }
+    },
+    REAL_WORKER_TEST_BUDGET_MS,
+  );
+
+  it(
+    "carries the fact that a catalogue read met a redirect out of a worker, so the keeper records it and doctor warns of it, with nothing of the worker's message",
+    async () => {
+      const upstream = http.createServer((_request, response) => {
+        response.writeHead(FOUND_STATUS, { location: "https://elsewhere.example/models?key=LOCATION-SECRET" });
+        response.end();
+      });
+      await new Promise<void>((resolve) => {
+        upstream.listen(0, "127.0.0.1", resolve);
+      });
+      const address = upstream.address();
+      if (address === null || typeof address === "string") {
+        throw new Error("the stand-in upstream has no port");
+      }
+      const root = path.join(dir, "home-redirect");
+      const paths = buildLayoutPaths(root);
+      fs.mkdirSync(paths.providersDir, { recursive: true });
+      fs.writeFileSync(path.join(paths.providersDir, "r.json"), JSON.stringify({ displayName: "R", baseUrl: `http://127.0.0.1:${String(address.port)}`, credential: { sources: [{ literal: "placeholder" }] }, catalogue: { tier: "haiku" } }));
+      const supervisor = process.pid;
+      const generation = "10000000-0000-4000-8000-000000000001";
+      writeFrontDoorState(realFarmFs, paths.frontdoorStateFile, { supervisorPid: supervisor });
+      writeFrontDoorCodexHome(realFarmFs, paths.frontdoorDir, supervisor, path.join(root, "codex"), generation);
+      const host = createDoorWorkerHost({ code, facts: { ownExecutablePath: bundlePath, contentSourcePath: bundlePath }, deadlineMs: { check: REAL_WORKER_TEST_BUDGET_MS, doctor: REAL_WORKER_TEST_BUDGET_MS, "refresh-catalogue": REAL_WORKER_TEST_BUDGET_MS } });
+      try {
+        const keeper = createCatalogueKeeper({
+          supervisorPid: supervisor,
+          providers: () => listProviders(paths).map(({ name, provider }) => [name, provider] as const),
+          readCache: (name) => (fs.existsSync(catalogueCachePath(paths, name)) ? fs.readFileSync(catalogueCachePath(paths, name), "utf8") : undefined),
+          readSettings: (name) => (fs.existsSync(catalogueSettingsPath(paths, name)) ? fs.readFileSync(catalogueSettingsPath(paths, name), "utf8") : undefined),
+          credentialFingerprint: () => undefined,
+          refresh: async (name) => {
+            await host.run("refresh-catalogue", { root, name, supervisorPid: supervisor, generation }, () => undefined);
+          },
+          nowMs: () => Date.now(),
+          log: () => undefined,
+          publishStatus: catalogueStatusPublisher(realFarmFs, paths, supervisor, generation, () => Date.now()),
+        });
+        keeper.tick();
+        const failureFile = path.join(paths.catalogueDir, "supervisors", String(supervisor), generation, "failures", "r.json");
+        await vi.waitFor(() => {
+          expect(fs.existsSync(failureFile)).toBe(true);
+        }, { timeout: REAL_WORKER_TEST_BUDGET_MS });
+        const recorded = fs.readFileSync(failureFile, "utf8");
+        expect(JSON.parse(recorded)).toMatchObject({ redirected: true });
+        expect(recorded).not.toContain("LOCATION-SECRET");
+        const redirectWarnings = (): readonly unknown[] => collectDoctorReport({ paths, env: { PATH: "" } }).findings.filter((finding) => finding.message.includes("reached a redirect")).map((finding) => finding.subject);
+        expect(redirectWarnings()).toEqual(["r"]);
+        // What the warning says of a refresh the worker ran: the worker's failure in the door's own words, the error's class and the command that prints the detail, and no URL (the stand-in's address) and nothing of its Location.
+        const message = collectDoctorReport({ paths, env: { PATH: "" } }).findings.find((finding) => finding.message.includes("reached a redirect"))?.message ?? "";
+        expect(message).toContain("refresh-catalogue failed in its worker: it ended with CatalogueFetchError");
+        expect(message).toContain("agent-shim provider models <name> --refresh");
+        expect(message).not.toContain(String(address.port));
+        expect(message).not.toContain("elsewhere.example");
+        // The doctor half of what follows (a fixed base URL clears the warning, a failure file with no settings is ignored) is also pinned over files alone by doctorProviderReachability.test.ts and catalogueFailures.test.ts; here it is run through the real worker for the refresh half.
+        // The base URL is fixed to an address that serves a list: the warning is gone at once (the provider's settings differ from the failure's), and the very next tick refreshes it through the worker, not after the retry period.
+        const listing = http.createServer((_request, response) => {
+          response.writeHead(OK_STATUS, { "content-type": "application/json" });
+          response.end(JSON.stringify({ data: [{ id: "served-model" }] }));
+        });
+        await new Promise<void>((resolve) => {
+          listing.listen(0, "127.0.0.1", resolve);
+        });
+        try {
+          const listingAddress = listing.address();
+          if (listingAddress === null || typeof listingAddress === "string") {
+            throw new Error("the stand-in listing has no port");
+          }
+          fs.writeFileSync(path.join(paths.providersDir, "r.json"), JSON.stringify({ displayName: "R", baseUrl: `http://127.0.0.1:${String(listingAddress.port)}`, credential: { sources: [{ literal: "placeholder" }] }, catalogue: { tier: "haiku" } }));
+          expect(redirectWarnings()).toEqual([]);
+          keeper.tick();
+          await vi.waitFor(() => {
+            expect(fs.existsSync(catalogueCachePath(paths, "r"))).toBe(true);
+          }, { timeout: REAL_WORKER_TEST_BUDGET_MS });
+          expect(fs.readFileSync(catalogueCachePath(paths, "r"), "utf8")).toContain("served-model");
+          await vi.waitFor(() => {
+            expect(fs.existsSync(catalogueSettingsPath(paths, "r"))).toBe(true);
+          }, { timeout: REAL_WORKER_TEST_BUDGET_MS });
+          // The digest file parses to the fingerprint of the provider as it was edited to, which a raw fingerprint written in its place would not.
+          const fixed = listProviders(paths).find((entry) => entry.name === "r")?.provider;
+          const stored = parseCatalogueCache(fs.readFileSync(catalogueCachePath(paths, "r"), "utf8"));
+          const digest = parseCatalogueSettings(fs.readFileSync(catalogueSettingsPath(paths, "r"), "utf8"));
+          expect(fixed !== undefined && isHttpProvider(fixed) && digest?.settings === catalogueSettingsFingerprint(fixed) && digest.fetchedAt === stored?.fetchedAt).toBe(true);
+          await vi.waitFor(() => {
+            expect(fs.existsSync(failureFile)).toBe(false);
+          }, { timeout: REAL_WORKER_TEST_BUDGET_MS });
+          expect(redirectWarnings()).toEqual([]);
+          // Failure files an older door wrote record no settings, so they are ignored whatever they say.
+          writeCatalogueStatus(realFarmFs, paths, supervisor, generation, "r", "failed", undefined, Date.now());
+          writeCatalogueFailureReason(realFarmFs, paths, supervisor, generation, "r", "no catalogue: status 302", { redirected: true });
+          expect(redirectWarnings()).toEqual([]);
+        } finally {
+          await new Promise<void>((resolve) => {
+            listing.closeAllConnections();
+            listing.close(() => {
+              resolve();
+            });
+          });
+        }
+      } finally {
+        host.stop();
+        await new Promise<void>((resolve) => {
+          upstream.closeAllConnections();
+          upstream.close(() => {
+            resolve();
+          });
+        });
       }
     },
     REAL_WORKER_TEST_BUDGET_MS,

@@ -8,7 +8,7 @@ import { UsageError } from "./cliError";
 import { listProfiles, readGlobalConfig } from "./configProfilesStore";
 import { effectiveStore, type CredentialCachePort } from "./credentialCache";
 import type { FarmFs } from "./launcher/ports";
-import { catalogueBindingPath, catalogueCachePath } from "./providerCatalogue";
+import { catalogueBindingPath, catalogueCachePath, catalogueSettingsPath } from "./providerCatalogue";
 import { UsageSnapshotSchema } from "./usage/schema";
 import { listUsageSnapshots, snapshotPath, type UsageReadFs } from "./usage/read";
 import { readDirectoryRules, writeDirectoryRules } from "./directoryRulesStore";
@@ -105,6 +105,13 @@ function moveState(paths: LayoutPaths, from: string, to: string, ports: Provider
   if (fs.existsSync(catalogueCachePath(paths, from))) {
     fs.renameSync(catalogueCachePath(paths, from), catalogueCachePath(paths, to));
     moved.push("catalogue");
+  }
+  // An http provider's digest of the settings its catalogue was fetched under goes with the catalogue it describes.
+  const digest = catalogueSettingsPath(paths, from);
+  if (fs.existsSync(digest)) {
+    fs.mkdirSync(path.dirname(catalogueSettingsPath(paths, to)), { recursive: true });
+    fs.renameSync(digest, catalogueSettingsPath(paths, to));
+    moved.push("catalogue digest");
   }
   const globalBinding = catalogueBindingPath(paths, from);
   if (fs.existsSync(globalBinding)) {
