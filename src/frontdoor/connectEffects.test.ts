@@ -6,6 +6,7 @@ import * as net from "node:net";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { closedLoopbackPort } from "../test-ports";
 import { ExemptHttpAgent, realConnectEffects, realDoorDialIo, SourcePortRange } from "./connectEffects";
 import { HTTP_OK } from "./connectTestWorld";
 
@@ -313,28 +314,8 @@ describe("the exempt agents' reserved source-port rotation", () => {
 });
 
 describe("the answer to a request whose upstream cannot be reached", () => {
-  /** A port nothing listens on: bound and released, so the connect to it is refused. */
-  async function closedPort(): Promise<number> {
-    const server = net.createServer();
-    await new Promise<void>((resolve) => {
-      server.listen(0, "127.0.0.1", () => {
-        resolve(undefined);
-      });
-    });
-    const bound = server.address();
-    if (bound === null || typeof bound === "string") {
-      throw new Error("the probe server did not bind a TCP port");
-    }
-    await new Promise<void>((resolve) => {
-      server.close(() => {
-        resolve(undefined);
-      });
-    });
-    return bound.port;
-  }
-
   it("names why a name that resolves to both loopback addresses refused every connection, without the local end of the connection", async () => {
-    const refusedPort = await closedPort();
+    const refusedPort = await closedLoopbackPort();
     const effects = realConnectEffects(PRIVATE_RANGE);
     const front = http.createServer((request, response) => {
       effects.forwardHttp({ host: "localhost", port: refusedPort, tls: false }, request, response);

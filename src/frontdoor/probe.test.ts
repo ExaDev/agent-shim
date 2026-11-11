@@ -12,6 +12,7 @@ import { observeBlockingSteps } from "../processRole";
 import { cliBundleOptions } from "../../scripts/bundle-options.mts";
 import { LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial, type LeafCert } from "./connect";
 import { PROBE_WAIT_MARGIN_MS, PROBE_WAIT_SLICE_MS, PROBE_WORKER_FAILURE_PREFIX, PROBE_WORKER_START_LIMIT_MS, STARTED_SIGNAL_SOURCE, slicedProbeWait, probeFrontDoorSync, probeListenerAcceptSync, probeWorkerSource, requestCatalogueRefreshSync, startProbeWorker, type ProbeWait, type ProbeWorkers } from "./probe";
+import { closedLoopbackPort } from "../test-ports";
 import * as probe from "./probe";
 
 /** Enough time for the pure-JS 2048-bit keypairs this file generates. */
@@ -69,22 +70,6 @@ async function listenerThread(leaf: LeafCert | undefined): Promise<number> {
     });
     worker.once("error", reject);
   });
-}
-
-/** A loopback port nothing listens on: bound, read, and released. */
-async function closedPort(): Promise<number> {
-  const server = net.createServer();
-  await new Promise<void>((resolve) => {
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  const address = server.address();
-  const port = typeof address === "object" && address !== null ? address.port : 0;
-  await new Promise<void>((resolve) => {
-    server.close(() => {
-      resolve(undefined);
-    });
-  });
-  return port;
 }
 
 describe("probeFrontDoorSync", () => {
@@ -171,7 +156,7 @@ describe("probeFrontDoorSync", () => {
   it("rejects a plain-HTTP listener and a port nothing holds", async () => {
     const plain = await listenerThread(undefined);
     expect(probeFrontDoorSync(plain, ca.certPem, READ_VERDICT_TIMEOUT_MS).ok).toBe(false);
-    const nothing = probeFrontDoorSync(await closedPort(), ca.certPem, READ_VERDICT_TIMEOUT_MS);
+    const nothing = probeFrontDoorSync(await closedLoopbackPort(), ca.certPem, READ_VERDICT_TIMEOUT_MS);
     expect(nothing.ok ? "" : nothing.reason).toContain("ECONNREFUSED");
   });
 });
@@ -183,7 +168,7 @@ describe("probeListenerAcceptSync", () => {
   });
 
   it("fails a port nothing listens on, naming the refusal", async () => {
-    const port = await closedPort();
+    const port = await closedLoopbackPort();
     const verdict = probeListenerAcceptSync(port, READ_VERDICT_TIMEOUT_MS);
     expect(verdict.ok).toBe(false);
     expect(verdict.ok ? "" : verdict.reason).toMatch(/ECONNREFUSED/);
@@ -446,7 +431,7 @@ describe("the probe sources in the release bundle", () => {
   it("run in a worker, which holds none of the bundle's helpers", async () => {
     const bundled = await bundledProbe({});
     expect(acceptProbeSourceOf(bundled)).not.toContain("__name(");
-    const refused = bundled.probeListenerAcceptSync(await closedPort(), READ_VERDICT_TIMEOUT_MS);
+    const refused = bundled.probeListenerAcceptSync(await closedLoopbackPort(), READ_VERDICT_TIMEOUT_MS);
     expect(refused.ok ? "" : refused.reason).toMatch(/ECONNREFUSED/);
     expect(bundled.probeListenerAcceptSync(await listenerThread(undefined), READ_VERDICT_TIMEOUT_MS)).toEqual({ ok: true });
   });
@@ -455,7 +440,7 @@ describe("the probe sources in the release bundle", () => {
     // Any construct the target has no syntax for (async functions, object spread, optional chaining, class fields) is rewritten into a call to a helper that lives in the bundle's own scope, which the worker does not have.
     const bundled = await bundledProbe({ target: "es2015" });
     expect(acceptProbeSourceOf(bundled)).not.toMatch(/\b__[A-Za-z]+\(/u);
-    const refused = bundled.probeListenerAcceptSync(await closedPort(), READ_VERDICT_TIMEOUT_MS);
+    const refused = bundled.probeListenerAcceptSync(await closedLoopbackPort(), READ_VERDICT_TIMEOUT_MS);
     expect(refused.ok ? "" : refused.reason).toMatch(/ECONNREFUSED/);
     expect(bundled.probeListenerAcceptSync(await listenerThread(undefined), READ_VERDICT_TIMEOUT_MS)).toEqual({ ok: true });
   });
@@ -463,7 +448,7 @@ describe("the probe sources in the release bundle", () => {
   it("fail when the bundle names its functions, which is why the build sets no keepNames", async () => {
     const bundled = await bundledProbe({ keepNames: true });
     expect(acceptProbeSourceOf(bundled)).toContain("__name(");
-    const verdict = bundled.probeListenerAcceptSync(await closedPort(), READ_VERDICT_TIMEOUT_MS);
+    const verdict = bundled.probeListenerAcceptSync(await closedLoopbackPort(), READ_VERDICT_TIMEOUT_MS);
     expect(verdict.ok ? "" : verdict.reason).toContain("__name is not defined");
   });
 });

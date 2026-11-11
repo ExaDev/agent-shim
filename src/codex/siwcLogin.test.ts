@@ -1,11 +1,11 @@
 import { createSign, generateKeyPairSync } from "node:crypto";
-import net from "node:net";
 
 import { describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "./http";
 import { SIWC_ISSUER, SIWC_JWKS_URL, SIWC_PLAN_SCOPE, SIWC_REVOKE_URL, SIWC_TOKEN_URL, SiwcError, SiwcInvalidGrantError, type SiwcPorts } from "./siwc";
 import { runSiwcLogin, runSiwcLogout, type CallbackListener, type SiwcLoginPorts } from "./siwcLogin";
+import { closedLoopbackPort } from "../test-ports";
 import { listenForCallback } from "./siwcPorts";
 import type { SiwcFile, SiwcStore } from "./siwcStore";
 import { fakeResponse, recordingFetch, type RecordedCall } from "./testing";
@@ -241,25 +241,8 @@ describe("runSiwcLogout", () => {
 
 describe("listenForCallback", () => {
   const STATE = "the-state";
-  async function freePort(): Promise<number> {
-    return await new Promise((resolve, reject) => {
-      const server = net.createServer();
-      server.once("error", reject);
-      server.listen(0, "127.0.0.1", () => {
-        const address = server.address();
-        server.close(() => {
-          if (address === null || typeof address === "string") {
-            reject(new Error("no port"));
-            return;
-          }
-          resolve(address.port);
-        });
-      });
-    });
-  }
-
   it("resolves with the redirect's URL and answers the browser", async () => {
-    const port = await freePort();
+    const port = await closedLoopbackPort();
     const listener = await listenForCallback(port, STATE);
     try {
       const waiting = listener.waitForCallback(AbortSignal.timeout(LISTEN_TIMEOUT_MS));
@@ -272,7 +255,7 @@ describe("listenForCallback", () => {
   });
 
   it("ignores a request with the wrong state or path and keeps waiting for the real callback", async () => {
-    const port = await freePort();
+    const port = await closedLoopbackPort();
     const listener = await listenForCallback(port, STATE);
     try {
       const waiting = listener.waitForCallback(AbortSignal.timeout(LISTEN_TIMEOUT_MS));
@@ -286,7 +269,7 @@ describe("listenForCallback", () => {
   });
 
   it("explains a port that is already in use", async () => {
-    const port = await freePort();
+    const port = await closedLoopbackPort();
     const first = await listenForCallback(port, STATE);
     try {
       await expect(listenForCallback(port, STATE)).rejects.toThrow(/in use/);
@@ -296,7 +279,7 @@ describe("listenForCallback", () => {
   });
 
   it("gives up when the signal aborts first", async () => {
-    const port = await freePort();
+    const port = await closedLoopbackPort();
     const listener = await listenForCallback(port, STATE);
     try {
       const controller = new AbortController();
