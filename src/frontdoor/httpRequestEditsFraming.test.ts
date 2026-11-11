@@ -19,7 +19,7 @@ interface Outcome {
   readonly answerHeaders: Readonly<Record<string, string>> | undefined;
 }
 
-async function through(body: string, headers: RoutedRequest["headers"]): Promise<Outcome> {
+async function through(body: string, headers: RoutedRequest["headers"], serverTools: "drop" | undefined): Promise<Outcome> {
   let forwarded: Outcome["forwarded"];
   let status: number | undefined;
   let answerHeaders: Readonly<Record<string, string>> | undefined;
@@ -37,9 +37,11 @@ async function through(body: string, headers: RoutedRequest["headers"]): Promise
   };
   const route = editingHttpRequest(inner, {
     provider: "spark",
-    definition: { baseUrl: "http://127.0.0.1:1" },
+    definition: { baseUrl: "http://127.0.0.1:1", ...(serverTools === undefined ? {} : { serverTools }) },
     served: { resolve: async () => await Promise.resolve({ ok: true, model: "served" } as const) },
     credential: async () => await Promise.resolve({ ok: false, message: "unused" } as const),
+    droppedLogged: new Set<string>(),
+    droppedLoggedLimit: 1,
     log: () => undefined,
     bodyLimitBytes: LIMIT,
   });
@@ -65,16 +67,27 @@ const framed = (body: string): RoutedRequest["headers"] => ({ "content-length": 
 describe("the framing of a request the wrapper forwards", () => {
   it("keeps the declared length of a request it did not change", async () => {
     const body = '{"max_tokens":1}';
-    const outcome = await through(body, framed(body));
+    const outcome = await through(body, framed(body), undefined);
     expect(outcome.forwarded?.body).toBe(body);
     expect(outcome.forwarded?.headers["content-length"]).toBe(String(body.length));
   });
 
   it("drops the declared length of a request whose model it rewrote, since the body changed length", async () => {
     const body = '{"model":"auto"}';
-    const outcome = await through(body, framed(body));
+    const outcome = await through(body, framed(body), undefined);
     expect(outcome.forwarded?.body).toBe('{"model":"served"}');
     expect(outcome.forwarded?.headers).not.toHaveProperty("content-length");
+  });
+
+  it("keeps the declared length under drop when no tool is removed, and drops it when one is", async () => {
+    const kept = '{"model":"m","tools":[{"name":"t","input_schema":{}}]}';
+    const unchanged = await through(kept, framed(kept), "drop");
+    expect(unchanged.forwarded?.body).toBe(kept);
+    expect(unchanged.forwarded?.headers["content-length"]).toBe(String(kept.length));
+    const dropping = '{"model":"m","tools":[{"type":"web_search_20250305"}]}';
+    const edited = await through(dropping, framed(dropping), "drop");
+    expect(edited.forwarded?.body).toBe('{"model":"m"}');
+    expect(edited.forwarded?.headers).not.toHaveProperty("content-length");
   });
 });
 
@@ -83,7 +96,7 @@ describe("the wrapper's own refusals", () => {
     ["a body past the limit", `{"model":"auto","pad":"${"x".repeat(LIMIT)}"}`, HTTP_STATUS.payloadTooLarge],
     ["a body that names auto twice", '{"model":"auto","model":"auto"}', HTTP_STATUS.badRequest],
   ])("answers %s as JSON", async (_label, body, status) => {
-    const outcome = await through(body, {});
+    const outcome = await through(body, {}, undefined);
     expect(outcome.status).toBe(status);
     expect(outcome.answerHeaders).toEqual(JSON_HEADERS);
     expect(outcome.forwarded).toBeUndefined();

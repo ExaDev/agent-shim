@@ -86,13 +86,15 @@ function recording(): { readonly response: RoutedResponse; readonly status: () =
   };
 }
 
-function served(): FrontDoorRoute {
+function served(serverTools: "drop" | undefined): FrontDoorRoute {
   const inner: FrontDoorRoute = { name: "http:spark", headroomEligible: true, headroomUpstream: undefined, serve: async () => { await Promise.resolve(); } };
   return editingHttpRequest(inner, {
     provider: "spark",
-    definition: { baseUrl: "http://127.0.0.1:1" },
+    definition: { baseUrl: "http://127.0.0.1:1", ...(serverTools === undefined ? {} : { serverTools }) },
     served: undefined,
     credential: async () => await Promise.resolve({ ok: false, message: "unused" } as const),
+    droppedLogged: new Set<string>(),
+    droppedLoggedLimit: 1,
     log: () => undefined,
     bodyLimitBytes: CAP,
   });
@@ -104,9 +106,11 @@ function requestOf(body: Readable, headers: Readonly<Record<string, string>> = {
 
 describe("a Messages body refused as too large", () => {
   it.each([
-    ["chunked, naming the model auto", "{\"model\":\"auto\",\"pad\":\"", {}],
-    ["declared past the cap, naming the model auto", "{\"model\":\"auto\",\"pad\":\"", { "content-length": String(CAP * CHUNKS) }],
-  ])("gets a 413, and its stream is neither destroyed nor left undrained: %s", async (_label, head, headers) => {
+    ["chunked, with serverTools drop", "drop" as const, "{\"model\":\"m\",\"pad\":\"", {}],
+    ["chunked, naming the model auto", undefined, "{\"model\":\"auto\",\"pad\":\"", {}],
+    ["declared past the cap, with serverTools drop", "drop" as const, "{\"model\":\"m\",\"pad\":\"", { "content-length": String(CAP * CHUNKS) }],
+    ["declared past the cap, naming the model auto", undefined, "{\"model\":\"auto\",\"pad\":\"", { "content-length": String(CAP * CHUNKS) }],
+  ])("gets a 413, and its stream is neither destroyed nor left undrained: %s", async (_label, serverTools, head, headers) => {
     const source = counted();
     const lead = Readable.from([Buffer.from(head)]);
     const body = Readable.from((async function* () {
@@ -118,7 +122,7 @@ describe("a Messages body refused as too large", () => {
       }
     })());
     const answered = recording();
-    await served().serve(requestOf(body, headers), answered.response);
+    await served(serverTools).serve(requestOf(body, headers), answered.response);
     expect(answered.status()).toBe(HTTP_STATUS.payloadTooLarge);
     await ended(body);
     // Drained to its natural end: a destroyed stream never ends, so its remaining chunks would not have been handed out.

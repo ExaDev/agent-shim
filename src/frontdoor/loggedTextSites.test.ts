@@ -25,10 +25,13 @@ interface RawAllowance {
 }
 
 const RAW_OK: readonly RawAllowance[] = [
-  { file: "frontdoor/httpRequestEdits.ts", expression: "deps.provider", sites: 4, why: "the provider's name, from the person's own configuration" },
+  { file: "frontdoor/httpRequestEdits.ts", expression: "deps.provider", sites: 6, why: "the provider's name, from the person's own configuration" },
+  { file: "frontdoor/httpRequestEdits.ts", expression: "removal.key", sites: 1, why: "one of two keys the door looks for" },
   { file: "frontdoor/httpRequestEdits.ts", expression: "AUTO_MODEL", sites: 3, why: "the model name the door itself reserves" },
   { file: "frontdoor/httpRequestEdits.ts", expression: "tooLarge", sites: 2, why: "the limit message the door builds from its own limit and the provider's name", declaredBy: /bodyTooLargeMessage\(/ },
   { file: "frontdoor/httpRequestEdits.ts", expression: "served.message", sites: 1, why: "the message the served-model lookup built from its own texts (this module's own scan covers servedModel.ts)" },
+  { file: "frontdoor/httpRequestEdits.ts", expression: "encoded", sites: 1, why: "the message the encoding check built from its own text and a quoted header value", declaredBy: /encodedRequestMessage\(/ },
+  { file: "frontdoor/providerRoute.ts", expression: "encoded", sites: 1, why: "the message the encoding check built from its own text and a quoted header value", declaredBy: /encodedRequestMessage\(/ },
   { file: "frontdoor/servedModel.ts", expression: "source.name", sites: 3, why: "the provider's name, from the person's own configuration" },
   { file: "frontdoor/servedModel.ts", expression: "credential.message", sites: 1, why: "the door's own credential resolution message" },
   { file: "frontdoor/servedModel.ts", expression: "error.message", sites: 1, why: "an error the door's own fetch raised, which names status codes and redacted addresses and no text a server chose" },
