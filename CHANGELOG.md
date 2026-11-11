@@ -1,3 +1,11 @@
+## [14.2.2](https://github.com/ExaDev/agent-shim/compare/v14.2.1...v14.2.2) (2026-11-11)
+
+### Bug Fixes
+
+* recognise a launcher wrapper by reading it, never running it ([955699c](https://github.com/ExaDev/agent-shim/commit/955699c3be9d1ce67c7b62046fa034ee847d32d6))
+* recognise a wrapper that execs the launcher through a resolved variable ([3a3c3df](https://github.com/ExaDev/agent-shim/commit/3a3c3dfc62f669bda1be53d3de9019f1a9200cb8))
+* skip a PATH claude whose launch ends in agent-shim ([29e82c0](https://github.com/ExaDev/agent-shim/commit/29e82c08190a7938921fab6f635853d81d1e1f13))
+
 ## [14.2.1](https://github.com/ExaDev/agent-shim/compare/v14.2.0...v14.2.1) (2026-11-11)
 
 ### Bug Fixes
