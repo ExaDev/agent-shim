@@ -379,7 +379,7 @@ describe("claudeShim", () => {
 
     it("recognises a launcher script that runs `agent-shim run`, which a dotfiles `claude` wrapper does", () => {
       const wrapper = path.join(binDir, "claude");
-      fs.writeFileSync(wrapper, "#!/bin/sh\nexec agent-shim run \"$@\"\n", { mode: 0o755 });
+      fs.writeFileSync(wrapper, '#!/bin/bash\n# Launcher for claude-use.\nbin="$(command -v claude-use)" || exit 127\nexec "$bin" run "$@"\n', { mode: 0o755 });
       const check = resolveOwnBinaryCheck(paths, sourcePath);
       expect(check(wrapper)).toBe(true);
     });
