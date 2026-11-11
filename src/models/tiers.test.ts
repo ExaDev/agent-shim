@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { CLAUDE_TIERS } from "../config/schema";
-import { claudeNameTier, claudeTierOf } from "./tiers";
+import { CLAUDE_TIERS, MODEL_ENV_VARIABLES, OTHER_MODEL_ENV_VARIABLES, TIER_MODEL_ENV_VARIABLES } from "../config/schema";
+import { TIER_ENV_VARIABLES, claudeNameTier, claudeTierOf } from "./tiers";
 
 describe("claudeTierOf", () => {
   it("selects the tier a model name names, case-insensitively", () => {
@@ -74,5 +74,14 @@ describe("claudeNameTier", () => {
         expect(claudeTierOf(name)).toBe(tier);
       }
     }
+  });
+});
+
+describe("the env variables that name a model", () => {
+  it("are one set, wherever a tier's variable is listed: every tier's variable is a model variable, and the model variables are the tiers' with ANTHROPIC_MODEL and ANTHROPIC_SMALL_FAST_MODEL", () => {
+    const tierVariables = CLAUDE_TIERS.map((tier) => TIER_ENV_VARIABLES[tier]);
+    expect([...MODEL_ENV_VARIABLES].sort()).toEqual([...tierVariables, "ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL"].sort());
+    expect([...TIER_MODEL_ENV_VARIABLES, ...OTHER_MODEL_ENV_VARIABLES].sort()).toEqual([...MODEL_ENV_VARIABLES].sort());
+    expect(new Set(MODEL_ENV_VARIABLES).size).toBe(MODEL_ENV_VARIABLES.length);
   });
 });

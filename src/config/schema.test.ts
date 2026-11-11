@@ -316,6 +316,17 @@ describe("ProviderSchema", () => {
     expect(provider.credential).toEqual(credential);
   });
 
+  it.each(["ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_SMALL_FAST_MODEL"])("refuses %s set to a context marker or whitespace alone, and accepts it empty or naming a model", (variable) => {
+    const parsed = (value: string): boolean => ProviderSchema.safeParse({ ...base, credential, env: { [variable]: value } }).success;
+    expect(parsed("[1m]")).toBe(false);
+    expect(parsed("[1M]")).toBe(false);
+    expect(parsed("   ")).toBe(false);
+    expect(parsed(" [1m]")).toBe(false);
+    expect(parsed("")).toBe(true);
+    expect(parsed("glm-5.3")).toBe(true);
+    expect(parsed("glm-5.3[1m]")).toBe(true);
+  });
+
   it("requires a credential block with at least one source", () => {
     expect(ProviderSchema.safeParse(base).success).toBe(false);
     expect(ProviderSchema.safeParse({ ...base, credential: { sources: [] } }).success).toBe(false);

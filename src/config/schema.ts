@@ -6,6 +6,7 @@ import path from "node:path";
 import { z } from "zod";
 import { PredicateNodeSchema } from "trilean";
 
+import { namesAModel } from "../models/identity";
 import { NUMERIC_DOTTED_VERSION_RE } from "../versionDiscovery";
 
 /**
@@ -235,11 +236,23 @@ const ProviderCredentialSchema = CredentialSchema.extend({ target: z.enum(PROVID
 /** The variables a provider's `env` block may not name, because the credential target sets one of them and agent-shim removes the others from the child's environment. */
 const RESERVED_PROVIDER_ENV_KEYS: readonly string[] = Object.values(CREDENTIAL_TARGET_VARS);
 
+/** The env variables an http provider's `env` names the model of a tier with, in the order a bare provider name takes the first set one: Sonnet is the tier Claude Code's default model is, then the larger and the smaller. */
+export const TIER_MODEL_ENV_VARIABLES = ["ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"] as const;
+
+/** The other variables an http provider's `env` names a model with: names the provider serves for a session launched on it, though they are not a tier a bare provider name defaults to. */
+export const OTHER_MODEL_ENV_VARIABLES = ["ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL"] as const;
+
+/** Every env variable whose value names a model: the one list the blank-value rule of the schema and the reads of the door both go by. */
+export const MODEL_ENV_VARIABLES: readonly string[] = [...OTHER_MODEL_ENV_VARIABLES, ...TIER_MODEL_ENV_VARIABLES];
+
 /** A provider's extra environment entries: any variable except the credential variables, which the credential block owns. */
 const ProviderEnvSchema = z
   .record(z.string().min(1), z.string())
   .refine((env) => !Object.keys(env).some((key) => RESERVED_PROVIDER_ENV_KEYS.includes(key)), {
     message: `env may not set ${RESERVED_PROVIDER_ENV_KEYS.join(", ")}: the credential block's target sets one and agent-shim removes the others`,
+  })
+  .refine((env) => !MODEL_ENV_VARIABLES.some((key) => env[key] !== undefined && env[key] !== "" && !namesAModel(env[key])), {
+    message: `env may not set ${MODEL_ENV_VARIABLES.join(", ")} to a context marker or whitespace alone: a model variable names a model, or is empty to leave the tier unset`,
   });
 
 /** The kinds of provider: `http` is an Anthropic Messages endpoint at a fixed `baseUrl` (the default when `kind` is absent), and `codex` is ChatGPT's Codex backend reached through agent-shim's own supervised translation daemon. */
@@ -426,6 +439,10 @@ const HttpBaseUrlSchema = z.url().superRefine((value, ctx) => {
   }
 });
 
+/** The values of an `http` provider's server-tools setting. */
+export const SERVER_TOOLS_MODES = ["forward", "drop"] as const;
+export type ServerToolsMode = (typeof SERVER_TOOLS_MODES)[number];
+
 const HttpProviderSchema = z.strictObject({
   $schema: z.string().optional(),
   kind: z.literal("http").optional(),
@@ -441,6 +458,8 @@ const HttpProviderSchema = z.strictObject({
   catalogue: ProviderCatalogueSchema.optional(),
   /** Per-request routing: when present, each request this provider would serve is matched against the list in order, and the first definite match is sent to that entry's provider instead (itself resolved exactly as a directly dialled request would be). Unmatched requests stay on this provider. */
   routes: z.array(ProviderRouteSchema).optional(),
+  /** The server-tools setting stored on this provider: `forward` or `drop`. */
+  serverTools: z.enum(SERVER_TOOLS_MODES).optional(),
 });
 export type HttpProvider = z.infer<typeof HttpProviderSchema>;
 

@@ -8,6 +8,7 @@ import { ConfigValidationError } from "./config/load";
 import { MAX_TIMER_DELAY_MS } from "./config/schema";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { registerProviderCommand } from "./providers";
+import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS } from "./providerReachability";
 import { ProviderKindMismatchError, addProvider, readProvider, updateProvider } from "./providersStore";
 import { fakeCommandDeps } from "./test-helpers";
 
@@ -40,6 +41,31 @@ describe("a provider's connect timeout", () => {
     expect(readProvider(paths, "local")).toMatchObject({ connectTimeoutMs: 500 });
     await run("set", "local", "--unset-connect-timeout");
     expect(readProvider(paths, "local")).not.toHaveProperty("connectTimeoutMs");
+  });
+
+  it("is printed by provider show --json and provider list --json, and left out of the view of a provider without one", async () => {
+    await run("add", "local", "--display-name", "Local", "--base-url", "http://127.0.0.1:4000", "--credential", "literal:dummy", "--connect-timeout", "3s");
+    await run("add", "plain", "--display-name", "Plain", "--base-url", "http://127.0.0.1:4001", "--credential", "literal:dummy");
+    vi.mocked(console.log).mockClear();
+    const logged = (): unknown[] => vi.mocked(console.log).mock.calls.map(([line]) => JSON.parse(String(line)) as unknown);
+    await run("show", "local", "--json");
+    await run("show", "plain", "--json");
+    await run("list", "--json");
+    const [shownLocal, shownPlain, listed] = logged();
+    expect(shownLocal).toMatchObject({ connectTimeoutMs: 3_000 });
+    expect(shownPlain).not.toHaveProperty("connectTimeoutMs");
+    expect(listed).toEqual(expect.arrayContaining([expect.objectContaining({ name: "local", connectTimeoutMs: 3_000 })]));
+  });
+
+  it("is shown by provider show as the default when none is set, and as the stored value when one is", async () => {
+    await run("add", "local", "--display-name", "Local", "--base-url", "http://127.0.0.1:4000", "--credential", "literal:dummy");
+    vi.mocked(console.log).mockClear();
+    await run("show", "local");
+    expect(vi.mocked(console.log).mock.calls.map(([line]) => String(line))).toContain(`Connect timeout: ${String(DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS)}ms (the default)`);
+    await run("set", "local", "--connect-timeout", "3s");
+    vi.mocked(console.log).mockClear();
+    await run("show", "local");
+    expect(vi.mocked(console.log).mock.calls.map(([line]) => String(line))).toContain("Connect timeout: 3000ms");
   });
 
   it("is refused above the longest delay a timer can hold, which Node would otherwise cut to 1 ms", async () => {

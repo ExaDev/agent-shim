@@ -14,6 +14,7 @@ import {
   type CredentialSource,
   type PickerModel,
   type ProviderCatalogue,
+  type ServerToolsMode,
   type PROVIDER_CREDENTIAL_TARGETS,
   type PROVIDER_KINDS,
   ProviderSchema,
@@ -262,6 +263,8 @@ export interface AddProviderInput {
   readonly catalogue?: ProviderCatalogue;
   /** An http provider's bound on opening a connection to its base URL, in milliseconds; absent keeps the derived default. */
   readonly connectTimeoutMs?: number;
+  /** The http provider's server-tools setting; see `HttpProvider.serverTools`. */
+  readonly serverTools?: ServerToolsMode;
   readonly codex?: CodexProviderConfig;
   readonly antigravity?: AntigravityProviderConfig;
 }
@@ -323,6 +326,9 @@ export function addProvider(paths: LayoutPaths, name: string, input: AddProvider
   if (kind !== "http" && input.connectTimeoutMs !== undefined) {
     throw new ProviderKindMismatchError("A connect timeout applies only to an http provider, the one kind that dials a base URL.");
   }
+  if (kind !== "http" && input.serverTools !== undefined) {
+    throw new ProviderKindMismatchError("The server-tools setting applies only to an http provider.");
+  }
   if (kind !== "codex" && !isEmptyCodexConfig(input.codex)) {
     throw new ProviderKindMismatchError("Codex settings apply only to a codex provider (--kind codex).");
   }
@@ -342,7 +348,7 @@ export function addProvider(paths: LayoutPaths, name: string, input: AddProvider
       ? { kind, ...shared, ...(isEmptyCodexConfig(input.codex) ? {} : { codex: input.codex }) }
       : kind === "antigravity"
       ? { kind, ...shared, ...(isEmptyAntigravityConfig(input.antigravity) ? {} : { antigravity: input.antigravity }) }
-      : { ...shared, baseUrl: input.baseUrl, ...(input.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: input.connectTimeoutMs }), ...(input.catalogue === undefined ? {} : { catalogue: input.catalogue }) },
+      : { ...shared, baseUrl: input.baseUrl, ...(input.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: input.connectTimeoutMs }), ...(input.catalogue === undefined ? {} : { catalogue: input.catalogue }), ...(input.serverTools === undefined ? {} : { serverTools: input.serverTools }) },
   );
   if (!parsed.success) {
     throw new ConfigValidationError(providerJsonPath(paths, name), parsed.error.issues);
@@ -371,6 +377,8 @@ export interface UpdateProviderInput {
   readonly catalogue?: ProviderCatalogue | false;
   /** A new connect timeout in milliseconds, or false to go back to the derived default; undefined leaves the existing one. Applies only to an http provider. */
   readonly connectTimeoutMs?: number | false;
+  /** The http provider's new server-tools setting; undefined leaves the existing one. */
+  readonly serverTools?: ServerToolsMode;
   /** Merged over a codex provider's existing settings: a field given here replaces that field, and `models` entries merge per tier. */
   readonly codex?: CodexProviderConfig;
   /** Merged over an antigravity provider's existing settings: a field given here replaces that field, and `models` entries merge per tier. */
@@ -409,6 +417,9 @@ export function updateProvider(paths: LayoutPaths, name: string, input: UpdatePr
   }
   if ((isCodexProvider(existing) || isAntigravityProvider(existing)) && input.catalogue !== undefined && input.catalogue !== false) {
     throw new ProviderKindMismatchError(`Provider "${name}" is not an http provider; a model catalogue applies only to an http provider.`);
+  }
+  if ((isCodexProvider(existing) || isAntigravityProvider(existing) || router) && input.serverTools !== undefined) {
+    throw new ProviderKindMismatchError(`Provider "${name}" is not an http provider; the server-tools setting applies only to an http provider.`);
   }
   if (!isCodexProvider(existing) && !isEmptyCodexConfig(input.codex)) {
     throw new ProviderKindMismatchError(`Provider "${name}" is not a codex provider; codex settings apply only to a codex provider.`);
@@ -450,7 +461,7 @@ export function updateProvider(paths: LayoutPaths, name: string, input: UpdatePr
   } else {
     const catalogue = input.catalogue === undefined ? existing.catalogue : input.catalogue === false ? undefined : input.catalogue;
     const connectTimeoutMs = input.connectTimeoutMs === undefined ? existing.connectTimeoutMs : input.connectTimeoutMs === false ? undefined : input.connectTimeoutMs;
-    candidate = { ...existing, ...shared, catalogue, connectTimeoutMs, ...(input.baseUrl === undefined ? {} : { baseUrl: input.baseUrl }) };
+    candidate = { ...existing, ...shared, catalogue, connectTimeoutMs, ...(input.serverTools === undefined ? {} : { serverTools: input.serverTools }), ...(input.baseUrl === undefined ? {} : { baseUrl: input.baseUrl }) };
   }
   const parsed = ProviderSchema.safeParse(candidate);
   if (!parsed.success) {

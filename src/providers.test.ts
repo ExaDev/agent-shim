@@ -95,6 +95,26 @@ describe("providers", () => {
       expect(() => addProvider(paths, "../escape", zInput)).toThrow(InvalidProviderNameError);
     });
 
+    it("stores an http provider's server-tools setting, changes it through update, and refuses it on another kind", () => {
+      const added = addProvider(paths, "spark", { displayName: "Spark", baseUrl: "http://127.0.0.1:18080", sources: [{ literal: "x" }], serverTools: "drop" });
+      expect(added).toMatchObject({ serverTools: "drop" });
+      expect(updateProvider(paths, "spark", { serverTools: "forward" })).toMatchObject({ serverTools: "forward" });
+      expect(updateProvider(paths, "spark", { displayName: "Spark 2" })).toMatchObject({ serverTools: "forward" });
+      expect(() => addProvider(paths, "cx", { kind: "codex", displayName: "Codex", sources: [{ literal: "c" }], serverTools: "drop" })).toThrow(ProviderKindMismatchError);
+      addProvider(paths, "cx2", { kind: "codex", displayName: "Codex", sources: [{ literal: "c" }] });
+      expect(() => updateProvider(paths, "cx2", { serverTools: "drop" })).toThrow(ProviderKindMismatchError);
+      expect(() => addProvider(paths, "rt", { kind: "router", displayName: "Router", sources: [], serverTools: "drop" })).toThrow(ProviderKindMismatchError);
+      addProvider(paths, "rt2", { kind: "router", displayName: "Router", sources: [] });
+      expect(() => updateProvider(paths, "rt2", { serverTools: "drop" })).toThrow(ProviderKindMismatchError);
+    });
+
+    it("refuses a model variable that is a context marker or whitespace alone, on add and on set, and leaves the stored file as it was", () => {
+      expect(() => addProvider(paths, "mk", { displayName: "Mk", baseUrl: "http://127.0.0.1:18080", sources: [{ literal: "x" }], env: { ANTHROPIC_DEFAULT_SONNET_MODEL: "[1m]" } })).toThrow();
+      addProvider(paths, "mk2", { displayName: "Mk", baseUrl: "http://127.0.0.1:18080", sources: [{ literal: "x" }], env: { ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.3" } });
+      expect(() => updateProvider(paths, "mk2", { env: { ANTHROPIC_DEFAULT_SONNET_MODEL: "  " } })).toThrow();
+      expect(readProvider(paths, "mk2")).toMatchObject({ env: { ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.3" } });
+    });
+
     it("writes a codex provider with no base URL, and its codex settings only when given", () => {
       const plain = addProvider(paths, "codex", { kind: "codex", displayName: "Codex", sources: [{ literal: "codex" }] });
       expect(plain).toEqual({ kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "codex" }] } });

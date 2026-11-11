@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { modelIdentity, relateModels, relateWithAssertions, type ModelIdentity } from "./identity";
+import { modelIdentity, namesAModel, relateModels, relateWithAssertions, type ModelIdentity } from "./identity";
 
 const identityOf = (name: string): Pick<ModelIdentity, "vendor" | "family" | "version" | "variant"> => {
   const { vendor, family, version, variant } = modelIdentity(name);
@@ -93,5 +93,11 @@ describe("relateWithAssertions", () => {
   it("leaves the heuristic's verdict when no assertion touches the pair", () => {
     expect(relateWithAssertions("glm-5.1", "glm-5.2", none)).toBe("similar");
     expect(relateWithAssertions("glm-5.1", "glm-5.1", none)).toBe("same");
+  });
+});
+
+describe("namesAModel", () => {
+  it.each([["glm-5.3", true], ["glm-5.3[1m]", true], ["x", true], ["", false], ["   ", false], ["[1m]", false], ["[1M]", false], [" [1m]", false], ["\t", false]])("%j is %s", (value, named) => {
+    expect(namesAModel(value)).toBe(named);
   });
 });
