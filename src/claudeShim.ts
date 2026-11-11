@@ -6,7 +6,6 @@ import { z } from "zod";
 import { withExamples, type CommandDeps } from "./cli/commandDeps";
 import { readJson, writeJsonAtomic } from "./config/store";
 import { findExecutableInDir, realContentSourcePath, realOwnExecutablePath } from "./realPorts";
-import { spawnSyncBlocking } from "./blockingSpawn";
 import { CliError } from "./cliError";
 import type { LayoutPaths } from "./paths";
 
@@ -71,17 +70,29 @@ export function isInvokedAsClaude(invokedName: string): boolean {
   return invokedName === "claude" || invokedName.toLowerCase() === "claude.exe";
 }
 
-/** Set to `1` in the environment of a probe launch: any `agent-shim` process that starts with it answers with `PROBE_REPLY` and exits, doing nothing else, so a candidate `claude` can be asked whether running it reaches this tool. */
-export const PROBE_ENV = "AGENT_SHIM_PROBE";
-/** What an `agent-shim` process prints when started with `PROBE_ENV` set. */
-export const PROBE_REPLY = "agent-shim-probe";
-/** A native binary prints its version without touching the network, so this bound only separates a cold start from a hang; a candidate that does not answer within it is not treated as this tool. */
-const PROBE_TIMEOUT_MS = 10_000;
+/** How much of a candidate is read to decide whether it is a launcher script: a wrapper is a few lines, and a native binary never starts with a shebang, so the bound only keeps a large file from being read whole. */
+const SCRIPT_HEAD_BYTES = 4096;
+/** A shell command line that runs this tool's launcher: `agent-shim run` (or its former name `claude-use run`) as a command word, after `exec`, a path, a quote or the start of a line. */
+const LAUNCHER_INVOCATION = /(^|[\s;&|("'`/])(agent-shim|claude-use)\s+run(\s|$)/m;
 
-/** True when running `candidate` ends in this tool, however many wrapper scripts, symlinks or copies lie between: it is run with `PROBE_ENV` set and answers `PROBE_REPLY` only when an `agent-shim` process received it. Real Claude Code ignores the variable and prints its version. */
-function reachesThisTool(candidate: string): boolean {
-  const probe = spawnSyncBlocking("probe a claude candidate", candidate, ["--version"], { env: { ...process.env, [PROBE_ENV]: "1" }, encoding: "utf8", timeout: PROBE_TIMEOUT_MS });
-  return probe.status === 0 && probe.stdout.includes(PROBE_REPLY);
+/** True when `candidate` is an interpreter script whose text runs `agent-shim run`, as a dotfiles `claude` wrapper does: spawning it would start this launcher again, forever. Read, never run, so it is safe where the event loop must not block (the front door plans launches too). A native binary, an unreadable file and a script that does not name the launcher are not this tool. */
+function isLauncherScript(candidate: string): boolean {
+  let head: string;
+  try {
+    const fd = fs.openSync(candidate, "r");
+    try {
+      const buffer = Buffer.alloc(SCRIPT_HEAD_BYTES);
+      head = buffer.subarray(0, fs.readSync(fd, buffer, 0, SCRIPT_HEAD_BYTES, 0)).toString("utf8");
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch (error) {
+    if (isEnoent(error) || (typeof error === "object" && error !== null && "code" in error && (error.code === "EACCES" || error.code === "EISDIR"))) {
+      return false;
+    }
+    throw error;
+  }
+  return head.startsWith("#!") && LAUNCHER_INVOCATION.test(head);
 }
 
 /**
@@ -89,7 +100,7 @@ function reachesThisTool(candidate: string): boolean {
  *
  * A candidate counts as this tool when it is the file `claude-shim.json` records (the marker is authoritative even after an agent-shim upgrade left the target holding the previous version's bytes, when neither its content nor its inode match the running binary any more; the same trust `enableClaudeShim`/`disableClaudeShim` already place in the marker) or when it is the same file as this process's own content, compared by inode the way `enableClaudeShim` already compares for its "is this target mine" decision (`fs.statSync` follows symlinks, so a `claude` symlink pointing at the running binary counts as the same file too, while a package manager's symlink to a different package's launcher does not).
  *
- * A candidate that is neither of those still counts when running it reaches this tool (a launcher script that `exec`s `agent-shim run`, as a dotfiles `claude` wrapper does): such a candidate is probed with `PROBE_ENV`, since spawning it would start this launcher again, forever.
+ * A candidate that is neither of those still counts when running it reaches this tool (a launcher script that `exec`s `agent-shim run`, as a dotfiles `claude` wrapper does): such a candidate is recognised by reading its text (`isLauncherScript`), since spawning it would start this launcher again, forever.
  *
  * Deliberately checks candidate files rather than excluding whole directories, the previous shape: an npm global prefix's bin directory holds every globally-installed package's binaries side by side, so a directory-level exclusion hid a genuinely separate `@anthropic-ai/claude-code` install living in the same directory as agent-shim (#188). The layouts the exclusion existed for stay safe, because the only `claude` dropped in them is agent-shim's own shim copy: install.sh's `~/.local/bin`, Homebrew's `/opt/homebrew/bin` and Scoop's shims directory are shared bin directories in exactly the same way, and a different package's claude there is now found instead of hidden.
  */
@@ -112,7 +123,7 @@ export function resolveOwnBinaryCheck(paths: LayoutPaths, contentSourcePath: str
       candidateStat.ino !== 0 &&
       candidateStat.dev === ownStat.dev &&
       candidateStat.ino === ownStat.ino;
-    return sameFile || reachesThisTool(candidate);
+    return sameFile || isLauncherScript(candidate);
   };
 }
 

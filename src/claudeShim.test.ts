@@ -12,8 +12,6 @@ import {
   enableClaudeShim,
   findPathShadow,
   isInvokedAsClaude,
-  PROBE_ENV,
-  PROBE_REPLY,
   resolveClaudeTargetPath,
   resolveOwnBinaryCheck,
   type LinkFs,
@@ -379,15 +377,14 @@ describe("claudeShim", () => {
       expect(check(foreignClaude)).toBe(false);
     });
 
-    it("recognises a launcher script whose run ends in agent-shim, which a dotfiles `claude` wrapper does", () => {
+    it("recognises a launcher script that runs `agent-shim run`, which a dotfiles `claude` wrapper does", () => {
       const wrapper = path.join(binDir, "claude");
-      // Stands in for `exec agent-shim run "$@"`: the probe variable reaches a process that answers it as agent-shim's own entry point does.
-      fs.writeFileSync(wrapper, `#!/bin/sh\nif [ "$${PROBE_ENV}" = 1 ]; then echo ${PROBE_REPLY}; fi\necho 2.1.0\n`, { mode: 0o755 });
+      fs.writeFileSync(wrapper, "#!/bin/sh\nexec agent-shim run \"$@\"\n", { mode: 0o755 });
       const check = resolveOwnBinaryCheck(paths, sourcePath);
       expect(check(wrapper)).toBe(true);
     });
 
-    it("keeps a real claude that ignores the probe variable and prints its version", () => {
+    it("keeps a real claude script that does not run the launcher", () => {
       const real = path.join(binDir, "claude");
       fs.writeFileSync(real, "#!/bin/sh\necho '2.1.311 (Claude Code)'\n", { mode: 0o755 });
       const check = resolveOwnBinaryCheck(paths, sourcePath);
