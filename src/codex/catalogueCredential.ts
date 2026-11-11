@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { CodexProvider } from "../config/schema";
 import type { LayoutPaths } from "../paths";
 
+import type { TolerantReader } from "../storedCatalogue";
 import { parseSiwcFile } from "./siwcStore";
 
 const CatalogueBindingSchema = z.strictObject({ fingerprint: z.string().min(1), source: z.string().min(1), revision: z.string().min(1) });
@@ -46,10 +47,10 @@ function signInCatalogueFingerprint(raw: string | undefined, filePath: string): 
   return grant === undefined ? undefined : catalogueCredentialFingerprint(false, grant.accessToken, undefined);
 }
 
-/** The binding of the login a Codex provider selects, read through the caller's filesystem port. */
-export function savedCatalogueFingerprint(provider: CodexProvider, paths: Pick<LayoutPaths, "chatgptSignInFile">, env: Readonly<Record<string, string | undefined>>, home: string, read: (filePath: string) => string | undefined): string | undefined {
-  if (provider.codex?.login === "chatgpt-sign-in") return signInCatalogueFingerprint(read(paths.chatgptSignInFile), paths.chatgptSignInFile);
+/** The binding of the login a Codex provider selects, read through the caller's `TolerantReader` (a login file that exists and cannot be read is that reader's fault to report, never a raw system error naming its path). */
+export function savedCatalogueFingerprint(provider: CodexProvider, paths: Pick<LayoutPaths, "chatgptSignInFile">, env: Readonly<Record<string, string | undefined>>, home: string, reader: TolerantReader): string | undefined {
+  if (provider.codex?.login === "chatgpt-sign-in") return signInCatalogueFingerprint(reader.read(paths.chatgptSignInFile), paths.chatgptSignInFile);
   const configuredHome = env.CODEX_HOME;
   const codexHome = configuredHome === undefined || configuredHome === "" ? path.join(home, ".codex") : configuredHome;
-  return cliCatalogueFingerprint(read(path.join(codexHome, "auth.json")));
+  return cliCatalogueFingerprint(reader.read(path.join(codexHome, "auth.json")));
 }

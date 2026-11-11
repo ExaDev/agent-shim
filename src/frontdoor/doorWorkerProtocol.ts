@@ -3,6 +3,8 @@ import type { DoctorRunOutputSchema } from "./controlSchemas";
 
 import { z } from "zod";
 
+import { isRedirectedFailure } from "../providerCatalogue";
+
 /** What each task takes, read by the worker at the boundary: the door sends structured clone, and the worker trusts nothing that arrives. */
 export const doorWorkerInputSchemas = {
   /** `agent-shim check` for `path` as `identity` (the identity a launch there would resolve when absent). */
@@ -42,18 +44,25 @@ export interface DoorWorkerData {
 }
 
 /**
- * What a worker posts once, when its task ends: the value, or that it failed. A failure carries the error's class name and, when it has one, its short `code` (ENOENT, ETIMEDOUT), and nothing else: an error's message can hold what a credential command printed to its standard error, and the door must not carry that to a caller of its API or into its log. The detail is what `agent-shim doctor` and `agent-shim check` print from a shell.
+ * What a worker posts once, when its task ends: the value, or that it failed. A failure carries the error's class name, its short `code` when it has one (ENOENT, ETIMEDOUT) and the allowlisted boolean `redirected` (a catalogue read met a redirect), and nothing else: an error's message can hold what a credential command printed to its standard error, and the door must not carry that to a caller of its API or into its log. The detail is what `agent-shim doctor` and `agent-shim check` print from a shell.
  */
-export type DoorWorkerMessage = { readonly kind: "done"; readonly value: unknown } | { readonly kind: "failed"; readonly name: string; readonly code?: string };
+export type DoorWorkerMessage = { readonly kind: "done"; readonly value: unknown } | ({ readonly kind: "failed" } & DoorWorkerFailure);
+
+/** What of an error leaves a worker: its class name, its short code when it has one, and whether it says a catalogue read met a redirect (a boolean the worker sets from the error's own field, which cannot hold a message). */
+export interface DoorWorkerFailure {
+  readonly name: string;
+  readonly code?: string;
+  readonly redirected?: true;
+}
 
 /** An error class name or code as a worker may post it: a short identifier, which cannot carry a message. */
 const IDENTIFIER = /^[A-Za-z][A-Za-z0-9_]{0,63}$/u;
 
-/** The class name and short code of an error as a worker may carry them across the door boundary: each only when it is a short identifier, so neither can hold a message. The one place that decides what of an error leaves a worker, for a posted failure and for an uncaught error alike. */
-export function identifiedFailure(error: unknown): { readonly name: string; readonly code?: string } {
+/** The class name, short code and redirect flag of an error as a worker may carry them across the door boundary: the first two only when they are short identifiers, so neither can hold a message, and the flag only as a boolean. The one place that decides what of an error leaves a worker, for a posted failure and for an uncaught error alike. */
+export function identifiedFailure(error: unknown): DoorWorkerFailure {
   const name = error instanceof Error && isIdentifier(error.name) ? error.name : "Error";
   const code: unknown = error instanceof Error && "code" in error ? error.code : undefined;
-  return isIdentifier(code) ? { name, code } : { name };
+  return { name, ...(isIdentifier(code) ? { code } : {}), ...(isRedirectedFailure(error) ? { redirected: true as const } : {}) };
 }
 
 /** Whether `value` is a short identifier. */
@@ -74,5 +83,5 @@ export function isDoorWorkerMessage(value: unknown): value is DoorWorkerMessage 
   if (value.kind === "done") {
     return "value" in value && Object.keys(value).length === 2;
   }
-  return value.kind === "failed" && "name" in value && isIdentifier(value.name) && (!("code" in value) || isIdentifier(value.code)) && Object.keys(value).every((key) => key === "kind" || key === "name" || key === "code");
+  return value.kind === "failed" && "name" in value && isIdentifier(value.name) && (!("code" in value) || isIdentifier(value.code)) && (!("redirected" in value) || value.redirected === true) && Object.keys(value).every((key) => key === "kind" || key === "name" || key === "code" || key === "redirected");
 }

@@ -12,13 +12,15 @@ import fs from "node:fs";
 import { realpathOrSelf, resolveMiseDispatcher } from "./doctorPath";
 import path from "node:path";
 import type { z } from "zod";
-import { lookupKeychainService } from "./checkReport";
 import { credentialsFilePath, decideSignIn, keychainHasItem } from "./usage/signIn";
 import { describeAccountHolder, groupSharedLogins, joinNames, loginKeyOf, readIdentityAccount, summariseIdentityAccount } from "./identityAccounts";
 import { readUsageSnapshot, UsageSnapshotError } from "./usage/read";
 import type { AccountMetadata, UsageSnapshot } from "./usage/schema";
 import { probeProviderReachabilities, realBaseUrlBatchProbe, type BaseUrlBatchProbe } from "./providerReachability";
 import { pushNameFinding } from "./doctorNameFinding";
+import { currentCatalogueSettings, pushCatalogueRedirectFinding } from "./doctorCatalogueRedirect";
+import { pushKeychainFindings } from "./doctorKeychain";
+import { providersWithRedirectedCatalogue } from "./frontdoor/catalogueFailures";
 import { parseSiwcFile } from "./codex/siwcStore";
 import { SIWC_PLAN_SCOPE } from "./codex/siwc";
 import { ConfigValidationError } from "./config/load";
@@ -181,6 +183,8 @@ export interface RunDoctorParams {
   readonly providerAliases?: ProviderAliases;
   /** Probes the base URLs of every valid http provider, up to `MAX_CONCURRENT_PROBES` distinct targets together and any more in rounds of that many, one connection each, each bounded by its provider's connect timeout. Omit to leave reachability out of the findings; with it, a valid http provider whose base URL accepts no connection fails, naming the URL. */
   readonly probeBaseUrls?: BaseUrlBatchProbe;
+  /** The providers whose last catalogue refresh, as the serving front door recorded it, failed on a redirect it does not follow, each with the reason it recorded. Omit to leave the finding out. */
+  readonly catalogueRedirects?: ReadonlyMap<string, string>;
   /** The journals of identity renames that were left unfinished, and the files in their directory that are not journals. Omit to leave renames out of the findings. */
   readonly renameJournals?: RenameJournalListing;
   /** The entries of the identities directory that cannot be reached (a symlink the filesystem would not follow, or a directory nobody can enter), which are not counted as identities. Omit to leave them out of the findings. */
@@ -678,22 +682,17 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
       continue;
     }
     pushProvider(push, entry, params.credentialCache, params.chatgptSignIn, unreachableLines.get(entry.name));
+    const redirectReason = params.catalogueRedirects?.get(entry.name);
+    if (redirectReason !== undefined) {
+      pushCatalogueRedirectFinding(push, entry.name, redirectReason);
+    }
   }
   const providerNames = new Set(params.providers.map((entry) => entry.name));
   for (const finding of aliasFindings(params.providerAliases ?? {}, providerNames)) {
     push("provider", finding.level, finding.message, finding.alias);
   }
 
-  if (params.platform !== "darwin" || params.run === undefined) {
-    push("keychain", "pass", "Skipped (not macOS).");
-  } else {
-    for (const entry of params.identities) {
-      if (validIdentityAgents.get(entry.name) === "codex") continue;
-      const result = lookupKeychainService(params.run, entry.farmRoot);
-      // Informational: whether the identity is signed in is the sign-in section's finding, which also counts a credentials file that stands in for the Keychain item.
-      push("keychain", "pass", result.found ? result.note : `${result.note} The sign-in section reports whether a login is stored elsewhere.`, entry.name);
-    }
-  }
+  pushKeychainFindings(push, params.platform, params.run, params.identities, validIdentityAgents);
 
   if (params.directoryRules.raw === undefined) {
     push("directory-rules", "pass", "No directory-rules.json configured.");
@@ -1043,6 +1042,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
     providers,
     providerAliases: readProviderAliases(paths),
     probeBaseUrls: realBaseUrlBatchProbe,
+    catalogueRedirects: providersWithRedirectedCatalogue(realFarmFs, paths, new Map(providers.map((entry) => [entry.name, currentCatalogueSettings(paths, entry.name)] as const))),
     renameJournals: listRenameJournals(realFarmFs, paths.identityRenamesDir),
     unreachableIdentities,
     identityRecords: { all: records, displaced: displacedIdentities.map((record) => ({ ...record, directoryPresent: fs.existsSync(path.join(paths.identitiesDir, record.id)) })), nameRenames: unfinishedNameRenames(paths).map((record) => ({ from: record.from, description: describeInterruptedNameRename(paths, record) })), strayNameRenameFiles: strayNameRenameRecordFiles(paths) },

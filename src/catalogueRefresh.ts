@@ -1,4 +1,4 @@
-import { CATALOGUE_REFRESH_TIMEOUT_MS, CatalogueFetchError, catalogueCachePath, fetchCatalogue, parseCatalogueBody, type CatalogueCache, type CatalogueFetch } from "./providerCatalogue";
+import { CATALOGUE_REFRESH_TIMEOUT_MS, CatalogueFetchError, catalogueCachePath, catalogueSettingsFingerprint, catalogueSettingsPath, fetchCatalogue, parseCatalogueBody, type CatalogueCache, type CatalogueFetch } from "./providerCatalogue";
 import { catalogueCredentialFingerprint } from "./codex/catalogueCredential";
 import type { CodexAuthStore, CodexCredentials } from "./codex/auth";
 import { HTTP_STATUS } from "./codex/http";
@@ -19,6 +19,10 @@ export interface RefreshCatalogueDeps {
   readonly codexVersion?: string;
   readonly now: () => number;
   readonly write: (filePath: string, cache: CatalogueCache) => void;
+  /** Stores the digest of the settings an `http` catalogue fetched at `fetchedAt` was fetched under, in the file `catalogueSettingsPath` names. */
+  readonly writeSettings: (filePath: string, settings: string, fetchedAt: number) => void;
+  /** Removes the digest file `catalogueSettingsPath` names, when there is one. */
+  readonly removeSettings: (filePath: string) => void;
   readonly writeBinding: (name: string, fingerprint: string) => void;
 }
 
@@ -65,6 +69,10 @@ export async function refreshProviderCatalogue(name: string, deps: Readonly<Refr
     throw new CatalogueFetchError(resolution.message);
   }
   const cache = await fetchCatalogue({ provider, catalogue: provider.catalogue, credential: resolution.credential, fetch: deps.fetch, now: deps.now });
+  // The digest goes first and comes back last: whatever stops the refresh in between (a crash, a failed write) leaves a catalogue with no digest, which no reader uses, and never an earlier digest over a catalogue fetched under other settings.
+  const settingsFile = catalogueSettingsPath(deps.paths, name);
+  deps.removeSettings(settingsFile);
   deps.write(catalogueCachePath(deps.paths, name), cache);
+  deps.writeSettings(settingsFile, catalogueSettingsFingerprint(provider), cache.fetchedAt);
   return cache;
 }

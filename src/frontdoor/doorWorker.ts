@@ -67,7 +67,7 @@ export class DoorWorkerBusyError extends CliError {
 const NEXT_STEP: Readonly<Record<DoorWorkerTaskName, string>> = {
   check: "run `agent-shim check` from a shell for the detail",
   doctor: "run `agent-shim doctor` from a shell for the detail",
-  "refresh-catalogue": "run `agent-shim provider models --refresh <name>` from a shell for the detail",
+  "refresh-catalogue": "run `agent-shim provider models <name> --refresh` from a shell for the detail",
 };
 
 /** Why a task failed: it outlasted its deadline, its heartbeat stood still, its worker raised an error or ended with no answer, its answer was not a valid result, its input was refused, its caller went away, or the door is ending. A caller maps the kind to a status; the message is for a person. */
@@ -75,9 +75,13 @@ export type DoorWorkerFailureKind = "deadline" | "stalled" | "worker" | "answer"
 
 /** Raised when a task's worker ended without an answer, was stopped by the watchdog, the caller or the door, or answered something that was not a valid result. `reason` names the cause in the door's own words (never a worker's message), and the message ends with what to do next. */
 export class DoorWorkerFailedError extends CliError {
-  constructor(task: DoorWorkerTaskName | "an unknown task", reason: string, readonly kind: DoorWorkerFailureKind) {
+  /** Whether the worker's error said a catalogue read met a redirect: the one fact of a worker's error that crosses the thread besides its class name and code. */
+  readonly redirected: boolean;
+
+  constructor(task: DoorWorkerTaskName | "an unknown task", reason: string, readonly kind: DoorWorkerFailureKind, redirected = false) {
     super(`${task} failed in its worker: ${reason}${task === "an unknown task" ? "" : `; ${NEXT_STEP[task]}`}`);
     this.name = "DoorWorkerFailedError";
+    this.redirected = redirected;
   }
 }
 
@@ -173,9 +177,9 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
   const maxQueued = options.maxQueued ?? MAX_QUEUED_DOOR_WORKER_TASKS;
   const log = options.log ?? ((): void => undefined);
   /** The failure of a task, logged once here with its kind and reason (never a worker's message), for the caller to throw or reject with. */
-  const failure = (task: DoorWorkerTaskName | "an unknown task", reason: string, kind: DoorWorkerFailureKind): DoorWorkerFailedError => {
+  const failure = (task: DoorWorkerTaskName | "an unknown task", reason: string, kind: DoorWorkerFailureKind, redirected = false): DoorWorkerFailedError => {
     log(`door worker ${task} failed (${kind}): ${reason}`);
-    return new DoorWorkerFailedError(task, reason, kind);
+    return new DoorWorkerFailedError(task, reason, kind, redirected);
   };
   /** The flights not yet over, by request: an equal request joins one of these. */
   const inFlight = new Map<string, Flight>();
@@ -309,12 +313,12 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
           if (value.kind === "done") {
             flight.outcome.resolve(value.value);
           } else {
-            flight.outcome.reject(failure(flight.task, `it ended with ${value.name}${value.code === undefined ? "" : ` (${value.code})`}`, "worker"));
+            flight.outcome.reject(failure(flight.task, `it ended with ${value.name}${value.code === undefined ? "" : ` (${value.code})`}`, "worker", value.redirected === true));
           }
         });
       });
       worker.on("error", (error) => {
-        // An uncaught error in the thread: its class name and code only, as a posted failure carries, never its message, which can hold what a credential command printed.
+        // An uncaught error in the thread: its class name and code only (a posted failure also carries the redirect flag, which an uncaught error has no way to set), never its message, which can hold what a credential command printed.
         const { name, code } = identifiedFailure(error);
         flight.cancel(`it raised ${name}${code === undefined ? "" : ` (${code})`}`, "worker");
       });

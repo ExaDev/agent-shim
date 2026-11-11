@@ -3,13 +3,16 @@ import os from "node:os";
 import type { FrontDoorPort } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
 import { listProviders } from "../providersStore";
-import { CATALOGUE_REFRESH_DEADLINE_MS, CATALOGUE_RETRY_MS, catalogueCachePath, isCatalogueStale, parseCatalogueCache } from "../providerCatalogue";
+import { isHttpProvider } from "../config/schema";
+import { CATALOGUE_REFRESH_DEADLINE_MS, CATALOGUE_RETRY_MS, catalogueMatchesSettings, catalogueSettingsFingerprint, isCatalogueStale, parseCatalogueCache, parseCatalogueSettings } from "../providerCatalogue";
+import { StoredCatalogue, TolerantReader, skipUnreadableCatalogue } from "../storedCatalogue";
 import { savedCatalogueFingerprint } from "../codex/catalogueCredential";
 import { realFarmFs, realIsFrontDoorSupervisor, realIsProcessRunning, realSleepSync, type DaemonSpawner } from "../realPorts";
 import { appendDoorLog } from "./doorLog";
 import type { RequestedReplacementReason } from "./replacement";
 import { ensureFrontDoor, FRONTDOOR_LAUNCHER_POLL_MS, restartFrontDoor, type EnsureFrontDoorPorts, type RestartFrontDoorResult } from "./ensure";
-import { readCatalogueStatus, readFrontDoorCodexRecord, readFrontDoorState, removeFrontDoorSession } from "./state";
+import { readFrontDoorCodexRecord, readFrontDoorState, removeFrontDoorSession } from "./state";
+import { readCatalogueFailure, readCatalogueStatus } from "./catalogueState";
 import { probeFrontDoorSync, requestCatalogueRefreshSync } from "./probe";
 import { isDeclaredFrontDoor, isFrontDoorSupervisorPid } from "./selfIdentity";
 import { resolveTrustBundle, type TrustBundleFs } from "./trust";
@@ -70,23 +73,41 @@ export function realFrontDoorPort(paths: LayoutPaths, spawnDaemon: DaemonSpawner
   return {
     waitForCatalogues: (supervisorPid) => {
       const timedOut = deadlineAfter(CATALOGUE_REFRESH_DEADLINE_MS);
+      // A stored catalogue file the launch cannot read reads as a missing one: the launch waits for the refresh the door starts.
+      const stored = new StoredCatalogue(paths, new TolerantReader((file) => realFarmFs.readFileUtf8(file), skipUnreadableCatalogue));
       let requested = false;
       const warnings = new Set<string>();
       while (!isDeclaredFrontDoor(supervisorPid) && listProviders(paths).map(({ name, provider }) => {
         const owner = readFrontDoorCodexRecord(realFarmFs, paths.frontdoorDir, supervisorPid);
         const published = owner === undefined ? undefined : readCatalogueStatus(realFarmFs, paths, supervisorPid, owner.generation, name);
-        if (provider.kind !== "codex" && published?.status === "failed" && published.recordedAt !== undefined && published.recordedAt <= Date.now() && Date.now() - published.recordedAt < CATALOGUE_RETRY_MS) {
+        // A failure is final for a launch only while the provider has the settings the refresh failed under: an `http` provider edited since (its failure file records the settings it was read under) is refreshed at once by the keeper, so the launch waits for that refresh and asks for it. A status with no failure file, or one that records no settings (as an older door writes it), counts as current.
+        const failedUnderCurrentSettings = (): boolean => {
+          if (!isHttpProvider(provider) || owner === undefined) return true;
+          // A provider with no catalogue is refreshed by nobody, so a failure recorded for it from when it had one is not a refresh failure of anything the launch waits for.
+          if (provider.catalogue === undefined) return false;
+          const recorded = readCatalogueFailure(realFarmFs, paths, supervisorPid, owner.generation, name)?.settings;
+          return recorded === undefined || recorded === catalogueSettingsFingerprint(provider);
+        };
+        if (provider.kind !== "codex" && published?.status === "failed" && published.recordedAt !== undefined && published.recordedAt <= Date.now() && Date.now() - published.recordedAt < CATALOGUE_RETRY_MS && failedUnderCurrentSettings()) {
           warnings.add(`Catalogue refresh failed for ${name}`);
           return false;
         }
         if (provider.kind === "codex") {
           if (owner === undefined) return true;
-          const cache = parseCatalogueCache(realFarmFs.readFileUtf8(catalogueCachePath(paths, name, supervisorPid, owner.generation)));
+          const cache = parseCatalogueCache(stored.cacheText(name, { pid: supervisorPid, generation: owner.generation }));
           let fingerprint: string | undefined;
+          let loginFault: string | undefined;
           try {
-            fingerprint = savedCatalogueFingerprint(provider, paths, { ...process.env, CODEX_HOME: owner.codexHome }, os.homedir(), realFarmFs.readFileUtf8);
+            fingerprint = savedCatalogueFingerprint(provider, paths, { ...process.env, CODEX_HOME: owner.codexHome }, os.homedir(), new TolerantReader((file) => realFarmFs.readFileUtf8(file), (fault) => {
+              loginFault = fault;
+            }));
           } catch (error) {
             warnings.add(`Cannot read catalogue credentials for ${name}: ${error instanceof Error ? error.message : String(error)}`);
+            return false;
+          }
+          // A login the launch cannot read is reported, with the fault's code and no path, and not waited for: no refresh can bind a catalogue to it.
+          if (loginFault !== undefined) {
+            warnings.add(`Cannot read the catalogue credentials for ${name} (${loginFault})`);
             return false;
           }
           const outcome = readCatalogueStatus(realFarmFs, paths, supervisorPid, owner.generation, name);
@@ -97,8 +118,8 @@ export function realFrontDoorPort(paths: LayoutPaths, spawnDaemon: DaemonSpawner
           return cache === undefined || isCatalogueStale(cache, Date.now()) || cache.supervisorPid !== supervisorPid || fingerprint === undefined || cache.credentialFingerprint !== fingerprint;
         }
         if ((provider.kind !== undefined && provider.kind !== "http") || provider.catalogue === undefined) return false;
-        const cache = parseCatalogueCache(realFarmFs.readFileUtf8(catalogueCachePath(paths, name)));
-        return cache === undefined || isCatalogueStale(cache, Date.now());
+        const cache = parseCatalogueCache(stored.cacheText(name));
+        return cache === undefined || isCatalogueStale(cache, Date.now()) || !catalogueMatchesSettings(parseCatalogueSettings(stored.digestText(name)), cache, provider);
       }).some(Boolean)) {
         if (timedOut()) return [...warnings, "Timed out waiting for provider catalogues"].join("; ");
         if (!requested) {

@@ -1,10 +1,18 @@
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
   CATALOGUE_MAX_AGE_MS,
+  CATALOGUE_MODEL_ID_MAX_CHARS,
   CatalogueFetchError,
   catalogueCachePath,
   catalogueHeaders,
+  catalogueMatchesSettings,
+  catalogueSettingsPath,
+  catalogueSettingsText,
+  parseCatalogueSettings,
+  catalogueSettingsFingerprint,
   catalogueUrls,
   fetchCatalogue,
   filterCatalogue,
@@ -19,6 +27,12 @@ import { buildLayoutPaths } from "./paths";
 const NOW = Date.parse("2026-01-02T00:00:00Z");
 const CREDENTIAL = { target: "bearer", token: "secret-token" } as const;
 const PROVIDER = { baseUrl: "https://api.example.com/anthropic/" };
+
+/** The statuses either side of the redirect range, which a read answers as a redirect only inside it. */
+const FIRST_REDIRECT_STATUS = 300;
+const PERMANENT_REDIRECT_STATUS = 308;
+const LAST_REDIRECT_STATUS = 399;
+const FIRST_CLIENT_ERROR_STATUS = 400;
 
 describe("catalogueCachePath", () => {
   const paths = buildLayoutPaths("/home/test/.agent-shim");
@@ -144,6 +158,22 @@ describe("parseCatalogueCache and isCatalogueStale", () => {
   });
 });
 
+/** Statuses either side of the 3xx range a redirect answer lies in. */
+const REDIRECT_PERMANENT = 308;
+const REDIRECT_MOVED = 301;
+const REDIRECT_FOUND = 302;
+const REDIRECT_SEE_OTHER = 303;
+const REDIRECT_TEMPORARY = 307;
+const NOT_MODIFIED = 304;
+const LAST_REDIRECT = 399;
+const FIRST_CLIENT_ERROR = 400;
+const SERVER_ERROR = 500;
+const OK_EMPTY = 200;
+/** The candidate URLs a provider with no catalogue URL of its own is asked. */
+const READ_CANDIDATES = 2;
+const UNAUTHORIZED_STATUS = 401;
+const FORBIDDEN_STATUS = 403;
+
 describe("fetchCatalogue", () => {
   const params = (fetch: CatalogueFetch) => ({ provider: PROVIDER, catalogue: {}, credential: CREDENTIAL, fetch, now: () => NOW });
 
@@ -153,6 +183,49 @@ describe("fetchCatalogue", () => {
     expect(await fetchCatalogue(params(fetch))).toEqual({ fetchedAt: NOW, url: "https://api.example.com/anthropic/v1/models", models: [{ id: "a" }] });
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch.mock.calls[0]?.[1]).toEqual({ authorization: "Bearer secret-token", "anthropic-version": "2023-06-01" });
+  });
+
+  it.each([[REDIRECT_PERMANENT, true], [REDIRECT_MOVED, true], [REDIRECT_FOUND, true], [REDIRECT_SEE_OTHER, true], [REDIRECT_TEMPORARY, true], [FIRST_REDIRECT_STATUS, false], [NOT_MODIFIED, false], [LAST_REDIRECT, false], [FIRST_CLIENT_ERROR, false], [SERVER_ERROR, false], [OK_EMPTY, false]])("marks the failure as a redirect only when a candidate answered with a 3xx (status %i: %s)", async (status, redirected) => {
+    const fetch = vi.fn<CatalogueFetch>().mockResolvedValue({ status, body: status === OK_EMPTY ? { data: [] } : undefined });
+    const error: unknown = await fetchCatalogue(params(fetch)).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(CatalogueFetchError);
+    expect(error instanceof CatalogueFetchError && error.redirected).toBe(redirected);
+  });
+
+  it.each([[UNAUTHORIZED_STATUS, true], [FORBIDDEN_STATUS, true], [FIRST_CLIENT_ERROR, false], [SERVER_ERROR, false]])("marks the failure as the credential's only when a candidate answered 401 or 403 (status %i: %s)", async (status, unauthorised) => {
+    const fetch = vi.fn<CatalogueFetch>().mockResolvedValue({ status, body: undefined });
+    const error: unknown = await fetchCatalogue(params(fetch)).catch((caught: unknown) => caught);
+    expect(error instanceof CatalogueFetchError && error.unauthorised).toBe(unauthorised);
+  });
+
+  it.each([
+    ["a 401 then a server error", [UNAUTHORIZED_STATUS, SERVER_ERROR], false],
+    ["a server error then a 401", [SERVER_ERROR, UNAUTHORIZED_STATUS], false],
+    ["a 403 then a timeout", [FORBIDDEN_STATUS, "timeout"], false],
+    ["a timeout then a 403", ["timeout", FORBIDDEN_STATUS], false],
+    ["a 401 then a 403", [UNAUTHORIZED_STATUS, FORBIDDEN_STATUS], true],
+    ["two 403s", [FORBIDDEN_STATUS, FORBIDDEN_STATUS], true],
+    ["a server error then a timeout", [SERVER_ERROR, "timeout"], false],
+    ["a timeout then a server error", ["timeout", SERVER_ERROR], false],
+    ["two timeouts", ["timeout", "timeout"], false],
+  ] as const)("marks the failure as the credential's only when every candidate that failed refused it: %s", async (_label, answers, unauthorised) => {
+    let asked = 0;
+    const fetch = vi.fn<CatalogueFetch>(async () => {
+      const answer = answers[asked];
+      asked += 1;
+      if (answer === "timeout" || answer === undefined) throw new Error("timed out");
+      return await Promise.resolve({ status: answer, body: undefined });
+    });
+    const error: unknown = await fetchCatalogue(params(fetch)).catch((caught: unknown) => caught);
+    expect(fetch).toHaveBeenCalledTimes(READ_CANDIDATES);
+    expect(error instanceof CatalogueFetchError && error.unauthorised).toBe(unauthorised);
+  });
+
+  it("keeps the redirect a first candidate answered with when a later one fails otherwise", async () => {
+    const fetch = vi.fn<CatalogueFetch>().mockResolvedValueOnce({ status: REDIRECT_PERMANENT, body: undefined }).mockResolvedValueOnce({ status: SERVER_ERROR, body: undefined });
+    const error: unknown = await fetchCatalogue(params(fetch)).catch((caught: unknown) => caught);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(error instanceof CatalogueFetchError && error.redirected).toBe(true);
   });
 
   it("falls through a refusal, an empty list and a thrown error to the next URL", async () => {
@@ -199,5 +272,124 @@ describe("fetchCatalogue with a base URL carrying a credential", () => {
     const error = await fetchCatalogue({ ...params(fetch), catalogue: { url: "https://user:hunter2@api.example.com/models?key=abc123" } }).catch((caught: unknown) => caught);
 
     expect((error as Error).message).toBe("no catalogue from https://api.example.com/models: status 500");
+  });
+
+  it.each([
+    [FIRST_REDIRECT_STATUS, "no redirect"],
+    [PERMANENT_REDIRECT_STATUS, "a redirect"],
+    [NOT_MODIFIED, "no redirect"],
+    [LAST_REDIRECT_STATUS, "no redirect"],
+    [FIRST_CLIENT_ERROR_STATUS, "no redirect"],
+  ])("names status %i as %s", async (status, kind) => {
+    const fetch = vi.fn<CatalogueFetch>().mockResolvedValue({ status, body: undefined });
+
+    const error = await fetchCatalogue({ ...params(fetch), catalogue: { url: "https://api.example.com/models" } }).catch((caught: unknown) => caught);
+
+    const redirect = "a redirect, which is not followed: set the provider's base URL (or its catalogue.url) to the address it redirects to";
+    expect((error as Error).message).toBe(`no catalogue from https://api.example.com/models: status ${String(status)}${kind === "a redirect" ? `, ${redirect}` : ""}`);
+  });
+});
+
+describe("a model id a catalogue lists", () => {
+  it.each([
+    ["one made of control characters", "a\nfront door: forged"],
+    ["one that holds a tab", "a\tb"],
+    ["one past the bound", "x".repeat(CATALOGUE_MODEL_ID_MAX_CHARS + 1)],
+  ])("is not taken: %s, as a bare id or as an object's id", (_label, id) => {
+    expect(parseCatalogueBody({ data: [id, { id }, { id: "kept" }] })).toEqual([{ id: "kept" }]);
+  });
+
+  it("is taken at exactly the bound, and trimmed before it is measured", () => {
+    const longest = "x".repeat(CATALOGUE_MODEL_ID_MAX_CHARS);
+    expect(parseCatalogueBody({ data: [{ id: ` ${longest} ` }] })).toEqual([{ id: longest }]);
+  });
+});
+
+describe("catalogueSettingsPath", () => {
+  it("is settings/<name>.json in the catalogue directory, which releases that read the digest file are documented to find", () => {
+    const paths = buildLayoutPaths("/home/user/.agent-shim");
+    expect(catalogueSettingsPath(paths, "spark")).toBe(path.join(paths.catalogueDir, "settings", "spark.json"));
+    expect(catalogueSettingsPath(paths, "spark")).not.toBe(catalogueCachePath(paths, "spark"));
+  });
+});
+
+describe("parseCatalogueSettings", () => {
+  const FETCHED_AT = 5;
+  const own = { settings: "digest", fetchedAt: FETCHED_AT };
+
+  it("reads the digest file catalogueSettingsText writes", () => {
+    expect(parseCatalogueSettings(catalogueSettingsText("digest", FETCHED_AT))).toEqual(own);
+  });
+
+  it.each([
+    ["an extra key", JSON.stringify({ ...own, extra: true })],
+    ["an empty settings string", JSON.stringify({ settings: "", fetchedAt: FETCHED_AT })],
+    ["a fetchedAt that is no number", JSON.stringify({ settings: "digest", fetchedAt: "5" })],
+    ["no fetchedAt", JSON.stringify({ settings: "digest" })],
+    ["text that is no JSON", "{ not json"],
+    ["a JSON value that is no object", "5"],
+  ])("refuses %s, as no digest", (_label, text) => {
+    expect(parseCatalogueSettings(text)).toBeUndefined();
+  });
+
+  it("is none for a file that does not exist", () => {
+    expect(parseCatalogueSettings(undefined)).toBeUndefined();
+  });
+});
+
+describe("catalogueSettingsFingerprint", () => {
+  const provider = { baseUrl: "https://user:hunter2@a.example/v1?key=queryvalue", catalogue: { tier: "sonnet" as const }, credential: { sources: [{ command: ["op", "read", "op://v/i/f"] as [string, ...string[]] }], target: "bearer" as const } };
+
+  it("is a digest that holds nothing of what it was made from", () => {
+    const fingerprint = catalogueSettingsFingerprint(provider);
+    expect(fingerprint).toMatch(/^[0-9a-f]{64}$/);
+    for (const material of ["hunter2", "queryvalue", "op://", "read"]) {
+      expect(fingerprint).not.toContain(material);
+    }
+  });
+
+  it("is the same for the same settings written in another key order, and does not depend on the filters, which are applied over the stored list", () => {
+    const reordered = { credential: { target: "bearer" as const, sources: [{ command: ["op", "read", "op://v/i/f"] as [string, ...string[]] }] }, catalogue: { exclude: ["x"], tier: "haiku" as const }, baseUrl: provider.baseUrl };
+    expect(catalogueSettingsFingerprint(reordered)).toBe(catalogueSettingsFingerprint(provider));
+  });
+
+  it.each([
+    ["the base URL", { ...provider, baseUrl: "https://a.example/v2" }],
+    ["the catalogue URL", { ...provider, catalogue: { tier: "sonnet" as const, url: "https://a.example/models" } }],
+    ["an argument of a command source", { ...provider, credential: { ...provider.credential, sources: [{ command: ["op", "read", "op://v/i/g"] as [string, ...string[]] }] } }],
+  ])("differs when %s differs", (_label, other) => {
+    expect(catalogueSettingsFingerprint(other)).not.toBe(catalogueSettingsFingerprint(provider));
+  });
+
+  it("differs between a provider with a catalogue and one without, whatever else it holds", () => {
+    const without = { baseUrl: provider.baseUrl, credential: provider.credential };
+    expect(catalogueSettingsFingerprint(without)).not.toBe(catalogueSettingsFingerprint(provider));
+    expect(catalogueSettingsFingerprint({ ...without, catalogue: { tier: "sonnet" } })).toBe(catalogueSettingsFingerprint(provider));
+  });
+
+  it("matches a stored list only when the list records the same settings", () => {
+    const own = catalogueSettingsFingerprint(provider);
+    const cache = { fetchedAt: 5 };
+    expect(catalogueMatchesSettings({ settings: own, fetchedAt: 5 }, cache, provider)).toBe(true);
+    expect(catalogueMatchesSettings({ settings: "other", fetchedAt: 5 }, cache, provider)).toBe(false);
+    expect(catalogueMatchesSettings({ settings: own, fetchedAt: 4 }, cache, provider)).toBe(false);
+    expect(catalogueMatchesSettings(undefined, cache, provider)).toBe(false);
+  });
+});
+
+describe("the advice a redirect's answer carries", () => {
+  const provider = { baseUrl: "https://api.example.com/anthropic" };
+  const ADVICE = "to the address it redirects to";
+
+  it("is given only for a redirect that carried a Location, and a fetch that cannot tell is read as one that did", async () => {
+    const message = async (located: boolean | undefined): Promise<string> => {
+      const fetch: CatalogueFetch = async () => await Promise.resolve({ status: PERMANENT_REDIRECT_STATUS, body: undefined, ...(located === undefined ? {} : { located }) });
+      const error: unknown = await fetchCatalogue({ provider, catalogue: { url: "https://api.example.com/models" }, credential: CREDENTIAL, fetch, now: () => NOW }).then(() => undefined, (cause: unknown) => cause);
+      return error instanceof Error ? error.message : "";
+    };
+    expect(await message(true)).toContain(ADVICE);
+    expect(await message(undefined)).toContain(ADVICE);
+    expect(await message(false)).not.toContain(ADVICE);
+    expect(await message(false)).toContain("with no Location");
   });
 });

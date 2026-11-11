@@ -136,6 +136,14 @@ describe("the door worker host", () => {
     await expect(queued).resolves.toBe("two");
   });
 
+  it("names no code for a worker that failed with none, and not the word undefined", async () => {
+    const { host, started } = hostOver();
+    const failed = host.run("check", { root: "/r", path: "/p" }, identity);
+    await settle();
+    started[0]?.emit("message", { kind: "failed", name: "TypeError" });
+    await expect(failed).rejects.toThrow("check failed in its worker: it ended with TypeError; run `agent-shim check` from a shell for the detail");
+  });
+
   it("terminates a worker that fails, whose error names the task, the error class and a next step, and one that ends with no answer", async () => {
     const { host, started } = hostOver();
     const failed = host.run("check", { root: "/r", path: "/p" }, identity);
@@ -421,6 +429,26 @@ describe("the door worker host", () => {
     expect(message).not.toContain("TOPSECRET");
   });
 
+  it("rejects with the redirect fact a worker posted, and only for a failure that says it is one", async () => {
+    const { host, started } = hostOver();
+    const redirected = host.run("doctor", { root: "/a" }, identity);
+    await settle();
+    started[0]?.emit("message", { kind: "failed", name: "CatalogueFetchError", redirected: true });
+    await expect(redirected).rejects.toMatchObject({ redirected: true });
+    const plain = host.run("doctor", { root: "/b" }, identity);
+    await settle();
+    started[1]?.emit("message", { kind: "failed", name: "CatalogueFetchError" });
+    await expect(plain).rejects.toMatchObject({ redirected: false });
+  });
+
+  it.each([[false], ["yes"], [1]])("refuses a failure message whose redirect field is %j", async (field) => {
+    const { host, started } = hostOver();
+    const running = host.run("doctor", { root: "/a" }, identity);
+    await settle();
+    started[0]?.emit("message", { kind: "failed", name: "Error", redirected: field });
+    await expect(running).rejects.toThrow("something other than a result");
+  });
+
   it("refuses a failure message that carries anything beyond a class name and a code", async () => {
     const { host, started } = hostOver();
     const running = host.run("doctor", { root: "/a" }, identity);
@@ -444,6 +472,41 @@ describe("the door worker host", () => {
     expect(message).not.toContain("SECRET-marker");
     expect(lines.join("\n")).not.toContain("SECRET-marker");
     expect(lines).toHaveLength(1);
+  });
+
+  it("says a failure met a redirect only when a worker posted that it did, whatever else ended the task", async () => {
+    const outcomes: { readonly name: string; readonly run: (world: ReturnType<typeof hostOver>) => Promise<unknown> }[] = [
+      { name: "a worker error", run: async (world) => { const running = world.host.run("doctor", { root: "/a" }, identity); await settle(); world.started[0]?.emit("error", new Error("SECRET-marker")); return await running; } },
+      { name: "a worker that ends with no answer", run: async (world) => { const running = world.host.run("doctor", { root: "/a" }, identity); await settle(); world.started[0]?.emit("exit", 1); return await running; } },
+      { name: "a posted failure", run: async (world) => { const running = world.host.run("doctor", { root: "/a" }, identity); await settle(); world.started[0]?.emit("message", { kind: "failed", name: "TypeError" }); return await running; } },
+      { name: "a stall", run: async (world) => { const running = world.host.run("doctor", { root: "/a" }, identity); await settle(); world.clock.advance(STALL_MS + DOOR_WORKER_WATCHDOG_INTERVAL_MS * 2); return await running; } },
+      { name: "a deadline", run: async (world) => { const running = world.host.run("doctor", { root: "/a" }, identity); await settle(); for (let at = 0; at <= DEADLINES.doctor; at += DOOR_WORKER_WATCHDOG_INTERVAL_MS) { world.started[0]?.beat(); world.clock.advance(DOOR_WORKER_WATCHDOG_INTERVAL_MS); } return await running; } },
+      { name: "the door stopping", run: async (world) => { const running = world.host.run("doctor", { root: "/a" }, identity); await settle(); world.host.stop(); return await running; } },
+      { name: "an answer that is not a valid result", run: async (world) => { const running = world.host.run("doctor", { root: "/a" }, () => { throw new Error("SECRET-marker"); }); await settle(); world.started[0]?.answer("x"); return await running; } },
+      { name: "a cancelled request with nobody else waiting", run: async (world) => { const abort = new AbortController(); const running = world.host.run("doctor", { root: "/a" }, identity, abort.signal); await settle(); abort.abort(); return await running; } },
+    ];
+    for (const outcome of outcomes) {
+      const world = hostOver();
+      const error: unknown = await outcome.run(world).then(() => undefined, (cause: unknown) => cause);
+      expect(error, outcome.name).toBeInstanceOf(DoorWorkerFailedError);
+      expect(error instanceof DoorWorkerFailedError && error.redirected, outcome.name).toBe(false);
+    }
+  });
+
+  it("says no redirect for a request that is cancelled before it starts and for each caller that leaves a shared flight", async () => {
+    const { host } = hostOver();
+    const before = new AbortController();
+    before.abort();
+    const early: unknown = await host.run("doctor", { root: "/r" }, identity, before.signal).then(() => undefined, (cause: unknown) => cause);
+    const one = new AbortController();
+    const running = host.run("doctor", { root: "/s" }, identity, one.signal);
+    await settle();
+    one.abort();
+    const leaving: unknown = await running.then(() => undefined, (cause: unknown) => cause);
+    for (const error of [early, leaving]) {
+      expect(error).toBeInstanceOf(DoorWorkerFailedError);
+      expect(error instanceof DoorWorkerFailedError && error.redirected).toBe(false);
+    }
   });
 
   it("logs exactly one line, with the task and kind and no message, for each way a task fails or is refused", async () => {

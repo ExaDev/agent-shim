@@ -1,6 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import os from "node:os";
-import { savedCatalogueFingerprint } from "../codex/catalogueCredential";
 import path from "node:path";
 import fs from "node:fs";
 import type net from "node:net";
@@ -28,8 +27,9 @@ import { loadPoolMembers } from "../usage/poolPick";
 import { createRealAnthropicUsageRefresher } from "../usage/realAnthropicUsageProbe";
 import { runChild } from "../usage/childRun";
 import { createCatalogueKeeper } from "../catalogueKeeper";
+import { keeperCatalogueReaders } from "./keeperCatalogueReaders";
 import { pruneAbandonedCatalogueGenerations } from "./catalogueCleanup";
-import { catalogueCachePath } from "../providerCatalogue";
+
 import { createProviderCanonicaliser, loadProviderAliases } from "../providerAliases";
 import { listProviders, providerFileDefined } from "../providersStore";
 import { WINDOW_OPEN_TIMEOUT_MS } from "../usage/realWindowOpener";
@@ -94,7 +94,8 @@ import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_COOLDOWN_CAP_MS, DOOR_RESPAWN_DELAY_EN
 import { PROBE_TIMEOUT_MS } from "./probe";
 import { readFrontDoorListeners, realFrontDoorListenerProbes } from "./listenerReadings";
 import { collectFrontDoorStatus, formatFrontDoorListeners, formatFrontDoorStatus, headroomSocketTarget } from "./status";
-import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, launchRouteStore, removeFrontDoorSession, writeCatalogueStatus, writeFrontDoorSession } from "./state";
+import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, launchRouteStore, removeFrontDoorSession, writeFrontDoorSession } from "./state";
+import { catalogueStatusPublisher } from "./catalogueState";
 import { declareThisProcessTheFrontDoor } from "./selfIdentity";
 import { awaitPidExit, runFrontDoorSupervisor, watchedInstallEntry, type FrontDoorSupervisorPorts, type OwnExecutableStat } from "./supervisor";
 import { createAccountReader } from "../usage/account";
@@ -449,10 +450,9 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
   // A provider that opted into a model catalogue is fetched in a worker thread of the door (`doorWorker.ts`), never on its event loop, which answers every session. The first tick runs at start, so a new catalogue does not wait a period, and a fresh cache costs no request.
   const catalogueKeeper = createCatalogueKeeper({
     supervisorPid: process.pid,
-    publishStatus: (name, status, fingerprint) => { writeCatalogueStatus(realFarmFs, paths, process.pid, catalogueGeneration, name, status, fingerprint, Date.now()); },
+    publishStatus: catalogueStatusPublisher(realFarmFs, paths, process.pid, catalogueGeneration, Date.now),
     providers: () => listProviders(paths, (name, message) => { log(`catalogue keeper skipped provider ${name}: ${message}`); }).map((entry) => [entry.name, entry.provider] as const),
-    readCache: (name, provider) => realFsPort.readFileUtf8(provider.kind === "codex" ? catalogueCachePath(paths, name, process.pid, catalogueGeneration) : catalogueCachePath(paths, name)),
-    credentialFingerprint: (provider) => provider.kind === "codex" ? savedCatalogueFingerprint(provider, paths, process.env, os.homedir(), realFsPort.readFileUtf8) : undefined,
+    ...keeperCatalogueReaders(paths, process.pid, catalogueGeneration),
     refresh: async (name) => { await doorWorkers.run("refresh-catalogue", { root: paths.root, name, supervisorPid: process.pid, generation: catalogueGeneration }, () => undefined); },
     nowMs: () => Date.now(),
     log,
@@ -849,7 +849,6 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
       }),
     ["agent-shim frontdoor restart", "agent-shim frontdoor restart --json"],
   );
-
 
   // The whole `frontdoor rc` verb tree lives in its own module, registered here so the command layout reads in one place.
   registerRcCommand(frontdoor, paths);
