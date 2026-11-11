@@ -5,7 +5,7 @@ import { parseLauncherArgv } from "./argv";
 import { LAUNCH_CANCELLED_EXIT } from "./hold";
 import { decideIdentity } from "./identity";
 import type { IdentityPickerPort, PickerAnswer, PickerRequest } from "./ports";
-import { IdentityPickerCancelledError, runIdentityPicker, type PickerOutcome } from "./runPicker";
+import { IdentityPickerCancelledError, NoIdentityToPickError, runIdentityPicker, type PickerOutcome } from "./runPicker";
 import { createFakeFarmFs, FAKE_NOW_MS, fakeFarm, fakeFs, paths } from "../test-helpers";
 import { readStickyPick, recordStickyPick } from "../usage/poolPick";
 
@@ -67,6 +67,7 @@ interface Setup {
   readonly picker?: IdentityPickerPort;
   readonly lastRanAs?: string;
   readonly providerOf?: (identity: string) => string | undefined;
+  readonly identityNames?: readonly string[];
 }
 
 async function run(setup: Setup = {}): Promise<{ readonly outcome: PickerOutcome; readonly requests: readonly PickerRequest[]; readonly farmFs: ReturnType<typeof createFakeFarmFs> }> {
@@ -95,7 +96,7 @@ async function run(setup: Setup = {}): Promise<{ readonly outcome: PickerOutcome
     pools: setup.pools ?? POOLS,
     cwd: farm.cwd,
     now: farm.now,
-    identityNames: () => ["personal", "spare", "work"],
+    identityNames: () => setup.identityNames ?? ["personal", "spare", "work"],
     ...(setup.providerOf === undefined ? {} : { providerOf: setup.providerOf }),
     picker,
   });
@@ -174,6 +175,26 @@ describe("runIdentityPicker when no identity resolves", () => {
   it("does not ask when the active selection resolves one", async () => {
     const { requests } = await run({ active: "work" });
     expect(requests).toHaveLength(0);
+  });
+});
+
+describe("runIdentityPicker when nothing exists to choose from", () => {
+  it("fails with the command that creates an identity, without asking", async () => {
+    const asked: PickerRequest[] = [];
+    const attempt = run({
+      seed: {},
+      pools: {},
+      identityNames: [],
+      picker: {
+        pick: async (request) => {
+          asked.push(request);
+          return Promise.resolve({ kind: "cancelled" });
+        },
+      },
+    });
+    await expect(attempt).rejects.toThrow(NoIdentityToPickError);
+    await expect(attempt).rejects.toThrow("agent-shim identity add <name>");
+    expect(asked).toHaveLength(0);
   });
 });
 

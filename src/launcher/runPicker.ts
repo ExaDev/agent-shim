@@ -1,4 +1,4 @@
-import { CliError } from "../cliError";
+import { CliError, UsageError } from "../cliError";
 import { poolMemberIdentity, type Pool } from "../config/schema";
 import { loginKeyOf } from "../identityAccounts";
 import type { LayoutPaths } from "../paths";
@@ -14,6 +14,14 @@ import { pickerLabel } from "./pickerEntries";
 import { decidePicker, isUnattendedLaunch, type PickerReason, type PickerSelection } from "./pickerDecision";
 import { isResuming } from "./pool";
 import type { FarmFs, FsPort, IdentityPickerPort, PickerEntry, PickerRequest } from "./ports";
+
+/** Raised when the identity picker is due but there is no identity or pool to offer (a machine with none registered): a prompt with no options can never be answered, so the launch ends with the command that fixes it. */
+export class NoIdentityToPickError extends UsageError {
+  constructor() {
+    super("no identity is selected for this launch and none exists to choose from. Create one with `agent-shim identity add <name>`, then launch with `claude @<name>`.");
+    this.name = "NoIdentityToPickError";
+  }
+}
 
 /** Raised when the person cancels the identity picker (Ctrl-C): the launch has no identity to run as, so it ends, with the interrupt's exit status. */
 export class IdentityPickerCancelledError extends CliError {
@@ -211,6 +219,9 @@ export async function runIdentityPicker(params: Readonly<RunIdentityPickerParams
   });
   if (reason === undefined) {
     return { kind: "unchanged" };
+  }
+  if (context.entries.length === 0) {
+    throw new NoIdentityToPickError();
   }
   const request: PickerRequest = { message: context.message(reason), entries: context.entries, ...(context.initial === undefined ? {} : { initial: context.initial }) };
   const answer = await params.picker.pick(request);
