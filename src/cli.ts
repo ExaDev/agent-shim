@@ -3,7 +3,7 @@ import { isMainThread } from "node:worker_threads";
 
 import { reportFatalError } from "./cliReport";
 import type { CommandDeps } from "./cli/commandDeps";
-import { isInvokedAsClaude, PROBE_ENV, PROBE_REPLY } from "./claudeShim";
+import { isInvokedAsClaude } from "./claudeShim";
 import { aliasLegacyEnv } from "./legacy";
 import { realPromptsPort } from "./configure";
 import { runDoorWorkerEntry } from "./frontdoor/doorWorkerEntry";
@@ -25,10 +25,6 @@ import { runClaude } from "./runClaude";
  * `parseAsync`, not `parse`: some Commander actions are `async` and return a promise Commander never awaits under `parse`, so a rejection there would surface as an unhandled promise rejection rather than reaching `reportFatalError`.
  */
 async function main(): Promise<void> {
-  if (process.env[PROBE_ENV] === "1") {
-    console.log(PROBE_REPLY);
-    return;
-  }
   aliasLegacyEnv(process.env);
   const invokedName = path.basename(process.argv[1] ?? "agent-shim");
   if (isInvokedAsClaude(invokedName)) {
