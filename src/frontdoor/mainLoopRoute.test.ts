@@ -201,7 +201,7 @@ describe("a provider-less session's helper requests follow its main loop", () =>
     const record = mainLoopRoutesOfLiveSessions();
     const world = await startWorld(record);
     try {
-      // No main request first: the launch header alone routes the helper, as it always has.
+      // No main request first: the launch header alone routes the helper.
       expect((await send(world, { model: Z_HAIKU_MODEL, requestClass: "auxiliary", provider: "z" })).status).toBe(HTTP_STATUS.ok);
       expect((await send(world, { model: Z_HAIKU_MODEL, requestClass: "main", provider: "z" })).status).toBe(HTTP_STATUS.ok);
       expect(world.upstream.seen.map((seen) => seen.model)).toEqual([Z_HAIKU_MODEL, Z_HAIKU_MODEL]);

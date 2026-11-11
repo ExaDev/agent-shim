@@ -1,14 +1,15 @@
 import { createAgyCredentialResolver } from "../antigravity/agyCredential";
 import { ConfigFileNotJsonError, ConfigValidationError } from "../config/load";
-import { InvalidProviderNameError, isFileName } from "../config/names";
-import { isAntigravityProvider, isCodexProvider, isHttpProvider, type AntigravityProvider, type CodexProvider, type HttpProvider, type Credential, isRouterProvider, type ModelsConfig } from "../config/schema";
+import { InvalidProviderNameError, isFileName, providerFilePath } from "../config/names";
+import { isAntigravityProvider, isCodexProvider, isHttpProvider, type AntigravityProvider, type CodexProvider, type HttpProvider, type Provider, type Credential, isRouterProvider, type ModelsConfig } from "../config/schema";
 import { HTTP_STATUS } from "../codex/http";
 import type { CodexRoutePorts } from "../codex/route";
 import { resolveCodexConfig } from "../codex/translate";
-import { resolveAntigravityConfig, type ResolvedAntigravityConfig } from "../antigravity/translate";
+import { AUTO_ALIAS, resolveAntigravityConfig, type ResolvedAntigravityConfig } from "../antigravity/translate";
 import { createCachedAntigravityQuotaSource, fetchAntigravityQuotaSummary, type AntigravityQuotaMap } from "../antigravity/quota";
 import { describeCredential, resolveCredentialAsync, shareInFlightResolutions, type AsyncCredentialPort, type ResolvedCredential, type ResolveCredentialAsyncParams, type CredentialResolution } from "../credential";
-import { LegacyProviderFileError, loadProvider } from "../providersStore";
+import { LegacyProviderFileError, listProviderNames, loadProvider } from "../providersStore";
+import { providerModelRows } from "../launcher/modelPicker";
 import { DEFAULT_PROVIDER_CONNECT_TIMEOUT_MS, providerConnectTimeoutMs } from "../providerReachability";
 import type { FsPort } from "../launcher/ports";
 import { createCodexRouteMount } from "./codexMount";
@@ -27,9 +28,12 @@ import { withoutContextMarker } from "../models/identity";
 import type { TargetObservation } from "../selection/signals";
 import type { UsageSnapshot } from "../usage/schema";
 import { PROVIDER_PATH_PREFIX, directOrigin, parseProviderPath, type FrontDoorRoute, type ModelChoice, type RoutedRequest } from "./route";
+import { reservedProviderNameReason } from "../models/reservedModelNames";
 import { followingMainLoop, withModel, type MappedModel, type MainLoopRouteRecord } from "./mainLoopRoute";
 import { TIER_ENV_VARIABLES, claudeNameTier } from "../models/tiers";
 import { scanRequestHead } from "./requestScan";
+import type { CatalogueModel } from "../providerCatalogue";
+import { catalogueReadFault } from "../storedCatalogue";
 
 /** How often the door logs that one upstream could not be connected to, while it stays down. */
 export const COULD_NOT_CONNECT_LOG_INTERVAL_MS = 60_000;
@@ -54,6 +58,29 @@ function scopeSessionProviderPath(request: RoutedRequest): RoutedRequest {
   return { ...request, url: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(request.session.provider)}${request.url}` };
 }
 
+/**
+ * Whether `model` is one of the models a provider serves itself, from the lists of its served models in the order they are asked: its `env` first (a lookup by revision, no listing), then the wider ones (the targets of every provider, or the provider's own rows with its catalogue), which are asked only when the earlier ones did not say. The one test of what a provider serves, shared by the resolver and by the tier mapping of a Claude name. A model compares without its context-window marker, on either side.
+ */
+function servesName(model: string, ...lists: readonly (() => readonly string[])[]): boolean {
+  const bare = withoutContextMarker(model);
+  return lists.some((listed) => listed().some((named) => withoutContextMarker(named) === bare));
+}
+
+/** The models of `providerName` among the `<provider>/<model>` targets the providers offer. */
+function targetModelsOf(deps: Readonly<Pick<RoutedModelDeps, "targets">>, providerName: string): readonly string[] {
+  const prefix = `${providerName}/`;
+  return (deps.targets?.() ?? []).flatMap((ref) => (ref.startsWith(prefix) ? [ref.slice(prefix.length)] : []));
+}
+
+/** The other variables an http provider's `env` block names a model with: names that provider serves for a session launched on it, though they are not a tier a bare provider name defaults to. */
+const OTHER_MODEL_VARIABLES: readonly string[] = ["ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL"];
+
+/** The environment variables an http provider's own `env` block names its main tier's model with, in the order a bare provider name takes the first set one: Sonnet is the tier Claude Code's default model is, then the larger and the smaller. */
+const TIER_MODEL_VARIABLES: readonly string[] = ["ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"];
+
+/** The variables whose value is the model a bare provider name selects on an `http` provider, in order: `ANTHROPIC_MODEL`, the model Claude Code runs a session on when it is set and so the provider's own default, then the tier variables. */
+const DEFAULT_MODEL_VARIABLES: readonly string[] = ["ANTHROPIC_MODEL", ...TIER_MODEL_VARIABLES];
+
 /** What a request's model name resolves to when it routes by name: the provider that serves it, the model name that provider serves it under (a qualified name loses its qualifier, a virtual model resolves to the member its mode chose), and the member ref the choice landed on, for the stickiness the next request of the same session reads. A virtual model or family selection also carries the name the session asked for and the distinct providers its members span, so the response can tell the middleware a choice among alternatives happened. */
 interface RoutedModel {
   readonly provider: string;
@@ -63,11 +90,25 @@ interface RoutedModel {
   readonly providers?: readonly string[];
 }
 
+/** A bare name that selects a provider the provider cannot serve: the request is answered with this reason (a 400) instead of reaching any route. */
+interface RoutedRefusal {
+  readonly refusal: string;
+}
+
+/** The model a bare provider name selects on that provider, or why it selects none. */
+type ProviderDefault = { readonly model: string } | RoutedRefusal;
+
 /** What `resolveRoutedModel` reads from the door: the session's models block, the quota snapshot of its identity, what each target's recent requests observed, and the targets the providers offer (which families are formed from). */
 interface RoutedModelDeps {
   readonly models?: (session: Readonly<{ readonly sessionId?: string }>) => ModelsConfig | undefined;
   /** Whether a provider file defines this name: the qualification test for a slash in a model name, so a provider's own slashed model ids (an aggregator's `vendor/model`) are only ever treated as a cross-provider ref when the first segment really names a provider. */
   readonly definesProvider?: (name: string) => boolean;
+  /** Why the provider file of this name cannot be used (it exists and is invalid), or `undefined` when it is absent or valid: a qualified name whose first segment names such a file is refused with this reason, where an absent file leaves the name to follow the session's route. */
+  readonly providerFaultOf?: (name: string) => string | undefined;
+  /** The model a bare provider name selects, or `undefined` when no provider file defines the name; a file that is invalid selects a refusal saying so. */
+  readonly defaultModelOf?: (name: string) => ProviderDefault | undefined;
+  /** The model names the session's own provider gives in its `env` (its tier models and `ANTHROPIC_MODEL`): names that provider serves though no catalogue lists them, so no other provider's bare name takes them. */
+  readonly envModelsOf?: (providerName: string) => readonly string[];
   readonly usageSnapshotOf?: (identity: string | undefined) => UsageSnapshot | undefined;
   readonly observations?: (target: string) => TargetObservation | undefined;
   readonly targets?: () => readonly string[];
@@ -90,22 +131,34 @@ function resolveRoutedModel(
   memory: Readonly<Map<string, string>>,
   rotations: Readonly<Map<string, number>>,
   needs: RequestNeeds | undefined,
-): RoutedModel | undefined {
+): RoutedModel | RoutedRefusal | undefined {
   const models = deps.models?.(session);
   // The wire name a provider expects carries no context marker: Claude Code strips it from the names it sends, and a member ref may name its model with it (`z/glm-5.3[1m]`), so the target the resolver writes has it stripped too or the provider sees a model it does not know.
   const qualified = model.includes("/") && !model.startsWith("acct:") ? model : undefined;
   if (qualified !== undefined) {
     const [provider, ...rest] = qualified.split("/");
     const named = rest.join("/");
+    const fault = provider === undefined || named === "" ? undefined : deps.providerFaultOf?.(provider);
+    if (fault !== undefined) {
+      return { refusal: fault };
+    }
     return provider === undefined || named === "" || (deps.definesProvider !== undefined && !deps.definesProvider(provider)) ? undefined : { provider, model: withoutContextMarker(named), ref: qualified };
   }
   const isFamily = model.startsWith(FAMILY_PREFIX);
   const virtual = isFamily ? undefined : models?.virtual?.[model];
-  // A bare name is the models block's to resolve only when the session's own provider does not serve that very name: the provider the session launched on wins for the names it serves (the launch chose it), and the block serves the names nothing else can. A name neither defines stays Claude Code's own.
+  // The session's own provider serves a name when its targets list it or its `env` maps a model to it: the launch chose that provider, so such a name stays its own and neither the models block nor a provider's bare name takes it.
+  // Asked only on the branches that need it: a bare name that is no provider's costs nothing here, and the targets of every provider are listed only when the session provider's `env` does not name the model.
+  const servedBySessionProvider = (): boolean => providerName !== undefined && servesName(model, () => deps.envModelsOf?.(providerName) ?? [], () => targetModelsOf(deps, providerName));
+  // A bare name is the models block's to resolve only when the session's own provider does not serve that very name: the block serves the names nothing else can. After the block has had its say, a name equal to a defined provider selects that provider's default model, so `/model spark` works in any session without naming one of its models. A virtual model or family named like a provider therefore keeps winning, and a name nothing defines stays Claude Code's own.
   if (virtual === undefined && !isFamily) {
-    return undefined;
+    const bare = withoutContextMarker(model);
+    const selected = reservedProviderNameReason(bare) === undefined ? deps.defaultModelOf?.(bare) : undefined;
+    if (selected === undefined || servedBySessionProvider()) {
+      return undefined;
+    }
+    return "refusal" in selected ? selected : { provider: bare, model: withoutContextMarker(selected.model), ref: `${bare}/${selected.model}` };
   }
-  if (providerName !== undefined && (deps.targets?.() ?? []).some((ref) => ref === `${providerName}/${model}` || withoutContextMarker(ref) === `${providerName}/${withoutContextMarker(model)}`)) {
+  if (servedBySessionProvider()) {
     return undefined;
   }
   const declared = isFamily ? [model] : expandMembers(model, models);
@@ -192,6 +245,8 @@ export function createProviderRouteResolver(deps: {
   readonly now: () => number;
   /** Where each provider-less session's latest main-loop request was served, which its helper requests follow (see `followingMainLoop`): the door's one record, bounded by its session registry. */
   readonly mainLoopRoutes: MainLoopRouteRecord;
+  /** The models of a provider's cached catalogue, after its own filters, or none: where a bare name takes the model it selects when the provider's env names no tier model. */
+  readonly catalogueModelsOf?: (name: string, provider: HttpProvider) => readonly CatalogueModel[];
 }): (request: RoutedRequest) => Promise<RouteResolution> {
   /** When each upstream (by the subject its routes name it with) last had a failure to connect logged. */
   const couldNotConnectLoggedAt = new Map<string, number>();
@@ -227,13 +282,109 @@ export function createProviderRouteResolver(deps: {
   const antigravityRoutingMemory = new Map<string, Map<string, string>>();
   // The models an antigravity provider's backend has refused as spent, each until the instant it lifts: one per provider (its account's allowance is shared by every session routed through it), held here for the same reason as the routing memory.
   const antigravityExhaustedModels = new Map<string, Map<string, number>>();
+  // A provider file by name, valid or not as `loadProvider` finds it. Where the file system port can name a file's revision without reading it, the parsed provider is kept until the revision changes, so a request naming an existing provider costs a stat of the directory and one of the file; a file with no revision (absent, or a port that cannot say) is read, as the route's own loads do.
+  // One entry for each provider name the door has parsed, replaced when its file's revision changes and never evicted: bounded by the provider files a person keeps, since only a name the providers directory lists is ever parsed.
+  const loaded = new Map<string, { readonly revision: string; readonly provider: Provider }>();
+  // The names the providers directory lists, kept until the directory's revision changes where the file system port can name one (a file added, removed or renamed changes it); a port that cannot lists it each time.
+  let listed: { readonly revision: string; readonly names: ReadonlySet<string> } | undefined;
+  // A revision the file system cannot name (a stat that fails with EACCES or ELOOP) is no revision: the file or directory is then read on every call, and the read's own failure is the one reported, as when no port names revisions at all.
+  const revisionOf = (file: string): string | undefined => {
+    try {
+      return deps.fs.fileRevision?.(file);
+    } catch {
+      return undefined;
+    }
+  };
+  const providerNamesListed = (): ReadonlySet<string> => {
+    const revision = revisionOf(deps.providersDir);
+    if (revision !== undefined && listed?.revision === revision) {
+      return listed.names;
+    }
+    const names = new Set(listProviderNames(deps.fs.readdir, deps.providersDir));
+    if (revision !== undefined && revisionOf(deps.providersDir) === revision) {
+      listed = { revision, names };
+    }
+    return names;
+  };
+  const providerOf = (name: string): Provider | undefined => {
+    // Provider names are case-sensitive: a file system that ignores case answers `Spark` with `spark.json`, which would make a second provider of that file with its own pool, served-model cache, drop log and route-context key. Only a name the directory lists exactly is a provider of that name, as on a file system that keeps case. A name that is no file name (a model id of any length or spelling) is never listed, so it never reaches a read.
+    if (!providerNamesListed().has(name)) {
+      return undefined;
+    }
+    const revision = revisionOf(providerFilePath(deps.providersDir, name));
+    const kept = loaded.get(name);
+    if (revision !== undefined && kept?.revision === revision) {
+      return kept.provider;
+    }
+    const provider = loadProvider(deps.providersDir, name, deps.fs);
+    // Kept only when the revision after the read equals the one before it, so a write that lands while the file is read is not kept under the earlier revision.
+    if (revision !== undefined && provider !== undefined && revisionOf(providerFilePath(deps.providersDir, name)) === revision) {
+      loaded.set(name, { revision, provider });
+    }
+    return provider;
+  };
+  /** What a provider's file is: absent, found and valid, or listed and invalid (the reason names the file). Only a name the directory lists reaches a read, so a failing read is the file's own fault. */
+  const lookupProvider = (name: string): { readonly kind: "absent" } | { readonly kind: "found"; readonly definition: Provider } | { readonly kind: "invalid"; readonly reason: string } => {
+    try {
+      const definition = providerOf(name);
+      return definition === undefined ? { kind: "absent" } : { kind: "found", definition };
+    } catch (error) {
+      return { kind: "invalid", reason: `provider "${name}" cannot be used because its file is invalid: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  };
+  /** Why the provider file of `name` cannot be used when it is listed and invalid, else `undefined`: the refusal a qualified name that names it is answered with. */
+  const providerFaultOf = (name: string): string | undefined => {
+    const found = lookupProvider(name);
+    return found.kind === "invalid" ? found.reason : undefined;
+  };
   /** Whether a provider file defines this name: an absent file and an unparseable one both answer no, exactly as the loop above treats an unparseable file as no routes rather than a fault. */
   const definesProvider = (name: string): boolean => {
     try {
-      return loadProvider(deps.providersDir, name, deps.fs) !== undefined;
+      return providerOf(name) !== undefined;
     } catch {
       return false;
     }
+  };
+  /** The model names a provider's own `env` gives, which that provider serves for a session launched on it. */
+  const envModelsOf = (name: string): readonly string[] => {
+    try {
+      const definition = providerOf(name);
+      const env = definition === undefined || isRouterProvider(definition) ? undefined : definition.env;
+      return [...TIER_MODEL_VARIABLES, ...OTHER_MODEL_VARIABLES].flatMap((variable) => env?.[variable] ?? []).filter((value) => value !== "");
+    } catch {
+      return [];
+    }
+  };
+  /** The models `definition`'s stored catalogue lists, or why they cannot be read: the class and code of the failure (`EACCES`), never its message, which names a path. A file the door cannot read is a fault of that provider's request, not of the door. */
+  const catalogueModels = (name: string, definition: HttpProvider): { readonly models: readonly CatalogueModel[]; readonly fault?: string } => {
+    try {
+      return { models: deps.catalogueModelsOf?.(name, definition) ?? [] };
+    } catch (error) {
+      return { models: [], fault: catalogueReadFault(error) };
+    }
+  };
+  /** The model a bare provider name selects, per provider kind: the provider's own configured default (codex and antigravity always have one), else for an http provider the model its env gives (`ANTHROPIC_MODEL`, then the Sonnet, Opus and Haiku tiers), else the first model of its cached catalogue, else a refusal naming the provider. A router has none of its own. */
+  const defaultModelFor = (name: string, definition: Provider): ProviderDefault => {
+    if (isCodexProvider(definition)) {
+      return { model: resolveCodexConfig(definition.codex).defaultModel };
+    }
+    if (isAntigravityProvider(definition)) {
+      return { model: definition.antigravity?.defaultModel ?? AUTO_ALIAS };
+    }
+    if (isRouterProvider(definition)) {
+      return { refusal: `provider "${name}" is a router and has no default model of its own: name a model, as ${name}/<model>` };
+    }
+    const mainTier = DEFAULT_MODEL_VARIABLES.map((variable) => definition.env?.[variable]).find((value) => value !== undefined && value !== "");
+    const model = mainTier ?? deps.catalogueModelsOf?.(name, definition)[0]?.id;
+    return model === undefined ? { refusal: `provider "${name}" has no default model: give its env ${TIER_MODEL_VARIABLES[0] ?? ""}, or opt it into a catalogue with \`agent-shim provider set ${name} --catalogue-tier <tier>\`, or name a model as ${name}/<model>` } : { model };
+  };
+  /** What a bare provider name selects: the provider's default model, a refusal when its file is invalid or it has no default, or `undefined` when no provider file has that name. */
+  const defaultModelOf = (name: string): ProviderDefault | undefined => {
+    const found = lookupProvider(name);
+    if (found.kind === "invalid") {
+      return { refusal: found.reason };
+    }
+    return found.kind === "absent" ? undefined : defaultModelFor(name, found.definition);
   };
   // The routing memory a by-name session keeps its last chosen member in, and the rotation counter that keeps `spread` turning, both held by the resolver for the same reason: the route is mounted afresh for every request.
   const routingMemory = new Map<string, string>();
@@ -315,7 +466,7 @@ export function createProviderRouteResolver(deps: {
     const { provider } = scoped;
     let definition;
     try {
-      definition = loadProvider(deps.providersDir, provider, deps.fs);
+      definition = providerOf(provider);
     } catch (error) {
       if (error instanceof InvalidProviderNameError) {
         return { ok: false, status: HTTP_STATUS.notFound, message: `no provider named ${JSON.stringify(provider)}` };
@@ -414,7 +565,7 @@ export function createProviderRouteResolver(deps: {
   });
 
   /** The routing loop, which hands `noteRequestedModel` the model name the request's body carried each time a scan reads it, the first name first. */
-  const resolveByName = async (request: RoutedRequest, noteRequestedModel: (model: string | undefined) => void): Promise<RouteResolution> => {
+  const resolveByName = async (request: RoutedRequest, noteRequestedModel: (model: string | undefined) => void, noteServedModel: (provider: string, model: string) => void, noteRouted: (provider: string, model: string) => void): Promise<RouteResolution> => {
     // A provider session arrives believing it is talking to Claude Code's own API (that belief is load-bearing: the CLI's Remote Control activation gate admits only that host, with no override), so its inference rides a bare /v1/ path. The rewrite to the session's provider scoped path happens here, before anything else, because the whole pipeline must see it: the body scan, the resolution and above all the route that serves, since a translating route re-derives its provider from the scoped path and a bare path would leave it unrouted. The Remote Control family never takes this branch, whichever surface serves it, because a provider serves inference, not the CCR session protocol.
     const scopedRequest = scopeSessionProviderPath(request);
     const serveScoped = (resolution: { ok: true; route: FrontDoorRoute }): { ok: true; route: FrontDoorRoute } =>
@@ -438,7 +589,7 @@ export function createProviderRouteResolver(deps: {
       }
       let routes;
       try {
-        const definition = providerName === undefined ? undefined : loadProvider(deps.providersDir, providerName, deps.fs);
+        const definition = providerName === undefined ? undefined : providerOf(providerName);
         routes = definition === undefined || !isHttpProvider(definition) ? undefined : definition.routes;
       } catch {
         // An invalid provider file is the sync resolver's own refusal to report, not this layer's.
@@ -450,15 +601,6 @@ export function createProviderRouteResolver(deps: {
         // Whole-body, because a resolved name is served under its target's own model name: the qualified or virtual name the session sent is rewritten in the one copy of the body this scan holds, exactly as a `routes` entry that names a model is.
         const scan = await scanRequestHead(current, true);
         noteRequestedModel(scan.model);
-        if (scan.replayed === undefined) {
-          // Nothing was read (the body was empty): the original request is the honest handover.
-          const resolution = resolve(current);
-          return resolution.ok && replay !== undefined
-            ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url } }
-            : resolution.ok
-              ? serveScoped(resolution)
-              : resolution;
-        }
         replay = scan.replayed;
         // An `acct:` member is served by relaunch, never by a route: one login per process. The door asks the session's supervisor to move it (when one is watching) and answers the request with what is happening, so the turn ends cleanly rather than hanging or 502-ing.
         const account = scan.model === undefined ? undefined : resolveAccountTarget(scan.model, deps.models?.(current.session));
@@ -473,14 +615,21 @@ export function createProviderRouteResolver(deps: {
               : `model "${account.model}" runs under identity "${account.identity}", which needs a relaunch this session cannot make; start it there with: claude @${account.identity} --resume`,
           };
         }
-        const routed = scan.model === undefined ? undefined : resolveRoutedModel(scan.model, providerName, current.session, { ...deps, definesProvider }, routingMemory, rotations, needsOf(scan));
+        const routed = scan.model === undefined ? undefined : resolveRoutedModel(scan.model, providerName, current.session, { ...deps, definesProvider, providerFaultOf, defaultModelOf, envModelsOf }, routingMemory, rotations, needsOf(scan));
         const requested = scan.model;
+        if (routed !== undefined && "refusal" in routed) {
+          return { ok: false, status: HTTP_STATUS.badRequest, message: routed.refusal };
+        }
         if (routed === undefined) {
           // Nothing to resolve by name, and this scan consumed the original body: the request the `routes` matching below (or the serving at the end) reads is the replay, which carries the whole body. Reading the original again would see only its remainder, and leaving both scans attached to one stream is a hang.
           current = scan.replayed;
         }
         if (routed !== undefined) {
           routingMemory.set(current.session.sessionId ?? "", routed.ref);
+          // A name that chose its provider and its model itself (a qualified name, or a bare provider name taking its default) is served under that model; a virtual model's or a family's choice among members is recorded as a choice, not as a served model.
+          if (routed.requested === undefined) {
+            noteServedModel(routed.provider, routed.model);
+          }
           // A virtual model's or family's selection is a choice among alternatives, unlike a qualified name the session picked itself: only that choice is recorded for the response middleware.
           if (routed.requested !== undefined) {
             modelChoice = { requested: routed.requested, providers: routed.providers ?? [routed.provider] };
@@ -527,15 +676,6 @@ export function createProviderRouteResolver(deps: {
       );
       const scan = await scanRequestHead(current, whole);
       noteRequestedModel(scan.model);
-      if (scan.replayed === undefined) {
-        // Nothing was read (the body was empty): the original request is the honest handover.
-        const resolution = resolve(current);
-        return resolution.ok && replay !== undefined
-          ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url } }
-          : resolution.ok
-            ? serveScoped(resolution)
-            : resolution;
-      }
       replay = scan.replayed;
       const requestFacts = {
         ...(scan.model === undefined ? {} : { model: scan.model }),
@@ -562,6 +702,11 @@ export function createProviderRouteResolver(deps: {
         // The target receives exactly the request that matched, with exactly its model field changed.
         replay = withModel(replay, scan.text, scan.model, matched.model);
       }
+      // The model the target is sent is the one it serves the request under, whatever name first chose the provider: the match's own model when it rewrites, else the name the body already carries. A later match in a chain replaces an earlier one, since the last target is where the request is served.
+      const sentModel = matched.model ?? scan.model;
+      if (sentModel !== undefined) {
+        noteRouted(matched.provider, sentModel);
+      }
       // The match rides the target's own scoped path, so the loop's next turn resolves it exactly as a direct dial would: its kind, its credential, and its own routes list all apply. The path after this provider's own prefix (or the whole bare /v1/ path of a session-named provider) is the target's to serve, query included.
       const rest = scoped === undefined ? path : path.slice(`${PROVIDER_PATH_PREFIX}${encodeURIComponent(scoped.provider)}`.length);
       const query = current.url.includes("?") ? current.url.slice(current.url.indexOf("?")) : "";
@@ -571,13 +716,13 @@ export function createProviderRouteResolver(deps: {
   };
 
   /**
-   * What `provider` does with a bare Claude model name a session on it asks for (the main loop's or a helper's), through its own tier mapping, and the credential it uses, from its file read once for this request: an `http` provider's tier environment variable or a router's `models.tiers` pointer names the model it is sent under, and a router with no pointer for the tier refuses the request with the reason, since nothing downstream of a router serves a Claude name. A name that is qualified or selects no tier, and a provider whose translator maps by tier itself (codex, antigravity), are served as asked. The credential is named by `describeCredential` (a variable name, a path, a program, a reference, a Keychain service, a source kind), never a value: a `literal` source renders as a placeholder.
+   * What `provider` does with a bare Claude model name a session on it asks for (the main loop's or a helper's), through its own tier mapping, and the credential it uses, from its file read once for this request: an `http` provider's tier environment variable (or, when its env names none for the tier, the model its bare name selects, if it has one) or a router's `models.tiers` pointer names the model it is sent under, and a router with no pointer for the tier refuses the request with the reason, since nothing downstream of a router serves a Claude name. A name that is qualified or selects no tier, and a provider whose translator maps by tier itself (codex, antigravity), are served as asked. The credential is named by `describeCredential` (a variable name, a path, a program, a reference, a Keychain service, a source kind), never a value: a `literal` source renders as a placeholder.
    */
   const providerMapping = (provider: string, session: RoutedRequest["session"], requested: string): { readonly model: MappedModel; readonly credential: string | undefined } => {
     const asIs: MappedModel = { kind: "as-is" };
     let definition;
     try {
-      definition = loadProvider(deps.providersDir, provider, deps.fs);
+      definition = providerOf(provider);
     } catch {
       // An invalid provider file is the routing loop's own refusal to report, with its reason, when the request reaches it.
       return { model: asIs, credential: undefined };
@@ -593,7 +738,15 @@ export function createProviderRouteResolver(deps: {
     if (isHttpProvider(definition)) {
       const model = definition.env?.[TIER_ENV_VARIABLES[tier]];
       // The variable may carry the `[1m]` context marker Claude Code reads, which is no part of the model's name.
-      return { model: model === undefined || model === "" ? asIs : { kind: "mapped", model: withoutContextMarker(model) }, credential };
+      if (model !== undefined && model !== "") {
+        return { model: { kind: "mapped", model: withoutContextMarker(model) }, credential };
+      }
+      // A tier the provider's env does not name is served by the model a bare provider name selects, so a session sent to the provider by `/model <provider>` never sends it a Claude name it has no model for. A name the provider serves itself (its catalogue lists it, or its env maps a model to it) and a provider with no default model leave the name as it is.
+      if (servesName(requested, () => envModelsOf(provider), () => providerModelRows(definition, catalogueModels(provider, definition).models).map((row) => row.model))) {
+        return { model: asIs, credential };
+      }
+      const fallback = defaultModelFor(provider, definition);
+      return { model: "model" in fallback ? { kind: "mapped", model: withoutContextMarker(fallback.model) } : asIs, credential };
     }
     if (!isRouterProvider(definition)) {
       return { model: asIs, credential };
@@ -609,10 +762,24 @@ export function createProviderRouteResolver(deps: {
     async (request) => {
       // The first scan reads the body as the client sent it; a later one reads a target's rewrite, which is not what the session asked for.
       let requestedModel: string | undefined;
-      const resolution = await resolveByName(request, (model) => {
-        requestedModel ??= model;
-      });
-      return resolution.ok && requestedModel !== undefined ? { ...resolution, requestedModel } : resolution;
+      let served: { readonly provider: string; readonly model: string } | undefined;
+      const resolution = await resolveByName(
+        request,
+        (model) => {
+          requestedModel ??= model;
+        },
+        (provider, model) => {
+          served ??= { provider, model };
+        },
+        (provider, model) => {
+          served = { provider, model };
+        },
+      );
+      if (!resolution.ok) {
+        return resolution;
+      }
+      const servedModel = served === undefined ? undefined : served.model;
+      return { ...resolution, ...(requestedModel === undefined ? {} : { requestedModel }), ...(servedModel === undefined ? {} : { servedModel }) };
     },
     { record: deps.mainLoopRoutes, providerMapping, loginOf, definesProvider },
   );

@@ -38,9 +38,12 @@ export interface RequestScan {
   readonly maxTokens?: number;
   /** True when the request targets the count_tokens endpoint, which the path (not the body) states. */
   readonly isCountTokens?: boolean;
-  /** The request as the chosen route should receive it: the scanned head replayed in front of the unread remainder. `undefined` when nothing was read, in which case the original request is the honest handover. */
+  /** The request as the chosen route should receive it: the scanned head replayed in front of the unread remainder. Always present on what `scanRequestHead` returns (see `ScannedRequest`); absent only on a stand-in for a body already read to its end, in which case the original request is the honest handover. */
   readonly replayed?: RoutedRequest;
 }
+
+/** What `scanRequestHead` hands back: a scan that always carries the request to route on, since a body it was given has a replay to read from even when it held no byte. A `RequestScan` without one is only the stand-in for a body that was read to its end before any scan could start. */
+export type ScannedRequest = RequestScan & { readonly replayed: RoutedRequest };
 
 /**
  * Reads the head of a request's body for the facts a route condition needs, and hands back a request whose body replays exactly what was read. The stream contract on `RoutedRequest.body` ("a route either pipes it onward untouched or reads it whole, never both") is why the scan never reads without teeing: whatever it consumes is re-emitted in front of the unread remainder, so the route sees one unbroken body.
@@ -49,7 +52,7 @@ export interface RequestScan {
  *
  * Nothing here parses the body: the model field is found as the `"model"` key of the top-level object in the head's text (`topLevelModel`: a walk over strings and brace depth, so a `model` nested in `messages` never counts), and an image block as the first `"type": "image"` inside it, which is exactly how the fields appear in the JSON Claude Code serialises. A head with neither (or a body the cap could not cover) reports the fact as absent, which the condition evaluator carries as indeterminate.
  */
-export async function scanRequestHead(request: RoutedRequest, wholeBody = false): Promise<RequestScan> {
+export async function scanRequestHead(request: RoutedRequest, wholeBody = false): Promise<ScannedRequest> {
   const body = request.body;
   // The listeners below wait for events: on a body that has already ended the `end` has fired and will not again, so the scan would wait for ever. A body read to its end is a request a caller already consumed, which is that caller's defect, so it fails here instead of stalling the request.
   if (body.readableEnded) {
@@ -68,7 +71,7 @@ export async function scanRequestHead(request: RoutedRequest, wholeBody = false)
   replay.on("error", () => undefined);
   const modelIn = (): string | undefined => topLevelModel(text)?.value;
 
-  const settled = new Promise<RequestScan>((resolve) => {
+  const settled = new Promise<ScannedRequest>((resolve) => {
     const settle = (): void => {
       const model = modelIn();
       const hasImage = /"type"\s*:\s*"image"/.test(text);

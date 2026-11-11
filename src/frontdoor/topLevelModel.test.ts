@@ -92,14 +92,14 @@ describe("scanning a body for its model", () => {
     expect(scan.model).toBeUndefined();
     expect(scan.headBytes).toBeLessThan(body.length);
     stream.end(Buffer.from(body.slice(WRITTEN)));
-    expect(await textOf(scan.replayed ?? requestOf(stream))).toBe(body);
+    expect(await textOf(scan.replayed)).toBe(body);
   });
 
   it("streams a 300 KB body through unread past the head, byte for byte", async () => {
     const body = `{"model":"claude-sonnet-5-5","messages":[{"role":"user","content":"${"y".repeat(STREAMED)}"}]}`;
     const scan = await scanRequestHead(requestOf(Readable.from([Buffer.from(body)])));
     expect(scan.model).toBe("claude-sonnet-5-5");
-    expect(await textOf(scan.replayed ?? requestOf(Readable.from([])))).toBe(body);
+    expect(await textOf(scan.replayed)).toBe(body);
   });
 });
 
@@ -108,7 +108,7 @@ describe("rewriting the model field", () => {
 
   it.each(CASES)("changes only the top-level field of a body with the model $name, in the head", async ({ body, model }) => {
     const scan = await scanRequestHead(requestOf(Readable.from([Buffer.from(body)])));
-    const request = scan.replayed ?? requestOf(Readable.from([Buffer.from(body)]));
+    const request = scan.replayed;
     const rewritten = await textOf(withModelInHead(request, scan.headBytes, model ?? "", "glm-4.5-air"));
     const found = topLevelModel(rewritten);
     expect(found?.value).toBe("glm-4.5-air");
@@ -126,21 +126,21 @@ describe("rewriting the model field", () => {
   it("leaves a body with no top-level model alone, though a nested one names the very name asked to change", async () => {
     const body = '{"messages":[{"model":"claude-haiku-5-5"}]}';
     const scan = await scanRequestHead(requestOf(Readable.from([Buffer.from(body)])));
-    expect(await textOf(withModelInHead(scan.replayed ?? requestOf(Readable.from([])), scan.headBytes, "claude-haiku-5-5", "glm-4.5-air"))).toBe(body);
+    expect(await textOf(withModelInHead(scan.replayed, scan.headBytes, "claude-haiku-5-5", "glm-4.5-air"))).toBe(body);
     expect(await textOf(withModel(requestOf(Readable.from([])), body, "claude-haiku-5-5", "glm-4.5-air"))).toBe(body);
   });
 
   it("leaves a body alone when the name asked to change is not the top-level field's", async () => {
     const body = '{"model":"claude-sonnet-5-5","messages":[]}';
     const scan = await scanRequestHead(requestOf(Readable.from([Buffer.from(body)])));
-    expect(await textOf(withModelInHead(scan.replayed ?? requestOf(Readable.from([])), scan.headBytes, "claude-haiku-5-5", "glm-4.5-air"))).toBe(body);
+    expect(await textOf(withModelInHead(scan.replayed, scan.headBytes, "claude-haiku-5-5", "glm-4.5-air"))).toBe(body);
     expect(await textOf(withModel(requestOf(Readable.from([])), body, "claude-haiku-5-5", "glm-4.5-air"))).toBe(body);
   });
 
   it("rewrites a name that is not valid JSON text of its own, as a JSON string, whatever the replacement holds", async () => {
     const body = '{"model":"claude-sonnet-5-5"}';
     const scan = await scanRequestHead(requestOf(Readable.from([Buffer.from(body)])));
-    const out = await textOf(withModelInHead(scan.replayed ?? requestOf(Readable.from([])), scan.headBytes, "claude-sonnet-5-5", 'a"b\\c$&'));
+    const out = await textOf(withModelInHead(scan.replayed, scan.headBytes, "claude-sonnet-5-5", 'a"b\\c$&'));
     expect(JSON.parse(out)).toEqual({ model: 'a"b\\c$&' });
   });
 });

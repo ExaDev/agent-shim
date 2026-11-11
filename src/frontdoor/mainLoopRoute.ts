@@ -169,7 +169,7 @@ type RouteOf = { readonly kind: "anthropic" } | { readonly kind: "provider"; rea
 /** What `followingMainLoop` reads besides the record. */
 export interface MainLoopRoutingDeps {
   readonly record: MainLoopRouteRecord;
-  /** What `provider` does with a requested Claude `model`, through that provider's own tier mapping, and the credential it uses, from the provider's file read once for this request: `as-is` for a provider that serves the name as it is (a translator that maps a Claude name by tier itself, an `http` provider whose `env` names no model for the tier) or a name that selects no tier, `refused` for a provider that routes by name and has no model for the tier. The credential is named by what describes it (a variable name, a path, a program, a reference, a Keychain service), never by its value, and is undefined when the provider has none to name. */
+  /** What `provider` does with a requested Claude `model`, through that provider's own tier mapping, and the credential it uses, from the provider's file read once for this request: `as-is` for a provider that serves the name as it is (a translator that maps a Claude name by tier itself, or an `http` provider whose `env` names no model for the tier and that has no default model to serve it by) or a name that selects no tier, `refused` for a provider that routes by name and has no model for the tier. The credential is named by what describes it (a variable name, a path, a program, a reference, a Keychain service), never by its value, and is undefined when the provider has none to name. */
   readonly providerMapping: (provider: string, session: RoutedRequest["session"], requested: string) => { readonly model: MappedModel; readonly credential: string | undefined };
   /** The login the Anthropic route uses for `session`, by name: the identity whose login it is, or the launch's own. */
   readonly loginOf: (session: RoutedRequest["session"]) => string;
@@ -214,7 +214,7 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
   const toAnthropic = async (base: RoutedRequest, requested: string): Promise<{ readonly resolution: RouteResolution; readonly served: string }> => {
     const served = requested.slice(ANTHROPIC_PREFIX.length);
     const scan = await scanRequestHead(base);
-    const rewritten = withModelInHead(scan.replayed ?? base, scan.headBytes, requested, served);
+    const rewritten = withModelInHead(scan.replayed, scan.headBytes, requested, served);
     const resolution = await resolve({ ...rewritten, url: base.url });
     return { resolution: resolution.ok ? { ...resolution, requestedModel: requested } : resolution, served };
   };
@@ -253,7 +253,7 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
     if (requestClass !== undefined && requestClass !== MAIN_REQUEST_CLASS) {
       // A helper is placed by the context before anything resolves it.
       const scan = await scanRequestHead(request);
-      const helper = scan.replayed ?? request;
+      const helper = scan.replayed;
       if (scan.model?.startsWith(ANTHROPIC_PREFIX) === true && !deps.definesProvider("anthropic")) {
         return (await toAnthropic(helper, scan.model)).resolution;
       }
@@ -287,10 +287,10 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
         return placed.resolution;
       }
     }
-    // Served where the resolver put it. A virtual model's or a family's served name is the member's, which the resolution does not carry, so only a name that says it (a qualified one) or an unchanged one is recorded as served.
+    // Served where the resolver put it. A virtual model's or a family's served name is the member's, which the resolution does not carry, so only a model the resolution says it served (a qualified name, a bare provider name's default, the live model of `auto`) or an unchanged name is recorded as served.
     const route: RouteOf = served === undefined ? { kind: "anthropic" } : { kind: "provider", provider: served };
     const qualified = served !== undefined && requested?.startsWith(`${served}/`) === true ? requested.slice(served.length + 1) : undefined;
-    const servedModel = qualified ?? (served === undefined ? requested : undefined);
+    const servedModel = resolution.servedModel ?? qualified ?? (served === undefined ? requested : undefined);
     // The credential is named from the provider's file as read for this request, which is read for every request anyway, so an edited credential block shows its new name at the next one.
     const credential = served === undefined ? deps.loginOf(request.session) : deps.providerMapping(served, request.session, "").credential;
     deps.record.record(launch, contextOf(route, credential, requested, servedModel));

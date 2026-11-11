@@ -33,6 +33,7 @@ import { assembleCascade, type CascadeInput } from "./resolve/walk";
 import type { LayoutPaths } from "./paths";
 import { FAMILY_PREFIX, buildFamilies, expandFamilyMembers, type Family } from "./models/families";
 import { isStoredName, providerFilePath, requireNewProviderName, UnsafeNameError } from "./config/names";
+import { requireUnreservedProviderName } from "./models/reservedModelNames";
 
 /** Raised by any operation that requires a provider to already exist, when it does not. */
 export class ProviderNotFoundError extends CliError {
@@ -304,6 +305,7 @@ export function addProvider(paths: LayoutPaths, name: string, input: AddProvider
     throw new ProviderAlreadyExistsError(name);
   }
   requireNewProviderName(name);
+  requireUnreservedProviderName(name);
   const kind = input.kind ?? "http";
   if (kind === "codex" && input.baseUrl !== undefined) {
     throw new ProviderKindMismatchError("A codex provider has no base URL: the launcher points its sessions at the front-door daemon. Drop --base-url.");

@@ -13,6 +13,7 @@ import { UsageSnapshotSchema } from "./usage/schema";
 import { listUsageSnapshots, snapshotPath, type UsageReadFs } from "./usage/read";
 import { readDirectoryRules, writeDirectoryRules } from "./directoryRulesStore";
 import { requireNewProviderName } from "./config/names";
+import { requireUnreservedProviderName } from "./models/reservedModelNames";
 import { mapModelRefs } from "./modelRefs";
 import { listIdentities, requireNoUnreachableIdentities, setIdentityProvider } from "./identityStore";
 import type { LayoutPaths } from "./paths";
@@ -70,6 +71,7 @@ export function renameProvider(paths: LayoutPaths, from: string, to: string, por
     throw new UsageError(`"${from}" is already the provider's name.`);
   }
   requireNewProviderName(to);
+  requireUnreservedProviderName(to);
   if (!providerExists(paths, from)) {
     throw new ProviderNotFoundError(from);
   }

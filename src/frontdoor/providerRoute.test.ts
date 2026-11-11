@@ -325,14 +325,12 @@ function mutableFs(): { readonly fs: FsPort; readonly files: Record<string, unkn
     files,
     fs: {
       ...base,
+      readdir: (dirPath) => Object.keys(files).filter((file) => file.startsWith(`${dirPath}/`)).map((file) => file.slice(dirPath.length + 1)),
       readFileUtf8: (filePath) => {
         const value = files[filePath];
         return typeof value === "string" ? value : base.readFileUtf8(filePath);
       },
-      readConfigFile: (filePath) => {
-        const value = files[filePath];
-        return value === undefined || typeof value === "string" ? undefined : value;
-      },
+      readConfigFile: (filePath) => (typeof files[filePath] === "string" ? undefined : files[filePath]),
     },
   };
 }

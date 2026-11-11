@@ -115,12 +115,13 @@ describe("a bare Claude model name from a session whose main loop is on a provid
     }
   });
 
-  it("serves a tier the provider does not map as asked, never on the launch's account", async () => {
+  it("serves a tier the provider does not map by the model its bare name selects, never on the launch's account", async () => {
     const world = await startWorld(undefined, HTTP_STATUS.ok, undefined, { ANTHROPIC_DEFAULT_HAIKU_MODEL: Z_HAIKU_MODEL });
     try {
       await send(world, { model: "z/glm-5.3", requestClass: "main" });
       expect((await send(world, { model: SONNET_NAME, requestClass: "main" })).status).toBe(HTTP_STATUS.ok);
-      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-5.3", SONNET_NAME]);
+      // The provider's env names only a haiku model, which is therefore the one model it selects.
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-5.3", Z_HAIKU_MODEL]);
       expect(world.toAnthropic).toEqual([]);
     } finally {
       await world.close();
@@ -291,6 +292,31 @@ describe("the route context the door keeps for a launch", () => {
       const { facts } = onDisk(fs, launch.pid);
       expect(facts).toMatchObject({ facts: { requestedModel: "fast" } });
       expect(JSON.stringify(facts)).not.toContain("servedModel");
+    } finally {
+      await world.close();
+    }
+  });
+
+  it("keeps a model name of exactly the bound (the next test leaves out one a character over it)", async () => {
+    const { fs, world, pid } = await recordedWorld();
+    try {
+      const atBound = `z/${"a".repeat(MAX_CONTEXT_TEXT_LENGTH - "z/".length)}`;
+      expect(atBound).toHaveLength(MAX_CONTEXT_TEXT_LENGTH);
+      await send(world, { model: atBound, requestClass: "main" });
+      expect(onDisk(fs, pid).facts).toMatchObject({ facts: { requestedModel: atBound } });
+    } finally {
+      await world.close();
+    }
+  });
+
+  it("records the model a tier the provider's env does not name was served by, not the Claude name sent", async () => {
+    const { fs, world, pid } = await recordedWorld();
+    try {
+      world.setProvider("sparse", { displayName: "sparse", baseUrl: `http://127.0.0.1:${String(world.upstreamPort)}`, credential: { sources: [{ literal: "sparse-token" }] }, env: { ANTHROPIC_DEFAULT_OPUS_MODEL: "sparse-main" } });
+      await send(world, { model: "sparse/chosen", requestClass: "main" });
+      await send(world, { model: SONNET_NAME, requestClass: "main" });
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["chosen", "sparse-main"]);
+      expect(onDisk(fs, pid).facts).toMatchObject({ facts: { requestedModel: SONNET_NAME, servedModel: "sparse-main" } });
     } finally {
       await world.close();
     }
