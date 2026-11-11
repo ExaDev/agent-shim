@@ -6,6 +6,7 @@ import { listProviders } from "../providersStore";
 import { isHttpProvider } from "../config/schema";
 import { CATALOGUE_REFRESH_DEADLINE_MS, CATALOGUE_RETRY_MS, catalogueMatchesSettings, catalogueSettingsFingerprint, isCatalogueStale, parseCatalogueCache, parseCatalogueSettings } from "../providerCatalogue";
 import { StoredCatalogue, TolerantReader, skipUnreadableCatalogue } from "../storedCatalogue";
+import { within } from "../elapsedWindow";
 import { savedCatalogueFingerprint } from "../codex/catalogueCredential";
 import { realFarmFs, realIsFrontDoorSupervisor, realIsProcessRunning, realSleepSync, type DaemonSpawner } from "../realPorts";
 import { appendDoorLog } from "./doorLog";
@@ -88,7 +89,7 @@ export function realFrontDoorPort(paths: LayoutPaths, spawnDaemon: DaemonSpawner
           const recorded = readCatalogueFailure(realFarmFs, paths, supervisorPid, owner.generation, name)?.settings;
           return recorded === undefined || recorded === catalogueSettingsFingerprint(provider);
         };
-        if (provider.kind !== "codex" && published?.status === "failed" && published.recordedAt !== undefined && published.recordedAt <= Date.now() && Date.now() - published.recordedAt < CATALOGUE_RETRY_MS && failedUnderCurrentSettings()) {
+        if (provider.kind !== "codex" && published?.status === "failed" && published.recordedAt !== undefined && within(published.recordedAt, Date.now(), CATALOGUE_RETRY_MS) && failedUnderCurrentSettings()) {
           warnings.add(`Catalogue refresh failed for ${name}`);
           return false;
         }
@@ -111,7 +112,7 @@ export function realFrontDoorPort(paths: LayoutPaths, spawnDaemon: DaemonSpawner
             return false;
           }
           const outcome = readCatalogueStatus(realFarmFs, paths, supervisorPid, owner.generation, name);
-          if (outcome?.status === "failed" && outcome.fingerprint === fingerprint && outcome.recordedAt !== undefined && outcome.recordedAt <= Date.now() && Date.now() - outcome.recordedAt < CATALOGUE_RETRY_MS) {
+          if (outcome?.status === "failed" && outcome.fingerprint === fingerprint && outcome.recordedAt !== undefined && within(outcome.recordedAt, Date.now(), CATALOGUE_RETRY_MS)) {
             warnings.add(`Catalogue refresh failed for ${name}`);
             return false;
           }

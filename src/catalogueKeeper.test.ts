@@ -45,6 +45,11 @@ async function settle(): Promise<void> {
   });
 }
 
+/** How far the wall clock steps back in the tests that step it: twice the retry period, so waiting out the step as well would be visible. */
+const STEP_BACK_MS = 2 * CATALOGUE_RETRY_MS;
+/** How many ticks fall while the clock is behind the failure: several, so a refresh on every tick would show. */
+const TICKS_DURING_STEP = 5;
+
 describe("createCatalogueKeeper", () => {
   describe("a provider whose stored files cannot be read", () => {
     const SECRET_PATH = "/home/someone/.agent-shim/catalogues/bad.json";
@@ -522,6 +527,27 @@ describe("createCatalogueKeeper", () => {
     expect(refresh).toHaveBeenCalledTimes(1);
 
     clock.now += 1;
+    keeper.tick();
+    await settle();
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("holds a failed refresh for a whole retry period from the step when the clock has stepped back since the failure, not refreshing on every tick for as long as the step lasts", async () => {
+    const refresh = vi.fn<(name: string) => Promise<void>>().mockRejectedValue(new Error("unreachable"));
+    const { keeper, clock } = setup({ refresh });
+
+    keeper.tick();
+    await settle();
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    clock.now -= STEP_BACK_MS;
+    for (let tick = 0; tick < TICKS_DURING_STEP; tick += 1) {
+      clock.now += 1;
+      keeper.tick();
+      await settle();
+    }
+    expect(refresh).toHaveBeenCalledTimes(1);
+    clock.now += CATALOGUE_RETRY_MS;
     keeper.tick();
     await settle();
     expect(refresh).toHaveBeenCalledTimes(2);
