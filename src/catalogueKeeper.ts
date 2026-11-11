@@ -1,3 +1,4 @@
+import { holdFrom } from "./elapsedWindow";
 import { CATALOGUE_RETRY_MS, catalogueMatchesSettings, catalogueSettingsFingerprint, isCatalogueStale, isRedirectedFailure, parseCatalogueCache, parseCatalogueSettings, type CatalogueCache } from "./providerCatalogue";
 import { isHttpProvider, type Provider } from "./config/schema";
 import { UnreadableCatalogueError, catalogueReadFault } from "./storedCatalogue";
@@ -60,7 +61,13 @@ export function createCatalogueKeeper(deps: Readonly<CatalogueKeeperDeps>): Cata
           continue;
         }
         const wasUnreadable = unreadable.delete(name);
-        const lastFailure = failedAt.get(name);
+        const recordedFailure = failedAt.get(name);
+        // A failure's backoff restarts when the clock has stepped back behind it, so a failing provider is refreshed once a window and not on every tick for as long as the step lasts.
+        const backoff = recordedFailure === undefined ? undefined : holdFrom(recordedFailure.at, now, CATALOGUE_RETRY_MS);
+        const lastFailure = recordedFailure === undefined || backoff === undefined ? undefined : { ...recordedFailure, at: backoff.sinceMs };
+        if (recordedFailure !== undefined && lastFailure !== undefined && lastFailure.at !== recordedFailure.at) {
+          failedAt.set(name, lastFailure);
+        }
         // What the refresh depends on besides the account: a failure of the provider as it was says nothing about the provider as it is edited now.
         const settings = isHttpProvider(provider) ? catalogueSettingsFingerprint(provider) : undefined;
         let current: string | undefined;
@@ -76,17 +83,17 @@ export function createCatalogueKeeper(deps: Readonly<CatalogueKeeperDeps>): Cata
         const changed = provider.kind === "codex" && deps.credentialFingerprint !== undefined && (current === undefined || cache?.credentialFingerprint !== current || cache.supervisorPid !== deps.supervisorPid);
         // Whether the stored catalogue can be used as it is: it is current, belongs to the account and fits the provider as it is now.
         const usable = cache !== undefined && digestMatches && !isCatalogueStale(cache, now) && !changed;
-        const due = (cache === undefined || isCatalogueStale(cache, now) || changed || !digestMatches) && (lastFailure === undefined || lastFailure.fingerprint !== current || lastFailure.settings !== settings || now - lastFailure.at >= CATALOGUE_RETRY_MS);
+        const due = (cache === undefined || isCatalogueStale(cache, now) || changed || !digestMatches) && (lastFailure === undefined || lastFailure.fingerprint !== current || lastFailure.settings !== settings || backoff?.held !== true);
         if (!due || running.has(name)) {
           if (!running.has(name)) {
-            if (usable && (wasUnreadable || lastFailure !== undefined)) {
+            if (usable && (wasUnreadable || recordedFailure !== undefined)) {
               // A catalogue that is current and fits the provider as it is now is not refreshed, so nothing would else replace what was recorded for the provider before: a failure recorded while its files could not be read, or a refresh that failed under settings it no longer has. Its status is ready.
               failedAt.delete(name);
               if (current === undefined) deps.publishStatus?.(name, "ready");
               else deps.publishStatus?.(name, "ready", current);
-            } else if (wasUnreadable && lastFailure !== undefined) {
+            } else if (wasUnreadable && recordedFailure !== undefined) {
               // The files are readable again but there is no catalogue to use and the refresh's failure is still being waited out: the failure it recorded is its status again, not ready.
-              deps.publishStatus?.(name, "failed", lastFailure.fingerprint, lastFailure.reason, { ...(lastFailure.redirected ? { redirected: true as const } : {}), ...(lastFailure.settings === undefined ? {} : { settings: lastFailure.settings }) });
+              deps.publishStatus?.(name, "failed", recordedFailure.fingerprint, recordedFailure.reason, { ...(recordedFailure.redirected ? { redirected: true as const } : {}), ...(recordedFailure.settings === undefined ? {} : { settings: recordedFailure.settings }) });
             }
           }
           continue;

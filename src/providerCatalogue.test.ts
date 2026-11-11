@@ -156,6 +156,11 @@ describe("parseCatalogueCache and isCatalogueStale", () => {
     expect(isCatalogueStale(cache, FETCHED_AT + CATALOGUE_MAX_AGE_MS - 1)).toBe(false);
     expect(isCatalogueStale(cache, FETCHED_AT + CATALOGUE_MAX_AGE_MS)).toBe(true);
   });
+
+  it("is stale when it was fetched after now, since the clock has stepped back and its age cannot be told", () => {
+    expect(isCatalogueStale(cache, FETCHED_AT - 1)).toBe(true);
+    expect(isCatalogueStale(cache, FETCHED_AT)).toBe(false);
+  });
 });
 
 /** Statuses either side of the 3xx range a redirect answer lies in. */

@@ -4,6 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 
 import { displayBaseUrl, redactUrlIn } from "./baseUrlDisplay";
+import { within } from "./elapsedWindow";
 import { canonicalJson } from "./canonicalJson";
 import type { ResolvedCredential } from "./credential";
 import type { HttpProvider, ProviderCatalogue } from "./config/schema";
@@ -132,9 +133,9 @@ export function parseCatalogueCache(text: string | undefined): CatalogueCache | 
   }
 }
 
-/** Whether `cache` is old enough that the door should fetch it again at `nowMs`. */
+/** Whether `cache` is old enough that the door should fetch it again at `nowMs`: a cache stamped after `nowMs` (the clock has stepped back since) is stale too, since its age cannot be told. */
 export function isCatalogueStale(cache: Readonly<CatalogueCache>, nowMs: number): boolean {
-  return nowMs - cache.fetchedAt >= CATALOGUE_MAX_AGE_MS;
+  return !within(cache.fetchedAt, nowMs, CATALOGUE_MAX_AGE_MS);
 }
 
 /**

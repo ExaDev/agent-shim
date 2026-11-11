@@ -14,6 +14,11 @@ const PROVIDERS_DIR = `${FAKE_HOME}/.agent-shim/providers`;
 /** The direct listener's port the resolver is told; no request in these tests is forwarded back to it. */
 const OWN_PORT = 4100;
 
+/** The lines logged before the clock steps back: the first, and the one after the interval. */
+const LINES_BEFORE_STEP_BACK = 2;
+/** How many failures fall while the clock is behind the last line: several, so a line for each would show. */
+const FAILURES_DURING_STEP = 5;
+
 /** Starts a door serving the routes `resolve` resolves, admitted by a fixed launch token. */
 async function startDoor(resolve: ReturnType<typeof createProviderRouteResolver>): Promise<{ readonly url: string; readonly close: () => Promise<void> }> {
   const server = createFrontDoorServer(
@@ -62,6 +67,16 @@ describe("an http provider the door cannot connect to", () => {
       now = COULD_NOT_CONNECT_LOG_INTERVAL_MS;
       expect((await send()).status).toBe(HTTP_STATUS.badGateway);
       expect(lines).toHaveLength(2);
+      // The clock steps back behind the last line's stamp: the interval restarts from the step, so the failures that follow are not logged one by one for as long as the step lasts.
+      now = 0;
+      for (let failure = 0; failure < FAILURES_DURING_STEP; failure += 1) {
+        now += 1;
+        expect((await send()).status).toBe(HTTP_STATUS.badGateway);
+      }
+      expect(lines).toHaveLength(LINES_BEFORE_STEP_BACK);
+      now += COULD_NOT_CONNECT_LOG_INTERVAL_MS;
+      expect((await send()).status).toBe(HTTP_STATUS.badGateway);
+      expect(lines).toHaveLength(LINES_BEFORE_STEP_BACK + 1);
     } finally {
       await door.close();
     }

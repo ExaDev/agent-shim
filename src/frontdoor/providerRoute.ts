@@ -1,3 +1,4 @@
+import { holdFrom } from "../elapsedWindow";
 import { createAgyCredentialResolver } from "../antigravity/agyCredential";
 import { ConfigFileNotJsonError, ConfigValidationError } from "../config/load";
 import { InvalidProviderNameError, isFileName, providerFilePath } from "../config/names";
@@ -254,8 +255,13 @@ export function createProviderRouteResolver(deps: {
   const couldNotConnectFor = (subject: string) => (line: string): void => {
     const now = deps.now();
     const last = couldNotConnectLoggedAt.get(subject);
-    if (last !== undefined && now - last < COULD_NOT_CONNECT_LOG_INTERVAL_MS) {
-      return;
+    if (last !== undefined) {
+      // The interval restarts when the clock has stepped back behind the last line, so a down provider is not logged on every failure for as long as the step lasts.
+      const interval = holdFrom(last, now, COULD_NOT_CONNECT_LOG_INTERVAL_MS);
+      couldNotConnectLoggedAt.set(subject, interval.sinceMs);
+      if (interval.held) {
+        return;
+      }
     }
     couldNotConnectLoggedAt.set(subject, now);
     deps.log(`front door: ${line}`);
