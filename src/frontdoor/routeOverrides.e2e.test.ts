@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
+import type { ModelsConfig } from "../config/schema";
 import { buildLayoutPaths, type LayoutPaths } from "../paths";
 import { realFsPort } from "../realPorts";
 import { createRouteOverridesReader, withRouteOverride, writeRouteOverrides, NO_ROUTE_OVERRIDES, type RouteOverrideScope } from "../routeOverridesStore";
@@ -42,13 +43,13 @@ describe("runtime route overrides through the real door, read from a real file",
   }
 
   /** A door whose overrides are read from the file under `root` through the real file system, counting each read of it. */
-  async function door(identityNames: Readonly<Record<string, string>> = { me: "me" }) {
+  async function door(identityNames: Readonly<Record<string, string>> = { me: "me" }, models?: ModelsConfig) {
     const counting = { fileRevision: realFsPort.fileRevision, readFileUtf8: (file: string) => {
       if (file === paths.routeOverridesFile) reads += 1;
       return realFsPort.readFileUtf8(file);
     } };
     const record = mainLoopRoutesOfLiveSessions();
-    const started = await startWorld(record, HTTP_STATUS.ok, undefined, undefined, undefined, { routeOverrides: createRouteOverridesReader(counting, paths.routeOverridesFile, () => undefined), identityNameOf: (id) => identityNames[id] });
+    const started = await startWorld(record, HTTP_STATUS.ok, models, undefined, undefined, { routeOverrides: createRouteOverridesReader(counting, paths.routeOverridesFile, () => undefined), identityNameOf: (id) => identityNames[id] });
     return { ...started, contextNow: () => record.routeOf(launchOfSession("s-1")) };
   }
 
@@ -151,15 +152,29 @@ describe("runtime route overrides through the real door, read from a real file",
     }
   }, TIMEOUT_MS);
 
-  it("routes by a selector target and by a virtual or Anthropic target", async () => {
-    set([[{ kind: "global" }, "sonnet", "auto/provider:z/opus"], [{ kind: "global" }, "haiku", "anthropic/claude-haiku-5-1"]]);
-    const world = await door();
+  it("routes by a selector target, a virtual model target and an Anthropic target", async () => {
+    set([[{ kind: "global" }, "sonnet", "auto/provider:z/opus"], [{ kind: "global" }, "haiku", "anthropic/claude-haiku-5-1"], [{ kind: "global" }, "opus", "fast"]]);
+    const world = await door(undefined, { virtual: { fast: { mode: "ordered", members: ["z/glm-virtual"] } } });
     try {
       await send(world, { model: "claude-sonnet-5-5", requestClass: "main" });
       expect(world.upstream.seen.map((seen) => seen.model)).toEqual([Z_OPUS_MODEL]);
       await send(world, { model: HAIKU_NAME, requestClass: "main" });
       expect(world.anthropicModels).toEqual(["claude-haiku-5-1"]);
       expect(world.contextNow()).toMatchObject({ kind: "anthropic", requestedModel: HAIKU_NAME });
+      await send(world, { model: OPUS, requestClass: "main" });
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual([Z_OPUS_MODEL, "glm-virtual"]);
+      expect(world.contextNow()).toMatchObject({ kind: "provider", provider: "z", requestedModel: OPUS });
+    } finally {
+      await world.close();
+    }
+  }, TIMEOUT_MS);
+
+  it("applies an override in a session launched on a provider as in one launched without", async () => {
+    set([[{ kind: "global" }, "opus", "z/by-override"]]);
+    const world = await door();
+    try {
+      expect((await send(world, { model: OPUS, requestClass: "main", provider: "m" })).status).toBe(HTTP_STATUS.ok);
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["by-override"]);
     } finally {
       await world.close();
     }
