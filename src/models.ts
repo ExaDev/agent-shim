@@ -95,11 +95,11 @@ function explainVirtualModel(paths: LayoutPaths, name: string): VirtualModelExpl
 }
 
 /** What `explain` says of a selector: how it parsed, the kind it named and the name the door routes it by, or why the door refuses it. */
-type SelectorExplanation = { readonly name: string; readonly kind: SelectorKind; readonly routedAs: string } | { readonly name: string; readonly refusal: string };
+type SelectorExplanation = { readonly name: string; readonly kind: SelectorKind | "class"; readonly routedAs: string } | { readonly name: string; readonly refusal: string };
 
 /** Expands a selector exactly as the door would for a session running as `identity`, against the same files. */
-function explainSelector(paths: LayoutPaths, name: string, identity: string | undefined): SelectorExplanation {
-  const expanded = expandSelectorName(name, cliSelectorPorts(paths, () => Date.now()), identity === undefined ? {} : { identity });
+function explainSelector(paths: LayoutPaths, name: string, identity: string | undefined, provider: string | undefined): SelectorExplanation {
+  const expanded = expandSelectorName(name, cliSelectorPorts(paths, () => Date.now(), provider), identity === undefined ? {} : { identity });
   if (expanded === undefined) {
     throw new UsageError(`"${name}" is not a selector.`);
   }
@@ -193,7 +193,7 @@ export function registerModelsCommand(program: Command, deps: CommandDeps): void
           return;
         }
         if (parseSelectorName(name) !== undefined) {
-          const explained = explainSelector(paths, name, options.identity);
+          const explained = explainSelector(paths, name, options.identity, options.provider);
           if (options.json === true) {
             printJson(explained);
             return;

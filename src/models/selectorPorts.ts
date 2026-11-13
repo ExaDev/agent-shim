@@ -86,13 +86,16 @@ export function realSelectorStatePorts(paths: LayoutPaths, now: () => number): S
 }
 
 /**
- * Every port a selector is expanded against, as the CLI reads them: the configuration state above, the providers read as the door reads them (their default models and tier mappings, with their stored catalogues), and the families the providers' offered targets form under the global models block. What `agent-shim model explain` expands a selector with, so it says what the door would do with the same files.
+ * Every port a selector is expanded against, as the CLI reads them, for a session on `routeProvider` (none: the Anthropic route): the configuration state above, the providers read as the door reads them (their default models and tier mappings, with their stored catalogues), and the families the providers' offered targets form under the global models block. What `agent-shim model explain` expands a selector with, so it says what the door would do with the same files.
  */
-export function cliSelectorPorts(paths: LayoutPaths, now: () => number): SelectorPorts {
+export function cliSelectorPorts(paths: LayoutPaths, now: () => number, routeProvider?: string): SelectorPorts {
   const models = readModels(paths);
   const reads = createProviderReads({ fs: realFsPort, providersDir: paths.providersDir, models: () => models, catalogueModelsOf: servedModelPorts(paths, () => undefined).catalogueModelsOf });
   return {
     ...realSelectorStatePorts(paths, now),
+    // No session is running, so none has sent a Claude id the CLI could name: a class on the Anthropic route is explained as the door refuses it before the session's first request of the tier.
+    claudeNameOf: () => undefined,
+    routeProvider: () => routeProvider,
     provider: (name) => {
       const found = reads.lookupProvider(name);
       return found.kind === "found" ? { kind: "found", value: undefined } : found;

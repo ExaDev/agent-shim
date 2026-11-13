@@ -11,7 +11,9 @@ import { declaredLength, withoutContentLength } from "./contentLength";
 import { REQUEST_SCAN_CAP_BYTES, type RequestScan, scanRequestHead } from "./requestScan";
 import { isMessagesInferencePath, isMessagesRequest } from "./messagesBodyLimit";
 import { AMBIGUOUS_MODEL_MESSAGE, topLevelModel } from "./topLevelModel";
-import { isBareClaudeName } from "../models/tiers";
+import { withoutContextMarker } from "../models/identity";
+import { claudeNameTier, isBareClaudeName } from "../models/tiers";
+import type { ClaudeTier } from "../config/schema";
 import { MAX_CONTEXT_TEXT_LENGTH, launchKeyOf, type FrontDoorLaunch, type MainLoopRouteStore, type RouteContext } from "./state";
 
 /**
@@ -52,6 +54,10 @@ export interface MainLoopRouteRecord {
   readonly begin: (launch: Readonly<FrontDoorLaunch>) => number;
   /** Where `launch`'s latest main-loop request was served, or undefined when none has been recorded. */
   readonly routeOf: (launch: Readonly<FrontDoorLaunch>) => RouteContext | undefined;
+  /** Notes a bare Claude model name `launch` sent (main loop or helper): the model id its Claude Code resolved that name's tier to, which is what `/model <tier>` would send. A launch that is not registered notes nothing. */
+  readonly noteClaudeName: (launch: Readonly<FrontDoorLaunch>, model: string) => void;
+  /** The Claude model id `launch` last sent for `tier`, or undefined when it has sent none this door saw. Held in memory only: a door that replaced the one that saw it starts with none. */
+  readonly claudeNameOf: (launch: Readonly<FrontDoorLaunch>, tier: ClaudeTier) => string | undefined;
 }
 
 /** What `createMainLoopRouteRecord` reads the registry through. */
@@ -88,7 +94,14 @@ export function createMainLoopRouteRecord(ports: MainLoopRoutePorts): MainLoopRo
   const recordedUnder = new Map<string, number>();
   // The launches whose durable copy failed to write, so a store that keeps failing is reported once per launch until a write succeeds, not once per request. A failure to read is reported once per identity of the copy by the read itself.
   const failed = new Set<string>();
+  // The Claude model id each launch last sent per tier, bounded like the routes: a launch's entry goes when it is no longer registered.
+  const claudeNames = new Map<string, { readonly launch: FrontDoorLaunch; readonly byTier: Map<ClaudeTier, string> }>();
   const dropEnded = (except: string): void => {
+    for (const [held, entry] of claudeNames) {
+      if (held !== except && !ports.holdsLaunch(entry.launch)) {
+        claudeNames.delete(held);
+      }
+    }
     for (const [held, entry] of routes) {
       if (held !== except && !ports.holdsLaunch(entry.launch)) {
         routes.delete(held);
@@ -132,6 +145,23 @@ export function createMainLoopRouteRecord(ports: MainLoopRoutePorts): MainLoopRo
     return { launch, route: stored, persisted: stored, identity };
   };
   return {
+    noteClaudeName: (launch, model) => {
+      // A name with a provider part is no id the session's Claude Code resolved a tier to, even one whose last part reads as a Claude name (`claude-haiku-5-5/x`).
+      const tier = isBareClaudeName(model) ? claudeNameTier(model) : undefined;
+      if (tier === undefined || !ports.holdsLaunch(launch)) {
+        return;
+      }
+      const key = launchKeyOf(launch);
+      dropEnded(key);
+      const entry = claudeNames.get(key) ?? { launch: { pid: launch.pid, startedAt: launch.startedAt }, byTier: new Map<ClaudeTier, string>() };
+      // A bare tier alias (`sonnet`) names no model id, so it is never what a tier resolves to.
+      const id = withoutContextMarker(model);
+      if (id.toLowerCase() !== tier) {
+        entry.byTier.set(tier, id);
+      }
+      claudeNames.set(key, entry);
+    },
+    claudeNameOf: (launch, tier) => claudeNames.get(launchKeyOf(launch))?.byTier.get(tier),
     begin: (launch) => {
       const key = launchKeyOf(launch);
       dropEnded(key);
@@ -215,6 +245,8 @@ export interface RenameContext {
   readonly unscoped: boolean;
   /** The provider the request would reach before any renaming: the launch's own, else the provider the launch's main loop was last served on; undefined on the Anthropic route. Asked only when needed, since it reads the route context. */
   readonly routeProvider: () => string | undefined;
+  /** The Claude model id this launch last sent for a tier (see `MainLoopRouteRecord.claudeNameOf`), which a class on the Anthropic route is sent as. */
+  readonly claudeNameOf: (tier: ClaudeTier) => string | undefined;
 }
 
 /** Replaces one model name: the name to route by, a refusal the request is answered with (a 400), or undefined to leave the name as it is. */
@@ -320,6 +352,9 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
     const asked = found.model;
     const requestClass = requestClassOf(request.headers);
     const { launch } = request.session;
+    if (launch !== undefined && asked !== undefined) {
+      deps.record.noteClaudeName(launch, asked);
+    }
     const decided = asked === undefined ? undefined : rename(asked, {
       session: request.session,
       main: requestClass === undefined || requestClass === MAIN_REQUEST_CLASS,
@@ -331,6 +366,7 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
         const context = launch === undefined ? undefined : deps.record.routeOf(launch);
         return context?.kind === "provider" ? context.provider : undefined;
       },
+      claudeNameOf: (tier) => (launch === undefined ? undefined : deps.record.claudeNameOf(launch, tier)),
     });
     if (decided === undefined || asked === undefined) {
       return { request: found.replayed };

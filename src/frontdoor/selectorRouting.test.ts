@@ -102,8 +102,9 @@ describe("a model name auto/<selector>[/<class>] through the real door", () => {
   it.each<[string, readonly string[]]>([
     ["auto/z/sonnet", ["ambiguous", "auto/pool:z/sonnet", "auto/provider:z/sonnet"]],
     ["auto/nobody", ["no configuration profile, identity, pool, provider or model family"]],
-    ["auto/me/sonnet", ["/model sonnet"]],
-    ["auto/plain/opus", ["Anthropic route", "/model opus"]],
+    ["auto/me/sonnet", ["no sonnet request", "/model sonnet"]],
+    ["auto/plain/opus", ["Anthropic route", "no opus request", "/model opus"]],
+    ["auto/opus", ["no opus request", "/model opus"]],
     ["auto//sonnet", ["names no selector"]],
   ])("refuses %j with a 400 naming the cause, reaching nothing and moving no context", async (name, fragments) => {
     const door = await world();
@@ -125,6 +126,61 @@ describe("a model name auto/<selector>[/<class>] through the real door", () => {
       expect((await send(door, { model: "auto/provider:z/opus", requestClass: "subagent", identity: "me" })).status).toBe(HTTP_STATUS.ok);
       expect(door.upstream.seen.map((seen) => seen.model)).toEqual([Z_OPUS_MODEL]);
       expect(door.contextNow()).toBeUndefined();
+    } finally {
+      await door.close();
+    }
+  }, TIMEOUT_MS);
+
+  /** The model id the session's Claude Code sends for each tier, as a helper or the main loop would. */
+  const SENT: Readonly<Record<string, string>> = { fable: "claude-fable-5-1", opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-5-5" };
+
+  it.each(Object.entries(SENT))("sends the class %s on the Anthropic route as the id the session itself last sent for it, %s", async (tier, id) => {
+    const door = await world();
+    try {
+      await send(door, { model: `${id}[1m]`, requestClass: "auxiliary", identity: "me" });
+      for (const name of [`auto/${tier}`, `auto/me/${tier}`, `auto/plain/${tier.toUpperCase()}`, `auto/pool:mine/${tier}`]) {
+        expect((await send(door, { model: name, requestClass: "main", identity: "me" })).status).toBe(HTTP_STATUS.badGateway);
+      }
+      expect(door.anthropicModels).toEqual([`${id}[1m]`, id, id, id, id]);
+      expect(door.contextNow()).toMatchObject({ kind: "anthropic", requestedModel: `auto/pool:mine/${tier}` });
+    } finally {
+      await door.close();
+    }
+  }, TIMEOUT_MS);
+
+  it("follows the id the session sends next for a tier, and never takes a bare tier alias as one", async () => {
+    const door = await world();
+    try {
+      await send(door, { model: "claude-opus-5-1", requestClass: "main", identity: "me" });
+      await send(door, { model: "opus", requestClass: "main", identity: "me" });
+      await send(door, { model: "auto/opus", requestClass: "main", identity: "me" });
+      await send(door, { model: "claude-opus-5-5", requestClass: "main", identity: "me" });
+      await send(door, { model: "auto/opus", requestClass: "main", identity: "me" });
+      expect(door.anthropicModels).toEqual(["claude-opus-5-1", "opus", "claude-opus-5-1", "claude-opus-5-5", "claude-opus-5-5"]);
+    } finally {
+      await door.close();
+    }
+  }, TIMEOUT_MS);
+
+  it("keeps one session's ids from another's", async () => {
+    const door = await world();
+    try {
+      await send(door, { model: "claude-sonnet-5-5", requestClass: "main", identity: "me", session: "s-2" });
+      const refused = await send(door, { model: "auto/sonnet", requestClass: "main", identity: "me" });
+      expect(refused.status).toBe(HTTP_STATUS.badRequest);
+      expect(refused.text).toContain("no sonnet request");
+    } finally {
+      await door.close();
+    }
+  }, TIMEOUT_MS);
+
+  it("sends a class alone on the provider the session is on now under its tier mapping", async () => {
+    const door = await world();
+    try {
+      await send(door, { model: "z/start", requestClass: "main", identity: "me" });
+      expect((await send(door, { model: "auto/haiku", requestClass: "main", identity: "me" })).status).toBe(HTTP_STATUS.ok);
+      expect(door.upstream.seen.map((seen) => seen.model)).toEqual(["start", Z_HAIKU_MODEL]);
+      expect(door.contextNow()).toMatchObject({ kind: "provider", provider: "z", requestedModel: "auto/haiku" });
     } finally {
       await door.close();
     }
