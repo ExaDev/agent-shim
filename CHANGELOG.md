@@ -1,3 +1,9 @@
+## [14.3.1](https://github.com/ExaDev/agent-shim/compare/v14.3.0...v14.3.1) (2026-11-13)
+
+### Bug Fixes
+
+* **frontdoor:** say that rc send arrives as another session's message ([1ec3a28](https://github.com/ExaDev/agent-shim/commit/1ec3a289f87f8d5d8210b34b25f0c9414ee4f162))
+
 ## [14.3.0](https://github.com/ExaDev/agent-shim/compare/v14.2.4...v14.3.0) (2026-11-13)
 
 ### Features
