@@ -133,3 +133,17 @@ export function loadConfigFile<S extends z.ZodType>(
     ruleEntryOrders: captureRuleEntryOrders(raw),
   };
 }
+
+/**
+ * Why a configuration file could not be used, for a message another party reads (a session's client, a refusal): the keys a file of another shape got wrong with what was expected at each, "not valid JSON" for one that does not parse, or the read failure's code or class. Never the error's own message, which names the file's path, and never the values the file holds.
+ */
+export function configFaultOf(error: unknown): string {
+  if (error instanceof ConfigValidationError) {
+    return error.issues.map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`).join("; ");
+  }
+  if (error instanceof ConfigFileNotJsonError) {
+    return `not valid ${error.format}`;
+  }
+  const code: unknown = error instanceof Error && "code" in error ? error.code : undefined;
+  return typeof code === "string" && /^[A-Z0-9_]{1,32}$/u.test(code) ? code : error instanceof Error ? error.name : "an error";
+}

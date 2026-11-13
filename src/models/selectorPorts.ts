@@ -17,7 +17,7 @@ import type { SelectorLookup, SelectorPorts, SelectorRefusal } from "./selectors
 import { targetRefs } from "./targets";
 import { ownEntry } from "../ownEntry";
 import { DuplicateIdentityNameError } from "../identityRecords";
-import { catalogueReadFault } from "../storedCatalogue";
+import { configFaultOf } from "../config/load";
 
 /** The part of a selector's live state that is the person's configuration (profiles, identities, pools and logins), as opposed to the providers and families the door reads itself. */
 export type SelectorStatePorts = Pick<SelectorPorts, "profile" | "identity" | "pool" | "poolPick" | "sameLogin">;
@@ -30,7 +30,7 @@ function reasonOf(what: string, name: string, error: unknown): string {
   if (error instanceof DuplicateIdentityNameError) {
     return `identity name "${name}" is claimed by more than one identity, so nothing that names it can be resolved: rename all but one (agent-shim doctor names them)`;
   }
-  return `the ${what} "${name}" cannot be read (${catalogueReadFault(error)}): agent-shim doctor says what is wrong`;
+  return `the ${what} "${name}" cannot be read (${configFaultOf(error)}): agent-shim doctor says what is wrong`;
 }
 
 /**

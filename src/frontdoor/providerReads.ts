@@ -13,6 +13,7 @@ import { listProviderNames, loadProvider } from "../providersStore";
 import { catalogueReadFault } from "../storedCatalogue";
 import type { SelectorTarget } from "../models/selectors";
 import type { MappedModel } from "./mainLoopRoute";
+import { configFaultOf } from "../config/load";
 import { ownEntry } from "../ownEntry";
 
 /**
@@ -118,7 +119,7 @@ export function createProviderReads(deps: Readonly<ProviderReadsDeps>): Provider
       const definition = providerOf(name);
       return definition === undefined ? { kind: "absent" } : { kind: "found", definition };
     } catch (error) {
-      return { kind: "invalid", reason: `provider "${name}" cannot be used because its file is invalid: ${error instanceof Error ? error.message : String(error)}` };
+      return { kind: "invalid", reason: `provider "${name}" cannot be used because its file is invalid (${configFaultOf(error)}): agent-shim doctor says what is wrong` };
     }
   };
   const providerFaultOf = (name: string): string | undefined => {
