@@ -5,6 +5,7 @@ import { HTTP_STATUS } from "../codex/http";
 import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
 import type { RoutedRequest, RoutedResponse } from "./route";
 import type { PresentationRefusal, RcEventWriter, SelfHostConversation, SelfHostSession } from "./rcSelfHost";
+import { ownEntry } from "../ownEntry";
 
 /**
  * The serving half of the Remote Control endpoints nothing in the CLI drove before this module: the presence channel (every announced client registered, the clear retiring one), the read receipts (each client's mark_read fanned to the worker), the teleport channel (the write the door's own client half sends and the paged read the CLI's teleport-to-local hydration speaks), and the compatibility `/v1/sessions` family the CLI's claude.ai-side session manager uses. Split out of `rcSelfHost.ts` so each file stays a readable size, exactly as the client-half writes were split into `rcWrites.ts`.
@@ -64,13 +65,13 @@ function parseJsonObject(body: string): Record<string, unknown> | undefined {
 
 /** A record's string field when it is a non-empty string, else undefined. */
 function nonEmptyString(record: Record<string, unknown> | undefined, field: string): string | undefined {
-  const value = record === undefined ? undefined : record[field];
+  const value = record === undefined ? undefined : ownEntry(record, field);
   return typeof value === "string" && value !== "" ? value : undefined;
 }
 
 /** A record's finite number field, accepting a numeric string too, because the real service has been observed serialising the protocol's numbers both ways (the write answer's `sequence_num` above all). */
 function numberOf(record: Record<string, unknown> | undefined, field: string): number | undefined {
-  const value = record === undefined ? undefined : record[field];
+  const value = record === undefined ? undefined : ownEntry(record, field);
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
   }

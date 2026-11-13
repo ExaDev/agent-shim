@@ -2,6 +2,7 @@ import { EN } from "./en";
 import type { StatuslineLanguage } from "./languages";
 import { ZH_HANS } from "./zhHans";
 import { ZH_HANT } from "./zhHant";
+import { ownEntry } from "../../ownEntry";
 
 /** The id of a message in the catalogue. */
 export type MessageId = keyof typeof EN;
@@ -26,7 +27,7 @@ const PLACEHOLDER = /\{(\w+)\}/g;
 /** `pattern` with each `{name}` replaced by its value. A placeholder with no value is a defect in the caller or the catalogue, and fails loudly rather than drawing a gap. */
 export function fillPlaceholders(pattern: string, values: Readonly<Record<string, string | number>>): string {
   return pattern.replace(PLACEHOLDER, (_placeholder, name: string) => {
-    const value = values[name];
+    const value = ownEntry(values, name);
     if (value === undefined) {
       throw new TypeError(`message "${pattern}" needs a value for {${name}}`);
     }

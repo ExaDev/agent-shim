@@ -57,6 +57,7 @@ import { runLaunchUpdateCheck, type UpdateLaunchPort } from "./update/launchHook
 import { targetRefs } from "./models/targets";
 import { profileFilePath } from "./config/names";
 import { INJECTED_ENV, launchEnvironment } from "./launcher/injected";
+import { ownEntry } from "./ownEntry";
 
 /**
  * Everything the farm resync needs that the launcher itself has no way to produce: a real filesystem, a real clock, the working directory, and a way to load the cascade for it.
@@ -963,7 +964,7 @@ export function resolveLaunch(params: PrepareLaunchParams): LaunchResolution {
     ...(decided.flags.statusline === undefined ? {} : { statusline: decided.flags.statusline }),
   });
   const credentialNames = decided.identityCredentialBlock === undefined ? [] : Object.keys(credentialVariables(decided.identityCredentialBlock.target ?? "bearer", ""));
-  const environment = [...new Set([...Object.keys(built).filter((name) => name !== INJECTED_ENV && built[name] !== env[name]), ...credentialNames])].sort();
+  const environment = [...new Set([...Object.keys(built).filter((name) => name !== INJECTED_ENV && ownEntry(built, name) !== ownEntry(env, name)), ...credentialNames])].sort();
   const credential =
     decided.provider !== undefined
       ? isRouterProvider(decided.provider.definition)

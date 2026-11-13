@@ -17,6 +17,7 @@ import { describeSharedLoginMembers, sharedLoginMembers } from "./poolSharedLogi
 import { readIdentityAccount } from "./identityAccounts";
 import type { LayoutPaths } from "./paths";
 import type { PoolPickReport } from "./usage/pickReportSchema";
+import { ownEntry } from "./ownEntry";
 
 function formatPoolPick(report: PoolPickReport, nowMs: number): string[] {
   const head =
@@ -165,7 +166,7 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
           return;
         }
         for (const name of names) {
-          const entry = pools[name];
+          const entry = ownEntry(pools, name);
           console.log(`${active === `${POOL_SELECTOR_PREFIX}${name}` ? "*" : " "} ${name}: ${(entry?.identities ?? []).map(poolMemberIdentity).join(", ")}${policyNotes(entry)}`);
         }
       }),

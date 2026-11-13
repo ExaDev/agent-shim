@@ -1,4 +1,5 @@
 import { isRateLimitHeader, type LimitClassification, type QuotaWindow, type UnifiedRateLimit } from "./schema";
+import { ownEntry } from "../ownEntry";
 
 /** The HTTP status of a refusal by rate limit or quota. */
 const TOO_MANY_REQUESTS = 429;
@@ -58,9 +59,9 @@ function withGrace(window: QuotaWindow | undefined, headers: Readonly<Record<str
 
 /** One unified window (`5h`, `7d` or `7d_oi`) from its utilisation, reset and status headers, or undefined when none is present. */
 function unifiedWindow(headers: Readonly<Record<string, string>>, window: string): QuotaWindow | undefined {
-  const utilization = nonNegativeNumber(headers[`${UNIFIED_PREFIX}${window}-utilization`]);
-  const resetsAt = epochSecondsToIso(headers[`${UNIFIED_PREFIX}${window}-reset`]);
-  const status = headers[`${UNIFIED_PREFIX}${window}-status`];
+  const utilization = nonNegativeNumber(ownEntry(headers, `${UNIFIED_PREFIX}${window}-utilization`));
+  const resetsAt = epochSecondsToIso(ownEntry(headers, `${UNIFIED_PREFIX}${window}-reset`));
+  const status = ownEntry(headers, `${UNIFIED_PREFIX}${window}-status`);
   if (utilization === undefined && resetsAt === undefined && status === undefined) {
     return undefined;
   }

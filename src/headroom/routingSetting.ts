@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { readJson, writeJsonAtomic } from "../config/store";
 import type { LayoutPaths } from "../paths";
+import { ownEntry } from "../ownEntry";
 
 /** What one setting says: whether the sessions it covers go through headroom, and, when set, the moment the person asked for it to apply at once rather than at each session's next cache boundary. */
 const RoutingChoiceSchema = z.strictObject({
@@ -46,7 +47,7 @@ export function withRoutingChoice(setting: RoutingSetting, scope: RoutingScope, 
 
 /** The setting that covers a session: its own, else the global one, else none (its launch flag decides). */
 export function choiceFor(setting: RoutingSetting, sessionId: string | undefined): RoutingChoice | undefined {
-  return (sessionId === undefined ? undefined : setting.sessions[sessionId]) ?? setting.global;
+  return (sessionId === undefined ? undefined : ownEntry(setting.sessions, sessionId)) ?? setting.global;
 }
 
 /** Whether any setting asks for headroom, which is what keeps the daemon wanted by the door itself. */

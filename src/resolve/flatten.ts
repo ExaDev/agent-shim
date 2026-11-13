@@ -3,6 +3,7 @@ import { mergeStatuslineSettings, StatuslineSchema, type StatuslineSettings } fr
 import { isVacuousWhen } from "./conditions";
 import { canonicaliseEntryKey, compareSpecificity, compileMatcher, EntryKeyError, isExactPattern, literalPrefixOf } from "./match";
 import type { CompiledRule, Diagnostic, FlattenedCascade, Layer } from "./types";
+import { ownEntry } from "../ownEntry";
 
 function unpackEntryValue(value: EntryValue): { value: boolean; when?: CompiledRule["when"] } {
   if (typeof value === "boolean") {
@@ -82,7 +83,7 @@ export function flattenLayers(layers: readonly Layer[], options: Readonly<{ home
 
     const order = orderedKeys(layer);
     for (const [ordinal, rawKey] of order.entries()) {
-      const value = layer.entries[rawKey];
+      const value = ownEntry(layer.entries, rawKey);
       if (value === undefined) {
         continue;
       }
@@ -188,7 +189,7 @@ function mergeModels(current: ModelsConfig | undefined, layer: ModelsLayer): Mod
     const virtual: NonNullable<ModelsConfig["virtual"]> = {};
     for (const [name, definition] of Object.entries(current?.virtual ?? {})) {
       // A null in this layer removes the inherited definition; an absent name leaves it standing.
-      if (layer.virtual[name] === undefined) {
+      if (ownEntry(layer.virtual, name) === undefined) {
         virtual[name] = definition;
       }
     }
@@ -215,7 +216,7 @@ function mergeModels(current: ModelsConfig | undefined, layer: ModelsLayer): Mod
   if (layer.prices !== undefined) {
     const priced: NonNullable<ModelsConfig["prices"]> = {};
     for (const [ref, prices] of Object.entries(current?.prices ?? {})) {
-      if (layer.prices[ref] === undefined) {
+      if (ownEntry(layer.prices, ref) === undefined) {
         priced[ref] = prices;
       }
     }
@@ -243,7 +244,7 @@ function mergeModels(current: ModelsConfig | undefined, layer: ModelsLayer): Mod
     const families: NonNullable<ModelsConfig["families"]> = {};
     for (const [key, settings] of Object.entries(current?.families ?? {})) {
       // A null in this layer removes the inherited settings; an absent key leaves them standing.
-      if (layer.families[key] === undefined) {
+      if (ownEntry(layer.families, key) === undefined) {
         families[key] = settings;
       }
     }

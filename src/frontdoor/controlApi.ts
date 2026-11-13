@@ -39,6 +39,7 @@ import type { RcSessionSummary } from "./rcSessions";
 import { rcSessionNotObservedMessage } from "./rcWrites";
 import type { FrontDoorStatus } from "./status";
 import type { PrePipelineApi } from "./server";
+import { ownEntry } from "../ownEntry";
 
 /**
  * The door's general control plane as a typed oRPC API: the read-only surfaces a programmatic consumer (automation, a dashboard, another of this user's tools) needs beyond Remote Control, one router per domain, every procedure behind the same per-generation control token as `rc.*` and validating through the Zod schemas of `controlSchemas.ts`.
@@ -131,7 +132,7 @@ export function createControlApiRouter(deps: ControlApiDeps) {
             throw new ORPCError("NOT_FOUND", { message: `identity ${input.identity} has no usage snapshot yet, so no quota window has been observed for it` });
           }
           const provider = input.provider ?? ANTHROPIC_PROVIDER;
-          const rateLimit = snapshot.providers[provider]?.rateLimit;
+          const rateLimit = ownEntry(snapshot.providers, provider)?.rateLimit;
           const unified = rateLimit?.unified;
           // One clock reading serves both windows, so a pair returned together describes the same instant.
           const now = deps.now();

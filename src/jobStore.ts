@@ -3,6 +3,7 @@ import { readGlobalConfig } from "./configProfilesStore";
 import { applyPatch } from "./config/store";
 import { GlobalConfigSchema, PoolNameSchema, type Job } from "./config/schema";
 import type { LayoutPaths } from "./paths";
+import { ownEntry } from "./ownEntry";
 
 /** Raised when a command names a job that is not defined in the global config. */
 class JobNotFoundError extends CliError {
@@ -35,7 +36,7 @@ export function readJobs(paths: LayoutPaths): Readonly<Record<string, Job>> {
 
 /** The job named `name`; throws `JobNotFoundError` when none is defined. */
 export function requireJob(paths: LayoutPaths, name: string): Job {
-  const job = readJobs(paths)[name];
+  const job = ownEntry(readJobs(paths), name);
   if (job === undefined) {
     throw new JobNotFoundError(name);
   }
@@ -55,7 +56,7 @@ export function addJob(paths: LayoutPaths, name: string, job: Job): Job {
     throw new InvalidJobNameError(name);
   }
   const jobs = readJobs(paths);
-  if (jobs[name] !== undefined) {
+  if (ownEntry(jobs, name) !== undefined) {
     throw new JobAlreadyExistsError(name);
   }
   writeJobs(paths, { ...jobs, [name]: job });

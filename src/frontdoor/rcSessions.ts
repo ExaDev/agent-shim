@@ -10,6 +10,7 @@ import { rcQuestionsOfToolRequest, type RcPendingQuestion } from "./rcQuestions"
 import type { RcStreamEnvelope } from "./rcSchemas";
 import type { FrontDoorRoute, RoutedResponse } from "./route";
 import type { RcObservedCredential } from "./rcWrites";
+import { ownEntry } from "../ownEntry";
 
 /**
  * Remote Control session tracking: the record of the `cse_` sessions whose traffic crosses the door's terminated API-host session, and of the control requests awaiting an answer inside them. The client-half writes themselves (the prompt inject, the `control_response` answer, and every client-originated control request) live in `rcWrites.ts`, built on the observed credential this tracker holds.
@@ -280,7 +281,7 @@ export interface RcSessionTracker {
 
 /** One header's single value, or undefined when absent or an unusable repeat. */
 function singleHeader(headers: Readonly<IncomingHttpHeaders>, name: string): string | undefined {
-  const value = headers[name];
+  const value = ownEntry(headers, name);
   return typeof value === "string" ? value : undefined;
 }
 
@@ -330,13 +331,13 @@ function parseJsonObject(body: string): Record<string, unknown> | undefined {
 
 /** A record's string field when it is a non-empty string, else undefined: the shape every id and name extraction narrows to. */
 function nonEmptyString(record: Record<string, unknown> | undefined, field: string): string | undefined {
-  const value = record === undefined ? undefined : record[field];
+  const value = record === undefined ? undefined : ownEntry(record, field);
   return typeof value === "string" && value !== "" ? value : undefined;
 }
 
 /** A record's number field when it is a finite number, else undefined. */
 function finiteNumber(record: Record<string, unknown> | undefined, field: string): number | undefined {
-  const value = record === undefined ? undefined : record[field];
+  const value = record === undefined ? undefined : ownEntry(record, field);
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 

@@ -6,6 +6,7 @@ import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
 import type { RoutedRequest, RoutedResponse } from "./route";
 import type { PresentationRefusal, RcEventWriter, SelfHostConversation, StoredEvent } from "./rcSelfHost";
 import { RC_SOURCE_CLIENT, serveRcClientChannels, withClientPlatform } from "./rcSelfHostEndpoints";
+import { ownEntry } from "../ownEntry";
 
 /**
  * The conversation family of the self-hosted Remote Control surface (`/v1/code/conversations...`), the door's own sessionless half: a client that joins a live conversation without creating a `cse_` session of its own reads, writes, streams and announces through it, sharing the one event log and sequence space the attached sessions already write into. Split out of `rcSelfHost.ts` so each file stays a readable size, exactly as the client channels and the compatibility family were split into `rcSelfHostEndpoints.ts`.
@@ -39,7 +40,7 @@ function parseJsonObject(body: string): Record<string, unknown> | undefined {
 
 /** A record's string field when it is a non-empty string, else undefined. */
 function nonEmptyString(record: Record<string, unknown> | undefined, field: string): string | undefined {
-  const value = record === undefined ? undefined : record[field];
+  const value = record === undefined ? undefined : ownEntry(record, field);
   return typeof value === "string" && value !== "" ? value : undefined;
 }
 

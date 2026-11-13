@@ -3,6 +3,7 @@ import { createSyncEvaluator, type PredicateNode, type Resolution, type SyncReso
 
 import { DURATION_RE, type WhenCondition, type WhenConditionObject } from "../config/schema";
 import type { EntryFact } from "./types";
+import { ownEntry } from "../ownEntry";
 
 const MILLISECONDS_PER_UNIT: Readonly<Record<string, number>> = Object.freeze({
   ms: 1,
@@ -25,7 +26,7 @@ export function parseDuration(value: string): number {
   if (count === undefined || unit === undefined) {
     throw new Error(`"${value}" is not a valid duration.`);
   }
-  const multiplier = MILLISECONDS_PER_UNIT[unit];
+  const multiplier = ownEntry(MILLISECONDS_PER_UNIT, unit);
   if (multiplier === undefined) {
     throw new Error(`"${value}" is not a valid duration.`);
   }
@@ -134,10 +135,10 @@ function resolversOf(context: ConditionContext): SyncResolvers {
         return { found: false };
       }
       if (key.startsWith("env.")) {
-        const value = context.env[key.slice("env.".length)];
+        const value = ownEntry(context.env, key.slice("env.".length));
         return value === undefined ? { found: false } : wrap(value);
       }
-      const value = values[key];
+      const value = ownEntry(values, key);
       return value === undefined ? { found: false } : wrap(value);
     },
     // This embedding provides the reference namespace only: a tree that asks for a lookup or a collection finds neither, which the evaluator carries as indeterminate rather than letting the tree pretend an answer.

@@ -1,4 +1,5 @@
 import { resumeTargetOf } from "../usage/resumeContext";
+import { ownEntry } from "../ownEntry";
 
 /** The token that ends agent-shim's own and claude's flag recognition: everything from it onwards belongs to a command claude runs. */
 const TERMINATOR = "--";
@@ -134,7 +135,7 @@ export function combineCallerSettings(passthrough: readonly string[], launcherSe
   }
   const hooks: Record<string, unknown> = { ...callerHooks };
   for (const [event, value] of Object.entries(added.hooks)) {
-    const existing = hooks[event];
+    const existing = ownEntry(hooks, event);
     if (!isUnknownArray(value) || (existing !== undefined && !isUnknownArray(existing))) {
       throw new Error(`settings hooks for ${event} must be arrays`);
     }
@@ -158,7 +159,7 @@ export function mergeSettings(parts: readonly (string | undefined)[]): string | 
       throw new Error("a launch's settings part is not a JSON object");
     }
     for (const [key, value] of Object.entries(parsed)) {
-      if (key in merged) {
+      if (Object.hasOwn(merged, key)) {
         throw new Error(`two launch settings parts both set "${key}"`);
       }
       merged[key] = value;

@@ -4,6 +4,7 @@
 
 import { exhaustionHeaders } from "../usage/unifiedRefusal";
 import { CCPA_DEFAULT_PROJECT_ID, CCPA_ENDPOINT, CCPA_USER_AGENT } from "./cloudUpstream";
+import { ownEntry } from "../ownEntry";
 
 const MS_PER_SECOND = 1000;
 const DEFAULT_RETRY_AFTER_SECONDS = 60;
@@ -31,7 +32,7 @@ const THIRD_PARTY_WEEKLY_KEYS = ["3p-weekly", "claude-weekly", "3p_weekly", "cla
 
 function findBucket(quota: AntigravityQuotaMap, keys: readonly string[]): AntigravityQuotaBucket | undefined {
   for (const key of keys) {
-    const bucket = quota[key];
+    const bucket = ownEntry(quota, key);
     if (bucket !== undefined) {
       return bucket;
     }
@@ -163,7 +164,7 @@ export function quotaWithExhaustions(quota: AntigravityQuotaMap | undefined, exh
   for (const [model, resetAtMs] of spent) {
     const resetIn = Math.ceil((resetAtMs - nowMs) / MS_PER_SECOND);
     const key = bucketKeyOf(model, resetIn);
-    const known = merged[key];
+    const known = ownEntry(merged, key);
     if (known?.remaining_fraction === 0 && (known.reset_in_seconds ?? 0) >= resetIn) {
       continue;
     }

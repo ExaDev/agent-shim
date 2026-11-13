@@ -6,6 +6,7 @@ import { isLiveCapability } from "./capability";
 import type { RcPendingRequestSummary, RcSessionStatus, RcSessionSummary } from "./rcSessions";
 import { RcPendingRequestSummarySchema, RcQuestionChoicesSchema } from "./rcSchemas";
 import { RC_CONTEXT_USAGE_DETAILS, RC_PERMISSION_MODES, RC_READ_FILE_ENCODINGS, isRcContextUsageDetail, isRcPermissionMode, isRcReadFileEncoding, rcSessionNotObservedMessage, type RcAnswerDecision, type RcContextUsageDetail, type RcEventWriteResult, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
+import { ownEntry } from "../ownEntry";
 
 /** The SDK's own permission modes as one readable list, so a body refused for a bad mode names exactly what is permitted. */
 const RC_PERMISSION_MODE_LIST = RC_PERMISSION_MODES.join(", ");
@@ -87,25 +88,25 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
 
 /** One route body's string field when it is a non-empty string, else undefined: the shape every id and name extraction narrows to. */
 function bodyString(body: Record<string, unknown>, field: string): string | undefined {
-  const value = body[field];
+  const value = ownEntry(body, field);
   return typeof value === "string" && value !== "" ? value : undefined;
 }
 
 /** One route body's string field when it is present as a string (the empty string included), else undefined: the one field family whose emptiness is a value of its own (the file-suggestions query). */
 function bodyStringAllowingEmpty(body: Record<string, unknown>, field: string): string | undefined {
-  const value = body[field];
+  const value = ownEntry(body, field);
   return typeof value === "string" ? value : undefined;
 }
 
 /** One route body's boolean field, else undefined. */
 function bodyBoolean(body: Record<string, unknown>, field: string): boolean | undefined {
-  const value = body[field];
+  const value = ownEntry(body, field);
   return typeof value === "boolean" ? value : undefined;
 }
 
 /** One route body's field when it is a positive whole number, else undefined: the read-file byte cap's own shape. */
 function bodyPositiveInteger(body: Record<string, unknown>, field: string): number | undefined {
-  const value = body[field];
+  const value = ownEntry(body, field);
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
 }
 

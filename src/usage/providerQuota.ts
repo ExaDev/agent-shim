@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { CCPA_USER_AGENT } from "../antigravity/cloudUpstream";
 import { ProviderQuotaSchema, type ProviderQuota, type ProviderQuotaWindow } from "./schema";
+import { ownEntry } from "../ownEntry";
 
 /** One request against a provider's usage endpoint: the status and body text, or a rejection for a transport failure. A GET unless `options` says otherwise; adapters that POST carry their body there. */
 export type QuotaHttpGet = (url: string, headers: Readonly<Record<string, string>>, signal: AbortSignal, options?: { readonly method?: "GET" | "POST"; readonly body?: string }) => Promise<{ readonly status: number; readonly text: string }>;
@@ -68,7 +69,7 @@ const ZaiResponseSchema = z.object({
 function zaiWindow(limit: z.infer<typeof ZaiLimitSchema>): ProviderQuotaWindow {
   const unitMs = ZAI_UNIT_MS.get(limit.unit);
   return {
-    measures: ZAI_MEASURES[limit.type] ?? limit.type.toLowerCase(),
+    measures: ownEntry(ZAI_MEASURES, limit.type) ?? limit.type.toLowerCase(),
     ...(unitMs === undefined ? { period: `unit ${String(limit.unit)} x ${String(limit.number)}` } : { periodMs: unitMs * limit.number }),
     utilization: limit.percentage / PERCENT,
     ...(limit.nextResetTime === undefined ? {} : { resetsAt: new Date(limit.nextResetTime).toISOString() }),
@@ -287,7 +288,7 @@ export const antigravityQuotaAdapter: ProviderQuotaAdapter = {
       windows: parsed.data.groups.flatMap((group) =>
         group.buckets.map((bucket) => ({
           measures: bucket.bucketId,
-          ...(ANTIGRAVITY_WINDOW_MS[bucket.bucketId] === undefined ? {} : { periodMs: ANTIGRAVITY_WINDOW_MS[bucket.bucketId] }),
+          ...(ownEntry(ANTIGRAVITY_WINDOW_MS, bucket.bucketId) === undefined ? {} : { periodMs: ownEntry(ANTIGRAVITY_WINDOW_MS, bucket.bucketId) }),
           utilization: bucket.remainingFraction === undefined ? 0 : 1 - bucket.remainingFraction,
           ...(bucket.resetTime === undefined ? {} : { resetsAt: bucket.resetTime }),
         })),
