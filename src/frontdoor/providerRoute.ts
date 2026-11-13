@@ -324,7 +324,7 @@ export function createProviderRouteResolver(deps: {
     family: (key) => familyNamed(buildFamilies(deps.targets?.() ?? [], deps.models?.(context.session)), `${FAMILY_PREFIX}${key}`) !== undefined,
   });
   /** The target of the route override that applies to a main-loop request for `model`, a refusal when the overrides cannot be read, or undefined. Only a bare Claude name is looked up, so no other request reads the table. */
-  const overriddenName = (model: string, context: Readonly<RenameContext>): { readonly name: string } | RoutedRefusal | undefined => {
+  const overriddenName = (model: string, context: Readonly<RenameContext>): { readonly name: string; readonly overridden: true } | RoutedRefusal | undefined => {
     if (deps.routeOverrides === undefined || !context.main || !context.unscoped || !isBareClaudeName(model)) {
       return undefined;
     }
@@ -338,12 +338,12 @@ export function createProviderRouteResolver(deps: {
     // The provider scope is read off the route context only when the table has one, since that costs a stat of the context file.
     const provider = read.table.providers === undefined ? undefined : context.routeProvider();
     const match = overrideFor(read.table, { ...(sessionId === undefined ? {} : { sessionId }), ...(identity === undefined ? {} : { identity }), ...(provider === undefined ? {} : { provider }) }, model);
-    return match === undefined ? undefined : { name: match.target };
+    return match === undefined ? undefined : { name: match.target, overridden: true };
   };
   /**
    * A session launched on a provider sends every request to that provider, whatever its model name, and its requests carry the provider's placeholder credential rather than an Anthropic login, so a name the door renamed to the Anthropic route (`anthropic/<model>`) cannot be served there and would reach the provider under that name: it is refused, naming the relaunch that puts the session on its own login. A provider file called `anthropic` claims the name, which then routes as any qualified name does.
    */
-  const onLaunchProvider = (renamed: { readonly name: string }, context: Readonly<RenameContext>): { readonly name: string } | RoutedRefusal => {
+  const onLaunchProvider = (renamed: { readonly name: string; readonly overridden?: true }, context: Readonly<RenameContext>): { readonly name: string; readonly overridden?: true } | RoutedRefusal => {
     const launchProvider = context.session.provider;
     if (launchProvider === undefined || !renamed.name.startsWith(ANTHROPIC_PREFIX) || definesProvider(ANTHROPIC_ROUTE_NAME)) {
       return renamed;
@@ -363,7 +363,7 @@ export function createProviderRouteResolver(deps: {
     if ("refusal" in expanded) {
       return overridden === undefined ? expanded : { refusal: `the route override of ${JSON.stringify(model)} routes it by ${JSON.stringify(name)}, which cannot be routed: ${expanded.refusal}` };
     }
-    return { name: expanded.name };
+    return overridden === undefined ? { name: expanded.name } : { name: expanded.name, overridden: true };
   };
   /** Replaces a main-loop Claude name with its override's target, and a selector (the request's own name or the target) with the name it expands to, before anything routes the request. An override is applied once: its target is never looked up again. A renaming to the Anthropic route in a session launched on a provider is refused (see `onLaunchProvider`). */
   const rename: RenameModel = (model, context) => {

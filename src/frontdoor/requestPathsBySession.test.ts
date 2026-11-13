@@ -111,6 +111,8 @@ interface SessionKind {
   readonly reaches: "provider" | "anthropic";
   /** Whether the session was launched on the provider, whose every request goes there, whatever its path; any other session's goes where its context says only on a Messages path, and to the Anthropic route elsewhere. */
   readonly launched?: true;
+  /** Whether an override put the session in its context, so that its main loop's request for a Claude name no override covers (the bodies below name `claude-sonnet-5-5`, which the overrides do not) goes back to the Anthropic route. */
+  readonly overrideLapses?: true;
   /** The requests that put the session in its context before the request under test, as the main loop does. */
   readonly establish: (world: World) => Promise<void>;
   readonly headers: Readonly<Record<string, string>>;
@@ -138,7 +140,7 @@ const SESSION_KINDS: readonly SessionKind[] = [
   { label: "provider context, a helper", reaches: "provider", establish: bySendingModel("z/glm-5.3"), headers: HELPER },
   { label: "provider context chosen by a selector", reaches: "provider", establish: bySendingModel("auto/z/sonnet"), headers: MAIN },
   { label: "provider context chosen by a selector, a helper", reaches: "provider", establish: bySendingModel("auto/provider:z"), headers: HELPER },
-  { label: "provider context an override chose", reaches: "provider", establish: bySendingModel(OVERRIDDEN), headers: MAIN },
+  { label: "provider context an override chose", reaches: "provider", overrideLapses: true, establish: bySendingModel(OVERRIDDEN), headers: MAIN },
   { label: "provider context an override chose, a helper", reaches: "provider", establish: bySendingModel(OVERRIDDEN), headers: HELPER },
   { label: "Anthropic context after anthropic/<model>", reaches: "anthropic", establish: bySendingModel("anthropic/claude-sonnet-5-5"), headers: MAIN },
   { label: "Anthropic context, a helper", reaches: "anthropic", establish: bySendingModel("anthropic/claude-sonnet-5-5"), headers: HELPER },
@@ -168,7 +170,8 @@ const contextOf = (record: MainLoopRouteRecord): unknown => record.routeOf(launc
  */
 describe.each(SESSION_KINDS)("a request of a session with $label", (kind) => {
   describe.each(PATH_CLASSES)("sends $label", (pathClass) => {
-    const reaches = pathClass.selfHost === true ? "anthropic" : pathClass.scopedTo !== undefined || (kind.reaches === "provider" && (kind.launched === true || isMessagesInferencePath(new URL(pathClass.path, "http://127.0.0.1").pathname))) ? "provider" : "anthropic";
+    const lapses = kind.overrideLapses === true && pathClass.carriesModel && pathClass.scopedTo === undefined;
+    const reaches = pathClass.selfHost === true || lapses ? "anthropic" : pathClass.scopedTo !== undefined || (kind.reaches === "provider" && (kind.launched === true || isMessagesInferencePath(new URL(pathClass.path, "http://127.0.0.1").pathname))) ? "provider" : "anthropic";
     for (const chunked of pathClass.body === undefined ? [false] : [false, true]) {
       it(`${chunked ? "chunked" : "with a length"}: it is answered, reaches ${reaches === "provider" ? "the provider unchanged" : "the Anthropic route"}, and leaves the context`, async () => {
         const upstream = await recordingUpstream();

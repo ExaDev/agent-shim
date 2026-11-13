@@ -252,6 +252,14 @@ describe("front-door session registry", () => {
     expect(fs.readdir(dir)).toEqual([]);
   });
 
+  it("keeps the mark that an override moved a launch's main loop, so a replacing door lets the context lapse with the override", () => {
+    const fs = createFakeFarmFs({});
+    const dir = paths.frontdoorSessionsDir;
+    writeFrontDoorSession(fs, dir, { pid: LIVE, startedAt: 1, token: "t" });
+    writeLaunchRoute(fs, dir, { pid: LIVE, startedAt: 1 }, { kind: "provider", provider: "z", requestedModel: "claude-opus-5-5", movedBy: "override" });
+    expect(readLaunchRoute(fs, dir, { pid: LIVE, startedAt: 1 }, () => undefined)).toEqual({ kind: "provider", provider: "z", requestedModel: "claude-opus-5-5", movedBy: "override" });
+  });
+
   it("drops the route an earlier launch left under a pid when a launcher registers under it again", () => {
     const fs = createFakeFarmFs({});
     const dir = paths.frontdoorSessionsDir;

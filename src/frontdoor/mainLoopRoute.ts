@@ -72,7 +72,7 @@ export interface MainLoopRoutePorts {
 
 /** Whether two contexts say the same: the same route and the same credential and model names, so a context is written again only when one of them changed. */
 function sameContext(a: RouteContext, b: RouteContext): boolean {
-  return a.kind === b.kind && (a.kind !== "provider" || (b.kind === "provider" && a.provider === b.provider)) && a.credential === b.credential && a.requestedModel === b.requestedModel && a.servedModel === b.servedModel;
+  return a.kind === b.kind && (a.kind !== "provider" || (b.kind === "provider" && a.provider === b.provider)) && a.credential === b.credential && a.requestedModel === b.requestedModel && a.servedModel === b.servedModel && a.movedBy === b.movedBy;
 }
 
 /**
@@ -250,7 +250,7 @@ export interface RenameContext {
 }
 
 /** Replaces one model name: the name to route by, a refusal the request is answered with (a 400), or undefined to leave the name as it is. */
-export type RenameModel = (model: string, context: Readonly<RenameContext>) => { readonly name: string } | { readonly refusal: string } | undefined;
+export type RenameModel = (model: string, context: Readonly<RenameContext>) => { readonly name: string; /** Set when a route override, not the request's own name, chose the name: what the context records as the reason the main loop moved. */ readonly overridden?: true } | { readonly refusal: string } | undefined;
 
 /** The provider a served request target names, or undefined for a bare target (the Anthropic route, or a path the session's launch provider scoped). */
 function servedProviderOf(url: string): string | undefined {
@@ -276,9 +276,9 @@ function boundedName(text: string | undefined): string | undefined {
  */
 export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<RouteResolution>, deps: MainLoopRoutingDeps): (request: RoutedRequest) => Promise<RouteResolution> {
   /** The context recorded for a request served on `route`, with the facts about it. */
-  const contextOf = (route: RouteOf, credentialName: string | undefined, requested: string | undefined, served: string | undefined): RouteContext => {
+  const contextOf = (route: RouteOf, credentialName: string | undefined, requested: string | undefined, served: string | undefined, overridden = false): RouteContext => {
     const credential = boundedName(credentialName);
-    const facts = { ...(credential === undefined ? {} : { credential }), ...(boundedName(requested) === undefined ? {} : { requestedModel: boundedName(requested) }), ...(boundedName(served) === undefined ? {} : { servedModel: boundedName(served) }) };
+    const facts = { ...(credential === undefined ? {} : { credential }), ...(boundedName(requested) === undefined ? {} : { requestedModel: boundedName(requested) }), ...(boundedName(served) === undefined ? {} : { servedModel: boundedName(served) }), ...(overridden ? { movedBy: "override" as const } : {}) };
     return { ...route, ...facts };
   };
 
@@ -344,7 +344,7 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
   /**
    * `request` with its model renamed by `deps.rename`, and the name it asked for, when the rename replaced it: only a Messages request carries a model, and only its head is read and rewritten, the rest streaming through unread. A request that names the model field twice is refused where it would be rewritten, since only the first field would change. A request the rename leaves alone goes on as the scan's replay, its bytes as they came.
    */
-  const renamed = async (request: RoutedRequest, rename: RenameModel, bodyLimitBytes: number): Promise<{ readonly request: RoutedRequest; readonly asked?: string } | { readonly refused: RouteResolution }> => {
+  const renamed = async (request: RoutedRequest, rename: RenameModel, bodyLimitBytes: number): Promise<{ readonly request: RoutedRequest; readonly asked?: string; readonly overridden?: true } | { readonly refused: RouteResolution }> => {
     const path = new URL(request.url, "http://127.0.0.1").pathname;
     // A body that declares more than the limit is refused by the resolver from its declared length before any of it is read, so it is not read here either.
     if (!isMessagesRequest(request.method, path) || declaredLength(request.headers) > bodyLimitBytes) {
@@ -382,10 +382,10 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
       abandonBody(scan.replayed.body);
       return { refused: { ok: false, status: HTTP_STATUS.badRequest, message: AMBIGUOUS_MODEL_MESSAGE } };
     }
-    return { request: withModelInHead(scan.replayed, scan.headBytes, asked, decided.name), asked };
+    return { request: withModelInHead(scan.replayed, scan.headBytes, asked, decided.name), asked, ...(decided.overridden === undefined ? {} : { overridden: true }) };
   };
 
-  const routed = async (request: RoutedRequest, asked: string | undefined): Promise<RouteResolution> => {
+  const routed = async (request: RoutedRequest, asked: string | undefined, overridden: boolean): Promise<RouteResolution> => {
     const { launch, provider } = request.session;
     const path = new URL(request.url, "http://127.0.0.1").pathname;
     if (launch === undefined || provider !== undefined || !isMessagesInferencePath(path)) {
@@ -420,15 +420,17 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
       if (requested?.startsWith(ANTHROPIC_PREFIX) === true && !deps.definesProvider(ANTHROPIC_ROUTE_NAME)) {
         const placed = await toAnthropic(base, requested);
         if (placed.resolution.ok) {
-          recordServing(launch, ticket, placed.resolution, (servedModel) => contextOf({ kind: "anthropic" }, deps.loginOf(request.session), recordedAs, servedModel), placed.served);
+          recordServing(launch, ticket, placed.resolution, (servedModel) => contextOf({ kind: "anthropic" }, deps.loginOf(request.session), recordedAs, servedModel, overridden), placed.served);
         }
         return placed.resolution;
       }
-      if (current?.kind === "provider") {
+      // A context an override put the main loop in lasts only while an override still applies: a bare Claude name no override covers now goes where it would with no override, the launch's own route, and the context is recorded there. A context the person chose (`/model <provider>/<model>`) is no override's and stays.
+      const overrideLapsed = current?.movedBy === "override" && !overridden && requested !== undefined && isBareClaudeName(requested);
+      if (current?.kind === "provider" && !overrideLapsed) {
         const placed = await toProvider(base, current.provider, request.session);
         // Only a Claude name asked for on the main loop is a fact about it worth recording, and the route stays what it was: a request that chose no route moves nothing.
         if (placed.resolution.ok && requested !== undefined && (isBareClaudeName(requested) || requested === AUTO_MODEL)) {
-          recordServing(launch, ticket, placed.resolution, (servedModel) => contextOf({ kind: "provider", provider: current.provider }, placed.credential, recordedAs, servedModel), unlessAuto(placed.served));
+          recordServing(launch, ticket, placed.resolution, (servedModel) => contextOf({ kind: "provider", provider: current.provider }, placed.credential, recordedAs, servedModel, current.movedBy === "override"), unlessAuto(placed.served));
         }
         return placed.resolution;
       }
@@ -442,19 +444,19 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
     const servedModel = resolution.servedModel ?? (served === undefined ? requested : undefined);
     // The credential is named from the provider's file as read for this request, which is read for every request anyway, so an edited credential block shows its new name at the next one.
     const credential = served === undefined ? deps.loginOf(request.session) : deps.providerMapping(served, request.session, "").credential;
-    recordServing(launch, ticket, resolution, (model) => contextOf(route, credential, recordedAs, model), served === undefined ? servedModel : unlessAuto(servedModel));
+    recordServing(launch, ticket, resolution, (model) => contextOf(route, credential, recordedAs, model, overridden), served === undefined ? servedModel : unlessAuto(servedModel));
     return resolution;
   };
 
   return async (request) => {
     if (deps.rename === undefined) {
-      return await routed(request, undefined);
+      return await routed(request, undefined, false);
     }
     const named = await renamed(request, deps.rename.model, deps.rename.bodyLimitBytes);
     if ("refused" in named) {
       return named.refused;
     }
-    const resolution = await routed(named.request, named.asked);
+    const resolution = await routed(named.request, named.asked, named.overridden === true);
     // The usage log records the name the request asked for, as the context does.
     return resolution.ok && named.asked !== undefined ? { ...resolution, requestedModel: named.asked } : resolution;
   };
