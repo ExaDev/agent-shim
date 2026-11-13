@@ -254,6 +254,8 @@ export function createProviderRouteResolver(deps: {
   readonly catalogueModelsOf?: (name: string, provider: HttpProvider) => readonly CatalogueModel[];
   /** Told of every request the routed pass-through to Claude Code's own API is dispatched, before it is dialled, whether the route serves it or the headroom hop in front of it forwards it (the daemon's default upstream is that API): the door's capture records each one, so a record of everything that left for the real API covers the routed pipeline as well as the connect surface's piped exchanges. A throw refuses the request before anything is dialled. */
   readonly observeAnthropicPassthrough?: (request: RoutedRequest) => void;
+  /** The name of the identity stored under a directory id (what a session's identity header carries), read as it is now so a rename applies at once; undefined for an id no identity is stored under. The route overrides' identity scopes are keyed by name. */
+  readonly identityNameOf?: (id: string) => string | undefined;
   /** The runtime route overrides as they stand now (see `createRouteOverridesReader`): a main-loop request whose model is a bare Claude name is routed by the target of the override that applies to it. Absent, nothing is overridden. */
   readonly routeOverrides?: () => RouteOverridesRead;
   /** The person's configuration a selector (`auto/<selector>[/<class>]`) names besides providers and families: profiles, identities, pools and logins, read fresh per request. Absent, no profile, identity or pool is a selector's to name, and providers and families still are. */
@@ -329,7 +331,9 @@ export function createProviderRouteResolver(deps: {
     if ("fault" in read) {
       return { refusal: `${read.fault}, so the door cannot tell where to route ${JSON.stringify(model)}; fix or remove the file (agent-shim doctor names what is wrong)` };
     }
-    const { sessionId, identity } = context.session;
+    const { sessionId } = context.session;
+    // The header carries the identity's directory id, and the identity scopes are keyed by its name as it is now.
+    const identity = context.session.identity === undefined ? undefined : deps.identityNameOf?.(context.session.identity);
     // The provider scope is read off the route context only when the table has one, since that costs a stat of the context file.
     const provider = read.table.providers === undefined ? undefined : context.routeProvider();
     const match = overrideFor(read.table, { ...(sessionId === undefined ? {} : { sessionId }), ...(identity === undefined ? {} : { identity }), ...(provider === undefined ? {} : { provider }) }, model);
@@ -342,7 +346,7 @@ export function createProviderRouteResolver(deps: {
       return overridden;
     }
     const name = overridden?.name ?? model;
-    const expanded = expandSelectorName(name, selectorPortsFor(context), context.session.identity === undefined ? {} : { identity: context.session.identity });
+    const expanded = expandSelectorName(name, selectorPortsFor(context), context.session.identity === undefined ? {} : { identityId: context.session.identity });
     if (expanded === undefined) {
       return overridden;
     }

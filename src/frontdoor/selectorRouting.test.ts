@@ -11,7 +11,8 @@ const STATE: SelectorStatePorts = {
   identity: (name) => (name === "me" || name === "twin" || name === "work" ? { kind: "found", value: { provider: undefined } } : name === "zid" ? { kind: "found", value: { provider: "z" } } : { kind: "absent" }),
   pool: (name) => (name === "subs" || name === "mine" || name === "z" ? { kind: "found", value: undefined } : { kind: "absent" }),
   poolPick: (name) => (name === "subs" ? { identity: "work" } : name === "mine" ? { identity: "twin" } : { refusal: `pool "${name}" picks nobody` }),
-  sameLogin: (identity, sessionIdentity) => sessionIdentity === "me" && (identity === "me" || identity === "twin"),
+  // The session's header carries its identity's directory id, "id-me", never the name "me".
+  sameLogin: (identity, sessionIdentityId) => sessionIdentityId === "id-me" && (identity === "me" || identity === "twin"),
 };
 
 const TIMEOUT_MS = 30_000;
@@ -27,11 +28,11 @@ describe("a model name auto/<selector>[/<class>] through the real door", () => {
   it("routes a provider selector with a class to the provider's own model for the class, moves the main loop there, and its helpers follow", async () => {
     const door = await world();
     try {
-      const main = await send(door, { model: "auto/provider:z/sonnet", requestClass: "main", identity: "me" });
+      const main = await send(door, { model: "auto/provider:z/sonnet", requestClass: "main", identity: "id-me" });
       expect(main.status).toBe(HTTP_STATUS.ok);
       expect(door.upstream.seen.at(-1)?.model).toBe(Z_SONNET_MODEL);
       expect(door.contextNow()).toMatchObject({ kind: "provider", provider: "z", requestedModel: "auto/provider:z/sonnet", servedModel: Z_SONNET_MODEL });
-      const helper = await send(door, { model: HAIKU_NAME, requestClass: "auxiliary", identity: "me" });
+      const helper = await send(door, { model: HAIKU_NAME, requestClass: "auxiliary", identity: "id-me" });
       expect(helper.status).toBe(HTTP_STATUS.ok);
       expect(door.upstream.seen.at(-1)?.model).toBe(Z_HAIKU_MODEL);
       expect(door.toAnthropic).toEqual([]);
@@ -50,7 +51,7 @@ describe("a model name auto/<selector>[/<class>] through the real door", () => {
   ])("routes %j to provider z under %j", async (name, model) => {
     const door = await world();
     try {
-      expect((await send(door, { model: name, requestClass: "main", identity: "me" })).status).toBe(HTTP_STATUS.ok);
+      expect((await send(door, { model: name, requestClass: "main", identity: "id-me" })).status).toBe(HTTP_STATUS.ok);
       expect(door.upstream.seen.map((seen) => seen.model)).toEqual([model]);
       expect(door.contextNow()).toMatchObject({ kind: "provider", provider: "z", requestedModel: name });
     } finally {
@@ -61,8 +62,8 @@ describe("a model name auto/<selector>[/<class>] through the real door", () => {
   it("serves a provider selector with no class under the model the bare provider name selects", async () => {
     const door = await world();
     try {
-      await send(door, { model: "z", requestClass: "main", identity: "me" });
-      await send(door, { model: "auto/provider:z", requestClass: "main", identity: "me" });
+      await send(door, { model: "z", requestClass: "main", identity: "id-me" });
+      await send(door, { model: "auto/provider:z", requestClass: "main", identity: "id-me" });
       const [bare, selected] = door.upstream.seen.map((seen) => seen.model);
       expect(selected).toBe(bare);
     } finally {
@@ -73,8 +74,8 @@ describe("a model name auto/<selector>[/<class>] through the real door", () => {
   it("sends an account selector on the session's own login, with an exact model, to the Anthropic route and moves the context there", async () => {
     const door = await world();
     try {
-      await send(door, { model: "z/glm-9", requestClass: "main", identity: "me" });
-      await send(door, { model: "auto/pool:mine/claude-opus-5-5", requestClass: "main", identity: "me" });
+      await send(door, { model: "z/glm-9", requestClass: "main", identity: "id-me" });
+      await send(door, { model: "auto/pool:mine/claude-opus-5-5", requestClass: "main", identity: "id-me" });
       expect(door.anthropicModels).toEqual(["claude-opus-5-5"]);
       expect(door.contextNow()).toMatchObject({ kind: "anthropic", requestedModel: "auto/pool:mine/claude-opus-5-5" });
     } finally {
@@ -88,7 +89,7 @@ describe("a model name auto/<selector>[/<class>] through the real door", () => {
   ])("never forwards %j, an account selector on another login, and names the relaunch", async (name, next) => {
     const door = await world();
     try {
-      const answered = await send(door, { model: name, requestClass: "main", identity: "me" });
+      const answered = await send(door, { model: name, requestClass: "main", identity: "id-me" });
       expect(answered.status).toBe(HTTP_STATUS.badRequest);
       expect(answered.text).toContain(next);
       expect(door.upstream.seen).toEqual([]);
@@ -109,7 +110,7 @@ describe("a model name auto/<selector>[/<class>] through the real door", () => {
   ])("refuses %j with a 400 naming the cause, reaching nothing and moving no context", async (name, fragments) => {
     const door = await world();
     try {
-      const answered = await send(door, { model: name, requestClass: "main", identity: "me" });
+      const answered = await send(door, { model: name, requestClass: "main", identity: "id-me" });
       expect(answered.status).toBe(HTTP_STATUS.badRequest);
       for (const fragment of fragments) expect(answered.text).toContain(fragment);
       expect(door.upstream.seen).toEqual([]);
@@ -123,7 +124,7 @@ describe("a model name auto/<selector>[/<class>] through the real door", () => {
   it("routes a helper that names a selector by it, and leaves the context where it was", async () => {
     const door = await world();
     try {
-      expect((await send(door, { model: "auto/provider:z/opus", requestClass: "subagent", identity: "me" })).status).toBe(HTTP_STATUS.ok);
+      expect((await send(door, { model: "auto/provider:z/opus", requestClass: "subagent", identity: "id-me" })).status).toBe(HTTP_STATUS.ok);
       expect(door.upstream.seen.map((seen) => seen.model)).toEqual([Z_OPUS_MODEL]);
       expect(door.contextNow()).toBeUndefined();
     } finally {
@@ -137,9 +138,9 @@ describe("a model name auto/<selector>[/<class>] through the real door", () => {
   it.each(Object.entries(SENT))("sends the class %s on the Anthropic route as the id the session itself last sent for it, %s", async (tier, id) => {
     const door = await world();
     try {
-      await send(door, { model: `${id}[1m]`, requestClass: "auxiliary", identity: "me" });
+      await send(door, { model: `${id}[1m]`, requestClass: "auxiliary", identity: "id-me" });
       for (const name of [`auto/${tier}`, `auto/me/${tier}`, `auto/plain/${tier.toUpperCase()}`, `auto/pool:mine/${tier}`]) {
-        expect((await send(door, { model: name, requestClass: "main", identity: "me" })).status).toBe(HTTP_STATUS.badGateway);
+        expect((await send(door, { model: name, requestClass: "main", identity: "id-me" })).status).toBe(HTTP_STATUS.badGateway);
       }
       expect(door.anthropicModels).toEqual([`${id}[1m]`, id, id, id, id]);
       expect(door.contextNow()).toMatchObject({ kind: "anthropic", requestedModel: `auto/pool:mine/${tier}` });
@@ -151,11 +152,11 @@ describe("a model name auto/<selector>[/<class>] through the real door", () => {
   it("follows the id the session sends next for a tier, and never takes a bare tier alias as one", async () => {
     const door = await world();
     try {
-      await send(door, { model: "claude-opus-5-1", requestClass: "main", identity: "me" });
-      await send(door, { model: "opus", requestClass: "main", identity: "me" });
-      await send(door, { model: "auto/opus", requestClass: "main", identity: "me" });
-      await send(door, { model: "claude-opus-5-5", requestClass: "main", identity: "me" });
-      await send(door, { model: "auto/opus", requestClass: "main", identity: "me" });
+      await send(door, { model: "claude-opus-5-1", requestClass: "main", identity: "id-me" });
+      await send(door, { model: "opus", requestClass: "main", identity: "id-me" });
+      await send(door, { model: "auto/opus", requestClass: "main", identity: "id-me" });
+      await send(door, { model: "claude-opus-5-5", requestClass: "main", identity: "id-me" });
+      await send(door, { model: "auto/opus", requestClass: "main", identity: "id-me" });
       expect(door.anthropicModels).toEqual(["claude-opus-5-1", "opus", "claude-opus-5-1", "claude-opus-5-5", "claude-opus-5-5"]);
     } finally {
       await door.close();
@@ -165,8 +166,8 @@ describe("a model name auto/<selector>[/<class>] through the real door", () => {
   it("keeps one session's ids from another's", async () => {
     const door = await world();
     try {
-      await send(door, { model: "claude-sonnet-5-5", requestClass: "main", identity: "me", session: "s-2" });
-      const refused = await send(door, { model: "auto/sonnet", requestClass: "main", identity: "me" });
+      await send(door, { model: "claude-sonnet-5-5", requestClass: "main", identity: "id-me", session: "s-2" });
+      const refused = await send(door, { model: "auto/sonnet", requestClass: "main", identity: "id-me" });
       expect(refused.status).toBe(HTTP_STATUS.badRequest);
       expect(refused.text).toContain("no sonnet request");
     } finally {
@@ -177,8 +178,8 @@ describe("a model name auto/<selector>[/<class>] through the real door", () => {
   it("sends a class alone on the provider the session is on now under its tier mapping", async () => {
     const door = await world();
     try {
-      await send(door, { model: "z/start", requestClass: "main", identity: "me" });
-      expect((await send(door, { model: "auto/haiku", requestClass: "main", identity: "me" })).status).toBe(HTTP_STATUS.ok);
+      await send(door, { model: "z/start", requestClass: "main", identity: "id-me" });
+      expect((await send(door, { model: "auto/haiku", requestClass: "main", identity: "id-me" })).status).toBe(HTTP_STATUS.ok);
       expect(door.upstream.seen.map((seen) => seen.model)).toEqual(["start", Z_HAIKU_MODEL]);
       expect(door.contextNow()).toMatchObject({ kind: "provider", provider: "z", requestedModel: "auto/haiku" });
     } finally {
@@ -189,11 +190,11 @@ describe("a model name auto/<selector>[/<class>] through the real door", () => {
   it("passes a Messages body that names no model through unrenamed", async () => {
     const door = await world();
     try {
-      const answered = await send(door, { model: "", rawBody: JSON.stringify({ max_tokens: 1, messages: [] }), requestClass: "main", identity: "me", provider: "z" });
+      const answered = await send(door, { model: "", rawBody: JSON.stringify({ max_tokens: 1, messages: [] }), requestClass: "main", identity: "id-me", provider: "z" });
       expect(answered.status).toBe(HTTP_STATUS.ok);
       expect(door.upstream.seen.map((seen) => seen.model)).toEqual([undefined]);
       // A request the rename leaves alone keeps the usage log's name as the resolver read it.
-      await send(door, { model: "z/glm-9", requestClass: "main", identity: "me" });
+      await send(door, { model: "z/glm-9", requestClass: "main", identity: "id-me" });
       expect(door.records.at(-1)?.requestedModel).toBe("z/glm-9");
     } finally {
       await door.close();
@@ -203,7 +204,7 @@ describe("a model name auto/<selector>[/<class>] through the real door", () => {
   it("expands a selector in a session launched on a provider too", async () => {
     const door = await world();
     try {
-      expect((await send(door, { model: "auto/provider:z/haiku", requestClass: "main", identity: "me", provider: "m" })).status).toBe(HTTP_STATUS.ok);
+      expect((await send(door, { model: "auto/provider:z/haiku", requestClass: "main", identity: "id-me", provider: "m" })).status).toBe(HTTP_STATUS.ok);
       expect(door.upstream.seen.map((seen) => seen.model)).toEqual([Z_HAIKU_MODEL]);
     } finally {
       await door.close();

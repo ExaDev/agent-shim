@@ -317,7 +317,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       accountMoves: async (sessionId, to, model) => await requestAccountMove({ fs: realFarmFs, paths, runningAmong: realRunningAmong, idOf: (name) => identityIdOf(paths, name), now: () => Date.now() }, sessionId, to, model),
       ...(rcSelfHostSurface === undefined ? {} : { rcSelfHostRoute: rcSelfHostSurface.route }),
       ...(capture === undefined ? {} : { observeAnthropicPassthrough: (request: RoutedRequest) => { capture.routedForward(request); } }),
-      ...servedModelPorts(paths, log), ...doorRoutingState(paths, log), log, now: () => Date.now(), mainLoopRoutes: createMainLoopRouteRecord({ holdsLaunch: sessionRegistry.holdsLaunch, stored: launchRouteStore(realFarmFs, paths.frontdoorSessionsDir, log), log }),
+      ...servedModelPorts(paths, log), ...doorRoutingState(paths, log, os.homedir()), log, now: () => Date.now(), mainLoopRoutes: createMainLoopRouteRecord({ holdsLaunch: sessionRegistry.holdsLaunch, stored: launchRouteStore(realFarmFs, paths.frontdoorSessionsDir, log), log }),
     }),
     rcTracker,
     rcHub,
