@@ -265,3 +265,27 @@ export function routeOverridesRenamed(overrides: Readonly<RouteOverrides>, kind:
   }
   return { value: { ...overrides, ...(global === undefined ? {} : { global }), ...(providers === undefined ? {} : { providers }), ...(identities === undefined ? {} : { identities }), ...(sessions === undefined ? {} : { sessions }) }, changes };
 }
+
+/** One model name or class some covering scope overrides, as `check` and `model explain` report it: the entry that wins and the entries it outranks, each with its scope. */
+export interface ApplyingOverride {
+  readonly model: string;
+  readonly target: string;
+  readonly scope: string;
+  readonly outranks: readonly { readonly scope: string; readonly target: string }[];
+}
+
+/** A scope as a report names it: `global`, or `<kind>:<name>`. */
+export function scopeLabelOf(scope: RouteOverrideScope): string {
+  return scope.kind === "global" ? "global" : `${scope.kind}:${scope.name}`;
+}
+
+/**
+ * Every key the scopes covering `ids` hold, each with the entry that wins for a request naming it and the ones that entry outranks, sorted by key. A class key's request is matched by the class entries alone, and an exact key's by its exact entries and its class's, as the door matches them.
+ */
+export function applyingOverrides(overrides: Readonly<RouteOverrides>, ids: Readonly<OverrideScopeIds>): readonly ApplyingOverride[] {
+  const keys = new Set(scopesOf(ids).flatMap((scope) => Object.keys(tableOf(overrides, scope) ?? {})));
+  return [...keys].sort().flatMap((model) => {
+    const [winner, ...rest] = overrideMatches(overrides, ids, model);
+    return winner === undefined ? [] : [{ model, target: winner.target, scope: scopeLabelOf(winner.scope), outranks: rest.map((match) => ({ scope: scopeLabelOf(match.scope), target: match.target })) }];
+  });
+}
