@@ -32,7 +32,8 @@ export interface ParsedSelector {
 /** What a selector expanded to: the name the door routes it by, the kind the selector named, and the selector as parsed. */
 export interface SelectorExpansion {
   readonly name: string;
-  readonly kind: SelectorKind;
+  /** The kind the selector named, or `class` for a class alone (`auto/<class>`) on the session's current route. */
+  readonly kind: SelectorKind | "class";
   readonly selector: ParsedSelector;
 }
 
@@ -101,6 +102,10 @@ export interface SelectorPorts {
   readonly family: (key: string) => boolean;
   /** Whether `identity` holds the login the session runs on (the same identity, or another holding the same account in the same organisation). */
   readonly sameLogin: (identity: string, sessionIdentity: string) => boolean;
+  /** The Claude model id the session last sent for a tier, as its own Claude Code resolved the tier: what a class is sent as on the Anthropic route. Undefined until the session has sent one. */
+  readonly claudeNameOf: (tier: ClaudeTier) => string | undefined;
+  /** The provider the session's main loop is on now (its launch's own, else the one its route context records), or undefined on the Anthropic route: where a class alone (`auto/<class>`) goes. */
+  readonly routeProvider: () => string | undefined;
 }
 
 /** One lookup of `name` in `kind`'s namespace. */
@@ -130,13 +135,20 @@ function candidatesFor(ports: Readonly<SelectorPorts>, selector: Readonly<Parsed
   return selector.kind === undefined ? SELECTOR_KINDS.filter((kind) => lookUp(ports, kind, selector.name).kind !== "absent") : [selector.kind];
 }
 
-/** A target on the Anthropic route of the session's own login: an exact model goes there by name; a class is refused, since the door has no source for the model a tier names there (Claude Code resolves a tier itself), and `/model <class>` already chooses it. */
-function onAnthropic(target: SelectorTarget, what: string, asked: string, written: string): { readonly name: string } | SelectorRefusal {
+/**
+ * A target on the Anthropic route of the session's own login: an exact model goes there by name, and a class as the model id the session's own Claude Code last sent for that tier (`/model <class>` sends the same id), which the door has seen on one of the session's requests. A class the session has sent no request for yet is refused, naming `/model <class>`, which resolves it in Claude Code; no table in agent-shim names the current id of a tier.
+ */
+function onAnthropic(ports: Readonly<SelectorPorts>, target: SelectorTarget, what: string, asked: string, written: string): { readonly name: string } | SelectorRefusal {
   if (target.kind === "model") {
     return { name: `anthropic/${target.model}` };
   }
-  const next = target.kind === "class" ? `choose the class with /model ${target.tier}` : "choose the model with /model <class>";
-  return { refusal: `${asked} selects ${what}, which runs on the Anthropic route, where the door cannot name the model a class means: ${next}, or name an exact model as ${written}/<model>` };
+  if (target.kind === "class") {
+    const seen = ports.claudeNameOf(target.tier);
+    return seen === undefined
+      ? { refusal: `${asked} selects ${what}, which runs on the Anthropic route, and this session has sent no ${target.tier} request the door has seen, so it cannot tell which model the class means there: choose it once with /model ${target.tier}, or name an exact model as ${written}/<model>` }
+      : { name: `anthropic/${seen}` };
+  }
+  return { refusal: `${asked} selects ${what}, which runs on the Anthropic route, where a selector needs a class or an exact model: write ${written}/<class> or ${written}/<model>` };
 }
 
 /** An identity selected (by name or by a pool's pick): the provider it declares, the session's own login, or another login, which only a relaunch can serve. */
@@ -152,9 +164,7 @@ function expandIdentity(ports: Readonly<SelectorPorts>, identity: string, target
     return ports.providerTarget(found.value.provider, target);
   }
   if (session.identity !== undefined && ports.sameLogin(identity, session.identity)) {
-    return target.kind === "model"
-      ? { name: `anthropic/${target.model}` }
-      : { refusal: `${asked} ${via}identity "${identity}", the login this session already runs on: ${target.kind === "class" ? `choose the class with /model ${target.tier}` : "choose the model with /model <class>"}, or name an exact model as ${SELECTOR_PREFIX}${identity}/<model>` };
+    return onAnthropic(ports, target, `identity "${identity}", the login this session already runs on`, asked, `${SELECTOR_PREFIX}${identity}`);
   }
   if (target.kind === "none") {
     return { refusal: `${asked} ${via}identity "${identity}", another login, which only a relaunch under it can serve: name the class or model to resume with, as ${SELECTOR_PREFIX}${identity}/<class>` };
@@ -187,7 +197,7 @@ function expandKind(ports: Readonly<SelectorPorts>, kind: SelectorKind, selector
       return absent(kind, name, asked);
     }
     const { provider } = profile.value;
-    return provider === undefined ? onAnthropic(target, `the configuration profile "${name}"`, asked, `${SELECTOR_PREFIX}${selector.kind === undefined ? "" : `${selector.kind}:`}${name}`) : ports.providerTarget(provider, target);
+    return provider === undefined ? onAnthropic(ports, target, `the configuration profile "${name}"`, asked, `${SELECTOR_PREFIX}${selector.kind === undefined ? "" : `${selector.kind}:`}${name}`) : ports.providerTarget(provider, target);
   }
   const refused = unusable(lookUp(ports, kind, name), kind, name, asked);
   if (refused !== undefined) {
@@ -218,6 +228,14 @@ export function expandSelectorName(model: string, ports: Readonly<SelectorPorts>
   const asked = JSON.stringify(withoutContextMarker(model));
   const candidates = candidatesFor(ports, selector);
   const only = candidates[0];
+  // A class alone (`auto/sonnet`) is that class on the route the session is on now, when the word names nothing else.
+  const alone = selector.kind === undefined && selector.target.kind === "none" ? CLAUDE_TIERS.find((tier) => tier === selector.name.toLowerCase()) : undefined;
+  if (alone !== undefined && only === undefined) {
+    const provider = ports.routeProvider();
+    const target: SelectorTarget = { kind: "class", tier: alone };
+    const routed = provider === undefined ? onAnthropic(ports, target, `the ${alone} class of the Anthropic route this session is on`, asked, SELECTOR_PREFIX.slice(0, -1)) : ports.providerTarget(provider, target);
+    return "refusal" in routed ? routed : { name: routed.name, kind: "class", selector };
+  }
   if (only === undefined) {
     return { refusal: `${asked} names nothing: no configuration profile, identity, pool, provider or model family is called ${JSON.stringify(selector.name)}` };
   }
@@ -225,6 +243,9 @@ export function expandSelectorName(model: string, ports: Readonly<SelectorPorts>
     const named = candidates.map((kind) => `a ${KIND_NOUNS[kind]}`).join(", ");
     const spellings = candidates.map((kind) => spelling(kind, selector.name, restOf(selector.target))).join(", ");
     return { refusal: `${JSON.stringify(selector.name)} is ambiguous: it names ${named}; say which with ${spellings}` };
+  }
+  if (alone !== undefined) {
+    return { refusal: `${JSON.stringify(selector.name)} is ambiguous: it names a ${KIND_NOUNS[only]} and the ${alone} class of the session's route; say which with ${spelling(only, selector.name, undefined)}, or choose the class with /model ${alone}` };
   }
   const expanded = expandKind(ports, only, selector, session, asked);
   return "refusal" in expanded ? expanded : { name: expanded.name, kind: only, selector };

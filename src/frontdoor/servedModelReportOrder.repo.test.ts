@@ -122,8 +122,11 @@ describe("what a main-loop request records, for every way it can reach an http p
 });
 
 /**
- * The places `followingMainLoop` uses its `deps` other than as `deps.<member>`: any identifier `deps` whose parent is not a property access (or a string-literal element access) on it, which is a copy, an alias, a spread, a destructuring or a call that hands `deps` on, and any use of `deps.record` other than `.routeOf` and `.begin`, outside the one top-level `recordServing`. Read from the syntax tree, so a spelling a text search would miss is a finding too. `recordServing` counts only as the variable declared in the body of `followingMainLoop` itself, never one nested in another function.
+ * The places `followingMainLoop` uses its `deps` other than as `deps.<member>`: any identifier `deps` whose parent is not a property access (or a string-literal element access) on it, which is a copy, an alias, a spread, a destructuring or a call that hands `deps` on, and any use of `deps.record` other than `.routeOf`, `.begin` and the per-launch note of Claude ids (`.noteClaudeName`, `.claudeNameOf`, which hold no route context), outside the one top-level `recordServing`. Read from the syntax tree, so a spelling a text search would miss is a finding too. `recordServing` counts only as the variable declared in the body of `followingMainLoop` itself, never one nested in another function.
  */
+/** The members of `deps.record` any part of `followingMainLoop` may use: reads of the context and the note of Claude ids, none of which records where a request was served. */
+const RECORD_MEMBERS_ALLOWED: ReadonlySet<string> = new Set(["routeOf", "begin", "noteClaudeName", "claudeNameOf"]);
+
 function depsUsesOutsideRecordServing(sourceText: string): readonly string[] {
   const file = ts.createSourceFile("mainLoopRoute.ts", sourceText, ts.ScriptTarget.Latest, true);
   const found: string[] = [];
@@ -144,7 +147,7 @@ function depsUsesOutsideRecordServing(sourceText: string): readonly string[] {
         found.push(parent.getText(file));
       } else if (member === "record") {
         const use = parent.parent;
-        const readsAllowed = (ts.isPropertyAccessExpression(use) || ts.isElementAccessExpression(use)) && use.expression === parent && (memberName(use) === "routeOf" || memberName(use) === "begin");
+        const readsAllowed = (ts.isPropertyAccessExpression(use) || ts.isElementAccessExpression(use)) && use.expression === parent && RECORD_MEMBERS_ALLOWED.has(memberName(use) ?? "");
         if (!readsAllowed) found.push(use.getText(file));
       }
     }
@@ -186,7 +189,11 @@ describe("the one place a main-loop request's context is recorded", () => {
     expect(depsUsesOutsideRecordServing(nested).length).toBeGreaterThan(0);
   });
 
-  it("leaves routeOf and begin, the other members of deps and the top-level recordServing alone", () => {
-    expect(depsUsesOutsideRecordServing(around("const current = deps.record.routeOf(launch);\n    const ticket = deps.record.begin(launch);\n    const login = deps.loginOf(session);"))).toEqual([]);
+  it("leaves routeOf, begin, the note of Claude ids, the other members of deps and the top-level recordServing alone", () => {
+    expect(depsUsesOutsideRecordServing(around("const current = deps.record.routeOf(launch);\n    const ticket = deps.record.begin(launch);\n    deps.record.noteClaudeName(launch, model);\n    const id = deps.record.claudeNameOf(launch, tier);\n    const login = deps.loginOf(session);"))).toEqual([]);
+  });
+
+  it("still finds the record written beside an allowed member", () => {
+    expect(depsUsesOutsideRecordServing(around("deps.record.noteClaudeName(launch, model);\n    deps.record.record(launch, context);"))).toHaveLength(1);
   });
 });

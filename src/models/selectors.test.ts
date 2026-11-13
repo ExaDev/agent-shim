@@ -129,6 +129,9 @@ function ports(overrides: Partial<SelectorPorts> = {}): SelectorPorts {
     },
     family: (key) => key === "glm-5-1" || key === "both",
     sameLogin: (identity, sessionIdentity) => sessionIdentity === "me" && (identity === "me" || identity === "twin"),
+    // The session has sent a sonnet and an opus id on the Anthropic route, and no haiku or fable one.
+    claudeNameOf: (tier) => (tier === "sonnet" ? "claude-sonnet-5-5" : tier === "opus" ? "claude-opus-5-5" : undefined),
+    routeProvider: () => undefined,
     ...overrides,
   };
 }
@@ -163,6 +166,11 @@ describe("expanding a selector against live state", () => {
     ["auto/pool:mine/claude-haiku-5-5", "anthropic/claude-haiku-5-5"],
     ["auto/zpool", "z/glm-4.7"],
     ["auto/z/sonnet[1m]", "z/glm-4.7"],
+    ["auto/plain/sonnet", "anthropic/claude-sonnet-5-5"],
+    ["auto/me/opus", "anthropic/claude-opus-5-5"],
+    ["auto/pool:mine/sonnet", "anthropic/claude-sonnet-5-5"],
+    ["auto/sonnet", "anthropic/claude-sonnet-5-5"],
+    ["auto/Opus", "anthropic/claude-opus-5-5"],
   ])("expands %j to %j", (name, expected) => {
     expect(expanded(name)).toBe(expected);
   });
@@ -171,9 +179,9 @@ describe("expanding a selector against live state", () => {
     ["auto/nothing", ["no configuration profile, identity, pool, provider or model family is called \"nothing\""]],
     ["auto/both/sonnet", ["\"both\" is ambiguous", "configuration profile", "pool", "provider", "model family", "auto/pool:both/sonnet", "auto/provider:both/sonnet", "auto/profile:both/sonnet", "auto/family:both/sonnet"]],
     ["auto/glm-5-1/sonnet", ["model family", "takes no class or model"]],
-    ["auto/plain/sonnet", ["Anthropic route", "/model sonnet"]],
+    ["auto/plain/haiku", ["Anthropic route", "no haiku request", "/model haiku"]],
     ["auto/plain", ["Anthropic route", "exact model"]],
-    ["auto/me/sonnet", ["already runs on", "/model sonnet"]],
+    ["auto/me/fable", ["no fable request", "/model fable"]],
     ["auto/work", ["another login", "auto/work/<class>"]],
     ["auto/spent/sonnet", ["every member of pool \"spent\" is refused"]],
     ["auto/broken", ["is invalid: bad"]],
@@ -193,6 +201,17 @@ describe("expanding a selector against live state", () => {
 
   it("offers each kind's spelling with no trailing part when the selector names no class", () => {
     expect(expanded("auto/both")).toBe('refused: "both" is ambiguous: it names a configuration profile, a pool, a provider, a model family; say which with auto/profile:both, auto/pool:both, auto/provider:both, auto/family:both');
+  });
+
+  it.each<[string, string]>([["auto/sonnet", "z/glm-4.7"], ["auto/opus", "z/opus"]])("expands a class alone, %j, on the provider the session is on now, to %j", (name, expected) => {
+    expect(expanded(name, ME, ports({ routeProvider: () => "z" }))).toBe(expected);
+  });
+
+  it("refuses a class alone that also names something, offering the class through /model", () => {
+    const result = expanded("auto/sonnet", ME, ports({ profile: (name) => (name === "sonnet" ? { kind: "found", value: { provider: "z" } } : { kind: "absent" }) }));
+    expect(result).toContain('"sonnet" is ambiguous');
+    expect(result).toContain("auto/profile:sonnet");
+    expect(result).toContain("/model sonnet");
   });
 
   it("treats a session with no identity as never on the selected login", () => {
