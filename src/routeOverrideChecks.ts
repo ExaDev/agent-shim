@@ -124,7 +124,17 @@ export function routeOverrideFindings(overrides: Readonly<RouteOverrides>, names
     const entries = entriesOf(overrides, scope);
     // The scopes a request covered by this one is also covered by, so a chain is followed as the door would have looked each name up.
     const ids = scope.kind === "global" ? {} : scope.kind === "session" ? { sessionId: scope.name } : scope.kind === "identity" ? { identity: scope.name } : { provider: scope.name };
+    const seenKeys = new Set<string>();
     for (const [key, target] of entries) {
+      if (key !== key.toLowerCase()) {
+        findings.push({ severity: "fail", message: `Route overrides: ${label} has the key ${JSON.stringify(key)}, which is not written in lower case as \`route set\` writes keys. Write it as ${JSON.stringify(key.toLowerCase())}${entries.some(([other]) => other !== key && other.toLowerCase() === key.toLowerCase()) ? "; the table also has another key differing only in case, so the front door refuses the file until one is removed" : ""}.` });
+        seenKeys.add(key.toLowerCase());
+        continue;
+      }
+      if (seenKeys.has(key)) {
+        continue;
+      }
+      seenKeys.add(key);
       if (!isOverrideKey(key)) {
         findings.push({ severity: "fail", message: `Route overrides: ${label} has the key ${JSON.stringify(key)}, which is no bare Claude name or class, so no request is ever routed by it.` });
         continue;

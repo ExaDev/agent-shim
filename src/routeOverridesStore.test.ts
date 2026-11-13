@@ -256,3 +256,25 @@ describe("the one writer of the overrides file", () => {
     expect(nodeFs.readFileSync(path.join(__dirname, "identityRenameSteps.ts"), "utf8")).toContain("jsonRewriteStep(paths, ports, paths.routeOverridesFile, RouteOverridesSchema,");
   });
 });
+
+describe("a key in any case is the lower-case key", () => {
+  it("stores a key as its lower-case spelling", () => {
+    expect(withRouteOverride(NO_ROUTE_OVERRIDES, { kind: "global" }, "OPUS", "z/a")).toEqual({ schemaVersion: 1, global: { opus: "z/a" } });
+    expect(withRouteOverride(NO_ROUTE_OVERRIDES, { kind: "global" }, "Claude-Opus-5-5", "z/a")).toEqual({ schemaVersion: 1, global: { "claude-opus-5-5": "z/a" } });
+  });
+
+  it("removes an entry a hand edit wrote in another case by its lower-case spelling", () => {
+    expect(withRouteOverride({ schemaVersion: 1, global: { OPUS: "z/a", haiku: "z/h" } }, { kind: "global" }, "opus", undefined)).toEqual({ schemaVersion: 1, global: { haiku: "z/h" } });
+  });
+
+  it("refuses a file with two keys of one table that differ only in case, since which was meant cannot be told", () => {
+    const read = createRouteOverridesReader({ fileRevision: () => "r1", readFileUtf8: () => JSON.stringify({ schemaVersion: 1, global: { opus: "z/a", OPUS: "z/b" } }) }, FILE, () => undefined)();
+    expect("fault" in read ? read.fault : "").toContain("differ only in case");
+  });
+
+  it("matches a key a hand edit wrote in another case, as the reader reads it", () => {
+    const read = createRouteOverridesReader({ fileRevision: () => "r1", readFileUtf8: () => JSON.stringify({ schemaVersion: 1, global: { OPUS: "z/a" }, identities: { work: { "CLAUDE-HAIKU-5-5": "z/h" } } }) }, FILE, () => undefined)();
+    expect("table" in read ? overrideFor(read.table, { identity: "work" }, "claude-opus-5-5")?.target : undefined).toBe("z/a");
+    expect("table" in read ? overrideFor(read.table, { identity: "work" }, "Claude-Haiku-5-5")?.target : undefined).toBe("z/h");
+  });
+});

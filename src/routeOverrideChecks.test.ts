@@ -53,6 +53,11 @@ describe("the route overrides check", () => {
     expect(findings.join("\n")).toContain('no provider "gone"');
   });
 
+  it("fails a key not written in lower case, and two keys that differ only in case", () => {
+    expect(over({ schemaVersion: 1, global: { OPUS: "z/glm" } })).toEqual([expect.stringMatching(/^fail: .*"OPUS".*lower case/)]);
+    expect(over({ schemaVersion: 1, global: { opus: "z/a", Opus: "z/b" } }).filter((line) => line.startsWith("fail: "))).toHaveLength(1);
+  });
+
   it("warns of a chain, which the door does not follow, and fails a cycle", () => {
     const chain = over({ schemaVersion: 1, global: { opus: "claude-sonnet-5-5", sonnet: "z/glm" } });
     expect(chain).toEqual([expect.stringMatching(/^warn: .*opus -> sonnet/)]);
