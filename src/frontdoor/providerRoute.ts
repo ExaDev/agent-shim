@@ -30,7 +30,7 @@ import type { TargetObservation } from "../selection/signals";
 import type { UsageSnapshot } from "../usage/schema";
 import { PROVIDER_PATH_PREFIX, directOrigin, parseProviderPath, type FrontDoorRoute, type ModelChoice, type RoutedRequest } from "./route";
 import { AMBIGUOUS_MODEL_MESSAGE } from "./topLevelModel";
-import { AUTO_MODEL, reservedProviderNameReason } from "../models/reservedModelNames";
+import { isAutoModel, reservedProviderNameReason } from "../models/reservedModelNames";
 import { followingMainLoop, withModel, type MappedModel, type MainLoopRouteRecord } from "./mainLoopRoute";
 import { TIER_ENV_VARIABLES, claudeNameTier } from "../models/tiers";
 import { scanRequestHead, type RequestScan } from "./requestScan";
@@ -407,7 +407,7 @@ export function createProviderRouteResolver(deps: {
     if (catalogue?.fault !== undefined) {
       return { refusal: `provider "${name}" has no default model: its stored catalogue cannot be read (${catalogue.fault}); fix the file's permissions or run \`agent-shim provider models ${name} --refresh\`` };
     }
-    const model = mainTier ?? catalogue?.models.find((entry) => entry.id !== AUTO_MODEL)?.id;
+    const model = mainTier ?? catalogue?.models.find((entry) => !isAutoModel(entry.id))?.id;
     return model === undefined ? { refusal: `provider "${name}" has no default model: give its env ${TIER_MODEL_ENV_VARIABLES[0]}, or opt it into a catalogue with \`agent-shim provider set ${name} --catalogue-tier <tier>\`, or name a model as ${name}/<model> (${name}/auto is the model its server serves)` } : { model };
   };
   /** What a bare provider name selects: the provider's default model, a refusal when its file is invalid or it has no default, or `undefined` when no provider file has that name. */
