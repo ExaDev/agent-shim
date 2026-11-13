@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { AgentNodeFields, SessionAgentTreeSchema, type AgentNode, type SessionAgentTree } from "./schema";
+import { ownEntry } from "../ownEntry";
 
 /**
  * The live half of the agent tree: what a Remote Control session's read stream says about its background tasks and subagents (`task_started`, `task_progress`, `task_updated`, `task_notification`, `background_tasks_changed`), and the merge of that with the tree read from disk. The event shapes are documented in `docs/rc-agent-events.md`. The stream exists only for sessions the door observes and only while they are live, so it is never the sole source: the disk tree is authoritative for every session and for completed content, and the stream supplies state the transcript has not flushed yet.
@@ -57,17 +58,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function stringField(record: Record<string, unknown>, field: string): string | undefined {
-  const value = record[field];
+  const value = ownEntry(record, field);
   return typeof value === "string" && value !== "" ? value : undefined;
 }
 
 function numberField(record: Record<string, unknown>, field: string): number | undefined {
-  const value = record[field];
+  const value = ownEntry(record, field);
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function booleanField(record: Record<string, unknown>, field: string): boolean | undefined {
-  const value = record[field];
+  const value = ownEntry(record, field);
   return typeof value === "boolean" ? value : undefined;
 }
 

@@ -13,6 +13,7 @@ import { listProviderNames, loadProvider } from "../providersStore";
 import { catalogueReadFault } from "../storedCatalogue";
 import type { SelectorTarget } from "../models/selectors";
 import type { MappedModel } from "./mainLoopRoute";
+import { ownEntry } from "../ownEntry";
 
 /**
  * Whether `model` is one of the models a provider serves itself, from the lists of its served models in the order they are asked: its `env` first (a lookup by revision, no listing), then the wider ones (the targets of every provider, or the provider's own rows with its catalogue), which are asked only when the earlier ones did not say. The one test of what a provider serves, shared by the resolver and by the tier mapping of a Claude name. A model compares without its context-window marker, on either side.
@@ -160,7 +161,7 @@ export function createProviderReads(deps: Readonly<ProviderReadsDeps>): Provider
     if (isRouterProvider(definition)) {
       return { refusal: `provider "${name}" is a router and has no default model of its own: name a model, as ${name}/<model>` };
     }
-    const mainTier = DEFAULT_MODEL_VARIABLES.map((variable) => definition.env?.[variable]).find((value) => value !== undefined && value !== "");
+    const mainTier = DEFAULT_MODEL_VARIABLES.map((variable) => ownEntry(definition.env, variable)).find((value) => value !== undefined && value !== "");
     const catalogue = mainTier === undefined ? catalogueModels(name, definition) : undefined;
     if (catalogue?.fault !== undefined) {
       return { refusal: `provider "${name}" has no default model: its stored catalogue cannot be read (${catalogue.fault}); fix the file's permissions or run \`agent-shim provider models ${name} --refresh\`` };
@@ -196,7 +197,7 @@ export function createProviderReads(deps: Readonly<ProviderReadsDeps>): Provider
       return { model: asIs, credential };
     }
     if (isHttpProvider(definition)) {
-      const model = definition.env?.[TIER_ENV_VARIABLES[tier]];
+      const model = ownEntry(definition.env, TIER_ENV_VARIABLES[tier]);
       // The variable may carry the `[1m]` context marker Claude Code reads, which is no part of the model's name.
       if (model !== undefined && model !== "") {
         return { model: { kind: "mapped", model: withoutContextMarker(model) }, credential };

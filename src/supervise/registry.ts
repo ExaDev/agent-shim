@@ -5,6 +5,7 @@ import type { FarmFs } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
 import type { UsageRecord } from "../usage/schema";
 import type { TranscriptFollower } from "./transcriptFollower";
+import { ownEntry } from "../ownEntry";
 
 /** The filesystem operations the registry needs. */
 export type RegistryFs = Pick<FarmFs, "mkdirPrivate" | "writeFilePrivate" | "removeRecursive" | "readdir" | "readFileUtf8">;
@@ -197,7 +198,7 @@ export function committedContextTokens(sessions: readonly SupervisedSession[], r
     // The registry and the door's usage records both key the member by its id.
     const written = records.some((record) => record.sessionId === session.sessionId && record.identity === session.identity && Date.parse(record.at) >= sinceMs);
     if (!written) {
-      committed[session.identity] = (committed[session.identity] ?? 0) + session.carriedTokens;
+      committed[session.identity] = (ownEntry(committed, session.identity) ?? 0) + session.carriedTokens;
     }
   }
   return committed;

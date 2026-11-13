@@ -1,4 +1,5 @@
 import type { IncomingHttpHeaders } from "node:http";
+import { ownEntry } from "./ownEntry";
 
 /**
  * Everything agent-shim still honours from its former name, `claude-use`, so an installation, a committed project config or an exported environment written for the old name keeps working. Nothing here is consulted when the current name's equivalent is present: a current name always wins, and the legacy form is only a fallback that `agent-shim doctor` reports so it can be retired.
@@ -35,9 +36,9 @@ export function aliasLegacyEnv(env: NodeJS.ProcessEnv): string[] {
     if (!name.startsWith(LEGACY_ENV_PREFIX)) {
       continue;
     }
-    const value = env[name];
+    const value = ownEntry(env, name);
     const current = `${ENV_PREFIX}${name.slice(LEGACY_ENV_PREFIX.length)}`;
-    if (value === undefined || env[current] !== undefined) {
+    if (value === undefined || ownEntry(env, current) !== undefined) {
       continue;
     }
     env[current] = value;

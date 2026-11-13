@@ -20,6 +20,7 @@ import type { AccountMetadata, LimitEvent, ProviderQuota, QuotaWindow, RateLimit
 import { createRealAnthropicUsageRefresher } from "./realAnthropicUsageProbe";
 import { createRealQuotaRefresher } from "./realQuotaRefresher";
 import { createUsageStore, USAGE_RETENTION_MS } from "./store";
+import { ownEntry } from "../ownEntry";
 
 const DAY_MS = 86_400_000;
 
@@ -144,7 +145,7 @@ function formatQuota(quota: ProviderQuota): string[] {
 
 /** The latest-state lines for one identity's provider. */
 function snapshotLines(snapshot: UsageSnapshot | undefined, provider: string): string[] {
-  const state = snapshot?.providers[provider];
+  const state = ownEntry(snapshot?.providers, provider);
   if (state === undefined) {
     return [];
   }

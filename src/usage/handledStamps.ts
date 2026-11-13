@@ -55,7 +55,7 @@ export function stampsWithKeyRenamed(raw: string, from: string, to: string): str
     return undefined;
   }
   const result = StampsFileSchema.safeParse(parsed);
-  if (!result.success || !(from in result.data.handled)) {
+  if (!result.success || !(Object.hasOwn(result.data.handled, from))) {
     return undefined;
   }
   const next: StampsFile = { ...result.data, handled: Object.fromEntries(Object.entries(result.data.handled).filter(([key]) => key !== to).map(([key, at]) => [key === from ? to : key, at])) };

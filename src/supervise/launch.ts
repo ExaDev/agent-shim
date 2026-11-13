@@ -32,6 +32,7 @@ import { stopHooksFinished } from "./stopSummary";
 import { stageSupervisedSettings } from "./settings";
 import { supervise, type CompactionDeps } from "./supervise";
 import { watchSessionFiles } from "./watchSession";
+import { ownEntry } from "../ownEntry";
 
 /**
  * Whether a launch on `pool` is run under the supervisor: the pool resumes on a spent quota and the arguments start a session. A claude subcommand (`plugin install`, `auth status`) starts none, so there is no conversation to move to another member and the supervisor's `--session-id` would be rejected as an unknown option.
@@ -92,7 +93,7 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
   const lifecycle = createLifecycleRecorder({ fs: realFarmFs, logsDir: paths.logsDir, fileId: randomUUID(), sessionId: first.sessionId, supervisorPid: farm.lock.pid, supervisorVersion: packageJson.version, entrypointSha256AtStart, now: farm.now, log });
   // The hooks also identify the current conversation after /clear, which moves need even when the pool does not compact.
   let compaction: CompactionDeps | undefined;
-  const policy = params.pools[pool];
+  const policy = ownEntry(params.pools, pool);
   const markSettings = markHooksSettings(selfInvocation([]), paths.root, pool, first.sessionId);
   const settingsArgs = [...params.extraFlags, ...params.passthrough];
   const settings = hasSettingsArgument(settingsArgs) ? combineCallerSettings(settingsArgs, markSettings, (name) => farm.fs.readFileUtf8(path.resolve(farm.cwd, name))) : undefined;

@@ -1,6 +1,7 @@
 import { antigravityFamilyBuckets, selectAntigravityBuckets, type AntigravityQuotaBucket, type AntigravityQuotaMap } from "../antigravity/quota";
 import type { AccountMetadata, QuotaWindow, UsageRecord, UsageSnapshot } from "../usage/schema";
 import type { HeadroomStats } from "./headroom";
+import { ownEntry } from "../ownEntry";
 
 /**
  * The record of `sessionId`'s latest main-loop request: the one that says where the session's own loop is, and so what the statusline draws. A helper's record (a hook judge, a title, a compaction, a subagent) is passed over, because its model is a mapping to what the main loop is on and drawn as the session's choice it would show a Claude haiku name served by a provider the person never typed. A record with no class (a launch whose child was not asked for one) counts as main, as the door treats such a request.
@@ -264,7 +265,7 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
   let scopedName: string | undefined;
   if (params.snapshot !== undefined) {
     scopedName = routedProvider === undefined ? providerScopedState(params.snapshot, params.providerName, params.env.AGENT_SHIM_PROVIDER) : providerScopedState(params.snapshot, routedProvider, routedProvider);
-    const scopedState = scopedName === undefined ? undefined : params.snapshot.providers[scopedName];
+    const scopedState = scopedName === undefined ? undefined : ownEntry(params.snapshot.providers, scopedName);
     // A session that selected a provider or is routed to one spends that provider's quota alone: when its state is not in the snapshot yet there are no windows to show, never another provider's (an exhausted login week was drawn as a z.ai session's usage). Only a session with no provider shows the binding windows across every provider the identity has used.
     const states = summary.provider === undefined && routedProvider === undefined && scopedState === undefined ? Object.values(params.snapshot.providers) : scopedState === undefined ? [] : [scopedState];
     let email: string | undefined;
@@ -358,7 +359,7 @@ function prefixBeforeSlash(value: string | undefined): string | undefined {
 
 /** The snapshot's provider entry for the session's launch-selected provider. The snapshot keys providers by their registered name; the launch environment carries only the display name, which can differ (`z` against `z.ai`), so the registered name resolved from the provider store wins and the display name is matched case-insensitively only as a fallback. */
 function providerScopedState(snapshot: UsageSnapshot, providerName: string | undefined, providerDisplayName: string | undefined): string | undefined {
-  if (providerName !== undefined && providerName in snapshot.providers) {
+  if (providerName !== undefined && Object.hasOwn(snapshot.providers, providerName)) {
     return providerName;
   }
   if (providerDisplayName === undefined || providerDisplayName === "") {

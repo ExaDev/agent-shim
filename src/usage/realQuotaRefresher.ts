@@ -4,6 +4,7 @@ import { createProviderLookup, createQuotaRefresher, type QuotaRefresher } from 
 import { realQuotaHttpGet } from "./quotaHttp";
 import { readUsageSnapshot, UsageSnapshotError } from "./read";
 import type { UsageStore } from "./store";
+import { ownEntry } from "../ownEntry";
 
 /** The refresher wired to the real filesystem, credential sources and network: what the front door and `agent-shim usage --refresh` both run, so a manual refresh and an automatic one authenticate and record identically. */
 export function createRealQuotaRefresher(params: { readonly paths: LayoutPaths; readonly store: UsageStore; readonly log: (line: string) => void }): QuotaRefresher {
@@ -13,7 +14,7 @@ export function createRealQuotaRefresher(params: { readonly paths: LayoutPaths; 
     http: realQuotaHttpGet,
     readQuota: (identity, provider) => {
       try {
-        return readUsageSnapshot(realFarmFs, paths.usageSnapshotsDir, identity)?.providers[provider]?.quota;
+        return ownEntry(readUsageSnapshot(realFarmFs, paths.usageSnapshotsDir, identity)?.providers, provider)?.quota;
       } catch (error) {
         if (error instanceof UsageSnapshotError) {
           return undefined;

@@ -9,6 +9,7 @@ import { quotaFactsOf } from "./quotaFacts";
 import { FIVE_HOUR_WINDOW_MS, SEVEN_DAY_WINDOW_MS } from "./windowLengths";
 import { parseUnifiedRateLimit, soleOverageWindow } from "./rateLimit";
 import type { AccountMetadata, ProviderUsageState, UsageRecord, UsageSnapshot } from "./schema";
+import { ownEntry } from "../ownEntry";
 
 /**
  * Ranks the members of a pool for a launch, from what the usage store recorded. Pure: snapshots, account metadata, log records and the clock all come in as values, so the launcher, `agent-shim pool pick` and the tests share one ranking.
@@ -284,7 +285,7 @@ function assessMember(member: PoolMember, nowMs: number): Assessment {
 
 /** The slice of the member's snapshot its launch spends: the provider's when the launch routes through one, the Claude account's (`anthropic`) otherwise. */
 function sliceOf(member: PoolMember): ProviderUsageState | undefined {
-  return member.snapshot?.providers[member.provider ?? ANTHROPIC_PROVIDER];
+  return ownEntry(member.snapshot?.providers, member.provider ?? ANTHROPIC_PROVIDER);
 }
 
 /** A member whose launch routes through a provider and whose slice for it reports no plan window to rank on: refused while the refusal its provider last answered with still binds, then billed by use when the level its provider reported says so, and otherwise unknown, since another provider's windows (the Claude account's included) say nothing about it. */
@@ -488,7 +489,7 @@ export function rankPool(input: RankPoolInput): PoolRanking {
     const warmHere = sticky?.identity === candidate.identity && nowMs - Date.parse(sticky.at) <= PROMPT_CACHE_TTL_MS;
     const resumeTokens = input.resumeContextTokens;
     if (input.resuming && resumeTokens !== undefined && !warmHere) {
-      const committed = input.committedContextTokens?.[candidate.identity] ?? 0;
+      const committed = ownEntry(input.committedContextTokens, candidate.identity) ?? 0;
       const alongside = committed === 0 ? "" : ` (with ${String(committed)} tokens of other conversations already moving here)`;
       for (const [name, label, window] of [["fiveHour", "5h", fiveHour], ["sevenDay", "7d", sevenDay]] as const) {
         const perToken = window === undefined ? undefined : utilisationPerBilledToken(assessment.member.records, name);

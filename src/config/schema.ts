@@ -8,6 +8,7 @@ import { PredicateNodeSchema } from "trilean";
 
 import { namesAModel } from "../models/identity";
 import { NUMERIC_DOTTED_VERSION_RE } from "../versionDiscovery";
+import { ownEntry } from "../ownEntry";
 
 /**
  * Every category a `~/.claude` entry can be classified into. `secret` is deliberately part of this list — it is a real classification the resolver acts on — but it is NOT part of `CategoryMapSchema`'s shape, because no configuration layer may ever toggle it. See OVERRIDABLE_CATEGORIES.
@@ -251,7 +252,10 @@ const ProviderEnvSchema = z
   .refine((env) => !Object.keys(env).some((key) => RESERVED_PROVIDER_ENV_KEYS.includes(key)), {
     message: `env may not set ${RESERVED_PROVIDER_ENV_KEYS.join(", ")}: the credential block's target sets one and agent-shim removes the others`,
   })
-  .refine((env) => !MODEL_ENV_VARIABLES.some((key) => env[key] !== undefined && env[key] !== "" && !namesAModel(env[key])), {
+  .refine((env) => !MODEL_ENV_VARIABLES.some((key) => {
+    const value = ownEntry(env, key);
+    return value !== undefined && value !== "" && !namesAModel(value);
+  }), {
     message: `env may not set ${MODEL_ENV_VARIABLES.join(", ")} to a context marker or whitespace alone: a model variable names a model, or is empty to leave the tier unset`,
   });
 

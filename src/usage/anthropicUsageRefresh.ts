@@ -8,6 +8,7 @@ import type { PoolMember } from "./pick";
 import { FIVE_HOUR_WINDOW_MS, SEVEN_DAY_WINDOW_MS } from "./windowLengths";
 import { planOf } from "./plan";
 import type { QuotaWindow, RateLimitState, UnifiedRateLimit } from "./schema";
+import { ownEntry } from "../ownEntry";
 
 const PERCENT = 100;
 
@@ -96,7 +97,7 @@ export function poolIdentityNames(pools: Readonly<Record<string, Pool>>, poolNam
   const seenPools = new Set<string>();
   const identities = new Set<string>();
   const walk = (name: string): void => {
-    const pool = pools[name];
+    const pool = ownEntry(pools, name);
     if (pool === undefined || seenPools.has(name)) {
       return;
     }

@@ -20,6 +20,7 @@ import { listIdentities, requireNoUnreachableIdentities, setIdentityProvider } f
 import type { LayoutPaths } from "./paths";
 import { aliasesAfterRename, readProviderAliases, writeProviderAliases } from "./providerAliases";
 import { ProviderAlreadyExistsError, ProviderNotFoundError, listProviders, providerExists, providerJsonPath, readProvider } from "./providersStore";
+import { ownEntry } from "./ownEntry";
 
 /** A model ref with a leading `<from>/` provider qualifier rewritten to `<to>/`. Refs that name no provider (`acct:work/opus`, `family:glm-5-1`, a virtual model's name) never start with a provider's name followed by a slash, because `:` is outside the provider alphabet. */
 function renameRef(ref: string, from: string, to: string): string {
@@ -96,12 +97,12 @@ export function renameProvider(paths: LayoutPaths, from: string, to: string, por
 function moveState(paths: LayoutPaths, from: string, to: string, ports: ProviderRenamePorts): readonly string[] {
   const moved: string[] = [];
   for (const snapshot of listUsageSnapshots(ports.fs, paths.usageSnapshotsDir)) {
-    const slice = snapshot.providers[from];
+    const slice = ownEntry(snapshot.providers, from);
     if (slice === undefined) {
       continue;
     }
     const others = Object.entries(snapshot.providers).filter(([name]) => name !== from);
-    const providers = Object.fromEntries(snapshot.providers[to] === undefined ? [...others, [to, slice]] : others);
+    const providers = Object.fromEntries(ownEntry(snapshot.providers, to) === undefined ? [...others, [to, slice]] : others);
     ports.fs.writeFilePrivate(snapshotPath(paths.usageSnapshotsDir, snapshot.identity), `${JSON.stringify(UsageSnapshotSchema.parse({ ...snapshot, providers }), null, 2)}\n`);
     moved.push(`usage ${snapshot.identity}`);
   }

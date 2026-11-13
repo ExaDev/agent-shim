@@ -7,6 +7,7 @@ import { GlobalConfigSchema, PoolNameSchema, PoolSchema, poolMemberIdentity, typ
 export type PoolMemberEntry = Pool["identities"][number];
 import { poolNameOf } from "./launcher/identity";
 import type { LayoutPaths } from "./paths";
+import { ownEntry } from "./ownEntry";
 
 /** Raised when a command names a pool that is not defined in the global config. */
 export class PoolNotFoundError extends CliError {
@@ -39,7 +40,7 @@ export function readPools(paths: LayoutPaths): Readonly<Record<string, Pool>> {
 
 /** The pool named `name`; throws `PoolNotFoundError` when none is defined. */
 export function requirePool(paths: LayoutPaths, name: string): Pool {
-  const pool = readPools(paths)[name];
+  const pool = ownEntry(readPools(paths), name);
   if (pool === undefined) {
     throw new PoolNotFoundError(name);
   }
@@ -58,7 +59,7 @@ function writePools(paths: LayoutPaths, pools: Readonly<Record<string, Pool>>): 
  */
 export function poolCycleOf(pools: Readonly<Record<string, Pool>>, name: string): readonly string[] | undefined {
   const walk = (current: string, path: readonly string[]): readonly string[] | undefined => {
-    for (const entry of pools[current]?.identities ?? []) {
+    for (const entry of ownEntry(pools, current)?.identities ?? []) {
       const nested = poolNameOf(poolMemberIdentity(entry));
       if (nested === undefined) {
         continue;
@@ -87,7 +88,7 @@ function validateMembers(pools: Readonly<Record<string, Pool>>, name: string, me
   for (const entry of members) {
     const identity = poolMemberIdentity(entry);
     const nested = poolNameOf(identity);
-    if (nested !== undefined && nested !== name && pools[nested] === undefined) {
+    if (nested !== undefined && nested !== name && ownEntry(pools, nested) === undefined) {
       throw new UsageError(`Member "${identity}" of pool "${name}" names a pool that is not defined. Run \`agent-shim pool add ${nested} --identity <name>...\` first.`);
     }
   }
@@ -141,7 +142,7 @@ export function addPool(paths: LayoutPaths, name: string, identities: readonly P
     throw new InvalidPoolNameError(name);
   }
   const pools = readPools(paths);
-  if (pools[name] !== undefined) {
+  if (ownEntry(pools, name) !== undefined) {
     throw new PoolAlreadyExistsError(name);
   }
   validateMembers(pools, name, identities);

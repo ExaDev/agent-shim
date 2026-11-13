@@ -9,6 +9,7 @@ import { once } from "./once";
 import { createPalette } from "./palette";
 import { parseClientPayload } from "./payload";
 import type { FileRange, StatuslinePorts } from "./ports";
+import { ownEntry } from "../ownEntry";
 
 /** One call to a fake `readRange`: where it started and how many bytes it asked for. */
 interface RangeRead {
@@ -30,7 +31,7 @@ export function newReadLog(): ReadLog {
 export function fakeRangeReader(files: Readonly<Record<string, string>>, log: ReadLog = newReadLog()): StatuslinePorts["readRange"] {
   return (file, start, length) => {
     log.reads.push({ start, length });
-    const text = files[file];
+    const text = ownEntry(files, file);
     if (text === undefined) {
       return undefined;
     }
@@ -147,7 +148,7 @@ export function fakeStatuslineFilesystem(initial: Readonly<Record<string, string
       },
       entryKind: (target) => {
         // Like lstat: a path that is itself a link is `other`, whatever it points at.
-        if (target in links) {
+        if (Object.hasOwn(links, target)) {
           return "other";
         }
         const resolved = resolve(target);

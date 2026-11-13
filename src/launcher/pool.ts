@@ -5,6 +5,7 @@ import type { Candidate, StickyPick } from "../usage/pick";
 import { formatAge } from "../usage/preflight";
 import { PoolGraphError, rankPoolGraph, readStickyPick, recordStickyPick, type PoolPickFs, type ProviderOf } from "../usage/poolPick";
 import type { FarmFs, FsPort, LogPort } from "./ports";
+import { ownEntry } from "../ownEntry";
 
 /** The flags that continue or resume an earlier conversation, which belongs on the account it started on. */
 const RESUME_FLAGS: ReadonlySet<string> = new Set(["--continue", "-c", "--resume", "-r"]);
@@ -76,7 +77,7 @@ export function isResuming(passthrough: readonly string[]): boolean {
  */
 export function resolvePoolLaunch(params: ResolvePoolParams): PoolResolution {
   const { poolName, log } = params;
-  const pool = params.pools?.[poolName];
+  const pool = ownEntry(params.pools, poolName);
   if (pool === undefined) {
     return { ok: false, message: `agent-shim: no pool named "${poolName}" (selected via ${params.selectedVia}). Run \`agent-shim pool add ${poolName} --identity <name>...\` first.` };
   }

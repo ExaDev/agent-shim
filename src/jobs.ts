@@ -13,6 +13,7 @@ import { realFarmFs, spawnDetachedSupervisor } from "./realPorts";
 import { ANCHOR_SYNTAX, formatAnchor } from "./usage/anchor";
 import { resolveJobIdentity } from "./usage/jobTarget";
 import { createRealJobRunner } from "./usage/realJobRunner";
+import { ownEntry } from "./ownEntry";
 
 interface JobAddOptions {
   readonly identity?: string;
@@ -119,7 +120,7 @@ export function registerJobCommand(program: Command, deps: CommandDeps): void {
           return;
         }
         for (const name of names) {
-          const entry = jobs[name];
+          const entry = ownEntry(jobs, name);
           if (entry !== undefined) {
             console.log(`${name}: ${describeTarget(entry)}, ${describeTrigger(entry)}`);
           }

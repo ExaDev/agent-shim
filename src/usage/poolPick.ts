@@ -14,6 +14,7 @@ import { readUsageLog, readUsageSnapshot, UsageSnapshotError, type UsageReadFs }
 import { ANTHROPIC_PROVIDER } from "./middleware";
 import { USAGE_RETENTION_MS } from "./store";
 import { FIVE_HOUR_WINDOW_MS } from "./windowLengths";
+import { ownEntry } from "../ownEntry";
 
 /**
  * The store-backed side of pool picking: loads each member's recorded state and ranks it with `rankPool`, and keeps the per-directory record of the last pick. The launcher and `agent-shim pool pick` both go through `rankPoolGraph`, so the command shows exactly what a launch would choose.
@@ -157,7 +158,7 @@ export function rankPoolGraph(input: Readonly<RankPoolGraphInput>): PoolGraphRan
 
 /** Ranks one pool of the graph. `stack` is the chain of pools being ranked above this one, including this one, for the cycle guard. */
 function rankNamedPool(input: Readonly<RankPoolGraphInput>, poolName: string, stack: readonly string[], sticky: StickyPick | undefined): PoolGraphRanking {
-  const pool = input.pools[poolName];
+  const pool = ownEntry(input.pools, poolName);
   if (pool === undefined) {
     throw new PoolGraphError(`No pool named "${poolName}". Run \`agent-shim pool add ${poolName} --identity <name>...\` first.`);
   }
@@ -199,7 +200,7 @@ function rankNamedPool(input: Readonly<RankPoolGraphInput>, poolName: string, st
 
 /** Refuses a nested `pool:<name>` entry that names a pool that is not defined or that closes a cycle. `childStack` is the chain of pools above and including the one holding the entry. */
 function assertNestable(pools: Readonly<Record<string, Pool>>, poolName: string, member: string, nestedName: string, childStack: readonly string[]): void {
-  if (pools[nestedName] === undefined) {
+  if (ownEntry(pools, nestedName) === undefined) {
     throw new PoolGraphError(`Pool "${poolName}" member "${member}" names a pool that is not defined.`);
   }
   if (childStack.includes(nestedName)) {
@@ -238,7 +239,7 @@ export function poolIdentities(pools: Readonly<Record<string, Pool>>, poolName: 
 }
 
 function collectPoolIdentities(pools: Readonly<Record<string, Pool>>, poolName: string, stack: readonly string[], found: Set<string>): void {
-  const pool = pools[poolName];
+  const pool = ownEntry(pools, poolName);
   if (pool === undefined) {
     throw new PoolGraphError(`No pool named "${poolName}". Run \`agent-shim pool add ${poolName} --identity <name>...\` first.`);
   }
@@ -302,7 +303,7 @@ export function picksWithIdentityRenamed(raw: string, from: string, to: string):
 /** The identity last picked from a pool for `directory`, with a note when the picks file was unreadable (a hint lost, never a launch blocked). */
 export function readStickyPick(fs: Pick<FarmFs, "readFileUtf8">, picksFile: string, directory: string): { readonly sticky?: StickyPick; readonly problem?: string } {
   const read = readPicksFile(fs, picksFile);
-  const entry = read.file.picks[directory];
+  const entry = ownEntry(read.file.picks, directory);
   return { ...(entry === undefined ? {} : { sticky: entry }), ...(read.problem === undefined ? {} : { problem: read.problem }) };
 }
 

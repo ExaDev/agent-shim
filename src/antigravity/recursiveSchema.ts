@@ -1,4 +1,5 @@
 import type { GeminiGenerateContentRequest } from "./geminiSchema";
+import { ownEntry } from "../ownEntry";
 
 /** Google identifies the recursive reference by a dot-delimited path inside one tool schema. */
 function rejectedPath(body: string): string[] | undefined {
@@ -66,7 +67,7 @@ export function relaxRejectedRecursiveProperty(request: GeminiGenerateContentReq
         let owner: unknown = schema;
         for (const part of path.slice(0, propertyIndex)) owner = descendExpanded(schema, owner, part);
         if (!record(owner) || !Array.isArray(owner.required) || !owner.required.includes(name) || !record(owner.properties)) continue;
-        const property = owner.properties[name];
+        const property = ownEntry(owner.properties, name);
         if (!record(property)) continue;
         owner.required = owner.required.filter((item: unknown) => item !== name);
         const description = typeof property.description === "string" ? `${property.description}\n` : "";

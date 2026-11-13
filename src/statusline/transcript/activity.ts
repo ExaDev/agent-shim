@@ -5,6 +5,7 @@ import { z } from "zod";
 import { graphemesOf } from "../graphemes";
 import { visibleDisplayText } from "../sanitise";
 import { recordTimeMs, type TranscriptRecord } from "./record";
+import { ownEntry } from "../../ownEntry";
 
 /**
  * The most tool calls the state keeps: the line of tools shows what the session has just been doing, so older calls are forgotten as newer ones arrive. It is also the most results kept while they wait for their calls. A result is written ahead of its call by a few milliseconds, so only the latest few are really waiting; the others are results (or announcements that a background agent finished) whose call is not in this transcript, because it lies before a compaction or in another one. They are kept like the rest, since the call might still arrive, and leave only when newer ones push them out. A result matters only if its call then stays among the tracked ones, so no more are kept than calls are.
@@ -124,7 +125,7 @@ export const BASH_MAX_TIMEOUT_MS = 600_000;
 
 /** The positive whole number the environment variable `name` holds, else `fallback`. */
 function timeoutFromEnv(env: Readonly<Record<string, string | undefined>>, name: string, fallback: number): number {
-  const value = Number(env[name]);
+  const value = Number(ownEntry(env, name));
   return Number.isInteger(value) && value > 0 ? value : fallback;
 }
 
@@ -280,7 +281,7 @@ function stored(text: string): string {
  * The field `key` of `input` when it is a string with characters, else nothing. An empty string reads as absent, so `??` and `||` fall back the same at every call site.
  */
 function stringField(input: Readonly<Record<string, unknown>> | undefined, key: string): string | undefined {
-  const value = input?.[key];
+  const value = ownEntry(input, key);
   return typeof value === "string" && value !== "" ? value : undefined;
 }
 

@@ -175,7 +175,7 @@ function resolveRoutedModel(
   const current = memory.get(session.sessionId ?? "");
   const evaluated = members.map((ref, order) => {
     const [provider] = ref.split("/");
-    const facts = quotaFactsOf(snapshot?.providers[provider ?? ""]?.rateLimit?.unified, Date.now());
+    const facts = quotaFactsOf(ownEntry(snapshot?.providers, provider ?? "")?.rateLimit?.unified, Date.now());
     const candidate = candidateOf(ref, order, {
       quota: facts,
       ...(deps.observations?.(ref) === undefined ? {} : { observation: deps.observations(ref) }),
