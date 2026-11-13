@@ -323,16 +323,16 @@ function userTextOf(message: Record<string, unknown>): string | undefined {
   return blocks.flatMap((block) => (isRecord(block) && block.type === "text" && typeof block.text === "string" ? [block.text] : [])).join("\n");
 }
 
-/** The uuid of the user entry this worker event mirrors, when it is the person's turn `text`: a user event whose origin is the Remote Control bridge (`{ kind: "bridge" }`, the origin Claude Code stamps on a message a person's app wrote, as its plugin API's `PromptOrigin` documents) and whose text is exactly `text`. */
+/** The uuid of the user entry this worker event mirrors, when it is the person's turn `text`: a user event whose origin is a person's (`{ kind: "human" }`, the origin a 2.1.319 worker stamps on its mirror, and its transcript row, of a message a person's app wrote on the door's own surface) and whose text is exactly `text`. */
 export function rcPersonTurnOf(event: RcStreamEvent, text: string): string | undefined {
   const payload = event.envelope.payload;
-  if (!isRecord(payload) || payload.type !== "user" || typeof payload.uuid !== "string" || !isRecord(payload.origin) || payload.origin.kind !== "bridge" || !isRecord(payload.message)) {
+  if (!isRecord(payload) || payload.type !== "user" || typeof payload.uuid !== "string" || !isRecord(payload.origin) || payload.origin.kind !== "human" || !isRecord(payload.message)) {
     return undefined;
   }
   return userTextOf(payload.message) === text ? payload.uuid : undefined;
 }
 
-/** Writes `text` into the session as a person's turn on the self-hosted surface and resolves once the worker mirrors it as a user entry with the bridge's origin, with that entry's uuid; fails at once when the worker passes it on as a peer's message instead. */
+/** Writes `text` into the session as a person's turn on the self-hosted surface and resolves once the worker mirrors it as a user entry with a person's origin, with that entry's uuid; fails at once when the worker passes it on as a peer's message instead. */
 export async function runSelfHostedTurn(deps: RcSelfHostCommandDeps, sessionId: string, text: string, waitMs: number | undefined, signal: AbortSignal): Promise<Outcome<{ readonly uuid: string }>> {
   return await writeAsPersonAndAwait(
     deps,

@@ -175,18 +175,18 @@ describe("slash commands on the door's own self-hosted surface", () => {
   });
 });
 
-/** The worker's mirror of a person's turn, in the shape the plugin API documents for a message a person's app wrote through the bridge: a user entry with the bridge's origin. */
-function personTurn(sequenceNum: number, text: string, origin: Record<string, unknown> = { kind: "bridge" }, uuid = "00000000-0000-4000-8000-0000000000b1"): RcStreamEvent {
+/** The worker's mirror of a person's turn, in the shape a 2.1.319 worker emitted for a message a person's app wrote on the door's own surface: a user entry with a person's origin and the uuid of the client's own write. */
+function personTurn(sequenceNum: number, text: string, origin: Record<string, unknown> = { kind: "human" }, uuid = "00000000-0000-4000-8000-0000000000b1"): RcStreamEvent {
   return streamEvent(sequenceNum, { type: "user", uuid, origin, message: { role: "user", content: text } });
 }
 
 describe("a person's turn on the door's own self-hosted surface", () => {
-  it("writes the text as a person's app and resolves with the uuid of the worker's user entry with the bridge's origin, ignoring the client's own write, other origins and other text", async () => {
+  it("writes the text as a person's app and resolves with the uuid of the worker's user entry with a person's origin, ignoring the client's own write, other origins and other text", async () => {
     // The decoys come first, each numbered after the write, and the entry that answers is numbered straight after them.
     const decoys = [
       (sequenceNum: number) => personTurn(sequenceNum, "carry on", { kind: "plugin", name: "other", asUser: true }, "00000000-0000-4000-8000-0000000000d1"),
-      (sequenceNum: number) => personTurn(sequenceNum, "something else", { kind: "bridge" }, "00000000-0000-4000-8000-0000000000d2"),
-      (sequenceNum: number) => streamEvent(sequenceNum, { type: "user", uuid: "00000000-0000-4000-8000-0000000000c1", origin: { kind: "bridge" }, message: { role: "user", content: "carry on" } }, "client"),
+      (sequenceNum: number) => personTurn(sequenceNum, "something else", { kind: "human" }, "00000000-0000-4000-8000-0000000000d2"),
+      (sequenceNum: number) => streamEvent(sequenceNum, { type: "user", uuid: "00000000-0000-4000-8000-0000000000c1", origin: { kind: "human" }, message: { role: "user", content: "carry on" } }, "client"),
     ].map((decoy, index) => decoy(COMMAND_SEQUENCE + 1 + index));
     const world = makeWorld([...decoys, personTurn(COMMAND_SEQUENCE + 1 + decoys.length, "carry on")]);
     expect(await runSelfHostedTurn(world.deps, SESSION, "carry on", undefined, NEVER)).toEqual({ ok: true, report: { uuid: "00000000-0000-4000-8000-0000000000b1" } });
@@ -194,10 +194,12 @@ describe("a person's turn on the door's own self-hosted surface", () => {
   });
 
   it("reads a mirrored entry whose content is text blocks, and only an exact match of the text", () => {
-    const blocks = streamEvent(1, { type: "user", uuid: "u1", origin: { kind: "bridge" }, message: { role: "user", content: [{ type: "text", text: "carry" }, { type: "text", text: "on" }] } });
+    const blocks = streamEvent(1, { type: "user", uuid: "u1", origin: { kind: "human" }, message: { role: "user", content: [{ type: "text", text: "carry" }, { type: "text", text: "on" }] } });
     expect(rcPersonTurnOf(blocks, "carry\non")).toBe("u1");
     expect(rcPersonTurnOf(blocks, "carry on")).toBeUndefined();
-    expect(rcPersonTurnOf(streamEvent(1, { type: "user", origin: { kind: "bridge" }, message: { role: "user", content: "carry on" } }), "carry on")).toBeUndefined();
+    expect(rcPersonTurnOf(streamEvent(1, { type: "user", origin: { kind: "human" }, message: { role: "user", content: "carry on" } }), "carry on")).toBeUndefined();
+    // The origin the plugin API's declarations name for a message through the bridge, which no worker was observed emitting for a person's turn on the door's surface, is not taken for one.
+    expect(rcPersonTurnOf(streamEvent(1, { type: "user", uuid: "u2", origin: { kind: "bridge" }, message: { role: "user", content: "carry on" } }), "carry on")).toBeUndefined();
   });
 
   it("fails at once when the worker passes the text on as a peer's message, and once the wait passes when it never records a person's entry", async () => {

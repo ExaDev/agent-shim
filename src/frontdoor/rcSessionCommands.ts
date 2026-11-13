@@ -275,7 +275,7 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
     },
 
     /**
-     * Puts `text` into the session as a person's typed turn, and resolves once the session recorded it as a user entry from the person, never as a peer's message: on the supervised route a transcript row the control plugin submitted as the person's words (`origin: { kind: "plugin", asUser: true }`), on the self-hosted route the worker's mirrored entry with the bridge's origin. The text reaches the session's model as its user's words (`docs/rc-slash-commands.md`, the trust boundary). Refused unsent: text that is empty, starts with `/` (a slash command, which the goal and compaction verbs run), or is longer than one request carries. Resolves when the turn entered the session, not when the model has answered it.
+     * Puts `text` into the session as a person's typed turn, and resolves once the session recorded it as a user entry from the person, never as a peer's message: on the supervised route a transcript row the control plugin submitted as the person's words (`origin: { kind: "plugin", asUser: true }`), on the self-hosted route the worker's mirrored entry with a person's origin (`{ kind: "human" }`). The text reaches the session's model as its user's words (`docs/rc-slash-commands.md`, the trust boundary). Refused unsent: text that is empty, starts with `/` (a slash command, which the goal and compaction verbs run), or is longer than one request carries. Resolves when the turn entered the session, not when the model has answered it.
      */
     turn: async (sessionId: string, text: string, options: RcSessionCommandOptions = {}): Promise<RcSessionCommandResult<RcTurnReport>> => {
       if (text.trim() === "") {
