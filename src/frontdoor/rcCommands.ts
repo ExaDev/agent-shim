@@ -15,7 +15,8 @@ import { registerRcEventsCommand } from "./rcEventsCommand";
 import { rcRateLimitInfoOf } from "./rcLiveUsage";
 import type { RcRateLimitInfo, RcSessionStatusWithRoute } from "./rcSchemas";
 import { mintRcSelfHostCredential, type RcSelfHostMintResult } from "./rcSelfHostMint";
-import { RC_GOAL_CLEAR_WORDS, RC_SESSION_COMMAND_MAX_WAIT_MS, RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "./rcSessionCommands";
+import { RC_GOAL_CLEAR_WORDS, RC_SESSION_COMMAND_MAX_WAIT_MS } from "./rcSessionCommands";
+import { RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "../supervise/verifiedVersions";
 import type { RcQuestionSelection } from "./rcQuestions";
 import { RC_PENDING_PER_SESSION_MAX, rcExcerpt, type RcPendingRequestSummary, type RcSessionSummary } from "./rcSessions";
 import { RC_CONTEXT_USAGE_DETAILS, RC_PERMISSION_MODES, RC_READ_FILE_ENCODINGS, RC_SEND_DELIVERY_NOTE, isRcContextUsageDetail, isRcPermissionMode, isRcReadFileEncoding, type RcEventWriteResult } from "./rcWrites";
@@ -581,7 +582,7 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
   };
   const waitOption = `How long to wait for the session's answer, in milliseconds (default ${String(COMPACT_TIMEOUT_MS)}, at most ${String(RC_SESSION_COMMAND_MAX_WAIT_MS)}).`;
   const versions = RC_SESSION_COMMAND_VERIFIED_VERSIONS.join(", ");
-  const routes = "A session an agent-shim supervisor launched is reached through its in-process control plugin, and one on the door's own self-hosted surface through that surface; any other session is refused with the reason.";
+  const routes = "A session agent-shim launched, under a supervisor (route supervised) or not (route launched), is reached through its in-process control plugin, and one on the door's own self-hosted surface through that surface; any other session is refused with the reason.";
 
   const goal = withExamples(
     rc
@@ -669,7 +670,7 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
   withExamples(
     rc
       .command("turn")
-      .description(`Put a person's typed turn into one Remote Control session, which its model reads as its user's words, and wait until the session records it as a user entry from the person (never as another session's message); prints the entry's uuid and the route. ${routes} Unlike \`send\`, it never delivers the text as a peer's message: a session neither route reaches is refused with the reason. Verified on Claude Code ${versions}; a session on any other version is refused.`)
+      .description(`Put a person's typed turn into one Remote Control session, which its model reads as its user's words, and wait until the session records it as a user entry from the person (never as another session's message); prints the entry's uuid and the route. ${routes} Unlike \`send\`, it never delivers the text as a peer's message: a session no route reaches is refused with the reason. Verified on Claude Code ${versions}; a session on any other version is refused.`)
       .requiredOption("--session <id>", "The cse_ session id, as `frontdoor rc list` shows it.")
       .requiredOption("--text <text>", "The text as the person typed it; not starting with / (the goal and compaction verbs run those commands).")
       .option("--wait-ms <ms>", waitOption)

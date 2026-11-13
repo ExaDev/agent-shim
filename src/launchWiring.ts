@@ -18,6 +18,7 @@ import { resolveWithAsyncRuns, type AsyncRun } from "./replayRun";
 import { resolveClaudeHome, resolveLayoutPaths, type LayoutPaths } from "./paths";
 import { identitySignIn, storedLoginUsable } from "./usage/signIn";
 import { realStartBaseUrlProbe } from "./providerReachability";
+import { stageLaunchControl } from "./supervise/launchControl";
 import type { ClaudeBinaryResolver } from "./versionDiscovery";
 import {
   realContentSourcePath,
@@ -122,6 +123,7 @@ export function realPrepareLaunchParams(paths: LayoutPaths, options: RealLaunchO
     hold: realHoldPort,
     hasStoredLogin: (identity) => identitySignIn(realFarmFs, { platform: process.platform, run: options.run ?? realRunPort }, { farmRoot: path.join(paths.identitiesDir, identity), hasCredentialBlock: false, provider: undefined }).state !== "signed-out",
     hasUsableLogin: (identity, claudeBin) => storedLoginUsable(options.run ?? realRunPort, claudeBin, path.join(paths.identitiesDir, identity), options.proc.env),
+    stageControlPlugin: () => stageLaunchControl({ fs: realFarmFs, paths, pid: process.pid, isRunning: realIsProcessRunning }),
     ...(farm.directoryIdentity === undefined ? {} : { directoryPinnedIdentity: farm.directoryIdentity }),
     ...(farm.directoryConfigProfile === undefined ? {} : { directoryRuleConfigProfile: farm.directoryConfigProfile }),
     ...(farm.globalDefaultConfigProfile === undefined ? {} : { globalDefaultConfigProfile: farm.globalDefaultConfigProfile }),

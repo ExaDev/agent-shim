@@ -1,10 +1,11 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { sessionControlConversation } from "./sessionControl";
 import { SESSION_CONTROL_PLUGIN_NAME, stageSessionControlPlugin, withSessionControlPlugin, type SessionControlPlugin } from "./sessionControlPlugin";
 
 /** The plugin's hook for one event, read from the module the stager wrote. */
@@ -39,6 +40,50 @@ const LIVE = NOW + 1;
 describe("the in-process control plugin", () => {
   it("preserves existing plugin options and positional arguments", () => {
     expect(withSessionControlPlugin(["--plugin-dir", "/user", "--", "prompt"], "/shim")).toEqual(["--plugin-dir", "/user", "--plugin-dir", "/shim", "--", "prompt"]);
+  });
+
+  it("records the session's conversation and transcript from its classic hook events once each is answered, for a door that has no supervisor's hooks to read", async () => {
+    const plugin = stageSessionControlPlugin();
+    try {
+      for (const event of ["classic.SessionStart", "classic.UserPromptSubmit", "classic.Stop"]) {
+        const hook = await hookOf(plugin, event);
+        const files = new Map<string, string>();
+        const fs = memoryFs(files);
+        const order: string[] = [];
+        let deferred: unknown;
+        const answer = await hook({ clock: { after: (_ms: number, callback: unknown) => { order.push("scheduled"); deferred = callback; } }, fs }, { hook_event_name: event.slice("classic.".length), session_id: `conversation-${event}`, transcript_path: "/projects/here/conversation.jsonl", cwd: "/here" }, () => {
+          order.push("answered");
+          return "answer";
+        });
+        expect(answer).toBe("answer");
+        expect(order).toEqual(["answered", "scheduled"]);
+        expect(fs.write).not.toHaveBeenCalled();
+        if (typeof deferred !== "function") throw new Error(`plugin did not schedule the record on ${event}`);
+        await Reflect.apply(deferred, undefined, []);
+        expect(files.get(plugin.session)).toBe(JSON.stringify({ conversationId: `conversation-${event}`, transcriptPath: "/projects/here/conversation.jsonl" }));
+      }
+      const files = new Map<string, string>();
+      const fs = memoryFs(files);
+      let scheduled = false;
+      const start = await hookOf(plugin, "classic.SessionStart");
+      expect(await start({ clock: { after: () => { scheduled = true; } }, fs }, { hook_event_name: "SessionStart" }, () => "answer")).toBe("answer");
+      expect(scheduled).toBe(false);
+    } finally {
+      plugin.release();
+    }
+  });
+
+  it("reads back the session the plugin recorded, and nothing from a record of another shape", () => {
+    const plugin = stageSessionControlPlugin();
+    try {
+      expect(sessionControlConversation(plugin)).toBeUndefined();
+      writeFileSync(plugin.session, JSON.stringify({ conversationId: "conversation-1", transcriptPath: "relative.jsonl" }));
+      expect(sessionControlConversation(plugin)).toBeUndefined();
+      writeFileSync(plugin.session, JSON.stringify({ conversationId: "conversation-1", transcriptPath: "/projects/here/conversation-1.jsonl" }));
+      expect(sessionControlConversation(plugin)).toEqual({ conversationId: "conversation-1", transcriptPath: "/projects/here/conversation-1.jsonl" });
+    } finally {
+      plugin.release();
+    }
   });
 
   it("completes a running compaction from the post-compaction event after a reload, and leaves other results alone", async () => {

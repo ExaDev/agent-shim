@@ -5,9 +5,11 @@ import path from "node:path";
 import { realIsProcessRunning } from "../realPorts";
 
 /**
- * A private, per-launch Claude Code plugin that acts inside the live session on request: the supervisor's channel into its child, which the front door also uses for the sessions a supervisor advertises it for.
+ * A private, per-launch Claude Code plugin that acts inside the live session on request: the supervisor's channel into its child, and the front door's into every session the launcher loaded it into, supervised or not (`docs/rc-slash-commands.md`).
  *
  * The protocol is one file per request, so several writers (the supervisor's own compaction and the door's goal and compaction verbs) never overwrite each other: a caller writes `requests/<id>.json` (atomically, by renaming a dot-prefixed file into place, since the plugin skips dot files), the plugin writes `results/<id>.json` (first `{ kind: "running" }`, then the outcome), and the caller removes both once it has read the outcome. An id begins with the zero-padded instant the request was made (`sessionControl.ts`), and the plugin handles one request at a time in name order, so the oldest runs first whichever process made it; it never handles a request that already has a result, so a plugin reload (which a compaction can cause) does not run a request twice, and it refuses one whose `expiresAt` has passed, so a request a crashed caller left behind never runs long after the caller gave up. A compaction whose result still reads `running` when the post-compaction event fires is completed then, as the reload lost the call that would have written it.
+ *
+ * It also records the session it runs in, for a caller that did not launch the session under a supervisor and so has no hooks of its own naming the transcript: on every classic `SessionStart`, `UserPromptSubmit` and `Stop` event it writes `session.json`, the event's `session_id` and `transcript_path`, which is the conversation a request must name and the transcript the door joins to a Remote Control session by its `bridge-session` row. The write is scheduled after the event has been answered, so a write that fails never changes how the session handles the event.
  *
  * What it can do is what the 2.1.319 plugin API gives a plugin: `$.session.compact`, the call `/compact` makes, with optional instructions; `$.command.run`, which runs a slash command as if the person typed it, used for `/goal <condition>` and `/goal clear` only; and `$.prompt.submit` with `asUser`, which submits text as the person's own words for a turn of its own once the session is idle (the model reads it bare, and the transcript records it with `origin: { kind: "plugin", name, asUser: true }`). A bare `/goal` is refused here, because in an interactive session it opens the goal panel and waits for the person to dismiss it; the goal is read from the transcript instead (`sessionGoal.ts`).
  */
@@ -15,6 +17,8 @@ export interface SessionControlPlugin {
   readonly directory: string;
   /** Written by the plugin once Claude Code has loaded it, naming the Claude Code version the session runs. */
   readonly ready: string;
+  /** Written by the plugin on the session's classic `SessionStart`, `UserPromptSubmit` and `Stop` events: the conversation the session runs and its transcript. */
+  readonly session: string;
   readonly requests: string;
   readonly results: string;
   readonly release: () => void;
@@ -49,16 +53,16 @@ export function stageSessionControlPlugin(options: Readonly<{ parent?: string; p
   const parent = options.parent ?? tmpdir();
   removeAbandonedPlugins(parent, options.isRunning ?? realIsProcessRunning);
   const directory = mkdtempSync(path.join(parent, `${STAGED_PREFIX}${String(options.pid ?? process.pid)}-`));
-  const { ready, requests, results } = sessionControlPluginPaths(directory);
+  const { ready, session, requests, results } = sessionControlPluginPaths(directory);
   try {
     mkdirSync(path.join(directory, ".claude-plugin"), { mode: 0o700 });
     mkdirSync(path.join(directory, "hooks"), { mode: 0o700 });
     mkdirSync(requests, { mode: 0o700 });
     mkdirSync(results, { mode: 0o700 });
-    writeFileSync(path.join(directory, ".claude-plugin", "plugin.json"), JSON.stringify({ name: SESSION_CONTROL_PLUGIN_NAME, version: "2.1.0", description: "Compacts, sets goals and submits a person's turns in supervised sessions in process" }), { mode: 0o600 });
+    writeFileSync(path.join(directory, ".claude-plugin", "plugin.json"), JSON.stringify({ name: SESSION_CONTROL_PLUGIN_NAME, version: "2.1.0", description: "Compacts, sets goals and submits a person's turns in sessions agent-shim launched, in process" }), { mode: 0o600 });
     writeFileSync(path.join(directory, "hooks", "hooks.json"), JSON.stringify({ modules: ["./register.js"] }), { mode: 0o600 });
-    writeFileSync(path.join(directory, "hooks", "register.js"), pluginSource(ready, requests, results), { mode: 0o600 });
-    return { directory, ready, requests, results, release: () => { rmSync(directory, { recursive: true, force: true }); } };
+    writeFileSync(path.join(directory, "hooks", "register.js"), pluginSource(ready, session, requests, results), { mode: 0o600 });
+    return { directory, ready, session, requests, results, release: () => { rmSync(directory, { recursive: true, force: true }); } };
   } catch (error) {
     rmSync(directory, { recursive: true, force: true });
     throw error;
@@ -66,12 +70,12 @@ export function stageSessionControlPlugin(options: Readonly<{ parent?: string; p
 }
 
 /** The paths a plugin staged at `directory` listens on, for a caller (the front door) that knows only the directory the registry's control record names. */
-export function sessionControlPluginPaths(directory: string): Pick<SessionControlPlugin, "directory" | "ready" | "requests" | "results"> {
-  return { directory, ready: path.join(directory, "ready.json"), requests: path.join(directory, "requests"), results: path.join(directory, "results") };
+export function sessionControlPluginPaths(directory: string): Pick<SessionControlPlugin, "directory" | "ready" | "session" | "requests" | "results"> {
+  return { directory, ready: path.join(directory, "ready.json"), session: path.join(directory, "session.json"), requests: path.join(directory, "requests"), results: path.join(directory, "results") };
 }
 
 /** Builds the plugin source with its per-launch paths encoded as JavaScript strings. */
-function pluginSource(ready: string, requests: string, results: string): string {
+function pluginSource(ready: string, session: string, requests: string, results: string): string {
   // Every helper that takes the plugin API object is declared at the module's top level: Claude Code's loader (2.1.319) refuses a module that passes it to a function declared anywhere else, and loads nothing of the module.
   return `const REQUESTS = ${JSON.stringify(requests)};
 const RESULTS = ${JSON.stringify(results)};
@@ -81,8 +85,21 @@ function compacted(id, value) {
 async function resultNames($) {
   return new Set((await $.fs.list(RESULTS)).map((entry) => entry.name));
 }
+async function recordSession($, event, next) {
+  const answer = await next(event);
+  if (typeof event?.session_id === 'string' && typeof event?.transcript_path === 'string') {
+    const record = JSON.stringify({ conversationId: event.session_id, transcriptPath: event.transcript_path });
+    $.clock.after(0, async () => {
+      await $.fs.write(${JSON.stringify(session)}, record);
+    });
+  }
+  return answer;
+}
 export function register(on) {
   let running = false;
+  on('classic.SessionStart', recordSession);
+  on('classic.UserPromptSubmit', recordSession);
+  on('classic.Stop', recordSession);
   on('classic.PostCompact', async ($, event, next) => {
     const answer = await next(event);
     $.clock.after(0, async () => {

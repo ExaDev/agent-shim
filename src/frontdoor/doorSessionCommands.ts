@@ -1,6 +1,7 @@
 import { realFarmFs, realRunningAmong } from "../realPorts";
 import type { LayoutPaths } from "../paths";
 import { COMPACT_TIMEOUT_MS } from "../supervise/compactTimeout";
+import { launchedSessionOfBridge } from "../supervise/launchControl";
 import { supervisedSessionOfBridge } from "../supervise/registry";
 import { createTranscriptFollower, realTranscriptReadPort } from "../supervise/transcriptFollower";
 import { compactInSession, runGoalInSession, sessionControlVersion, submitTurnInSession } from "../supervise/sessionControl";
@@ -28,11 +29,11 @@ export interface DoorRcSessionCommandsDeps {
 }
 
 /**
- * The door's goal, compaction and turn verbs over the real machine (`rcSessionCommands.ts` holds the routing): a supervised session is reached through its supervisor's in-process control plugin, found by the bridge-session row in its own transcript; a session on the door's own self-hosted surface gets the command written there as a person's app, over a dial that reaches that surface and nothing else (it refuses rather than fall back to the real API host when the surface is not bound, and the route refuses first with the reason); anything else is refused with the reason.
+ * The door's goal, compaction and turn verbs over the real machine (`rcSessionCommands.ts` holds the routing): a supervised session is reached through its supervisor's in-process control plugin, found by the bridge-session row in its own transcript, and a session the launcher started with no supervisor through the control plugin its launch recorded, found by the same row in the transcript the plugin recorded; a session on the door's own self-hosted surface gets the command written there as a person's app, over a dial that reaches that surface and nothing else (it refuses rather than fall back to the real API host when the surface is not bound, and the route refuses first with the reason); anything else is refused with the reason.
  */
 export function createDoorRcSessionCommands(deps: DoorRcSessionCommandsDeps): RcSessionCommands {
   const { selfHost } = deps;
-  // Every supervised transcript's facts, kept across verbs and read asynchronously, so a call reads only what each transcript gained since the last one.
+  // Every plugin-reached transcript's facts, kept across verbs and read asynchronously, so a call reads only what each transcript gained since the last one.
   const follower = createTranscriptFollower(realTranscriptReadPort);
   return createRcSessionCommands({
     supervisedOf: async (sessionId) => {
@@ -49,6 +50,25 @@ export function createDoorRcSessionCommands(deps: DoorRcSessionCommandsDeps): Rc
       return {
         conversationId,
         transcriptPath: found.state?.transcriptPath,
+        version: sessionControlVersion(plugin),
+        compact: async (signal, instructions, waitMs) => await compactInSession(plugin, conversationId, { signal, expiresInMs: waitMs }, instructions),
+        runGoal: async (args, signal, waitMs) => await runGoalInSession(plugin, conversationId, args, { signal, expiresInMs: waitMs }),
+        submitTurn: async (text, signal, waitMs) => await submitTurnInSession(plugin, conversationId, text, { signal, expiresInMs: waitMs }),
+      };
+    },
+    launchedOf: async (sessionId) => {
+      const lookup = await launchedSessionOfBridge(realFarmFs, deps.paths, sessionId, realRunningAmong, follower);
+      if (lookup.kind === "ambiguous") {
+        return { refused: `more than one live launch's control plugin records Remote Control session ${sessionId} as its current bridge session (conversations ${lookup.conversationIds.join(", ")}), as a resumed or forked conversation can, so the door does not guess which one to act on` };
+      }
+      if (lookup.kind === "none") {
+        return undefined;
+      }
+      const plugin = sessionControlPluginPaths(lookup.session.control.directory);
+      const { conversationId, transcriptPath } = lookup.session.conversation;
+      return {
+        conversationId,
+        transcriptPath,
         version: sessionControlVersion(plugin),
         compact: async (signal, instructions, waitMs) => await compactInSession(plugin, conversationId, { signal, expiresInMs: waitMs }, instructions),
         runGoal: async (args, signal, waitMs) => await runGoalInSession(plugin, conversationId, args, { signal, expiresInMs: waitMs }),

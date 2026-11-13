@@ -319,12 +319,12 @@ export {
   type RcStreamEnvelope,
   type RcStreamEvent,
 } from "./frontdoor/rcSchemas";
+export { RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "./supervise/verifiedVersions";
 export { createRcLiveUsage, rcRateLimitInfoOf, type RcLiveUsage, type RcLiveUsageDeps } from "./frontdoor/rcLiveUsage";
 export {
   RC_GOAL_CLEAR_WORDS,
   RC_GOAL_CONDITION_MAX_CHARS,
   RC_SESSION_COMMAND_MAX_WAIT_MS,
-  RC_SESSION_COMMAND_VERIFIED_VERSIONS,
   createRcSessionCommands,
   type RcCompactOptions,
   type RcCompactReport,

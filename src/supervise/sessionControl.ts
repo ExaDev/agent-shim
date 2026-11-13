@@ -3,6 +3,8 @@ import { existsSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSyn
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { z } from "zod";
+
 import type { CompactionResult } from "./realCompact";
 import type { SessionControlPlugin } from "./sessionControlPlugin";
 
@@ -26,6 +28,22 @@ export function sessionControlVersion(plugin: Readonly<PluginPaths>): string | u
     return undefined;
   }
   return typeof value === "object" && value !== null && "version" in value && typeof value.version === "string" ? value.version : undefined;
+}
+
+/** What the plugin records of the session it runs in (`session.json`, `sessionControlPlugin.ts`). */
+const SessionControlConversationSchema = z.object({ conversationId: z.string().min(1), transcriptPath: z.string().refine(path.isAbsolute) });
+export type SessionControlConversation = z.infer<typeof SessionControlConversationSchema>;
+
+/** The conversation and transcript the plugin last recorded from the session's own hook events, or undefined when it has recorded none (no such event has fired yet) or what is there is not a record of this shape. */
+export function sessionControlConversation(plugin: Readonly<Pick<SessionControlPlugin, "session">>): SessionControlConversation | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(readFileSync(plugin.session, "utf8"));
+  } catch {
+    return undefined;
+  }
+  const parsed = SessionControlConversationSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
 }
 
 /**

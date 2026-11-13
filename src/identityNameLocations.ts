@@ -56,6 +56,7 @@ export const IDENTITY_NAME_LOCATIONS = {
   identityRenamesDir: "unaffected",
   identityNameRenamesDir: "unaffected",
   launchesDir: "unaffected",
+  launchControlDir: "unaffected",
   superviseDir: "id",
   modelMovesDir: "id",
 } as const satisfies Record<keyof LayoutPaths, NameLocation>;

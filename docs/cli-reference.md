@@ -161,7 +161,7 @@ agent-shim frontdoor rc mcp-reconnect --session <cse_id> --server <name> [--json
 agent-shim frontdoor rc mcp-authenticate --session <cse_id> --server <name> --redirect-uri <uri> [--json]
 agent-shim frontdoor rc mcp-oauth-callback-url --session <cse_id> --server <name> --callback-url <url> [--json]
 agent-shim frontdoor rc teleport --session <cse_id> --marker <text> [--json]
-agent-shim frontdoor rc goal get|clear --session <cse_id> [--wait-ms <ms>] [--json]   # through a supervised session's control plugin or the self-hosted surface; see docs/rc-slash-commands.md
+agent-shim frontdoor rc goal get|clear --session <cse_id> [--wait-ms <ms>] [--json]   # through the session's control plugin (supervised or launched) or the self-hosted surface; see docs/rc-slash-commands.md
 agent-shim frontdoor rc goal set --session <cse_id> --condition <text> [--wait-ms <ms>] [--json]   # a directive to the session's model
 agent-shim frontdoor rc compact --session <cse_id> [--instructions <text>] [--wait-ms <ms>] [--json]   # waits for the compaction's outcome
 agent-shim frontdoor rc turn --session <cse_id> --text <text> [--wait-ms <ms>] [--json]   # a person's typed turn, confirmed as the session's user entry; never sent as a peer's message
@@ -207,7 +207,7 @@ claude @<identity> ...                      # the same, once `agent-shim shim en
 
 ### Remote Control session status
 
-`frontdoor rc status`, `GET /rest/rc/status`, the `rc_status` MCP tool and the library's `RcSessionStatus` all report one entry per observed session, and an entry carries `identity`, `model`, `name`, `pid` and `cwd` beside its worker state and pending requests. The status read (`frontdoor rc status`, `GET /rest/rc/status`, `rc_status`) also carries each session's `route`: the route the goal, compaction and turn verbs would take for it (`supervised` or `self-hosted`), or `null` with `refused` naming why none would, so a caller can decide whether to offer a person a reply box before the person types ([rc-slash-commands.md](rc-slash-commands.md)). A field the door has no source for is absent from the entry, never blank or null. Sessions are addressed by their `cse_` id in every verb (several sessions can share a name), so `rc status` is how a name is mapped to its id.
+`frontdoor rc status`, `GET /rest/rc/status`, the `rc_status` MCP tool and the library's `RcSessionStatus` all report one entry per observed session, and an entry carries `identity`, `model`, `name`, `pid` and `cwd` beside its worker state and pending requests. The status read (`frontdoor rc status`, `GET /rest/rc/status`, `rc_status`) also carries each session's `route`: the route the goal, compaction and turn verbs would take for it (`supervised`, `launched` or `self-hosted`), or `null` with `refused` naming why none would, so a caller can decide whether to offer a person a reply box before the person types ([rc-slash-commands.md](rc-slash-commands.md)). A field the door has no source for is absent from the entry, never blank or null. Sessions are addressed by their `cse_` id in every verb (several sessions can share a name), so `rc status` is how a name is mapped to its id.
 
 The sources are:
 

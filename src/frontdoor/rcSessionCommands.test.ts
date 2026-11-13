@@ -8,7 +8,8 @@ import { activeGoalOfTranscript } from "../supervise/sessionGoal";
 import { SESSION_CONTROL_PLUGIN_NAME } from "../supervise/sessionControlPlugin";
 import { NO_PLUGIN_TURNS, pluginTurnsAfterLine, type PluginTurns } from "../supervise/sessionPluginTurns";
 import { rcSelfHostEventDial, type RcSelfHostCommandDeps } from "./rcSelfHostCommands";
-import { RC_GOAL_CONDITION_MAX_CHARS, RC_SESSION_COMMAND_VERIFIED_VERSIONS, RC_TURN_TEXT_MAX_CHARS, createRcSessionCommands, type RcSessionCommandDeps, type RcSupervisedTarget } from "./rcSessionCommands";
+import { RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "../supervise/verifiedVersions";
+import { RC_GOAL_CONDITION_MAX_CHARS, RC_TURN_TEXT_MAX_CHARS, createRcSessionCommands, type RcSessionCommandDeps, type RcSupervisedTarget } from "./rcSessionCommands";
 import { createRcEventFanout } from "./rcStream";
 
 const SESSION = "cse_00000000-0000-4000-8000-000000000000";
@@ -54,8 +55,8 @@ function goalRow(attachment: Record<string, unknown>): string {
   return JSON.stringify({ type: "attachment", attachment: { type: "goal_status", ...attachment } });
 }
 
-/** A supervised session whose plugin edits an in-memory transcript the way the real CLI does: a set writes a sentinel row, a clear a met sentinel. */
-function supervisedWorld(options: Readonly<{ version?: string; transcript?: string[]; compact?: CompactionResult; turn?: "recorded" | "unrecorded" | "framed" | "other-text" }> = {}) {
+/** A session whose control plugin edits an in-memory transcript the way the real CLI does (a set writes a sentinel row, a clear a met sentinel), found through a supervisor or, with `launched`, through an unsupervised launch's control record. */
+function supervisedWorld(options: Readonly<{ version?: string; transcript?: string[]; compact?: CompactionResult; turn?: "recorded" | "unrecorded" | "framed" | "other-text"; launched?: true }> = {}) {
   const transcript = options.transcript ?? [];
   const ran: string[] = [];
   const submitted: string[] = [];
@@ -89,8 +90,9 @@ function supervisedWorld(options: Readonly<{ version?: string; transcript?: stri
       return await Promise.resolve({ text, asUser: turn !== "framed" });
     },
   };
+  const found = async (): Promise<RcSupervisedTarget> => await Promise.resolve(target);
   const deps: RcSessionCommandDeps = {
-    supervisedOf: async () => await Promise.resolve(target),
+    ...(options.launched === true ? { supervisedOf: noSupervisor, launchedOf: found } : { supervisedOf: found }),
     goalOf: async (file) => await Promise.resolve(file === TRANSCRIPT ? activeGoalOfTranscript(transcript.join("\n")) : undefined),
     pluginTurnsOf: async (file) => await Promise.resolve(file === TRANSCRIPT ? transcript.reduce(pluginTurnsAfterLine, NO_PLUGIN_TURNS) : undefined),
     selfHost: undefined,
@@ -230,11 +232,11 @@ describe("goal and compaction control over Remote Control, by route", () => {
     expect(unbound.written).toEqual([]);
   });
 
-  it("refuses a session neither route reaches with the reason, and an unknown one as unknown", async () => {
+  it("refuses a session no route reaches with the reason, and an unknown one as unknown", async () => {
     const deps: RcSessionCommandDeps = { supervisedOf: noSupervisor, goalOf: noFile, pluginTurnsOf: noTurns, selfHost: undefined, isObserved: (id) => id === SESSION };
     const commands = createRcSessionCommands(deps);
     const unsupported = await commands.compact(SESSION);
-    expect(unsupported.ok ? "" : unsupported.message).toContain("not launched under an agent-shim supervisor");
+    expect(unsupported.ok ? "" : unsupported.message).toContain("no agent-shim launch's in-process control plugin records session");
     expect(unsupported.ok ? "" : unsupported.message).toContain("treats any other writer as a peer");
     const missing = await commands.goalGet("cse_missing");
     expect(missing.ok ? "" : missing.message).toBe("the front door has not observed Remote Control session cse_missing");
@@ -348,14 +350,15 @@ describe("a person's turn over Remote Control, by route", () => {
     expect(world.submitted).toEqual([]);
   });
 
-  it("writes a turn on the self-hosted surface as a person's app, and refuses a session neither route reaches, naming what would give it one", async () => {
+  it("writes a turn on the self-hosted surface as a person's app, and refuses a session no route reaches, naming what would give it one", async () => {
     const world = selfHostedWorld(VERIFIED_VERSION, undefined, true);
     const result = await createRcSessionCommands(world.deps).turn(SESSION, "carry on", { waitMs: SHORT_WAIT_MS });
     expect(result.ok ? "" : result.message).toContain(`did not answer within ${String(SHORT_WAIT_MS)} ms`);
     expect(world.written.map((body) => JSON.stringify(JSON.parse(body)).includes('"content":"carry on"'))).toEqual([true]);
     const deps: RcSessionCommandDeps = { supervisedOf: noSupervisor, goalOf: noFile, pluginTurnsOf: noTurns, selfHost: undefined, isObserved: () => true };
     const refused = await createRcSessionCommands(deps).turn(SESSION, "carry on");
-    expect(refused.ok ? "" : refused.message).toContain("issues/803");
+    expect(refused.ok ? "" : refused.message).toContain("no agent-shim launch's in-process control plugin records session");
+    expect(refused.ok ? "" : refused.message).toContain(`Start the session through agent-shim run on Claude Code ${RC_SESSION_COMMAND_VERIFIED_VERSIONS.join(", ")} without --bare`);
   });
 
   it("reads which route a session has, or why it has none, without waiting behind a verb queued on it", async () => {
@@ -392,5 +395,37 @@ describe("the verified versions", () => {
     const documented = versions.split(/, | and /u).map((version) => version.trim());
     expect(RC_SESSION_COMMAND_VERIFIED_VERSIONS.length).toBeGreaterThan(0);
     expect([...documented].sort()).toEqual([...RC_SESSION_COMMAND_VERIFIED_VERSIONS].sort());
+  });
+});
+
+describe("a session the launcher started with no supervisor, through its control plugin", () => {
+  it("takes the launched route for every verb, and names it in the status read", async () => {
+    const world = supervisedWorld({ launched: true, transcript: [goalRow({ met: false, sentinel: true, condition: "tests pass" })] });
+    const commands = createRcSessionCommands(world.deps);
+    expect(await commands.routeOf(SESSION)).toEqual({ route: "launched" });
+    expect(await commands.goalGet(SESSION)).toEqual({ ok: true, report: { route: "launched", goal: { condition: "tests pass", iterations: 0 } } });
+    expect(await commands.goalSet(SESSION, "docs build")).toEqual({ ok: true, report: { route: "launched", condition: "docs build", superseded: "tests pass" } });
+    expect(await commands.goalClear(SESSION)).toEqual({ ok: true, report: { route: "launched", cleared: "docs build" } });
+    expect(await commands.compact(SESSION)).toEqual({ ok: true, report: { route: "launched", trigger: "plugin", preTokens: 900, postTokens: 120 } });
+    expect(await commands.turn(SESSION, "carry on")).toEqual({ ok: true, report: { route: "launched", uuid: "turn-1" } });
+    expect(world.ran).toEqual(["docs build", "clear"]);
+    expect(world.submitted).toEqual(["carry on"]);
+  });
+
+  it("prefers a supervisor's claim, and is not asked when one holds the session", async () => {
+    const world = supervisedWorld();
+    let asked = 0;
+    const deps: RcSessionCommandDeps = { ...world.deps, launchedOf: async () => { asked += 1; return await Promise.resolve({ refused: "unused" }); } };
+    expect(await createRcSessionCommands(deps).routeOf(SESSION)).toEqual({ route: "supervised" });
+    expect(asked).toBe(0);
+  });
+
+  it("refuses a launched session on an unverified version or not yet loaded, and passes on the lookup's own refusal", async () => {
+    const unverified = await createRcSessionCommands(supervisedWorld({ launched: true, version: "2.0.1" }).deps).routeOf(SESSION);
+    expect(unverified.route === null ? unverified.refused : "").toContain("runs Claude Code 2.0.1");
+    const unloaded = await createRcSessionCommands(supervisedWorld({ launched: true, version: undefined }).deps).routeOf(SESSION);
+    expect(unloaded.route === null ? unloaded.refused : "").toContain("its launch's control plugin has not loaded");
+    const deps: RcSessionCommandDeps = { supervisedOf: noSupervisor, launchedOf: async () => await Promise.resolve({ refused: "two launches claim it" }), goalOf: noFile, pluginTurnsOf: noTurns, selfHost: undefined, isObserved: () => true };
+    expect(await createRcSessionCommands(deps).routeOf(SESSION)).toEqual({ route: null, refused: "two launches claim it" });
   });
 });

@@ -108,6 +108,8 @@ export interface LayoutPaths {
   readonly identityNameRenamesDir: string;
   /** Directory holding one `<launcher-pid>.<id>.json` record per launch in progress, named by the id of the identity it launches, written before the identity's farm is resynced and removed once the child has exited. Runtime state, never configuration: it is what lets `identity rename --move` see a launch that has resynced but not yet started its child. */
   readonly launchesDir: string;
+  /** Directory holding one `<launcher-pid>.<id>.json` record per unsupervised launch that loaded the in-process control plugin, naming the plugin's directory, written before the child starts and removed once it has exited: what the front door reads to reach such a session. Runtime state, never configuration. */
+  readonly launchControlDir: string;
   /** Directory of the supervised sessions' shared state, one subdirectory per pool: the live sessions each launcher registers, so sessions on one account see each other, and the lock that serialises their moves. Runtime state, never configuration. */
   readonly superviseDir: string;
   /** Directory of the model-move requests the front door writes for supervised sessions that picked a model served under another identity: one `<sessionId>.json` per pending request, claimed and removed by the session's supervisor. Runtime state, never configuration. */
@@ -195,6 +197,7 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     identityRenamesDir: path.join(root, "identity-renames"),
     identityNameRenamesDir: path.join(root, "identity-name-renames"),
     launchesDir: path.join(root, "launches"),
+    launchControlDir: path.join(root, "launch-control"),
     superviseDir: path.join(root, "supervise"),
     modelMovesDir: path.join(root, "model-moves"),
     mcpPermissionsFile: path.join(root, "mcp", "permissions.json"),

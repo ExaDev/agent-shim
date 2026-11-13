@@ -4,6 +4,7 @@ import { COMPACT_TIMEOUT_MS } from "../supervise/compactTimeout";
 import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
 import type { CompactionResult } from "../supervise/realCompact";
 import { RESULT_POLL_MS } from "../supervise/sessionControl";
+import { RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "../supervise/verifiedVersions";
 import type { SubmittedTurn } from "../supervise/sessionControl";
 import type { TranscriptGoal } from "../supervise/sessionGoal";
 import type { PluginTurns } from "../supervise/sessionPluginTurns";
@@ -13,15 +14,14 @@ import { runSelfHostedSlashCommand, runSelfHostedTurn, type RcSelfHostCommandDep
  * Goal, compaction and turn control over a Remote Control session: read, set and clear its `/goal`, compact its conversation, and put a person's typed turn into it, each returning the outcome the session itself reports. One verb surface over the two routes Claude Code 2.1.319 leaves open, chosen per session:
  *
  * - **A supervised session** (one an agent-shim supervisor launched, whatever its account or provider): the door finds the launch through the registry, by the `bridge-session` row Claude Code writes into the session's own transcript, and asks the session's in-process control plugin (`supervise/sessionControlPlugin.ts`), which runs `$.session.compact`, `/goal <condition>` and `/goal clear` through the plugin API, or submits a person's turn with `$.prompt.submit` as the person's words. The goal is read from the transcript's `goal_status` rows, with no effect on the session.
- * - **A session on the door's self-hosted surface** that no supervisor owns: the door is the Remote Control service there, so it writes the slash command or the turn into its own conversation as a person's app would and reads the worker's answer off the stream (`rcSelfHostCommands.ts`).
+ * - **A launched session** (one the launcher started with no supervisor, which loads the same control plugin, `supervise/launchControl.ts`): the same plugin, found through the launch's control record by the same `bridge-session` row, in the transcript the plugin itself recorded. Everything the plugin does is the same; what needs the supervisor (resuming on a spent quota, moving to another member) is not there.
+ * - **A session on the door's self-hosted surface** that no supervisor owns and no control plugin reaches: the door is the Remote Control service there, so it writes the slash command or the turn into its own conversation as a person's app would and reads the worker's answer off the stream (`rcSelfHostCommands.ts`).
  *
- * Any other session is refused with the reason: the door has no in-process channel into it, and on the real service the worker runs a slash command only when a person's app wrote it (it treats every other writer, the door's own `send` among them, as a peer whose message the model reads as text), which the door will not claim to be.
+ * Any other session is refused with the reason (one started outside the launcher, with `--native` or `--bare`, or on a version the plugin was not verified on): the door has no in-process channel into it, and on the real service the worker runs a slash command only when a person's app wrote it (it treats every other writer, the door's own `send` among them, as a peer whose message the model reads as text), which the door will not claim to be.
  *
  * Both routes are verified for exactly the Claude Code versions `RC_SESSION_COMMAND_VERIFIED_VERSIONS` names, read from the running binary itself (the plugin's `$.session.version()`, or the worker's own `system/init`), and every verb refuses a session on any other version, or one whose version is not known.
  */
 
-/** The Claude Code versions both routes were verified on end to end; a session reporting any other version is refused. */
-export const RC_SESSION_COMMAND_VERIFIED_VERSIONS: readonly string[] = ["2.1.319", "2.1.325"];
 
 /** The arguments the 2.1.319 `/goal` command reads as a request to clear the goal rather than set one, compared case-insensitively; a condition that is one of these words cannot be set through `/goal`, so the set verb refuses it rather than clear the goal by accident. */
 export const RC_GOAL_CLEAR_WORDS: readonly string[] = ["clear", "stop", "off", "reset", "none", "cancel"];
@@ -45,8 +45,11 @@ export const RC_TURN_TEXT_MAX_CHARS = Math.floor(CONTROL_BODY_CAP_BYTES / MAX_JS
  */
 export const RC_SESSION_COMMAND_MAX_WAIT_MS = 2_147_483_647;
 
-/** Who answered: the session's supervisor through its in-process plugin, or the door's own self-hosted surface. */
-export type RcSessionCommandRoute = "supervised" | "self-hosted";
+/** Who answered: the in-process control plugin of a session an agent-shim supervisor runs (`supervised`) or of one the launcher started with no supervisor (`launched`), or the door's own self-hosted surface. */
+export type RcSessionCommandRoute = "supervised" | "launched" | "self-hosted";
+
+/** The two routes through a session's in-process control plugin. */
+type RcPluginRoute = Extract<RcSessionCommandRoute, "supervised" | "launched">;
 
 /** One goal as the session reports it. */
 export type RcGoal = TranscriptGoal;
@@ -105,11 +108,11 @@ export interface RcCompactOptions extends RcSessionCommandOptions {
 }
 
 
-/** The supervised launch a Remote Control session belongs to, as the door reaches it. */
+/** The launch a Remote Control session belongs to, as the door reaches it through the launch's in-process control plugin: a supervised launch, or one the launcher started with no supervisor. */
 export interface RcSupervisedTarget {
   /** The conversation the plugin acts on: the session's current one, which differs from its launch id after `/clear`. */
   readonly conversationId: string;
-  /** The session's current transcript, the goal's record; undefined until the session's hooks have named it. */
+  /** The session's current transcript, the goal's record; undefined until the session's hooks (a supervisor's) or its control plugin (a launch's) have named it. */
   readonly transcriptPath: string | undefined;
   /** The Claude Code version the plugin reported when it loaded; undefined when it has not loaded. */
   readonly version: string | undefined;
@@ -125,6 +128,8 @@ export interface RcSupervisedTarget {
 export interface RcSessionCommandDeps {
   /** The supervised launch a `cse_` session belongs to; undefined when no live supervisor owns it, or when it does but its control plugin is not recorded; a refusal when the door cannot tell which launch it is (two live launches claim it). */
   readonly supervisedOf: (sessionId: string) => Promise<RcSupervisedTarget | { readonly refused: string } | undefined>;
+  /** The unsupervised launch a `cse_` session belongs to, asked only when no supervisor owns it: undefined when no live launch's control plugin records it, a refusal when two do. Absent when the host starts no sessions with the control plugin, and then no session takes the `launched` route. */
+  readonly launchedOf?: (sessionId: string) => Promise<RcSupervisedTarget | { readonly refused: string } | undefined>;
   /** The goal a transcript leaves active, read incrementally without blocking (`transcriptFollower.ts`); undefined when the file does not exist. */
   readonly goalOf: (path: string) => Promise<RcGoal | null | undefined>;
   /** The turns the control plugin submitted as the person's words, as a transcript records them (`sessionPluginTurns.ts`), read the same way; undefined when the file does not exist. */
@@ -143,14 +148,20 @@ function unverifiedVersionMessage(sessionId: string, version: string | undefined
     : `session ${sessionId} runs Claude Code ${version}, and goal, compaction and turn control is verified only on Claude Code ${verified}: the door will not act on a version whose behaviour it has not verified`;
 }
 
-/** The refusal for a session neither route reaches. */
+/** Why no in-process control plugin reaches a session: the start of both refusals that name it. */
+function noPluginReason(sessionId: string): string {
+  return `no agent-shim launch's in-process control plugin records session ${sessionId}: it was started outside the launcher (with claude's own command, or agent-shim run --native), with --bare, on a Claude Code version the plugin is not verified on, or its plugin has not yet recorded its transcript, which it does from the session's first hook event`;
+}
+
+/** The refusal for a session no route reaches. */
 function unsupportedMessage(sessionId: string): string {
-  return `session ${sessionId} was not launched under an agent-shim supervisor, so the door has no in-process channel into it, and it is not on the door's own self-hosted surface. Over the real Remote Control service, Claude Code ${RC_SESSION_COMMAND_VERIFIED_VERSIONS.join(", ")} takes a message as a person's (running it when it is a slash command) only when a person's app wrote it and treats any other writer as a peer, whose message the model reads as another session's, and the door does not claim to be a person's app on a service it does not run. Launch the session under a pool with resumeOnLimit (which supervises it), or run it against the door's self-hosted surface; loading the control plugin into every launch (https://github.com/ExaDev/agent-shim/issues/803) would give it a route.`;
+  return `${noPluginReason(sessionId)}, so the door has no in-process channel into it, and it is not on the door's own self-hosted surface. Over the real Remote Control service, Claude Code ${RC_SESSION_COMMAND_VERIFIED_VERSIONS.join(", ")} takes a message as a person's (running it when it is a slash command) only when a person's app wrote it and treats any other writer as a peer, whose message the model reads as another session's, and the door does not claim to be a person's app on a service it does not run. Start the session through agent-shim run on Claude Code ${RC_SESSION_COMMAND_VERIFIED_VERSIONS.join(", ")} without --bare, or run it against the door's self-hosted surface.`;
 }
 
 /** One verb's work on a resolved route. */
 interface RouteActions<T> {
-  readonly supervised: (target: RcSupervisedTarget, signal: AbortSignal, waitMs: number) => Promise<RcSessionCommandResult<T>>;
+  /** The work through the session's control plugin, on the route it was found by, which the report names. */
+  readonly plugin: (target: RcSupervisedTarget, route: RcPluginRoute, signal: AbortSignal, waitMs: number) => Promise<RcSessionCommandResult<T>>;
   readonly selfHosted: (selfHost: RcSelfHostCommandDeps, signal: AbortSignal) => Promise<RcSessionCommandResult<T>>;
 }
 
@@ -173,17 +184,30 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
     }
   };
 
-  /** Resolves the session's route and gates its version: the supervised launch, the door's own surface, or the refusal naming why neither serves it. Reads only, so a caller can ask it outside the session's queue. */
-  const resolveRoute = async (sessionId: string): Promise<{ readonly kind: "supervised"; readonly target: RcSupervisedTarget } | { readonly kind: "self-hosted"; readonly selfHost: RcSelfHostCommandDeps } | { readonly kind: "refused"; readonly message: string }> => {
-    const target = await deps.supervisedOf(sessionId);
-    if (target !== undefined && "refused" in target) {
+  /** The session's launch on one plugin route, gated on the version its plugin reported; undefined when that route does not hold the session. */
+  const pluginRoute = async (sessionId: string, route: RcPluginRoute, lookup: RcSessionCommandDeps["supervisedOf"]): Promise<{ readonly kind: RcPluginRoute; readonly target: RcSupervisedTarget } | { readonly kind: "refused"; readonly message: string } | undefined> => {
+    const target = await lookup(sessionId);
+    if (target === undefined) {
+      return undefined;
+    }
+    if ("refused" in target) {
       return { kind: "refused", message: target.refused };
     }
-    if (target !== undefined) {
-      if (target.version === undefined || !RC_SESSION_COMMAND_VERIFIED_VERSIONS.includes(target.version)) {
-        return { kind: "refused", message: unverifiedVersionMessage(sessionId, target.version, "its supervisor's control plugin has not loaded") };
-      }
-      return { kind: "supervised", target };
+    if (target.version === undefined || !RC_SESSION_COMMAND_VERIFIED_VERSIONS.includes(target.version)) {
+      return { kind: "refused", message: unverifiedVersionMessage(sessionId, target.version, route === "supervised" ? "its supervisor's control plugin has not loaded" : "its launch's control plugin has not loaded") };
+    }
+    return { kind: route, target };
+  };
+
+  /** Resolves the session's route and gates its version: the supervised launch, the unsupervised launch, the door's own surface, or the refusal naming why none serves it. Reads only, so a caller can ask it outside the session's queue. */
+  const resolveRoute = async (sessionId: string): Promise<{ readonly kind: RcPluginRoute; readonly target: RcSupervisedTarget } | { readonly kind: "self-hosted"; readonly selfHost: RcSelfHostCommandDeps } | { readonly kind: "refused"; readonly message: string }> => {
+    const supervised = await pluginRoute(sessionId, "supervised", deps.supervisedOf);
+    if (supervised !== undefined) {
+      return supervised;
+    }
+    const launched = deps.launchedOf === undefined ? undefined : await pluginRoute(sessionId, "launched", deps.launchedOf);
+    if (launched !== undefined) {
+      return launched;
     }
     if (!deps.isObserved(sessionId)) {
       return { kind: "refused", message: `the front door has not observed Remote Control session ${sessionId}` };
@@ -193,7 +217,7 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
     }
     const unavailable = deps.selfHost.unavailable();
     if (unavailable !== undefined) {
-      return { kind: "refused", message: `session ${sessionId} was not launched under an agent-shim supervisor, and the door's self-hosted surface cannot take a command: ${unavailable}` };
+      return { kind: "refused", message: `${noPluginReason(sessionId)}, and the door's self-hosted surface cannot take a command: ${unavailable}` };
     }
     const version = deps.selfHost.versionOf(sessionId);
     if (version === undefined || !RC_SESSION_COMMAND_VERIFIED_VERSIONS.includes(version)) {
@@ -213,13 +237,13 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
       if (resolved.kind === "refused") {
         return { ok: false, message: resolved.message };
       }
-      if (resolved.kind === "supervised") {
+      if (resolved.kind !== "self-hosted") {
         // The plugin answers only once the session is idle (a request queued behind a turn waiting on a permission prompt waits as long as the prompt does), so the wait is bounded here: the request's own signal or the wait, whichever ends first.
         const waitMs = options.waitMs ?? COMPACT_TIMEOUT_MS;
         const timeout = AbortSignal.timeout(waitMs);
         const bounded = signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
         try {
-          return await actions.supervised(resolved.target, bounded, waitMs);
+          return await actions.plugin(resolved.target, resolved.kind, bounded, waitMs);
         } catch (error) {
           if (timeout.aborted) {
             return { ok: false, message: `session ${sessionId}'s control plugin did not answer within ${String(waitMs)} ms. A request the plugin had not started is withdrawn; one it had started runs once the session is idle (a turn waiting on a permission prompt holds it), so read the session's goal or transcript before asking again` };
@@ -237,17 +261,17 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
       return result;
     });
 
-  /** The supervised session's goal as its transcript records it now. */
+  /** The plugin-reached session's goal as its transcript records it now. */
   const transcriptGoal = async (sessionId: string, target: RcSupervisedTarget): Promise<RcSessionCommandResult<RcGoal | null>> => {
     const goal = target.transcriptPath === undefined ? undefined : await deps.goalOf(target.transcriptPath);
     if (goal === undefined) {
-      return { ok: false, message: `session ${sessionId}'s supervisor has not recorded its transcript yet, which is where its goal is read from; retry once it has finished a turn` };
+      return { ok: false, message: `session ${sessionId}'s transcript has not been recorded yet, which is where its goal is read from; retry once it has finished a turn` };
     }
     return { ok: true, report: goal };
   };
 
   /**
-   * The supervised session's goal once `holds` is true of it, re-reading the transcript at the plugin's own result cadence until it is or the verb's signal ends: the plugin reports the command run once `$.command.run` resolves, and the transcript row that records its effect can land a moment after. When the signal ends first, the last read is returned, and the caller reports that it does not show the change.
+   * The plugin-reached session's goal once `holds` is true of it, re-reading the transcript at the plugin's own result cadence until it is or the verb's signal ends: the plugin reports the command run once `$.command.run` resolves, and the transcript row that records its effect can land a moment after. When the signal ends first, the last read is returned, and the caller reports that it does not show the change.
    */
   const settledGoal = async (sessionId: string, target: RcSupervisedTarget, signal: AbortSignal, holds: (goal: RcGoal | null) => boolean): Promise<RcSessionCommandResult<RcGoal | null>> => {
     for (;;) {
@@ -261,10 +285,10 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
 
   const waitOf = (options: RcSessionCommandOptions): number | undefined => options.waitMs;
 
-  /** The control plugin's turns as the supervised session's transcript records them now; a failure when the transcript is not named yet or does not exist. */
+  /** The control plugin's turns as the plugin-reached session's transcript records them now; a failure when the transcript is not named yet or does not exist. */
   const transcriptPluginTurns = async (sessionId: string, target: RcSupervisedTarget): Promise<RcSessionCommandResult<PluginTurns>> => {
     const turns = target.transcriptPath === undefined ? undefined : await deps.pluginTurnsOf(target.transcriptPath);
-    return turns === undefined ? { ok: false, message: `session ${sessionId}'s supervisor has not recorded its transcript yet, which is where a turn is confirmed from; retry once it has finished a turn` } : { ok: true, report: turns };
+    return turns === undefined ? { ok: false, message: `session ${sessionId}'s transcript has not been recorded yet, which is where a turn is confirmed from; retry once it has finished a turn` } : { ok: true, report: turns };
   };
 
   return {
@@ -288,7 +312,7 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
         return { ok: false, message: `a turn's text is limited to ${String(RC_TURN_TEXT_MAX_CHARS)} characters, and this one has ${String(text.length)}` };
       }
       return await onRoute<RcTurnReport>(sessionId, options, {
-        supervised: async (target, signal, waitMs) => {
+        plugin: async (target, route, signal, waitMs) => {
           const before = await transcriptPluginTurns(sessionId, target);
           if (!before.ok) {
             return before;
@@ -304,7 +328,7 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
               return after;
             }
             if (after.report.count > before.report.count && after.report.last !== undefined) {
-              return after.report.last.text === text ? { ok: true, report: { route: "supervised", uuid: after.report.last.uuid } } : { ok: false, message: `session ${sessionId}'s transcript records a turn the control plugin submitted, but its text is not the text sent` };
+              return after.report.last.text === text ? { ok: true, report: { route, uuid: after.report.last.uuid } } : { ok: false, message: `session ${sessionId}'s transcript records a turn the control plugin submitted, but its text is not the text sent` };
             }
             if (signal.aborted) {
               return { ok: false, message: `session ${sessionId} accepted the turn but its transcript did not record it within ${String(waitMs)} ms; it is queued behind the running turn, so read the transcript before sending it again` };
@@ -322,9 +346,9 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
     /** Reads the session's goal: from the transcript for a supervised session, with no effect on it; by running `/goal` on the self-hosted surface otherwise. */
     goalGet: async (sessionId: string, options: RcSessionCommandOptions = {}): Promise<RcSessionCommandResult<RcGoalReport>> =>
       await onRoute<RcGoalReport>(sessionId, options, {
-        supervised: async (target) => {
+        plugin: async (target, route) => {
           const read = await transcriptGoal(sessionId, target);
-          return await Promise.resolve(read.ok ? { ok: true as const, report: { route: "supervised" as const, goal: read.report } } : read);
+          return read.ok ? { ok: true, report: { route, goal: read.report } } : read;
         },
         selfHosted: async (selfHost, signal) => {
           const read = await runSelfHostedSlashCommand(selfHost, sessionId, { kind: "goal-get" }, waitOf(options), signal);
@@ -350,7 +374,7 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
         return { ok: false, message: `a goal condition is limited to ${String(RC_GOAL_CONDITION_MAX_CHARS)} characters, and this one has ${String(trimmed.length)}` };
       }
       return await onRoute<RcGoalSetReport>(sessionId, options, {
-        supervised: async (target, signal, waitMs) => {
+        plugin: async (target, route, signal, waitMs) => {
           const before = await transcriptGoal(sessionId, target);
           if (!before.ok) {
             return before;
@@ -360,7 +384,7 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
           if (!after.ok) {
             return after;
           }
-          return after.report?.condition === trimmed ? { ok: true, report: { route: "supervised", condition: trimmed, superseded: before.report?.condition ?? null } } : { ok: false, message: `session ${sessionId} ran /goal but its transcript does not record the goal as set` };
+          return after.report?.condition === trimmed ? { ok: true, report: { route, condition: trimmed, superseded: before.report?.condition ?? null } } : { ok: false, message: `session ${sessionId} ran /goal but its transcript does not record the goal as set` };
         },
         selfHosted: async (selfHost, signal) => {
           const before = await runSelfHostedSlashCommand(selfHost, sessionId, { kind: "goal-get" }, waitOf(options), signal);
@@ -376,20 +400,20 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
     /** Clears the session's goal and names the condition it cleared, or `null` when there was none, which is not a failure (clearing is idempotent). */
     goalClear: async (sessionId: string, options: RcSessionCommandOptions = {}): Promise<RcSessionCommandResult<RcGoalClearReport>> =>
       await onRoute<RcGoalClearReport>(sessionId, options, {
-        supervised: async (target, signal, waitMs) => {
+        plugin: async (target, route, signal, waitMs) => {
           const before = await transcriptGoal(sessionId, target);
           if (!before.ok) {
             return before;
           }
           if (before.report === null) {
-            return { ok: true, report: { route: "supervised", cleared: null } };
+            return { ok: true, report: { route, cleared: null } };
           }
           await target.runGoal("clear", signal, waitMs);
           const after = await settledGoal(sessionId, target, signal, (goal) => goal === null);
           if (!after.ok) {
             return after;
           }
-          return after.report === null ? { ok: true, report: { route: "supervised", cleared: before.report.condition } } : { ok: false, message: `session ${sessionId} ran /goal clear but its transcript still records the goal "${after.report.condition}"` };
+          return after.report === null ? { ok: true, report: { route, cleared: before.report.condition } } : { ok: false, message: `session ${sessionId} ran /goal clear but its transcript still records the goal "${after.report.condition}"` };
         },
         selfHosted: async (selfHost, signal) => {
           const cleared = await runSelfHostedSlashCommand(selfHost, sessionId, { kind: "goal-clear" }, waitOf(options), signal);
@@ -402,13 +426,13 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
       const instructions = options.instructions?.trim();
       const given = instructions === undefined || instructions === "" ? undefined : instructions;
       return await onRoute<RcCompactReport>(sessionId, options, {
-        supervised: async (target, signal, waitMs) => {
+        plugin: async (target, route, signal, waitMs) => {
           const result = await target.compact(signal, given, waitMs);
           if (result.kind === "unchanged") {
             return { ok: false, message: `session ${sessionId} was not compacted: ${result.reason}` };
           }
           // `$.session.compact` is the `session.compact` event with trigger `plugin`, which is what the plugin API names a compaction it asked for.
-          return { ok: true, report: { route: "supervised", trigger: "plugin", ...(result.beforeTokens === undefined ? {} : { preTokens: result.beforeTokens }), ...(result.afterTokens === undefined ? {} : { postTokens: result.afterTokens }) } };
+          return { ok: true, report: { route, trigger: "plugin", ...(result.beforeTokens === undefined ? {} : { preTokens: result.beforeTokens }), ...(result.afterTokens === undefined ? {} : { postTokens: result.afterTokens }) } };
         },
         selfHosted: async (selfHost, signal) => {
           const compacted = await runSelfHostedSlashCommand(selfHost, sessionId, { kind: "compact", instructions: given }, waitOf(options), signal);

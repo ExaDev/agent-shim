@@ -42,10 +42,10 @@ export const RcTurnInputSchema = z.strictObject({
   waitMs: WaitMsSchema,
 });
 
-/** The fields every verb's answer carries: the session and the route that served it (the session's supervisor, or the door's own self-hosted surface). */
+/** The fields every verb's answer carries: the session and the route that served it (the control plugin of a supervised or an unsupervised launch, or the door's own self-hosted surface). */
 const commandAnswerShape = {
   session: z.string(),
-  route: z.enum(["supervised", "self-hosted"]),
+  route: z.enum(["supervised", "launched", "self-hosted"]),
 };
 
 /** The goal read's answer: the active goal (condition, evaluated turns, the check's last reason when it gave one), or null when the session has none. */

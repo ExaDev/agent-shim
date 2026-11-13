@@ -36,6 +36,7 @@ import { resumedContextTokens } from "./usage/resumeContext";
 import { IdentityLockBusyError } from "./launcher/lock";
 import type { FarmFs, FsPort, FrontDoorPort, HeadroomPort, HeadroomUp, LogPort, ProcPort, ReportRow, SpawnPort } from "./launcher/ports";
 import { childExitCode } from "./launcher/spawn";
+import { stageControlPluginFor, type StagedLaunchControl } from "./supervise/launchControl";
 import { resolveProvider, resolveRoutedProviderCredentials, selectProvider, type SelectedProvider } from "./providersStore";
 import { loadConfigFile } from "./config/load";
 import { flattenLayers } from "./resolve/flatten";
@@ -132,6 +133,8 @@ export interface PrepareLaunchParams {
   readonly hasStoredLogin?: (identity: string) => boolean;
   /** Whether Claude Code can authenticate with the login an identity has stored, asked only for an identity that has one (`claudeBin` is the binary the launch would run). Undefined when it cannot be determined, and then the stored login is assumed good. Absent when the caller cannot ask. */
   readonly hasUsableLogin?: (identity: string, claudeBin: string) => boolean | undefined;
+  /** Stages the in-process control plugin for an unsupervised launch that loads one (`launchLoadsControlPlugin`) and records where it listens for the front door (`supervise/launchControl.ts`). Absent when the caller cannot stage it, and then no launch loads it. */
+  readonly stageControlPlugin?: () => StagedLaunchControl;
 }
 
 /** Inputs to `runLauncher`: a launch's inputs plus the port that spawns the child. */
@@ -317,6 +320,10 @@ interface DecidedLaunch {
   /** The global models block alone, which a session that adds no definitions of its own leaves the door to follow live. */
   readonly globalModels: ModelsConfig | undefined;
   readonly bin: string;
+  /** The version of `bin`, when discovery found it in the versions directory; a binary found on PATH has none. */
+  readonly binVersion: string | undefined;
+  /** Whether the arguments start a session, rather than a claude subcommand. */
+  readonly startsSession: boolean;
   readonly args: readonly string[];
   readonly argsForSupervisor: (supervisorPid?: number) => { readonly args: readonly string[]; readonly pickerSuppressed: boolean };
   readonly decision: LaunchDecision;
@@ -691,6 +698,8 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean, onRecorded
       models,
       globalModels,
       bin: discovered.path,
+      binVersion: discovered.version,
+      startsSession,
       args,
       argsForSupervisor,
       decision,
@@ -883,17 +892,19 @@ function prepareRegisteredLaunch(params: PrepareLaunchParams, onRecorded: (remov
       ...(resolvedFlags.statusline === undefined ? {} : { statusline: resolvedFlags.statusline }),
     });
 
-    // Every daemon session registration this launch holds, released when the child exits.
-    const releases = [...(unregisterLaunch === undefined ? [] : [unregisterLaunch]), ...(headroom === undefined || headroomPort === undefined ? [] : [headroomPort.release]), ...(frontDoorRelease === undefined ? [] : [frontDoorRelease])];
+    const picker = decided.argsForSupervisor(frontDoor?.supervisorPid);
+    // An unsupervised session gets the same in-process control plugin a supervised one does, so the door can reach it for the goal, compaction and turn verbs.
+    const control = stageControlPluginFor({ args: picker.args, version: decided.binVersion, startsSession: decided.startsSession, supervised: params.supervised !== undefined }, params.stageControlPlugin, log.warn);
+    // Every daemon session registration this launch holds, and its control plugin, released when the child exits.
+    const releases = [...(unregisterLaunch === undefined ? [] : [unregisterLaunch]), ...(headroom === undefined || headroomPort === undefined ? [] : [headroomPort.release]), ...(frontDoorRelease === undefined ? [] : [frontDoorRelease]), ...(control === undefined ? [] : [control.release])];
     const release = (): void => {
       for (const registered of releases) {
         registered();
       }
     };
-    const picker = decided.argsForSupervisor(frontDoor?.supervisorPid);
     if (picker.pickerSuppressed) rows.push(noteRow("--settings was passed, so /model keeps Claude Code's own model names"));
     rows.push(...notes.map(noteRow));
-    return { finalEnv, release, picker, sessionId };
+    return { finalEnv, release, args: control === undefined ? picker.args : control.args(picker.args), sessionId };
   });
   const unreachable = reachability?.line();
   log.report(rows);
@@ -902,7 +913,7 @@ function prepareRegisteredLaunch(params: PrepareLaunchParams, onRecorded: (remov
   }
   printDiagnosticLines(log, warnings, { errorsAsWarnings: false });
   const hold = (): HoldOutcome => holdBeforeLaunch({ delayMs: resolvedFlags.delayMs, pause: resolvedFlags.pause }, params.hold, log);
-  return { bin: decided.bin, args: brought.picker.args, env: brought.finalEnv, sessionId: brought.sessionId, release: brought.release, markChildStarted: updateCheck.markChildStarted, hold, decision };
+  return { bin: decided.bin, args: brought.args, env: brought.finalEnv, sessionId: brought.sessionId, release: brought.release, markChildStarted: updateCheck.markChildStarted, hold, decision };
 }
 
 /**
