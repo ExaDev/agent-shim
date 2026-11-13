@@ -36,7 +36,7 @@ export interface LayoutPaths {
   readonly headroomStateFile: string;
   /** The live routing setting `agent-shim headroom enable|disable` writes and the front door re-reads per request: which sessions go through headroom, whatever their launch asked for. */
   readonly headroomRoutingFile: string;
-  /** The runtime route overrides `agent-shim route set|unset` writes and the front door re-reads on change: per scope (session, identity, provider, global), the name a request asking for a Claude name or class is routed by instead. At the root, beside `provider-aliases.json`, since it is the door's routing and not headroom's. */
+  /** The runtime route overrides `agent-shim route set|remove` writes and the front door re-reads on change: per scope (session, identity, provider, global), the name a request asking for a Claude name or class is routed by instead. At the root, beside `provider-aliases.json`, since it is the door's routing and not headroom's. */
   readonly routeOverridesFile: string;
   /** The previous release's versioned name for the state file, read only while a supervisor from that release is still alive and removed once its generation has drained (see `migrateHeadroomState`). */
   readonly headroomLegacyStateFile: string;
