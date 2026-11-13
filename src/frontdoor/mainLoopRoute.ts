@@ -236,6 +236,16 @@ export interface MainLoopRoutingDeps {
   readonly rename?: { readonly model: RenameModel; readonly bodyLimitBytes: number };
 }
 
+/**
+ * The provider of the route a session itself chose: the provider it was launched on, else the provider its recorded context names when the session's own request put it there, else none (the Anthropic route). A context a route override made is the override's, not the session's: reading an override's scope from it would let an override's own move decide which override applies next, so a provider-scoped entry for the provider a global entry moved the session to would flip the session between the two on every request. Every scope and route a renaming reads comes from here.
+ */
+export function sessionRouteProvider(launchProvider: string | undefined, context: Readonly<RouteContext> | undefined): string | undefined {
+  if (launchProvider !== undefined) {
+    return launchProvider;
+  }
+  return context?.kind === "provider" && context.movedBy !== "override" ? context.provider : undefined;
+}
+
 /** What a renaming knows of the request whose model it may replace. */
 export interface RenameContext {
   readonly session: RoutedRequest["session"];
@@ -243,7 +253,7 @@ export interface RenameContext {
   readonly main: boolean;
   /** Whether the request's path names no provider: the session's own request, as against one a routing layer or the headroom hop scoped. */
   readonly unscoped: boolean;
-  /** The provider the request would reach before any renaming: the launch's own, else the provider the launch's main loop was last served on; undefined on the Anthropic route. Asked only when needed, since it reads the route context. */
+  /** The provider of the route the session itself chose: the launch's own, else the provider its main loop was last served on when the session's own request put it there; undefined on the Anthropic route. A context a route override made (`movedBy: "override"`) is no choice of the session's and counts as the launch's own route, so nothing read from it decides which override applies (see `sessionRouteProvider`). Asked only when needed, since it reads the route context. */
   readonly routeProvider: () => string | undefined;
   /** The Claude model id this launch last sent for a tier (see `MainLoopRouteRecord.claudeNameOf`), which a class on the Anthropic route is sent as. */
   readonly claudeNameOf: (tier: ClaudeTier) => string | undefined;
@@ -366,13 +376,7 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
       session: request.session,
       main: requestClass === undefined || requestClass === MAIN_REQUEST_CLASS,
       unscoped: parseProviderPath(path) === undefined,
-      routeProvider: () => {
-        if (request.session.provider !== undefined) {
-          return request.session.provider;
-        }
-        const context = launch === undefined ? undefined : deps.record.routeOf(launch);
-        return context?.kind === "provider" ? context.provider : undefined;
-      },
+      routeProvider: () => sessionRouteProvider(request.session.provider, launch === undefined ? undefined : deps.record.routeOf(launch)),
       claudeNameOf: (tier) => (launch === undefined ? undefined : deps.record.claudeNameOf(launch, tier)),
     });
     if (decided === undefined || asked === undefined) {
