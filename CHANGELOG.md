@@ -1,3 +1,9 @@
+## [14.3.2](https://github.com/ExaDev/agent-shim/compare/v14.3.1...v14.3.2) (2026-11-13)
+
+### Bug Fixes
+
+* **farm:** leave out a shared entry whose symlink in ~/.claude leads nowhere ([31827da](https://github.com/ExaDev/agent-shim/commit/31827dadea85a2f7c1f3ef4f5c80dc4d98c1abf2)), closes [#815](https://github.com/ExaDev/agent-shim/issues/815)
+
 ## [14.3.1](https://github.com/ExaDev/agent-shim/compare/v14.3.0...v14.3.1) (2026-11-13)
 
 ### Bug Fixes
