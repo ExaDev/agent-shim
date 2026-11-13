@@ -13,7 +13,7 @@ import { catalogueReadFault } from "./storedCatalogue";
 import { RouteOverridesSchema, type OverrideTable, type RouteOverrides } from "./routeOverridesSchema";
 
 /**
- * The runtime route overrides: per scope, a table from a bare Claude model name or class to the name a request asking for it is routed by instead. Stored at `LayoutPaths.routeOverridesFile`, written by `agent-shim route set|unset` and `config.route.set|unset`, and read by the door on change (`createRouteOverridesReader`), so an edit applies to the next request with no restart and nothing changed in Claude Code.
+ * The runtime route overrides: per scope, a table from a bare Claude model name or class to the name a request asking for it is routed by instead. Stored at `LayoutPaths.routeOverridesFile`, written by `agent-shim route set|remove` and `config.route.set|remove`, and read by the door on change (`createRouteOverridesReader`), so an edit applies to the next request with no restart and nothing changed in Claude Code.
  */
 
 /** The scopes an override can be set in, highest precedence first: an entry of an earlier scope outranks every entry of a later one. */

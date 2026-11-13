@@ -1,13 +1,13 @@
 import type { Command } from "commander";
 
-import { printJson, reportMutation, withExamples, type CommandDeps } from "./cli/commandDeps";
+import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDeps } from "./cli/commandDeps";
 import { UsageError } from "./cliError";
 import type { LayoutPaths } from "./paths";
 import { overrideNamesOf, overrideScopeProblem, overrideTargetProblem } from "./routeOverrideChecks";
 import { describeScope, readRouteOverrides, ROUTE_OVERRIDE_SCOPES, scopeLabelOf, withRouteOverride, writeRouteOverrides, type RouteOverrideScope } from "./routeOverridesStore";
 import type { RouteOverrides } from "./routeOverridesSchema";
 
-/** The scope flags one `route set` or `route unset` takes, at most one of them. */
+/** The scope flags one `route set` or `route remove` takes, at most one of them. */
 interface ScopeOptions {
   readonly session?: string;
   readonly identity?: string;
@@ -63,14 +63,14 @@ export function setRouteOverride(paths: LayoutPaths, scope: RouteOverrideScope, 
   return overrides;
 }
 
-/** Removes one override; throws `UsageError` when none is set there. Shared by `route unset` and `config.route.unset`. Returns the overrides as written. */
-export function unsetRouteOverride(paths: LayoutPaths, scope: RouteOverrideScope, model: string): RouteOverrides {
+/** Removes one override; throws `UsageError` when none is set there. Shared by `route remove` and `config.route.remove`. Returns the overrides as written. */
+export function removeRouteOverride(paths: LayoutPaths, scope: RouteOverrideScope, model: string): RouteOverrides {
   const overrides = withRouteOverride(readRouteOverrides(paths), scope, model, undefined);
   writeRouteOverrides(paths, overrides);
   return overrides;
 }
 
-/** Registers `agent-shim route set|unset|list`: the runtime route overrides the front door applies to the next request with no restart. */
+/** Registers `agent-shim route set|remove|list`, with the verbs and flags every noun's write verbs take (`remove` asks for confirmation unless `--yes`, as `rule remove` does): the runtime route overrides the front door applies to the next request with no restart. */
 export function registerRouteCommand(program: Command, deps: CommandDeps): void {
   const { paths } = deps;
   const route = program.command("route").description("Route a Claude model name or class somewhere else at runtime, per session, identity, provider or globally; the front door applies a change to the next request.");
@@ -92,11 +92,12 @@ export function registerRouteCommand(program: Command, deps: CommandDeps): void 
     });
   });
   withExamples(
-    scoped(route.command("unset <model>").description("Remove one override, so requests for the name go where they would without it.")),
-    ["agent-shim route unset opus", "agent-shim route unset claude-sonnet-5-5 --identity work --json"],
-  ).action((model: string, options: Readonly<ScopeOptions & { json?: boolean }>) => {
+    scoped(route.command("remove <model>").description("Remove one override, so requests for the name go where they would without it.").option("--yes", "Remove without asking for confirmation.")),
+    ["agent-shim route remove opus --yes", "agent-shim route remove claude-sonnet-5-5 --identity work --yes --json"],
+  ).action(async (model: string, options: Readonly<ScopeOptions & { json?: boolean; yes?: boolean }>) => {
     const scope = scopeOfOptions(options);
-    unsetRouteOverride(paths, scope, model);
+    await confirmRemoval(deps, options.yes, `the route override of "${model}" ${describeScope(scope)}`);
+    removeRouteOverride(paths, scope, model);
     reportMutation(options.json, { action: "removed", kind: "route", name: model, value: undefined }, () => {
       console.log(`Removed the override of ${model} ${describeScope(scope)}.`);
     });

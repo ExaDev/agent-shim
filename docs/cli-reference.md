@@ -121,7 +121,7 @@ agent-shim provider rename <old> <new> [--json]
 agent-shim provider unalias <alias> [--json]
 
 agent-shim route set <model> <target> [--session <id> | --identity <name> | --provider <name>] [--json]   # route a Claude name or class (opus, claude-opus-5-5) to a target from each session's next request; no scope flag is global
-agent-shim route unset <model> [--session <id> | --identity <name> | --provider <name>] [--json]
+agent-shim route remove <model> [--session <id> | --identity <name> | --provider <name>] [--yes] [--json]
 agent-shim route list [--json]   # every override, highest precedence first: session, identity, provider, global
 
 agent-shim rule add <path> [--config-profile <profile>] [--identity <identity>]
