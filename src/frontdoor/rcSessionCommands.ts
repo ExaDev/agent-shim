@@ -90,8 +90,18 @@ export interface RcTurnReport {
 /** Which route the verbs would take for a session now, or why none would: the read a caller makes before offering a person a reply box. */
 export type RcSessionRoute = { readonly route: RcSessionCommandRoute } | { readonly route: null; readonly refused: string };
 
-/** One verb's outcome: the report, or a verbose failure ready to show a user. */
-export type RcSessionCommandResult<T> = { readonly ok: true; readonly report: T } | { readonly ok: false; readonly message: string };
+/** Why the door refused a verb itself, before the session or its worker could fail it: `invalid-input` is a request that can never succeed as written, `not-observed` names a session the door does not observe, and `session-state` is a session the door observes but whose state does not let the verb run now (no route reaches it, its version is unverified, two launches claim it, or its transcript is not recorded yet). */
+export type RcRefusalKind = "invalid-input" | "not-observed" | "session-state";
+
+/** One verb's outcome: the report, or a verbose failure ready to show a user. A failure carries a `refusal` when the door refused the verb itself; without one the verb was attempted and the session, its plugin or its worker did not deliver it (no answer in time, an answer that says it failed). */
+export type RcSessionCommandResult<T> = { readonly ok: true; readonly report: T } | { readonly ok: false; readonly message: string; readonly refusal?: RcRefusalKind };
+
+/** A route resolution that found no route, with the refusal's kind. */
+interface RcRefusedRoute {
+  readonly kind: "refused";
+  readonly message: string;
+  readonly refusal: RcRefusalKind;
+}
 
 /** The options every verb takes. */
 export interface RcSessionCommandOptions {
@@ -185,22 +195,22 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
   };
 
   /** The session's launch on one plugin route, gated on the version its plugin reported; undefined when that route does not hold the session. */
-  const pluginRoute = async (sessionId: string, route: RcPluginRoute, lookup: RcSessionCommandDeps["supervisedOf"]): Promise<{ readonly kind: RcPluginRoute; readonly target: RcSupervisedTarget } | { readonly kind: "refused"; readonly message: string } | undefined> => {
+  const pluginRoute = async (sessionId: string, route: RcPluginRoute, lookup: RcSessionCommandDeps["supervisedOf"]): Promise<{ readonly kind: RcPluginRoute; readonly target: RcSupervisedTarget } | RcRefusedRoute | undefined> => {
     const target = await lookup(sessionId);
     if (target === undefined) {
       return undefined;
     }
     if ("refused" in target) {
-      return { kind: "refused", message: target.refused };
+      return { kind: "refused", message: target.refused, refusal: "session-state" };
     }
     if (target.version === undefined || !RC_SESSION_COMMAND_VERIFIED_VERSIONS.includes(target.version)) {
-      return { kind: "refused", message: unverifiedVersionMessage(sessionId, target.version, route === "supervised" ? "its supervisor's control plugin has not loaded" : "its launch's control plugin has not loaded") };
+      return { kind: "refused", message: unverifiedVersionMessage(sessionId, target.version, route === "supervised" ? "its supervisor's control plugin has not loaded" : "its launch's control plugin has not loaded"), refusal: "session-state" };
     }
     return { kind: route, target };
   };
 
   /** Resolves the session's route and gates its version: the supervised launch, the unsupervised launch, the door's own surface, or the refusal naming why none serves it. Reads only, so a caller can ask it outside the session's queue. */
-  const resolveRoute = async (sessionId: string): Promise<{ readonly kind: RcPluginRoute; readonly target: RcSupervisedTarget } | { readonly kind: "self-hosted"; readonly selfHost: RcSelfHostCommandDeps } | { readonly kind: "refused"; readonly message: string }> => {
+  const resolveRoute = async (sessionId: string): Promise<{ readonly kind: RcPluginRoute; readonly target: RcSupervisedTarget } | { readonly kind: "self-hosted"; readonly selfHost: RcSelfHostCommandDeps } | RcRefusedRoute> => {
     const supervised = await pluginRoute(sessionId, "supervised", deps.supervisedOf);
     if (supervised !== undefined) {
       return supervised;
@@ -210,18 +220,18 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
       return launched;
     }
     if (!deps.isObserved(sessionId)) {
-      return { kind: "refused", message: `the front door has not observed Remote Control session ${sessionId}` };
+      return { kind: "refused", message: `the front door has not observed Remote Control session ${sessionId}`, refusal: "not-observed" };
     }
     if (deps.selfHost === undefined) {
-      return { kind: "refused", message: unsupportedMessage(sessionId) };
+      return { kind: "refused", message: unsupportedMessage(sessionId), refusal: "session-state" };
     }
     const unavailable = deps.selfHost.unavailable();
     if (unavailable !== undefined) {
-      return { kind: "refused", message: `${noPluginReason(sessionId)}, and the door's self-hosted surface cannot take a command: ${unavailable}` };
+      return { kind: "refused", message: `${noPluginReason(sessionId)}, and the door's self-hosted surface cannot take a command: ${unavailable}`, refusal: "session-state" };
     }
     const version = deps.selfHost.versionOf(sessionId);
     if (version === undefined || !RC_SESSION_COMMAND_VERIFIED_VERSIONS.includes(version)) {
-      return { kind: "refused", message: unverifiedVersionMessage(sessionId, version, "no system/init from its worker has been observed on its stream; send it a prompt so it reports one") };
+      return { kind: "refused", message: unverifiedVersionMessage(sessionId, version, "no system/init from its worker has been observed on its stream; send it a prompt so it reports one"), refusal: "session-state" };
     }
     return { kind: "self-hosted", selfHost: deps.selfHost };
   };
@@ -235,7 +245,7 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
       }
       const resolved = await resolveRoute(sessionId);
       if (resolved.kind === "refused") {
-        return { ok: false, message: resolved.message };
+        return { ok: false, message: resolved.message, refusal: resolved.refusal };
       }
       if (resolved.kind !== "self-hosted") {
         // The plugin answers only once the session is idle (a request queued behind a turn waiting on a permission prompt waits as long as the prompt does), so the wait is bounded here: the request's own signal or the wait, whichever ends first.
@@ -265,7 +275,7 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
   const transcriptGoal = async (sessionId: string, target: RcSupervisedTarget): Promise<RcSessionCommandResult<RcGoal | null>> => {
     const goal = target.transcriptPath === undefined ? undefined : await deps.goalOf(target.transcriptPath);
     if (goal === undefined) {
-      return { ok: false, message: `session ${sessionId}'s transcript has not been recorded yet, which is where its goal is read from; retry once it has finished a turn` };
+      return { ok: false, message: `session ${sessionId}'s transcript has not been recorded yet, which is where its goal is read from; retry once it has finished a turn`, refusal: "session-state" };
     }
     return { ok: true, report: goal };
   };
@@ -288,7 +298,7 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
   /** The control plugin's turns as the plugin-reached session's transcript records them now; a failure when the transcript is not named yet or does not exist. */
   const transcriptPluginTurns = async (sessionId: string, target: RcSupervisedTarget): Promise<RcSessionCommandResult<PluginTurns>> => {
     const turns = target.transcriptPath === undefined ? undefined : await deps.pluginTurnsOf(target.transcriptPath);
-    return turns === undefined ? { ok: false, message: `session ${sessionId}'s transcript has not been recorded yet, which is where a turn is confirmed from; retry once it has finished a turn` } : { ok: true, report: turns };
+    return turns === undefined ? { ok: false, message: `session ${sessionId}'s transcript has not been recorded yet, which is where a turn is confirmed from; retry once it has finished a turn`, refusal: "session-state" } : { ok: true, report: turns };
   };
 
   return {
@@ -303,13 +313,13 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
      */
     turn: async (sessionId: string, text: string, options: RcSessionCommandOptions = {}): Promise<RcSessionCommandResult<RcTurnReport>> => {
       if (text.trim() === "") {
-        return { ok: false, message: "a turn needs non-empty text" };
+        return { ok: false, message: "a turn needs non-empty text", refusal: "invalid-input" };
       }
       if (text.trimStart().startsWith("/")) {
-        return { ok: false, message: "a turn's text starts with /, which the session would read as a slash command rather than a message, and the turn could not be confirmed as one; use the goal or compaction verbs for those commands, or start the text with something else" };
+        return { ok: false, message: "a turn's text starts with /, which the session would read as a slash command rather than a message, and the turn could not be confirmed as one; use the goal or compaction verbs for those commands, or start the text with something else", refusal: "invalid-input" };
       }
       if (text.length > RC_TURN_TEXT_MAX_CHARS) {
-        return { ok: false, message: `a turn's text is limited to ${String(RC_TURN_TEXT_MAX_CHARS)} characters, and this one has ${String(text.length)}` };
+        return { ok: false, message: `a turn's text is limited to ${String(RC_TURN_TEXT_MAX_CHARS)} characters, and this one has ${String(text.length)}`, refusal: "invalid-input" };
       }
       return await onRoute<RcTurnReport>(sessionId, options, {
         plugin: async (target, route, signal, waitMs) => {
@@ -362,16 +372,16 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
     goalSet: async (sessionId: string, condition: string, options: RcSessionCommandOptions = {}): Promise<RcSessionCommandResult<RcGoalSetReport>> => {
       const trimmed = condition.trim();
       if (trimmed === "") {
-        return { ok: false, message: "a goal set needs a non-empty condition" };
+        return { ok: false, message: "a goal set needs a non-empty condition", refusal: "invalid-input" };
       }
       if (RC_GOAL_CLEAR_WORDS.includes(trimmed.toLowerCase())) {
-        return { ok: false, message: `"${trimmed}" cannot be set as a goal condition: /goal reads ${RC_GOAL_CLEAR_WORDS.join(", ")} as a request to clear the goal, so use the clear verb for that` };
+        return { ok: false, message: `"${trimmed}" cannot be set as a goal condition: /goal reads ${RC_GOAL_CLEAR_WORDS.join(", ")} as a request to clear the goal, so use the clear verb for that`, refusal: "invalid-input" };
       }
       if (/[\r\n]/u.test(trimmed)) {
-        return { ok: false, message: "a goal condition is one line: /goal reads its condition from the line it is typed on, and both routes confirm the goal by the exact condition, so a condition spanning lines is refused rather than set as something else" };
+        return { ok: false, message: "a goal condition is one line: /goal reads its condition from the line it is typed on, and both routes confirm the goal by the exact condition, so a condition spanning lines is refused rather than set as something else", refusal: "invalid-input" };
       }
       if (trimmed.length > RC_GOAL_CONDITION_MAX_CHARS) {
-        return { ok: false, message: `a goal condition is limited to ${String(RC_GOAL_CONDITION_MAX_CHARS)} characters, and this one has ${String(trimmed.length)}` };
+        return { ok: false, message: `a goal condition is limited to ${String(RC_GOAL_CONDITION_MAX_CHARS)} characters, and this one has ${String(trimmed.length)}`, refusal: "invalid-input" };
       }
       return await onRoute<RcGoalSetReport>(sessionId, options, {
         plugin: async (target, route, signal, waitMs) => {

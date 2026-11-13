@@ -3,6 +3,7 @@ import * as http from "node:http";
 import * as os from "node:os";
 import * as nodePath from "node:path";
 
+import { z } from "zod";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
@@ -10,7 +11,10 @@ import { LIFECYCLE_AND_CODEX_TEST_DEPS } from "./lifecycleCodexTestDeps";
 import { createDoorApiNodeHandler } from "./controlApi";
 import { createDoorEventHub, rcFanoutOnDoorHub } from "./eventHub";
 import { withRegisteredSessionFacts } from "./rcSessionRegistry";
+import { NO_PLUGIN_TURNS } from "../supervise/sessionPluginTurns";
+import { createRcSessionCommands, type RcSupervisedTarget } from "./rcSessionCommands";
 import { createRcSessionTracker, RC_IDLE_EXPIRY_MS, RC_PENDING_PER_SESSION_MAX, type RcSessionTracker } from "./rcSessions";
+import { RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "../supervise/verifiedVersions";
 import { RC_SEND_DELIVERY_NOTE, type RcAnswerDecision } from "./rcWrites";
 import type { RcStreamEvent } from "./rcSchemas";
 import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog } from "./rcEventLog";
@@ -102,6 +106,46 @@ const EXPECTED_REST_PATHS = [
   "/rest/usage/windows",
 ].sort();
 
+/** The error body every refusal over REST carries. */
+const RefusalBodySchema = z.object({ code: z.string(), message: z.string() });
+
+/** A session the door observes whose two launches claim it, so no verb can tell where to act. */
+const AMBIGUOUS_SESSION_ID = "cse_00000000-0000-4000-8000-000000000002";
+/** A session whose control plugin accepts a verb and then fails it. */
+const FAILING_PLUGIN_SESSION_ID = "cse_00000000-0000-4000-8000-000000000003";
+/** A session id the door has never observed. */
+const UNOBSERVED_SESSION_ID = "cse_00000000-0000-4000-8000-0000000000ff";
+/** The transcript the failing plugin's session records its turns in. */
+const FAILING_PLUGIN_TRANSCRIPT = "/transcripts/failing.jsonl";
+
+/** The verbs over the real session commands, wired to sessions that exercise each way a verb is refused or fails, so the REST status of each kind is read from the real verb rather than restated. */
+const SESSION_VERBS = createRcSessionCommands({
+  supervisedOf: async (sessionId) => {
+    if (sessionId === AMBIGUOUS_SESSION_ID) {
+      return await Promise.resolve({ refused: "two launches claim this session" });
+    }
+    if (sessionId === FAILING_PLUGIN_SESSION_ID) {
+      const target: RcSupervisedTarget = {
+        conversationId: "conversation",
+        transcriptPath: FAILING_PLUGIN_TRANSCRIPT,
+        version: RC_SESSION_COMMAND_VERIFIED_VERSIONS[0],
+        compact: async () => await Promise.reject(new Error("the plugin cannot compact")),
+        runGoal: async () => await Promise.reject(new Error("the plugin cannot run /goal")),
+        submitTurn: async () => await Promise.reject(new Error("the plugin cannot submit")),
+      };
+      return target;
+    }
+    return undefined;
+  },
+  goalOf: async () => {
+    await Promise.resolve();
+    return undefined;
+  },
+  pluginTurnsOf: async (file) => await Promise.resolve(file === FAILING_PLUGIN_TRANSCRIPT ? NO_PLUGIN_TURNS : undefined),
+  selfHost: undefined,
+  isObserved: (sessionId) => sessionId !== UNOBSERVED_SESSION_ID,
+});
+
 /** The stand-in status the frontdoor reads answer, the same shape `frontdoor status` reports. */
 const FRONTDOOR_STATUS: FrontDoorStatus = {
   state: { supervisorPid: 10, port: 4100, lastPort: 4100 },
@@ -190,10 +234,10 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
       mcpOAuthCallbackUrl: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" }),
       teleport: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS }),
       goalGet: async () => await Promise.resolve({ ok: true as const, report: { route: "supervised" as const, goal: null } }),
-      goalSet: async (_session: string, condition: string) => await Promise.resolve({ ok: true as const, report: { route: "supervised" as const, condition, superseded: null } }),
+      goalSet: SESSION_VERBS.goalSet,
       goalClear: async () => await Promise.resolve({ ok: true as const, report: { route: "supervised" as const, cleared: null } }),
       compact: async () => await Promise.resolve({ ok: true as const, report: { route: "supervised" as const, trigger: "plugin" } }),
-      turn: async () => await Promise.resolve({ ok: true as const, report: { route: "supervised" as const, uuid: "00000000-0000-4000-8000-0000000000a1" } }),
+      turn: SESSION_VERBS.turn,
       routeOf: async () => await Promise.resolve({ route: "supervised" as const }),
       fanout,
       sessionEvents: createRcSessionEventLog({ generation: "00000000-0000-4000-8000-0000000000ee", capacity: RC_SESSION_EVENT_LOG_CAPACITY }),
@@ -299,6 +343,30 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
     const refused = await call("POST", "/rest/rc/send", { session: SESSION_ID });
     expect(refused.status).toBe(HTTP_STATUS.badRequest);
     expect(refused.text).toContain("text");
+  });
+
+  it("answers a verb's refusal with the status of whose fault it is, and the refusal's own text", async () => {
+    const answered = async (path: string, body: unknown): Promise<{ readonly status: number; readonly code: string; readonly message: string }> => {
+      const { status, text } = await call("POST", path, body);
+      return { status, ...RefusalBodySchema.parse(JSON.parse(text)) };
+    };
+    // A request that can never succeed as written: the verb's own refusals of what the input schema lets through.
+    expect(await answered("/rest/rc/turn", { session: SESSION_ID, text: "   " })).toEqual({ status: HTTP_STATUS.badRequest, code: "BAD_REQUEST", message: "a turn needs non-empty text" });
+    const slash = await answered("/rest/rc/turn", { session: SESSION_ID, text: " /goal tests pass" });
+    expect([slash.status, slash.code]).toEqual([HTTP_STATUS.badRequest, "BAD_REQUEST"]);
+    expect(slash.message).toContain("a turn's text starts with /");
+    const clearWord = await answered("/rest/rc/goal/set", { session: SESSION_ID, condition: "clear" });
+    expect([clearWord.status, clearWord.code]).toEqual([HTTP_STATUS.badRequest, "BAD_REQUEST"]);
+    expect(clearWord.message).toContain("cannot be set as a goal condition");
+    // A session the door does not observe, as the status and pending reads answer it.
+    expect(await answered("/rest/rc/turn", { session: UNOBSERVED_SESSION_ID, text: "carry on" })).toEqual({ status: HTTP_STATUS.notFound, code: "NOT_FOUND", message: `the front door has not observed Remote Control session ${UNOBSERVED_SESSION_ID}` });
+    // A session whose state does not let the verb run: no route reaches it, or two launches claim it.
+    const unrouted = await answered("/rest/rc/turn", { session: SESSION_ID, text: "carry on" });
+    expect([unrouted.status, unrouted.code]).toEqual([HTTP_STATUS.conflict, "CONFLICT"]);
+    expect(unrouted.message).toContain("no agent-shim launch's in-process control plugin records session");
+    expect(await answered("/rest/rc/goal/set", { session: AMBIGUOUS_SESSION_ID, condition: "tests pass" })).toEqual({ status: HTTP_STATUS.conflict, code: "CONFLICT", message: "two launches claim this session" });
+    // A verb that was attempted and not delivered stays an upstream failure.
+    expect(await answered("/rest/rc/turn", { session: FAILING_PLUGIN_SESSION_ID, text: "carry on" })).toEqual({ status: HTTP_STATUS.badGateway, code: "BAD_GATEWAY", message: `session ${FAILING_PLUGIN_SESSION_ID}'s control plugin did not complete the request: the plugin cannot submit` });
   });
 
   it("delivers a write over REST and answers with the operation's own shape", async () => {

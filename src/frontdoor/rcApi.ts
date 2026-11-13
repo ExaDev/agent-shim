@@ -43,7 +43,7 @@ import {
   type RcStreamEvent,
 } from "./rcSchemas";
 import { RcCompactInputSchema, RcCompactOutputSchema, RcCompactWithInstructionsInputSchema, RcGoalClearOutputSchema, RcGoalGetOutputSchema, RcGoalSessionInputSchema, RcGoalSetInputSchema, RcGoalSetOutputSchema, RcTurnInputSchema, RcTurnOutputSchema } from "./rcSlashCommandSchemas";
-import { RC_SESSION_COMMAND_MAX_WAIT_MS, type RcCompactOptions, type RcCompactReport, type RcGoalClearReport, type RcGoalReport, type RcGoalSetReport, type RcSessionCommandOptions, type RcSessionCommandResult, type RcSessionRoute, type RcTurnReport } from "./rcSessionCommands";
+import { RC_SESSION_COMMAND_MAX_WAIT_MS, type RcCompactOptions, type RcCompactReport, type RcGoalClearReport, type RcGoalReport, type RcGoalSetReport, type RcRefusalKind, type RcSessionCommandOptions, type RcSessionCommandResult, type RcSessionRoute, type RcTurnReport } from "./rcSessionCommands";
 import type { RcEventFanout } from "./rcStream";
 import type { PrePipelineApi } from "./server";
 
@@ -167,6 +167,13 @@ const RC_API_TAG = "remote-control";
  */
 export const RC_DIRECTIVE_TAG = "remote-control-directives";
 
+/** The oRPC code each refusal the door makes of a verb itself is carried as. */
+const RC_REFUSAL_CODES = {
+  "invalid-input": "BAD_REQUEST",
+  "not-observed": "NOT_FOUND",
+  "session-state": "CONFLICT",
+} as const satisfies Record<RcRefusalKind, string>;
+
 /** Builds the typed API's router: one procedure per operation, every one behind the control-token middleware. */
 export function createRcApiRouter(deps: RcApiDeps) {
   const authed = doorApiAuth(deps.expectedToken);
@@ -187,10 +194,10 @@ export function createRcApiRouter(deps: RcApiDeps) {
     }
     return { request: result.requestId, sequenceNums: result.sequenceNums };
   };
-  // A goal or compaction verb that did not reach an outcome (an unknown or unreachable session, an unverified version, a refusal in the session's own words, or no answer within the wait) becomes the same verbose message, carried as an oRPC error.
+  // A goal, compaction or turn verb that did not reach an outcome becomes the same verbose message, carried as an oRPC error whose code follows who is at fault, the same codes the other typed routes use: a request that can never succeed as written is BAD_REQUEST, a session the door does not observe is NOT_FOUND (as `rc.status` and `rc.pending` answer it), a session whose state does not let the verb run now is CONFLICT, and a verb that was attempted and not delivered (no answer within the wait, a refusal in the session's own words) stays BAD_GATEWAY.
   const commanded = <T>(sessionId: string, result: RcSessionCommandResult<T>): { readonly session: string } & T => {
     if (!result.ok) {
-      throw new ORPCError("BAD_GATEWAY", { message: result.message });
+      throw new ORPCError(result.refusal === undefined ? "BAD_GATEWAY" : RC_REFUSAL_CODES[result.refusal], { message: result.message });
     }
     return { session: sessionId, ...result.report };
   };

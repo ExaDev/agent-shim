@@ -332,6 +332,7 @@ export {
   type RcGoalClearReport,
   type RcGoalReport,
   type RcGoalSetReport,
+  type RcRefusalKind,
   type RcSessionCommandDeps,
   type RcSessionCommandOptions,
   type RcSessionCommandResult,
