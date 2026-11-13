@@ -354,7 +354,7 @@ export interface RcClaudeCodeVersions {
   readonly sweep: (isTracked: (sessionId: string) => boolean) => void;
 }
 
-/** Subscribes to every session's stream and files the `claude_code_version` each worker-sourced `system/init` names, the worker's own statement of the version it runs (it emits one at the start of the stream and after every turn); an event a client wrote is never taken for the worker's. In memory: on the self-hosted surface a session lives exactly as long as the door that serves it. */
+/** Subscribes to every session's stream and files the `claude_code_version` each worker-sourced `system/init` names, the worker's own statement of the version it runs. A 2.1.319 or 2.1.325 worker emits one once it has taken a turn and again after each later turn, not when its stream opens, so a session that has run no turn has no version filed yet and the self-hosted route refuses it until it has. An event a client wrote is never taken for the worker's. In memory: on the self-hosted surface a session lives exactly as long as the door that serves it. */
 export function createRcClaudeCodeVersions(fanout: RcEventFanout): RcClaudeCodeVersions {
   const versions = new Map<string, string>();
   fanout.subscribe(undefined, (event) => {
