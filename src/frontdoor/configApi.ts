@@ -62,7 +62,8 @@ import {
   ConfigRouteUnsetInputSchema,
   ConfigRouteUnsetOutputSchema,
 } from "./configSchemas";
-import { routeScopeName, setRouteOverride, unsetRouteOverride } from "../routeOverrides";
+import { setRouteOverride, unsetRouteOverride } from "../routeOverrides";
+import { scopeLabelOf } from "../routeOverridesStore";
 import { doorApiAuth } from "./rcApi";
 
 /**
@@ -523,7 +524,7 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
           .handler(({ input }) =>
             guarded(() => {
               setRouteOverride(paths, input.scope, input.model, input.target);
-              return { action: "updated" as const, kind: "route" as const, name: input.model, value: { scope: routeScopeName(input.scope), model: input.model, target: input.target } };
+              return { action: "updated" as const, kind: "route" as const, name: input.model, value: { scope: scopeLabelOf(input.scope), model: input.model, target: input.target } };
             }),
           ),
         unset: route("/rest/config/route/unset", "Remove one route override")
