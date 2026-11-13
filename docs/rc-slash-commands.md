@@ -10,6 +10,8 @@ The goal and compaction verbs are verified on Claude Code 2.1.319 (`RC_SESSION_C
 
 `frontdoor rc send` writes a user message under the `anthropic-client-platform` value the door observed on the session, `claude_code_cli` for a CLI-launched session. The service stamps that header onto the event as its `client_platform` (the CLI's own schema describes the field as injected server-side by the ingress from the request header), and the worker decides from it who wrote an inbound message. On 2.1.319 the bridge treats `ios`, `android`, `web_claude_ai` and `desktop_app` as a person and demotes every other value to a peer message.
 
+An ordinary prompt is framed the same way, so whether it reaches the model at all is the receiving session's `crossSessionInbound` decision; [What `frontdoor rc send` delivers](cli-reference.md#what-frontdoor-rc-send-delivers) covers the hold a session that bypasses permission prompts applies to it.
+
 So a slash command sent through `send` is never run. The worker wraps it as "Another Claude session sent a message: /goal ..." and passes it to the model as text, which is the CLI's deliberate framing of a message an agent sends, and `send` keeps it.
 
 Written by a person's app, the same text runs as a command. Observed in a live 2.1.319 session on the door's self-hosted surface:

@@ -18,7 +18,7 @@ import { mintRcSelfHostCredential, type RcSelfHostMintResult } from "./rcSelfHos
 import { RC_GOAL_CLEAR_WORDS, RC_SESSION_COMMAND_MAX_WAIT_MS, RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "./rcSessionCommands";
 import type { RcQuestionSelection } from "./rcQuestions";
 import { RC_PENDING_PER_SESSION_MAX, rcExcerpt, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
-import { RC_CONTEXT_USAGE_DETAILS, RC_PERMISSION_MODES, RC_READ_FILE_ENCODINGS, isRcContextUsageDetail, isRcPermissionMode, isRcReadFileEncoding, type RcEventWriteResult } from "./rcWrites";
+import { RC_CONTEXT_USAGE_DETAILS, RC_PERMISSION_MODES, RC_READ_FILE_ENCODINGS, RC_SEND_DELIVERY_NOTE, isRcContextUsageDetail, isRcPermissionMode, isRcReadFileEncoding, type RcEventWriteResult } from "./rcWrites";
 import type { RcStreamEvent } from "./rcSchemas";
 
 /**
@@ -307,10 +307,10 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
   withExamples(
     rc
       .command("send")
-      .description("Send a text prompt into one observed Remote Control session, arriving as a message from an attached client would.")
+      .description(`Write a text prompt into one observed Remote Control session's event stream. ${RC_SEND_DELIVERY_NOTE} The printed sequence numbers confirm the service filed the write, not that the model received it.`)
       .requiredOption("--session <id>", "The cse_ session id, as `frontdoor rc list` shows it.")
-      .requiredOption("--text <text>", "The prompt text to deliver.")
-      .option("--json", "Print the delivery result as JSON.")
+      .requiredOption("--text <text>", "The prompt text to write.")
+      .option("--json", "Print the write result as JSON.")
       .action(async (options: Readonly<{ session: string; text: string; json?: boolean }>) => {
         const result = await frontDoorRcControlFromState(realFarmFs, paths).sendPrompt(options.session, options.text);
         if (!result.ok) {

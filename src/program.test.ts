@@ -183,6 +183,14 @@ describe("buildProgram", () => {
     }
   });
 
+  it("says in the Remote Control send help that the prompt arrives as another session's message, not an attached client's", async () => {
+    const help = (await cli(["frontdoor", "rc", "send", "--help"])).stdout.replace(/\s+/g, " ");
+    expect(help).toContain("Claude Code reads it as a message from another session, not as a person typing in an attached client");
+    expect(help).toContain("crossSessionInbound");
+    expect(help).toContain("not that the model received it");
+    expect(help).not.toContain("as a message from an attached client would");
+  });
+
   it("documents run, the launch flags, the exit statuses and the double-dash terminator in the root help", async () => {
     const result = await cli(["--help"]);
     expect(result.code).toBe(0);

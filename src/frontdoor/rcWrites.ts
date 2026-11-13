@@ -13,7 +13,12 @@ import { resolveRcQuestionAnswers, type RcQuestionSelection } from "./rcQuestion
  */
 
 /**
- * Builds the user-message payload event for one injected prompt: the Agent SDK stream-json `user` message shape (`type`, `uuid`, `session_id`, `parent_tool_use_id`, `message` with a `user` role), the same envelope a claude.ai client sends as a turn. The content is the plain string form, which is the shape validated end to end against the real API by the third-party client survey that settled this protocol.
+ * How Claude Code treats a prompt the door injects, stated once for every surface that describes the injection (the CLI's help, the typed API's description and so the MCP tool's). The service stamps each event with its writer's `anthropic-client-platform` header as `client_platform`, the door replays the session's own observed value (`claude_code_cli` for a CLI-launched session), and Claude Code reads a user message whose platform is not a person's app (`ios`, `android`, `web_claude_ai`, `desktop_app`) as a cross-session peer message from an unidentified sender. The door's write carries no permission-mode attestation, which the Agent SDK's `SDKMessageOrigin.fromMode` documents as honoured only from the host injecting on local stdin, so a receiving session that bypasses permission prompts holds it unless its `crossSessionInbound` setting accepts peer messages.
+ */
+export const RC_SEND_DELIVERY_NOTE = "Claude Code reads it as a message from another session, not as a person typing in an attached client, because the service stamps it with the session's own client platform. Whether it reaches the model is the receiving session's crossSessionInbound setting: with none set, a session that bypasses permission prompts holds it for approval, since the write cannot attest a permission mode.";
+
+/**
+ * Builds the user-message payload event for one injected prompt: the Agent SDK stream-json `user` message shape (`type`, `uuid`, `session_id`, `parent_tool_use_id`, `message` with a `user` role), the envelope a claude.ai client sends as a turn. The envelope alone does not decide how the worker reads it: the service adds the writer's `client_platform`, and that is what makes a client's turn a person's and the door's a peer's (`RC_SEND_DELIVERY_NOTE`). The content is the plain string form, which is the shape validated end to end against the real API by the third-party client survey that settled this protocol.
  */
 export function buildRcUserMessagePayload(uuid: string, sessionId: string, text: string): Record<string, unknown> {
   return {
@@ -144,7 +149,7 @@ export function rcWriteHeaders(credential: RcObservedCredential): Record<string,
 }
 
 /**
- * Injects one user-message prompt into an observed session: the documented client-half write, `POST /v1/code/sessions/{id}/events`, authenticated by the observed bearer and carrying the observed protocol headers, the observed `anthropic-client-platform` included, so the door never names an app it is not. The result is the sequence numbers the real service assigned, or a verbose failure. A dial that cannot reach the API host is reported rather than thrown, so a caller with no exception handling still shows the user exactly what failed.
+ * Injects one user-message prompt into an observed session: the documented client-half write, `POST /v1/code/sessions/{id}/events`, authenticated by the observed bearer and carrying the observed protocol headers, the observed `anthropic-client-platform` included, so the door never names an app it is not. The result is the sequence numbers the real service assigned, or a verbose failure: an assigned number confirms the service filed the event, not that the session's model received it, since the worker reads it as a peer message and its own inbound setting decides whether to deliver, hold or drop it (`RC_SEND_DELIVERY_NOTE`). A dial that cannot reach the API host is reported rather than thrown, so a caller with no exception handling still shows the user exactly what failed.
  */
 export async function injectRcUserMessage(deps: RcInjectDeps, sessionId: string, text: string): Promise<RcEventWriteResult> {
   const credential = deps.credentialOf(sessionId);

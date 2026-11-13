@@ -14,7 +14,7 @@ import { HTTP_STATUS } from "../codex/http";
 import { isLiveCapability } from "./capability";
 import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
 import type { RcPendingRequestSummary, RcSessionStatus, RcSessionSummary } from "./rcSessions";
-import { rcSessionNotObservedMessage, type RcAnswerDecision, type RcContextUsageDetail, type RcEventWriteResult, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
+import { RC_SEND_DELIVERY_NOTE, rcSessionNotObservedMessage, type RcAnswerDecision, type RcContextUsageDetail, type RcEventWriteResult, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
 import {
   RcAnswerInputSchema,
   RcAnswerOutputSchema,
@@ -224,7 +224,7 @@ export function createRcApiRouter(deps: RcApiDeps) {
           return { pending, ...(dropped.length === 0 ? {} : { dropped }) };
         }),
       send: authed
-        .meta(openapi({ method: "POST", path: "/rest/rc/send", summary: "Send one message into a session", tags: [RC_API_TAG] }))
+        .meta(openapi({ method: "POST", path: "/rest/rc/send", summary: "Send one message into a session", description: RC_SEND_DELIVERY_NOTE, tags: [RC_API_TAG] }))
         .input(RcSendInputSchema)
         .output(RcWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, sequenceNums: delivered(input.session, await deps.inject(input.session, input.text)) })),

@@ -11,7 +11,7 @@ import { createDoorApiNodeHandler } from "./controlApi";
 import { createDoorEventHub, rcFanoutOnDoorHub } from "./eventHub";
 import { withRegisteredSessionFacts } from "./rcSessionRegistry";
 import { createRcSessionTracker, RC_IDLE_EXPIRY_MS, RC_PENDING_PER_SESSION_MAX, type RcSessionTracker } from "./rcSessions";
-import type { RcAnswerDecision } from "./rcWrites";
+import { RC_SEND_DELIVERY_NOTE, type RcAnswerDecision } from "./rcWrites";
 import type { RcStreamEvent } from "./rcSchemas";
 import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog } from "./rcEventLog";
 import { createRcEventFanout } from "./rcStream";
@@ -405,6 +405,15 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
     // The SSE routes describe their wire shape, so a consumer knows what the stream is before dialling it.
     const streamResponses = parsed.paths["/rest/rc/events"]?.get?.responses;
     expect(Object.keys(streamResponses?.["200"]?.content ?? {})).toContain("text/event-stream");
+  });
+
+  it("describes the send procedure as a peer message the receiving session may hold, never as a person's typed turn", async () => {
+    const doc = await call("GET", "/openapi.json");
+    const parsed = JSON.parse(doc.text) as { paths: Record<string, { post?: { description?: string } } | undefined> };
+    const description = parsed.paths["/rest/rc/send"]?.post?.description ?? "";
+    expect(description).toBe(RC_SEND_DELIVERY_NOTE);
+    expect(description).toContain("message from another session");
+    expect(description).toContain("crossSessionInbound");
   });
 
   it("carries every operation's Zod schemas and their constraints in the document", async () => {
