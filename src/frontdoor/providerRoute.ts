@@ -30,7 +30,9 @@ import type { UsageSnapshot } from "../usage/schema";
 import { PROVIDER_PATH_PREFIX, directOrigin, parseProviderPath, type FrontDoorRoute, type ModelChoice, type RoutedRequest } from "./route";
 import { AMBIGUOUS_MODEL_MESSAGE } from "./topLevelModel";
 import { reservedProviderNameReason } from "../models/reservedModelNames";
-import { followingMainLoop, withModel, type MainLoopRouteRecord } from "./mainLoopRoute";
+import { followingMainLoop, withModel, type MainLoopRouteRecord, type RenameModel } from "./mainLoopRoute";
+import { expandSelectorName, type SelectorPorts } from "../models/selectors";
+import type { SelectorStatePorts } from "../models/selectorPorts";
 import { createProviderReads, servesName, type ProviderDefault, type RoutedRefusal } from "./providerReads";
 import { scanRequestHead, type RequestScan } from "./requestScan";
 import type { CatalogueFetch, CatalogueModel } from "../providerCatalogue";
@@ -250,6 +252,8 @@ export function createProviderRouteResolver(deps: {
   readonly catalogueModelsOf?: (name: string, provider: HttpProvider) => readonly CatalogueModel[];
   /** Told of every request the routed pass-through to Claude Code's own API is dispatched, before it is dialled, whether the route serves it or the headroom hop in front of it forwards it (the daemon's default upstream is that API): the door's capture records each one, so a record of everything that left for the real API covers the routed pipeline as well as the connect surface's piped exchanges. A throw refuses the request before anything is dialled. */
   readonly observeAnthropicPassthrough?: (request: RoutedRequest) => void;
+  /** The person's configuration a selector (`auto/<selector>[/<class>]`) names besides providers and families: profiles, identities, pools and logins, read fresh per request. Absent, no profile, identity or pool is a selector's to name, and providers and families still are. */
+  readonly selectorState?: SelectorStatePorts;
 }): (request: RoutedRequest) => Promise<RouteResolution> {
   /** When each upstream (by the subject its routes name it with) last had a failure to connect logged. */
   const couldNotConnectLoggedAt = new Map<string, number>();
@@ -293,6 +297,25 @@ export function createProviderRouteResolver(deps: {
   const antigravityExhaustedModels = new Map<string, Map<string, number>>();
   const reads = createProviderReads({ fs: deps.fs, providersDir: deps.providersDir, ...(deps.models === undefined ? {} : { models: deps.models }), ...(deps.catalogueModelsOf === undefined ? {} : { catalogueModelsOf: deps.catalogueModelsOf }) });
   const { providerOf, providerFaultOf, definesProvider, envModelsOf, defaultModelOf, providerMapping } = reads;
+  const noState: SelectorStatePorts = {
+    profile: () => ({ kind: "absent" }),
+    identity: () => ({ kind: "absent" }),
+    pool: () => ({ kind: "absent" }),
+    poolPick: (name) => ({ refusal: `no pool named "${name}"` }),
+    sameLogin: (identity, sessionIdentity) => identity === sessionIdentity,
+  };
+  /** The live state one session's selector is expanded against: the configuration ports, the providers as this resolver reads them, and the families the providers' offered targets form under the session's models block. */
+  const selectorPortsFor = (session: RoutedRequest["session"]): SelectorPorts => ({
+    ...(deps.selectorState ?? noState),
+    provider: (name) => {
+      const found = reads.lookupProvider(name);
+      return found.kind === "found" ? { kind: "found", value: undefined } : found;
+    },
+    providerTarget: (provider, target) => reads.selectorTarget(provider, target, session),
+    family: (key) => familyNamed(buildFamilies(deps.targets?.() ?? [], deps.models?.(session)), `${FAMILY_PREFIX}${key}`) !== undefined,
+  });
+  /** Replaces a selector with the name it expands to, before anything routes the request. */
+  const rename: RenameModel = (model, context) => expandSelectorName(model, selectorPortsFor(context.session), context.session.identity === undefined ? {} : { identity: context.session.identity });
   // The most a Messages body is read whole under: the same bound the editing wrapper reads under, so neither of the resolver's whole-body scans holds more of a body than that.
   const messagesBodyLimitBytes = deps.messagesBodyLimitBytes ?? MESSAGES_BODY_LIMIT_BYTES;
   /** A scan of `request`'s head, or of the whole body under `messagesBodyLimitBytes` when `whole`: both whole-body scans of the resolver go through it, so neither can hold more of a body than the limit. */
@@ -705,7 +728,7 @@ export function createProviderRouteResolver(deps: {
       }
       return { ...resolution, servedModelReport: report, ...(requestedModel === undefined ? {} : { requestedModel }), ...(served === undefined ? {} : { servedModel: served.model }) };
     },
-    { record: deps.mainLoopRoutes, providerMapping, loginOf, definesProvider },
+    { record: deps.mainLoopRoutes, providerMapping, loginOf, definesProvider, rename: { model: rename, bodyLimitBytes: messagesBodyLimitBytes } },
   );
 }
 

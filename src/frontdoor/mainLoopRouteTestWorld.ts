@@ -13,7 +13,7 @@ import type { UsageRecord } from "../usage/schema";
 import { type MainLoopRouteRecord } from "./mainLoopRoute";
 import { serveRouted, type PipelineDeps, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
-import { AUTH_HEADER, PROVIDER_HEADER, SESSION_HEADER, type RoutedRequest } from "./route";
+import { AUTH_HEADER, IDENTITY_HEADER, PROVIDER_HEADER, SESSION_HEADER, type RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
 import type { FrontDoorLaunch } from "./state";
 
@@ -195,7 +195,7 @@ export interface World {
 }
 
 /** The ports the door reads the models the providers serve through. */
-export type ModelPorts = Readonly<Pick<Parameters<typeof createProviderRouteResolver>[0], "targets" | "catalogueModelsOf" | "catalogueFetch">>;
+export type ModelPorts = Readonly<Pick<Parameters<typeof createProviderRouteResolver>[0], "targets" | "catalogueModelsOf" | "catalogueFetch" | "selectorState">>;
 
 /** A door serving an `http` provider `z` (whose tier environment maps haiku) and a `codex` provider `cx`, with the usage middleware recording into `records`. */
 export async function startWorld(
@@ -263,7 +263,7 @@ export async function startWorld(
 }
 
 /** Sends one Messages request as a launch's child would: its capability, its session id, and, when given, the class Claude Code states and a launch provider. */
-export async function send(world: World, options: { readonly model: string; /** The body as sent, instead of one built from `model`: for a request with no model field or a body that is no JSON. */ readonly rawBody?: string; readonly session?: string; readonly token?: string; readonly requestClass?: string; readonly agentId?: string; readonly provider?: string; readonly maxTokens?: number }): Promise<{ readonly status: number; readonly text: string }> {
+export async function send(world: World, options: { readonly model: string; /** The body as sent, instead of one built from `model`: for a request with no model field or a body that is no JSON. */ readonly rawBody?: string; readonly session?: string; readonly token?: string; readonly requestClass?: string; readonly agentId?: string; readonly provider?: string; readonly maxTokens?: number; /** The identity the launch resolved, as the launcher names it. */ readonly identity?: string }): Promise<{ readonly status: number; readonly text: string }> {
   const response = await fetch(`${world.url}/v1/messages`, {
     method: "POST",
     headers: {
@@ -273,6 +273,7 @@ export async function send(world: World, options: { readonly model: string; /** 
       ...(options.requestClass === undefined ? {} : { "x-claude-code-request-class": options.requestClass }),
       ...(options.agentId === undefined ? {} : { "x-claude-code-agent-id": options.agentId }),
       ...(options.provider === undefined ? {} : { [PROVIDER_HEADER]: options.provider }),
+      ...(options.identity === undefined ? {} : { [IDENTITY_HEADER]: options.identity }),
     },
     body: options.rawBody ?? JSON.stringify({ model: options.model, stream: false, max_tokens: options.maxTokens ?? ORDINARY_MAX_TOKENS, messages: [{ role: "user", content: "hi" }] }),
   });

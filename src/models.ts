@@ -16,6 +16,8 @@ import { candidateOf, type CandidateWindowFacts } from "./selection/candidates";
 import type { LayoutPaths } from "./paths";
 import type { UsageSnapshot } from "./usage/schema";
 import { selectMember } from "./selection/engine";
+import { cliSelectorPorts } from "./models/selectorPorts";
+import { expandSelectorName, parseSelectorName, type SelectorKind } from "./models/selectors";
 
 /** The quota facts for one provider, from the newest snapshot of any identity that records it: the identities this machine actually uses, each contributing what it last saw. */
 function providerQuotaOf(paths: LayoutPaths): (provider: string) => Readonly<Partial<Record<"fiveHour" | "sevenDay" | "extraUsage", CandidateWindowFacts>>> {
@@ -53,14 +55,24 @@ export function describeUnroutedMembers(members: readonly string[], families: re
   });
 }
 
+/** What `explain` says of one virtual model's (or family row's) choice. */
+interface VirtualModelExplanation {
+  readonly name: string;
+  readonly mode: SelectionModeName;
+  readonly chooses: string | undefined;
+  /** The members the mode ranked: every one but the account members, which only a relaunch serves. */
+  readonly candidates: readonly string[];
+  readonly reasons: readonly string[];
+}
+
 /** Explains one virtual model's (or family row's) choice: the member its mode picks over the live signals, and why each candidate stands where it does. */
-function explainVirtualModel(paths: LayoutPaths, name: string): void {
+function explainVirtualModel(paths: LayoutPaths, name: string): VirtualModelExplanation {
   const models = readModels(paths);
   const virtual = models?.virtual?.[name];
   const families = buildFamilies(targetRefs(paths), models);
   const isFamily = name.startsWith(FAMILY_PREFIX);
   if (virtual === undefined && !isFamily) {
-    throw new UsageError(`No virtual model named "${name}".`);
+    throw new UsageError(`No virtual model named "${name}". explain takes a virtual model, a family (family:<key>) or a selector (auto/<selector>[/<class>]).`);
   }
   const mode = virtual?.mode ?? familyMode(familyNamed(families, name)?.settings ?? {});
   const quotaOf = providerQuotaOf(paths);
@@ -75,11 +87,20 @@ function explainVirtualModel(paths: LayoutPaths, name: string): void {
   const evaluated = candidates.map((candidate) => ({ candidate, capabilities: familyCapabilities(familyOfRef(families, candidate.ref)?.settings ?? {}) }));
   const selection = selectMember(mode, evaluated, {});
   const unrouted = describeUnroutedMembers(members, families);
-  console.log(`${name} (${mode}) chooses ${selection.ref ?? (candidates.length === 0 ? "nothing by quota" : "nothing")}:`);
   // With no routable candidate the engine's own reasons describe an empty set (it reads as every member being spent), so only what the members are is said.
-  for (const line of candidates.length === 0 ? unrouted : [...selection.reasons, ...unrouted]) {
-    console.log(`  ${line}`);
+  return { name, mode, chooses: selection.ref, candidates: candidates.map((candidate) => candidate.ref), reasons: candidates.length === 0 ? unrouted : [...selection.reasons, ...unrouted] };
+}
+
+/** What `explain` says of a selector: how it parsed, the kind it named and the name the door routes it by, or why the door refuses it. */
+type SelectorExplanation = { readonly name: string; readonly kind: SelectorKind; readonly routedAs: string } | { readonly name: string; readonly refusal: string };
+
+/** Expands a selector exactly as the door would for a session running as `identity`, against the same files. */
+function explainSelector(paths: LayoutPaths, name: string, identity: string | undefined): SelectorExplanation {
+  const expanded = expandSelectorName(name, cliSelectorPorts(paths, () => Date.now()), identity === undefined ? {} : { identity });
+  if (expanded === undefined) {
+    throw new UsageError(`"${name}" is not a selector.`);
   }
+  return "refusal" in expanded ? { name, refusal: expanded.refusal } : { name, kind: expanded.kind, routedAs: expanded.name };
 }
 
 /** Groups the models whose names are the same model across providers (a family, with the user's assertions applied), and lists the pairs that are merely similar, across every provider given. */
@@ -118,11 +139,30 @@ export function registerModelsCommand(program: Command, deps: CommandDeps): void
   withExamples(
     modelsCommand
       .command("explain <name>")
-      .description("Show which member a virtual model's (or a family row's) mode picks over the live signals, and why each candidate stands where it does.")
-      .action((name: string) => {
-        explainVirtualModel(paths, name);
+      .description("Show which member a virtual model's (or a family row's) mode picks over the live signals, and why each candidate stands where it does; or what a selector (auto/<selector>[/<class>]) is routed as.")
+      .option("--identity <name>", "The identity the session runs as, which an account selector is compared with.")
+      .option("--json", "Print the explanation as JSON.")
+      .action((name: string, options: Readonly<{ identity?: string; json?: boolean }>) => {
+        if (parseSelectorName(name) !== undefined) {
+          const explained = explainSelector(paths, name, options.identity);
+          if (options.json === true) {
+            printJson(explained);
+            return;
+          }
+          console.log("refusal" in explained ? `${name} is refused: ${explained.refusal}` : `${name} selects the ${explained.kind} and is routed as ${explained.routedAs}`);
+          return;
+        }
+        const explained = explainVirtualModel(paths, name);
+        if (options.json === true) {
+          printJson(explained);
+          return;
+        }
+        console.log(`${name} (${explained.mode}) chooses ${explained.chooses ?? (explained.candidates.length === 0 ? "nothing by quota" : "nothing")}:`);
+        for (const line of explained.reasons) {
+          console.log(`  ${line}`);
+        }
       }),
-    ["agent-shim model explain fast"],
+    ["agent-shim model explain fast", "agent-shim model explain auto/z/sonnet", "agent-shim model explain auto/pool:subs/sonnet --identity work --json"],
   );
   withExamples(modelsCommand, ["agent-shim model match", "agent-shim model add fast --mode soonest-reset --member z/glm-5.3 --member m/MiniMax-M3"]);
   withExamples(

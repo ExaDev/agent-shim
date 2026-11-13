@@ -132,6 +132,8 @@ const SESSION_KINDS: readonly SessionKind[] = [
   { label: "provider context chosen by a qualified name", reaches: "provider", establish: bySendingModel("z/glm-5.3"), headers: MAIN },
   { label: "provider context chosen by a bare provider name", reaches: "provider", establish: bySendingModel("spark"), headers: MAIN },
   { label: "provider context, a helper", reaches: "provider", establish: bySendingModel("z/glm-5.3"), headers: HELPER },
+  { label: "provider context chosen by a selector", reaches: "provider", establish: bySendingModel("auto/z/sonnet"), headers: MAIN },
+  { label: "provider context chosen by a selector, a helper", reaches: "provider", establish: bySendingModel("auto/provider:z"), headers: HELPER },
   { label: "Anthropic context after anthropic/<model>", reaches: "anthropic", establish: bySendingModel("anthropic/claude-sonnet-5-5"), headers: MAIN },
   { label: "Anthropic context, a helper", reaches: "anthropic", establish: bySendingModel("anthropic/claude-sonnet-5-5"), headers: HELPER },
   { label: "a session launched on the provider", reaches: "provider", launched: true, establish: noContext, headers: { ...MAIN, [PROVIDER_HEADER]: "z" } },
