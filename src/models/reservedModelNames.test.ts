@@ -10,7 +10,7 @@ import { buildLayoutPaths, type LayoutPaths } from "../paths";
 import { renameProvider, type ProviderRenamePorts } from "../providerRename";
 import { addProvider, providerExists } from "../providersStore";
 import { realFarmFs } from "../realPorts";
-import { reservedProviderNameReason, requireUnreservedProviderName } from "./reservedModelNames";
+import { reservedProviderNameReason, requireUnreservedProviderName, isAutoModel } from "./reservedModelNames";
 
 const RESERVED = ["auto", "opus", "sonnet", "haiku", "fable", "Opus", "default", "best", "opusplan", "Default", "OpusPlan", "claude-opus-5-5", "claude-sonnet-4-5[1m]", "auto[1m]", "auto[1M]", "default[1m]", "Default[1M]", "best[1m]", "opusplan[1m]", "opus[1m]"];
 const FREE = ["Auto", "AUTO", "spark", "z", "opusx", "automatic", "my-opus-gateway", "claudette", "defaults", "bestest", "opus-plan"];
@@ -61,5 +61,11 @@ describe("a provider may not be called a bare model name", () => {
   it("has the doctor say nothing of the sort about a free name", () => {
     const report = runDoctor(baseParams({ providers: [provider("spark", { displayName: "X", baseUrl: "https://example.test/anthropic", credential: { sources: [{ literal: "t" }] } })] }));
     expect(findingsFor(report, "provider").map((finding) => finding.message).join("\n")).not.toContain("bare model name");
+  });
+});
+
+describe("the model auto, as a name", () => {
+  it.each([["auto", true], ["auto[1m]", true], ["auto[1M]", true], ["AUTO", false], ["auto[2m]", false], ["autos", false], ["spark/auto", false], ["", false], [" auto", false]])("is read from %j as %s", (name, expected) => {
+    expect(isAutoModel(name)).toBe(expected);
   });
 });

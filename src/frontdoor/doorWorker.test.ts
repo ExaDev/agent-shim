@@ -441,6 +441,34 @@ describe("the door worker host", () => {
     await expect(plain).rejects.toMatchObject({ redirected: false });
   });
 
+  it("rejects with the fact that the redirect carried no Location a worker posted, and only beside the redirect", async () => {
+    const { host, started } = hostOver();
+    const unlocated = host.run("doctor", { root: "/a" }, identity);
+    await settle();
+    started[0]?.emit("message", { kind: "failed", name: "CatalogueFetchError", redirected: true, unlocated: true });
+    await expect(unlocated).rejects.toMatchObject({ redirected: true, unlocated: true });
+    const located = host.run("doctor", { root: "/b" }, identity);
+    await settle();
+    started[1]?.emit("message", { kind: "failed", name: "CatalogueFetchError", redirected: true });
+    await expect(located).rejects.toMatchObject({ redirected: true, unlocated: false });
+  });
+
+  it.each([[false], ["yes"], [1]])("refuses a failure message whose unlocated field is %j", async (field) => {
+    const { host, started } = hostOver();
+    const running = host.run("doctor", { root: "/a" }, identity);
+    await settle();
+    started[0]?.emit("message", { kind: "failed", name: "Error", redirected: true, unlocated: field });
+    await expect(running).rejects.toThrow("something other than a result");
+  });
+
+  it("refuses a failure message that says a redirect carried no Location without saying it met one", async () => {
+    const { host, started } = hostOver();
+    const running = host.run("doctor", { root: "/a" }, identity);
+    await settle();
+    started[0]?.emit("message", { kind: "failed", name: "Error", unlocated: true });
+    await expect(running).rejects.toThrow("something other than a result");
+  });
+
   it.each([[false], ["yes"], [1]])("refuses a failure message whose redirect field is %j", async (field) => {
     const { host, started } = hostOver();
     const running = host.run("doctor", { root: "/a" }, identity);

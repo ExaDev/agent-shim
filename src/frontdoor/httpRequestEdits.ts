@@ -6,7 +6,7 @@ import type { CredentialResolution } from "../credential";
 import type { FrontDoorRoute, RoutedRequest, RoutedResponse } from "./route";
 import { scanRequestHead } from "./requestScan";
 import { type ServedModels } from "./servedModel";
-import { AUTO_MODEL } from "../models/reservedModelNames";
+import { AUTO_MODEL, isAutoModel } from "../models/reservedModelNames";
 import { errorBody } from "./pipeline";
 import { bodyTooLargeMessage, isMessagesRequest } from "./messagesBodyLimit";
 import { declaredLength, withoutContentLength } from "./contentLength";
@@ -203,7 +203,7 @@ export function editingHttpRequest(route: FrontDoorRoute, deps: Readonly<HttpReq
       // Without `drop`, the head says whether the request names a model other than `auto`, in which case it is forwarded without reading the rest of it, whatever it holds. A head that found no model field at all leaves it open, since the resolver in front of this route decides on the whole body: such a request is read whole, under the same cap, so both decide on the same data.
       if (!drop) {
         const head = await scanRequestHead(request, false);
-        if (head.model !== undefined && head.model !== AUTO_MODEL) {
+        if (head.model !== undefined && !isAutoModel(head.model)) {
           await route.serve(head.replayed, response);
           return;
         }
@@ -227,13 +227,13 @@ export function editingHttpRequest(route: FrontDoorRoute, deps: Readonly<HttpReq
       // The body's bytes viewed one character each, the view every offset of the walks below is in: the body is never decoded, so bytes that are not UTF-8 reach the server as they came.
       const text = buffer.toString("latin1");
       // Whether the request names `auto` is read by the same lenient walk the scan used, in every mode, so a body is decided the same whether or not tools are being dropped: a body that names `auto` but is no well-formed JSON object (the strict walk below cannot see its model) is refused, never forwarded with the literal name.
-      const namesAuto = topLevelModel(text)?.decoded === AUTO_MODEL;
+      const namesAuto = isAutoModel(topLevelModel(text)?.decoded ?? "");
       // The one structural walk over the whole body: every decision below (the model fields, the tools, the span the model is replaced at) is read from its result, so the body is walked once however many edits it needs.
       const members = walkTopLevelMembers(text);
       const modelFields = members === undefined ? [] : modelFieldsOf(text, members);
       const names = modelFields.map((field) => field.decoded);
       // The door rewrites the first model field when it names `auto`. Which of two fields a server reads differs between parsers (the last usually wins), so a body whose first field names `auto` and that has another top-level `model` key, whatever its value, cannot be rewritten to mean one thing: it is refused rather than guessed at. A body whose first field names another model is not rewritten, whatever a later field says (under `drop` its tools are still edited): the rule for the model is the same in every mode.
-      if (names[0] === AUTO_MODEL && members?.filter((member) => member.key === "model").length !== 1) {
+      if (names[0] !== undefined && isAutoModel(names[0]) && members?.filter((member) => member.key === "model").length !== 1) {
         await refuse(response, HTTP_STATUS.badRequest, `provider "${deps.provider}": the request has more than one top-level model field and one is "${AUTO_MODEL}", so which model it names is ambiguous`);
         return;
       }
@@ -259,7 +259,7 @@ export function editingHttpRequest(route: FrontDoorRoute, deps: Readonly<HttpReq
       }
       const source = { name: deps.provider, provider: deps.definition, credential: deps.credential };
       const model = modelFields[0];
-      if (model?.decoded !== AUTO_MODEL) {
+      if (model === undefined || !isAutoModel(model.decoded)) {
         // A body that names `auto` where the strict walk finds no replaceable model is no well-formed JSON object, so the name cannot be replaced and the request is refused; one that does not name `auto` goes on as it came.
         if (namesAuto) {
           await refuse(response, HTTP_STATUS.badRequest, `provider "${deps.provider}": the request names the model "${AUTO_MODEL}" but its body is not a JSON object whose top-level model can be replaced`);

@@ -5,6 +5,11 @@ import { claudeNameTier } from "./tiers";
 /** The model name that means "whichever model the provider's server serves right now". */
 export const AUTO_MODEL = "auto";
 
+/** Whether `model` names the model `auto`, with or without the context-window marker Claude Code writes after a model name (`auto[1m]`): the one comparison every site that treats `auto` specially makes, so the name is read the same wherever it arrives. */
+export function isAutoModel(model: string): boolean {
+  return withoutContextMarker(model) === AUTO_MODEL;
+}
+
 /** The model aliases Claude Code resolves itself that name no tier: `default` (the session's default model), `best` (the most capable model) and `opusplan` (Opus in plan mode, Sonnet otherwise). Read from the strings of Claude Code 2.1.309's build, which holds each as a bare alias beside the tier names. */
 const CLAUDE_CODE_ALIASES: ReadonlySet<string> = new Set(["default", "best", "opusplan"]);
 

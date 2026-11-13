@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { arrayElements, walkTopLevelMembers } from "./topLevelMembers";
+import { arrayElements, modelFieldsOf, walkTopLevelMembers } from "./topLevelMembers";
 
 describe("the walk over a body's top-level object", () => {
   it.each([
@@ -199,5 +199,29 @@ describe("the members of a body that opens with a byte order mark", () => {
   it.each([["decoded", "\uFEFF"], ["viewed one character each", "\u00EF\u00BB\u00BF"]])("are found after the mark, %s", (_label, mark) => {
     const members = walkTopLevelMembers(`${mark}{"model":"auto","a":1}`);
     expect(members?.map((member) => member.key)).toEqual(["model", "a"]);
+  });
+});
+
+describe("the model fields of a body", () => {
+  const fieldsOf = (text: string): readonly string[] => {
+    const members = walkTopLevelMembers(text);
+    return members === undefined ? [] : modelFieldsOf(text, members).map((field) => field.decoded);
+  };
+
+  it.each([
+    ["a string", '{"model":"auto"}', ["auto"]],
+    ["a string with an escape, decoded", '{"model":"a\\u0075to"}', ["auto"]],
+    ["two strings, in order", '{"model":"a","x":1,"model":"b"}', ["a", "b"]],
+    ["a number", '{"model":5}', []],
+    ["an empty string", '{"model":""}', []],
+    ["null", '{"model":null}', []],
+    ["true", '{"model":true}', []],
+    ["an object", '{"model":{"id":"auto"}}', []],
+    ["an array", '{"model":["auto"]}', []],
+    ["a nested model, which is no top-level field", '{"messages":[{"model":"auto"}],"model":"x"}', ["x"]],
+    ["a string and then a value that is no string, only the string counted", '{"model":"a","model":5}', ["a"]],
+    ["an empty string and then a string, only the string counted", '{"model":"","model":"b"}', ["b"]],
+  ])("counts %s as the fields a model field is: %j", (_label, text, expected) => {
+    expect(fieldsOf(text)).toEqual(expected);
   });
 });

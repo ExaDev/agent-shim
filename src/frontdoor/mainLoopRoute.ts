@@ -4,7 +4,7 @@ import { Readable } from "node:stream";
 import { HTTP_STATUS } from "../codex/http";
 import type { RouteResolution, ServedModelReport } from "./pipeline";
 import { RequestClassSchema, type RequestClass } from "../usage/schema";
-import { AUTO_MODEL } from "../models/reservedModelNames";
+import { isAutoModel } from "../models/reservedModelNames";
 import { PROVIDER_PATH_PREFIX, internalHeaderValue, parseProviderPath, type RoutedRequest } from "./route";
 import { withoutContentLength } from "./contentLength";
 import { REQUEST_SCAN_CAP_BYTES, type RequestScan, scanRequestHead } from "./requestScan";
@@ -249,7 +249,7 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
   };
 
   /** The model a provider route is recorded as sent before the route has reported one: `auto` asks the server to name the model, so it is no model that was sent, and nothing is recorded until the route says which. */
-  const unlessAuto = (model: string | undefined): string | undefined => (model === AUTO_MODEL ? undefined : model);
+  const unlessAuto = (model: string | undefined): string | undefined => (model !== undefined && isAutoModel(model) ? undefined : model);
 
   /** `base` placed on the Anthropic route under its bare model name, for a request that asked for `requested` as `anthropic/<model>`. */
   const toAnthropic = async (base: RoutedRequest, requested: string): Promise<{ readonly resolution: RouteResolution; readonly served: string }> => {
@@ -335,7 +335,7 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
       if (current?.kind === "provider") {
         const placed = await toProvider(base, current.provider, request.session);
         // Only a Claude name asked for on the main loop is a fact about it worth recording, and the route stays what it was: a request that chose no route moves nothing.
-        if (placed.resolution.ok && requested !== undefined && (isBareClaudeName(requested) || requested === AUTO_MODEL)) {
+        if (placed.resolution.ok && requested !== undefined && (isBareClaudeName(requested) || isAutoModel(requested))) {
           recordServing(launch, ticket, placed.resolution, (servedModel) => contextOf({ kind: "provider", provider: current.provider }, placed.credential, requested, servedModel), unlessAuto(placed.served));
         }
         return placed.resolution;

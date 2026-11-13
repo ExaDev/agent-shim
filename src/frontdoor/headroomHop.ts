@@ -29,10 +29,10 @@ export interface HeadroomHopDeps {
   readonly log: (line: string) => void;
 }
 
-/** The model the direct listener reported sending, from the head of the hop's response (`SERVED_MODEL_HEADER`, URI-encoded; the pipeline drops the header from the head forwarded to the client), or undefined when the response carries none, carries it more than once, or carries what does not decode to a name. */
+/** The model the direct listener reported sending, from the head of the hop's response (`SERVED_MODEL_HEADER`, URI-encoded; the pipeline drops the header from the head forwarded to the client), or undefined when the response carries none, carries it more than once (Node joins a header sent twice into one value with a comma, which an encoded name never holds: `encodeURIComponent` writes a comma as `%2C`), or carries what does not decode to a name. */
 function servedModelOf(headers: Readonly<IncomingHttpHeaders>): string | undefined {
   const value = headers[SERVED_MODEL_HEADER];
-  if (typeof value !== "string" || value === "") {
+  if (typeof value !== "string" || value === "" || value.includes(",")) {
     return undefined;
   }
   try {

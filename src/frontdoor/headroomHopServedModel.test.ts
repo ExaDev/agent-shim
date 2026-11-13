@@ -141,7 +141,7 @@ describe.each([["through the headroom hop", true], ["directly", false]] as const
 
 /** What the hop makes of a head that carries a served-model header it cannot decode: the daemon's response is the one thing it does not control, so a value that is no encoded name is ignored and the response is served as it is. */
 describe("the headroom hop's reading of the served-model header", () => {
-  it.each([["a malformed escape", "%E0%A4%A"], ["an empty value", ""]])("ignores %s, and serves the response", async (_label, value) => {
+  it.each([["a malformed escape", "%E0%A4%A"], ["an empty value", ""], ["a header sent twice", ["live-model", "other-model"]]])("ignores %s, and serves the response", async (_label, value) => {
     const record = mainLoopRoutesOfLiveSessions();
     const upstream = await liveModelUpstream();
     const headroom = await fakeHeadroom({ responseHeaders: { [SERVED_MODEL_HEADER]: value } });

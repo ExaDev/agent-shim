@@ -68,7 +68,7 @@ export const CATALOGUE_WORKER_ALLOWANCE_MS = DOOR_WORKER_START_ALLOWANCE_MS + BL
 export const CATALOGUE_REFRESH_DEADLINE_MS = CATALOGUE_REFRESH_TIMEOUT_MS + CATALOGUE_WORKER_ALLOWANCE_MS;
 
 /** One model the provider's catalogue lists. `name` is its display name when the endpoint gives one. */
-const CatalogueModelSchema = z.strictObject({ id: z.string().min(1), name: z.string().min(1).optional() });
+const CatalogueModelSchema = z.strictObject({ id: z.string().min(1), name: z.string().min(1).optional() }).refine((model) => model.name === undefined || isDisplayName(model.name), { message: "a model's display name holds a character a display name may not or is too long" });
 export type CatalogueModel = z.infer<typeof CatalogueModelSchema>;
 
 /** A fetched catalogue as the door stores it: when and where it came from, and the models it listed. */
@@ -163,6 +163,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** The longest a model id a catalogue lists may be, in characters: a bound no real id comes near (aggregator ids are a few dozen characters) that keeps one a server made up from being cached, logged and written into every request body at any length. */
 export const CATALOGUE_MODEL_ID_MAX_CHARS = 256;
 
+/** Whether `name` can be shown as a model's display name: non-empty, within `CATALOGUE_MODEL_ID_MAX_CHARS` (the bound of an id, since a name is shown beside it), and free of the characters `quotedForLog` escapes, as an id is: a name is printed into the picker's description and into a terminal, where a control or format character could start a line or move a cursor. */
+function isDisplayName(name: string): boolean {
+  return name !== "" && name.length <= CATALOGUE_MODEL_ID_MAX_CHARS && !holdsUnsafeCharacter(name);
+}
+
 /** Whether `id` can be a model id: non-empty, within `CATALOGUE_MODEL_ID_MAX_CHARS`, and free of the characters `quotedForLog` escapes (control characters, separators, format characters), which no model id holds and which could start a line of a log or an error message or move a terminal's cursor. */
 function isModelId(id: string): boolean {
   return id !== "" && id.length <= CATALOGUE_MODEL_ID_MAX_CHARS && !holdsUnsafeCharacter(id);
@@ -181,7 +186,8 @@ function modelOf(entry: unknown): CatalogueModel | undefined {
   }
   const label = typeof entry.display_name === "string" ? entry.display_name : typeof entry.name === "string" ? entry.name : undefined;
   const name = label?.trim();
-  return name === undefined || name === "" ? { id: entry.id.trim() } : { id: entry.id.trim(), name };
+  // A name that breaks the rules of a display name is dropped, never cut: the model is listed under its id alone.
+  return name === undefined || !isDisplayName(name) ? { id: entry.id.trim() } : { id: entry.id.trim(), name };
 }
 
 /**
@@ -244,17 +250,25 @@ export function isRedirectedFailure(error: unknown): boolean {
   return error instanceof Error && "redirected" in error && error.redirected === true;
 }
 
+/** Whether `error` says a catalogue read met a redirect and none of the redirects it met carried a `Location`: the advice to set the base URL to the address it redirects to has no address to point at. Carried across the door's worker the way `redirected` is. */
+export function isUnlocatedRedirect(error: unknown): boolean {
+  return error instanceof Error && "unlocated" in error && error.unlocated === true;
+}
+
 /** Raised when no candidate URL returned a catalogue; the message names each URL (as `displayBaseUrl` shows it, without userinfo or query) and what it answered, never the credential. */
 export class CatalogueFetchError extends Error {
   /** Whether a candidate URL answered with a redirect, which the read never follows: a fact about the failure carried beside its message, so nothing decides it by searching a message that may have been cut. */
   readonly redirected: boolean;
+  /** Whether it met a redirect and none carried a `Location`: a fact beside `redirected`, so the advice that names an address is given only when there is one. */
+  readonly unlocated: boolean;
   /** Whether every candidate URL that failed refused the provider's credential (a 401 or a 403): the failure is then the credential's and ends when the credential is fixed. A candidate that failed another way (a timeout, a server error) makes it the server's failure, which ends with the server's own recovery. */
   readonly unauthorised: boolean;
 
-  constructor(message: string, flags: Readonly<{ readonly redirected?: boolean; readonly unauthorised?: boolean }> = {}) {
+  constructor(message: string, flags: Readonly<{ readonly redirected?: boolean; readonly unlocated?: boolean; readonly unauthorised?: boolean }> = {}) {
     super(message);
     this.name = "CatalogueFetchError";
     this.redirected = flags.redirected === true;
+    this.unlocated = flags.redirected === true && flags.unlocated === true;
     this.unauthorised = flags.unauthorised === true;
   }
 }
@@ -266,6 +280,7 @@ export async function fetchCatalogue(params: Readonly<FetchCatalogueParams>): Pr
   const headers = catalogueHeaders(params.credential);
   const outcomes: string[] = [];
   let redirected = false;
+  let locatedRedirect = false;
   let failedCandidates = 0;
   let refusedCandidates = 0;
   for (const url of catalogueUrls(params.provider, params.catalogue)) {
@@ -279,6 +294,7 @@ export async function fetchCatalogue(params: Readonly<FetchCatalogueParams>): Pr
       // A redirect is named as one: the read never follows it, since its request carries the provider's credential and a redirect target is another origin. Its `Location` is not repeated, because it can carry a credential of its own.
       const redirect = REDIRECT_STATUSES.has(response.status);
       redirected ||= redirect;
+      locatedRedirect ||= redirect && response.located !== false;
       failedCandidates += 1;
       refusedCandidates += response.status === HTTP_UNAUTHORIZED || response.status === HTTP_FORBIDDEN ? 1 : 0;
       // The advice names an address to set, so it is given only for an answer that carried a `Location`.
@@ -289,5 +305,5 @@ export async function fetchCatalogue(params: Readonly<FetchCatalogueParams>): Pr
       outcomes.push(`${displayBaseUrl(url)}: ${redactUrlIn(error instanceof Error ? error.message : String(error), url)}`);
     }
   }
-  throw new CatalogueFetchError(`no catalogue from ${outcomes.join("; ")}`, { redirected, unauthorised: refusedCandidates === failedCandidates });
+  throw new CatalogueFetchError(`no catalogue from ${outcomes.join("; ")}`, { redirected, unlocated: redirected && !locatedRedirect, unauthorised: refusedCandidates === failedCandidates });
 }

@@ -77,11 +77,14 @@ export type DoorWorkerFailureKind = "deadline" | "stalled" | "worker" | "answer"
 export class DoorWorkerFailedError extends CliError {
   /** Whether the worker's error said a catalogue read met a redirect: the one fact of a worker's error that crosses the thread besides its class name and code. */
   readonly redirected: boolean;
+  /** Whether the redirect it says a catalogue read met carried no `Location`. */
+  readonly unlocated: boolean;
 
-  constructor(task: DoorWorkerTaskName | "an unknown task", reason: string, readonly kind: DoorWorkerFailureKind, redirected = false) {
+  constructor(task: DoorWorkerTaskName | "an unknown task", reason: string, readonly kind: DoorWorkerFailureKind, redirected = false, unlocated = false) {
     super(`${task} failed in its worker: ${reason}${task === "an unknown task" ? "" : `; ${NEXT_STEP[task]}`}`);
     this.name = "DoorWorkerFailedError";
     this.redirected = redirected;
+    this.unlocated = unlocated;
   }
 }
 
@@ -177,9 +180,9 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
   const maxQueued = options.maxQueued ?? MAX_QUEUED_DOOR_WORKER_TASKS;
   const log = options.log ?? ((): void => undefined);
   /** The failure of a task, logged once here with its kind and reason (never a worker's message), for the caller to throw or reject with. */
-  const failure = (task: DoorWorkerTaskName | "an unknown task", reason: string, kind: DoorWorkerFailureKind, redirected = false): DoorWorkerFailedError => {
+  const failure = (task: DoorWorkerTaskName | "an unknown task", reason: string, kind: DoorWorkerFailureKind, redirected = false, unlocated = false): DoorWorkerFailedError => {
     log(`door worker ${task} failed (${kind}): ${reason}`);
-    return new DoorWorkerFailedError(task, reason, kind, redirected);
+    return new DoorWorkerFailedError(task, reason, kind, redirected, unlocated);
   };
   /** The flights not yet over, by request: an equal request joins one of these. */
   const inFlight = new Map<string, Flight>();
@@ -313,7 +316,7 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
           if (value.kind === "done") {
             flight.outcome.resolve(value.value);
           } else {
-            flight.outcome.reject(failure(flight.task, `it ended with ${value.name}${value.code === undefined ? "" : ` (${value.code})`}`, "worker", value.redirected === true));
+            flight.outcome.reject(failure(flight.task, `it ended with ${value.name}${value.code === undefined ? "" : ` (${value.code})`}`, "worker", value.redirected === true, value.unlocated === true));
           }
         });
       });
