@@ -29,7 +29,7 @@ import type { TargetObservation } from "../selection/signals";
 import type { UsageSnapshot } from "../usage/schema";
 import { PROVIDER_PATH_PREFIX, directOrigin, parseProviderPath, type FrontDoorRoute, type ModelChoice, type RoutedRequest } from "./route";
 import { AMBIGUOUS_MODEL_MESSAGE } from "./topLevelModel";
-import { reservedProviderNameReason } from "../models/reservedModelNames";
+import { SELECTOR_PREFIX, reservedProviderNameReason } from "../models/reservedModelNames";
 import { ANTHROPIC_PREFIX, ANTHROPIC_ROUTE_NAME, followingMainLoop, withModel, type MainLoopRouteRecord, type RenameContext, type RenameModel } from "./mainLoopRoute";
 import { overrideFor, type RouteOverridesRead } from "../routeOverridesStore";
 import { isBareClaudeName } from "../models/tiers";
@@ -350,6 +350,38 @@ export function createProviderRouteResolver(deps: {
     }
     return { refusal: `this session was launched on provider "${launchProvider}", whose requests carry no Anthropic login, so ${JSON.stringify(renamed.name)} cannot be served on the Anthropic route: relaunch the session without --provider (claude @<identity> --resume) to use it` };
   };
+  /**
+   * An account target (`acct:<identity>/<model>`, or a virtual model whose account member is one) naming the login the session already runs on is no other login's: it is served as the selector naming that identity is (`auto/identity:<identity>/<model>`), on the session's own credential, rather than as a relaunch onto the login the session is on. Undefined for a name that is no account target, or one on another login, which a relaunch serves; a refusal when the identity does not exist, the login cannot be told, or the selector refuses.
+   */
+  const ownLoginAccount = (name: string, context: Readonly<RenameContext>): { readonly name: string } | RoutedRefusal | undefined => {
+    const account = resolveAccountTarget(name, deps.models?.(context.session));
+    if (account === undefined) {
+      return undefined;
+    }
+    // An account target naming no identity can be served by no relaunch, so it is refused here, as the selector naming it is.
+    if (deps.selectorState !== undefined) {
+      const found = deps.selectorState.identity(account.identity);
+      if (found.kind === "invalid") {
+        return { refusal: found.reason };
+      }
+      if (found.kind === "absent") {
+        return { refusal: `${JSON.stringify(name)} names no identity: no identity is called ${JSON.stringify(account.identity)}` };
+      }
+    }
+    const sessionIdentityId = context.session.identity;
+    if (sessionIdentityId === undefined) {
+      return undefined;
+    }
+    const same = (deps.selectorState ?? noState).sameLogin(account.identity, sessionIdentityId);
+    if (typeof same === "object") {
+      return same;
+    }
+    if (!same) {
+      return undefined;
+    }
+    const expanded = expandSelectorName(`${SELECTOR_PREFIX}identity:${account.identity}/${account.model}`, selectorPortsFor(context), { identityId: sessionIdentityId });
+    return expanded === undefined ? undefined : "refusal" in expanded ? expanded : { name: expanded.name };
+  };
   const renameOnce: RenameModel = (model, context) => {
     const overridden = overriddenName(model, context);
     if (overridden !== undefined && "refusal" in overridden) {
@@ -358,7 +390,11 @@ export function createProviderRouteResolver(deps: {
     const name = overridden?.name ?? model;
     const expanded = expandSelectorName(name, selectorPortsFor(context), context.session.identity === undefined ? {} : { identityId: context.session.identity });
     if (expanded === undefined) {
-      return overridden;
+      const own = ownLoginAccount(name, context);
+      if (own === undefined) {
+        return overridden;
+      }
+      return "refusal" in own || overridden === undefined ? own : { name: own.name, overridden: true };
     }
     if ("refusal" in expanded) {
       return overridden === undefined ? expanded : { refusal: `the route override of ${JSON.stringify(model)} routes it by ${JSON.stringify(name)}, which cannot be routed: ${expanded.refusal}` };
