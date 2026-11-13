@@ -278,3 +278,10 @@ describe("a key in any case is the lower-case key", () => {
     expect("table" in read ? overrideFor(read.table, { identity: "work" }, "Claude-Haiku-5-5")?.target : undefined).toBe("z/h");
   });
 });
+
+describe("names every object inherits", () => {
+  it.each(["constructor", "toString", "__proto__", "valueOf"])("are no scope and no key: %j", (name) => {
+    expect(overrideMatches({ schemaVersion: 1, global: { opus: "z/g" } }, { sessionId: name, identity: name, provider: name }, "claude-opus-5-5").map((match) => match.scope.kind)).toEqual(["global"]);
+    expect(() => withRouteOverride(NO_ROUTE_OVERRIDES, { kind: "session", name }, "opus", undefined)).toThrow(/No override/);
+  });
+});

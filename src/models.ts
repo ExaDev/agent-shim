@@ -23,6 +23,7 @@ import { isBareClaudeName } from "./models/tiers";
 import { realFsPort } from "./realPorts";
 import { identityIdOf } from "./identityStore";
 import { createRouteOverridesReader, overrideMatches, scopeLabelOf } from "./routeOverridesStore";
+import { ownEntry } from "./ownEntry";
 
 /** The quota facts for one provider, from the newest snapshot of any identity that records it: the identities this machine actually uses, each contributing what it last saw. */
 function providerQuotaOf(paths: LayoutPaths): (provider: string) => Readonly<Partial<Record<"fiveHour" | "sevenDay" | "extraUsage", CandidateWindowFacts>>> {
@@ -45,7 +46,7 @@ function providerQuotaOf(paths: LayoutPaths): (provider: string) => Readonly<Par
   }
   return (provider) => {
     const snapshot = newest.get(provider);
-    return snapshot === undefined ? {} : quotaFactsOf(snapshot.providers[provider]?.rateLimit?.unified, Date.now());
+    return snapshot === undefined ? {} : quotaFactsOf(ownEntry(snapshot.providers, provider)?.rateLimit?.unified, Date.now());
   };
 }
 
@@ -73,7 +74,7 @@ interface VirtualModelExplanation {
 /** Explains one virtual model's (or family row's) choice: the member its mode picks over the live signals, and why each candidate stands where it does. */
 function explainVirtualModel(paths: LayoutPaths, name: string): VirtualModelExplanation {
   const models = readModels(paths);
-  const virtual = models?.virtual?.[name];
+  const virtual = ownEntry(models?.virtual, name);
   const families = buildFamilies(targetRefs(paths), models);
   const isFamily = name.startsWith(FAMILY_PREFIX);
   if (virtual === undefined && !isFamily) {
@@ -87,7 +88,7 @@ function explainVirtualModel(paths: LayoutPaths, name: string): VirtualModelExpl
     .filter((member) => !member.startsWith("acct:"))
     .map((ref, order) => {
       const [provider] = ref.split("/");
-      return candidateOf(ref, order, { quota: quotaOf(provider ?? ""), ...(observations.observation(ref) === undefined ? {} : { observation: observations.observation(ref) }), ...(models?.prices?.[ref] === undefined ? {} : { price: models.prices[ref] }) }, false);
+      return candidateOf(ref, order, { quota: quotaOf(provider ?? ""), ...(observations.observation(ref) === undefined ? {} : { observation: observations.observation(ref) }), ...(ownEntry(models?.prices, ref) === undefined ? {} : { price: ownEntry(models?.prices, ref) }) }, false);
     });
   const evaluated = candidates.map((candidate) => ({ candidate, capabilities: familyCapabilities(familyOfRef(families, candidate.ref)?.settings ?? {}) }));
   const selection = selectMember(mode, evaluated, {});
@@ -272,7 +273,7 @@ export function registerModelsCommand(program: Command, deps: CommandDeps): void
       .option("--member <ref>", "Add or replace one member (repeatable).", collectRepeated),
     ["agent-shim model set fast --mode most-allowance"],
   ).action((name: string, options: { mode?: SelectionModeName; member?: string[] }) => {
-    const existing = readModels(paths)?.virtual?.[name];
+    const existing = ownEntry(readModels(paths)?.virtual, name);
     if (existing === undefined) {
       throw new VirtualModelNotFoundError(name);
     }
@@ -370,7 +371,7 @@ export function registerModelsCommand(program: Command, deps: CommandDeps): void
       console.log(`Removed the settings of family ${key}.`);
       return;
     }
-    const existing = readModels(paths)?.families?.[key] ?? {};
+    const existing = ownEntry(readModels(paths)?.families, key) ?? {};
     const settings = {
       ...existing,
       ...(options.mode === undefined ? {} : { mode: options.mode }),
