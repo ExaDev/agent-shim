@@ -10,7 +10,7 @@ import { parseSelectorName } from "./models/selectors";
 import { claudeNameTier } from "./models/tiers";
 import type { LayoutPaths } from "./paths";
 import { catalogueReadFault } from "./storedCatalogue";
-import { RouteOverridesSchema, type OverrideTable, type RouteOverrides } from "./routeOverridesSchema";
+import { RepairableRouteOverridesSchema, RouteOverridesSchema, type OverrideTable, type RouteOverrides } from "./routeOverridesSchema";
 
 /**
  * The runtime route overrides: per scope, a table from a bare Claude model name or class to the name a request asking for it is routed by instead. Stored at `LayoutPaths.routeOverridesFile`, written by `agent-shim route set|remove` and `config.route.set|remove`, and read by the door on change (`createRouteOverridesReader`), so an edit applies to the next request with no restart and nothing changed in Claude Code.
@@ -101,6 +101,13 @@ export function readRouteOverrides(paths: LayoutPaths): RouteOverrides {
   return readJson(paths.routeOverridesFile, RouteOverridesSchema) ?? NO_ROUTE_OVERRIDES;
 }
 
+/** Throws `UsageError` for a session, identity or provider scope whose name is empty, which no reader accepts: a new entry must name what it applies to. A removal may name one, to repair a file a hand edit left that way. */
+export function requireNamedScope(scope: RouteOverrideScope): void {
+  if (scope.kind !== "global" && scope.name === "") {
+    throw new UsageError(`An override's ${scope.kind} cannot be empty: name the ${scope.kind} it applies to.`);
+  }
+}
+
 /** `overrides` with one top-level field replaced, or left out when `value` is undefined, so an emptied table or scope map leaves no key. */
 function withField<K extends "global" | "providers" | "identities" | "sessions">(overrides: Readonly<RouteOverrides>, field: K, value: RouteOverrides[K] | undefined): RouteOverrides {
   const fields: Pick<RouteOverrides, "global" | "providers" | "identities" | "sessions"> = { ...overrides, [field]: value };
@@ -119,8 +126,11 @@ export function withRouteOverride(overrides: Readonly<RouteOverrides>, scope: Ro
   if (!isOverrideKey(key)) {
     throw new UsageError(`An override's model must be a bare Claude name or class (opus, sonnet, haiku, fable, or a name such as claude-opus-5-5, with no [1m] marker), not ${JSON.stringify(key)}.`);
   }
+  if (target !== undefined) {
+    requireNamedScope(scope);
+  }
   const table = tableOf(overrides, scope) ?? {};
-  if (target === undefined && table[key] === undefined) {
+  if (target === undefined && !Object.hasOwn(table, key)) {
     throw new UsageError(`No override of ${JSON.stringify(key)} is set ${describeScope(scope)}.`);
   }
   const problem = target === undefined ? undefined : overrideTargetShapeProblem(target);
@@ -138,7 +148,17 @@ export function withRouteOverride(overrides: Readonly<RouteOverrides>, scope: Ro
 
 /** Writes the overrides atomically (a temporary file renamed over the old one), so a reader sees the old table or the new one, never a part of either. */
 export function writeRouteOverrides(paths: LayoutPaths, overrides: Readonly<RouteOverrides>): void {
-  writeJsonAtomic(paths.routeOverridesFile, overrides);
+  // Checked against the schema the readers use, so no write leaves a file the door refuses every request over.
+  const checked = RouteOverridesSchema.safeParse(overrides);
+  if (!checked.success) {
+    throw new UsageError(`The route overrides would not be readable after this change: ${shapeFault(checked.error.issues)}. Nothing was written; \`agent-shim doctor\` names what is wrong with the file.`);
+  }
+  writeJsonAtomic(paths.routeOverridesFile, checked.data);
+}
+
+/** Reads the overrides for a removal: as `readRouteOverrides` does, except that an entry the readers refuse (an empty scope name, a key or target that is no string they accept) is read as written, so the removal can name and drop it. */
+export function readRouteOverridesForRepair(paths: LayoutPaths): RouteOverrides {
+  return readJson(paths.routeOverridesFile, RepairableRouteOverridesSchema) ?? NO_ROUTE_OVERRIDES;
 }
 
 /** A scope as a message names it. */

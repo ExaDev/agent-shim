@@ -1,7 +1,11 @@
+import nodeFs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { UsageError } from "./cliError";
-import { createRouteOverridesReader, isOverrideKey, NO_ROUTE_OVERRIDES, overrideFor, overrideMatches, routeOverridesRenamed, withRouteOverride } from "./routeOverridesStore";
+import { buildLayoutPaths } from "./paths";
+import { createRouteOverridesReader, isOverrideKey, NO_ROUTE_OVERRIDES, overrideFor, overrideMatches, readRouteOverrides, routeOverridesRenamed, withRouteOverride, writeRouteOverrides } from "./routeOverridesStore";
 import type { RouteOverrides } from "./routeOverridesSchema";
 
 const FILE = "/state/route-overrides.json";
@@ -209,5 +213,46 @@ describe("a damaged overrides file is never read as no overrides", () => {
     const read = createRouteOverridesReader(fs, FILE, () => undefined)();
     expect(read).not.toHaveProperty("table");
     expect(read).toHaveProperty("fault");
+  });
+});
+
+describe("every write leaves a file the reader can use", () => {
+  it.each<[string, RouteOverrides]>([
+    ["an empty scope name", { schemaVersion: 1, sessions: { "": { opus: "z/a" } } }],
+    ["an empty target", { schemaVersion: 1, global: { opus: "" } }],
+  ])("refuses to set an entry that would leave %s", (_label, overrides) => {
+    const [scopeKey] = Object.keys(overrides).filter((key) => key !== "schemaVersion");
+    const scope = scopeKey === "sessions" ? ({ kind: "session", name: "" } as const) : ({ kind: "global" } as const);
+    const target = scopeKey === "sessions" ? "z/a" : "";
+    expect(() => withRouteOverride(NO_ROUTE_OVERRIDES, scope, "opus", target)).toThrow(UsageError);
+  });
+});
+
+describe("the one writer of the overrides file", () => {
+  it("refuses to write overrides the readers would refuse, leaving the file as it was", () => {
+    const root = nodeFs.mkdtempSync(path.join(os.tmpdir(), "route-overrides-write-"));
+    try {
+      const paths = buildLayoutPaths(root);
+      writeRouteOverrides(paths, TABLE);
+      expect(() => {
+        writeRouteOverrides(paths, { schemaVersion: 1, sessions: { "": { opus: "z/a" } } });
+      }).toThrow(UsageError);
+      expect(readRouteOverrides(paths)).toEqual(TABLE);
+    } finally {
+      nodeFs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("is the only code that writes the file: every other module goes through it or through a step that checks the same schema", () => {
+    const sources = (directory: string): readonly string[] =>
+      nodeFs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+        const full = path.join(directory, entry.name);
+        return entry.isDirectory() ? sources(full) : entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts") ? [full] : [];
+      });
+    const naming = sources(path.join(__dirname)).filter((file) => nodeFs.readFileSync(file, "utf8").includes("routeOverridesFile"));
+    const writers = naming.filter((file) => /routeOverridesFile[^\n]*(?:writeJsonAtomic|writeTextAtomic|writeFile)|(?:writeJsonAtomic|writeTextAtomic|writeFile)[^\n]*routeOverridesFile/.test(nodeFs.readFileSync(file, "utf8")));
+    expect(writers.map((file) => path.relative(__dirname, file)).sort()).toEqual(["routeOverridesStore.ts"]);
+    // The identity rename's step writes it through `jsonRewriteStep`, which validates against the schema it is given: the readers' own.
+    expect(nodeFs.readFileSync(path.join(__dirname, "identityRenameSteps.ts"), "utf8")).toContain("jsonRewriteStep(paths, ports, paths.routeOverridesFile, RouteOverridesSchema,");
   });
 });

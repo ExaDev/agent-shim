@@ -4,7 +4,7 @@ import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDe
 import { UsageError } from "./cliError";
 import type { LayoutPaths } from "./paths";
 import { overrideNamesOf, overrideScopeProblem, overrideTargetProblem } from "./routeOverrideChecks";
-import { describeScope, readRouteOverrides, ROUTE_OVERRIDE_SCOPES, scopeLabelOf, withRouteOverride, writeRouteOverrides, type RouteOverrideScope } from "./routeOverridesStore";
+import { describeScope, readRouteOverrides, readRouteOverridesForRepair, requireNamedScope, ROUTE_OVERRIDE_SCOPES, scopeLabelOf, withRouteOverride, writeRouteOverrides, type RouteOverrideScope } from "./routeOverridesStore";
 import type { RouteOverrides } from "./routeOverridesSchema";
 
 /** The scope flags one `route set` or `route remove` takes, at most one of them. */
@@ -49,6 +49,7 @@ function listed(overrides: Readonly<RouteOverrides>): readonly ListedOverride[] 
  * Sets one override after checking it against the configuration as the door would route it: the scope names a defined identity or provider, and the target names something defined (`overrideTargetProblem`). Shared by `route set` and `config.route.set`, so both refuse the same writes. Throws `UsageError` for anything refused. Returns the overrides as written.
  */
 export function setRouteOverride(paths: LayoutPaths, scope: RouteOverrideScope, model: string, target: string): RouteOverrides {
+  requireNamedScope(scope);
   const names = overrideNamesOf(paths);
   const scopeProblem = overrideScopeProblem(scope, names);
   if (scopeProblem !== undefined) {
@@ -65,7 +66,8 @@ export function setRouteOverride(paths: LayoutPaths, scope: RouteOverrideScope, 
 
 /** Removes one override; throws `UsageError` when none is set there. Shared by `route remove` and `config.route.remove`. Returns the overrides as written. */
 export function removeRouteOverride(paths: LayoutPaths, scope: RouteOverrideScope, model: string): RouteOverrides {
-  const overrides = withRouteOverride(readRouteOverrides(paths), scope, model, undefined);
+  // Read as written, so an entry that made the file unreadable can be removed to repair it.
+  const overrides = withRouteOverride(readRouteOverridesForRepair(paths), scope, model, undefined);
   writeRouteOverrides(paths, overrides);
   return overrides;
 }
