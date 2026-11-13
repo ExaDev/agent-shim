@@ -118,9 +118,10 @@ describe("createProviderRouteResolver", () => {
   });
 
   it("never rides a self-hosted session's bare /v1/ target on the pass-through to the real API, however it reached the pipeline", async () => {
-    const selfHosted: RoutedRequest = { ...request("/v1/messages"), session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, projectId: undefined, selfHosted: true } };
-    expect(await resolver({})(selfHosted)).toMatchObject({ ok: false, status: HTTP_STATUS.notFound });
-    expect(await resolver({ [`${PROVIDERS_DIR}/z.json`]: httpProvider })({ ...selfHosted, url: "/providers/z/v1/messages" })).toMatchObject({ ok: true });
+    // A request's body is read once, so each resolution gets a request of its own.
+    const selfHosted = (url: string): RoutedRequest => ({ ...request(url), session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, projectId: undefined, selfHosted: true } });
+    expect(await resolver({})(selfHosted("/v1/messages"))).toMatchObject({ ok: false, status: HTTP_STATUS.notFound });
+    expect(await resolver({ [`${PROVIDERS_DIR}/z.json`]: httpProvider })(selfHosted("/providers/z/v1/messages"))).toMatchObject({ ok: true });
   });
 
   it("resolves a bare name only the models block defines on every session, and keeps a name the session's own provider serves itself", async () => {
