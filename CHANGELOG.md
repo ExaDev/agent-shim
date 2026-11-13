@@ -1,3 +1,17 @@
+## [14.4.0](https://github.com/ExaDev/agent-shim/compare/v14.3.2...v14.4.0) (2026-11-13)
+
+### Features
+
+* **doctor:** report farm links that lead nowhere, and resync a farm without launching ([1c55b2e](https://github.com/ExaDev/agent-shim/commit/1c55b2e06e93f259cb1dbf460436c8e00201b1d0))
+
+### Bug Fixes
+
+* **doctor:** print the legacy-name and models findings in the text report ([0dbffe7](https://github.com/ExaDev/agent-shim/commit/0dbffe7bd8b2f35f8377d05e8437f9199ac838a3))
+
+### Code Refactoring
+
+* **doctor:** move the text report into its own module ([d0326d6](https://github.com/ExaDev/agent-shim/commit/d0326d62c4633526a6b737a12ca44127d1c72af8))
+
 ## [14.3.2](https://github.com/ExaDev/agent-shim/compare/v14.3.1...v14.3.2) (2026-11-13)
 
 ### Bug Fixes
