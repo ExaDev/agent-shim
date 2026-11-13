@@ -163,6 +163,18 @@ export function parseProviderPath(path: string): { readonly provider: string; re
 }
 
 /**
+ * The class of the error a request target raises when it is read as the door reads every target (as a URL against a loopback origin, and its provider segment percent-decoded), or `undefined` when it reads: `URIError` for a provider segment with a bad escape (`/providers/%/v1/messages`), `TypeError` for a target that is no URL (an absolute-form target with a bad port or host). Only the class is returned, never the target or the error's message, so nothing a client sent is echoed back.
+ */
+export function malformedTargetClass(target: string): string | undefined {
+  try {
+    parseProviderPath(new URL(target, "http://127.0.0.1").pathname);
+    return undefined;
+  } catch (error) {
+    return error instanceof Error ? error.name : "Error";
+  }
+}
+
+/**
  * The request target with its provider segment replaced by the provider that name stands for: `/providers/<alias>/<rest>?query` becomes `/providers/<current>/<rest>?query`. A target that names no provider, or whose provider is already current, is returned as it came.
  */
 export function withCanonicalProviderTarget(target: string, canonical: (name: string) => string): string {

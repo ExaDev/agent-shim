@@ -9,6 +9,7 @@ import type { LeafCert } from "./connect";
 import { processorShare, readMachineLoad, type MachineLoadReading } from "./machineLoad";
 import { CONTROL_PATH_PREFIX } from "./rcControl";
 import type { PipelineRequest } from "./pipeline";
+import { malformedTargetClass } from "./route";
 
 /** How long one health probe waits before giving up: a listener that just bound answers in milliseconds, so the bound only bites when the request path itself is broken. */
 const HEALTH_TIMEOUT_MS = 2_000;
@@ -87,6 +88,13 @@ export function createFrontDoorServer(
       }
     });
     const handle = async (): Promise<void> => {
+      // A target that cannot be read is the client's fault, answered 400 naming the class of the failure only: node drains a request that was never read once its response has ended, so the connection carries the next request.
+      const malformed = malformedTargetClass(request.url ?? "/");
+      if (malformed !== undefined) {
+        response.writeHead(HTTP_STATUS.badRequest, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: `the request target is malformed (${malformed})` } }));
+        return;
+      }
       await pipeline({ method: request.method ?? "GET", url: request.url ?? "/", headers: aliasLegacyWireHeaders(request.headers), body: request, signal: abort.signal, response });
       // A request the route never read (an unrouted target answered by the pipeline's own error) must still be drained, or a client mid-body waits on a response it cannot see.
       if (!request.readableEnded) {
