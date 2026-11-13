@@ -21,11 +21,13 @@ const SECTION_TITLES: Readonly<Record<DoctorSection, string>> = {
   "active-identity": "Active identity",
 };
 
+/** The order `formatDoctorReport` prints the sections in; every section in `DOCTOR_SECTIONS` is listed, or its findings would reach `--json` alone. */
 const SECTION_ORDER: readonly DoctorSection[] = [
   "ambient-credential",
   "binary-discovery",
   "claude-shim",
   "path-resolution",
+  "legacy-name",
   "config-profile",
   "identity",
   "sign-in",
@@ -34,6 +36,7 @@ const SECTION_ORDER: readonly DoctorSection[] = [
   "keychain",
   "directory-rules",
   "global-config",
+  "models",
   "headroom",
   "frontdoor",
   "categories-local",

@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { formatDoctorReport } from "./doctorFormat";
-import { collectDoctorReport, refinePathShadow, runDoctor, type DoctorConfigProfileInput, type RunDoctorParams } from "./doctorReport";
+import { collectDoctorReport, DOCTOR_SECTIONS, refinePathShadow, runDoctor, type DoctorConfigProfileInput, type RunDoctorParams } from "./doctorReport";
 import { baseParams, findingsFor, identity, provider } from "./doctorTestFixtures";
 import type { CredentialCacheEnv } from "./credential";
 import type { RunPort } from "./launcher/ports";
@@ -643,6 +643,13 @@ describe("formatDoctorReport", () => {
     const lines = formatDoctorReport(report);
     expect(lines.some((line) => line.includes("[FAIL]"))).toBe(true);
     expect(lines.at(-1)).toBe("1 check(s) failed.");
+  });
+
+  it("prints a finding of every section", () => {
+    const lines = formatDoctorReport({ findings: DOCTOR_SECTIONS.map((section) => ({ section, severity: "pass", message: `a finding of ${section}` })), ok: true });
+    for (const section of DOCTOR_SECTIONS) {
+      expect(lines).toContain(`  [PASS] a finding of ${section}`);
+    }
   });
 });
 
