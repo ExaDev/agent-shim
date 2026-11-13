@@ -16,13 +16,21 @@ import { createRouteOverridesReader, type RouteOverridesRead } from "../routeOve
 import type { SelectorLookup, SelectorPorts, SelectorRefusal } from "./selectors";
 import { targetRefs } from "./targets";
 import { ownEntry } from "../ownEntry";
+import { DuplicateIdentityNameError } from "../identityRecords";
+import { catalogueReadFault } from "../storedCatalogue";
 
 /** The part of a selector's live state that is the person's configuration (profiles, identities, pools and logins), as opposed to the providers and families the door reads itself. */
 export type SelectorStatePorts = Pick<SelectorPorts, "profile" | "identity" | "pool" | "poolPick" | "sameLogin">;
 
 /** The message of a failed read, for a refusal: the store's own error names the file and what is wrong with it. */
-function reasonOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+/**
+ * Why the `what` named `name` cannot be used, from the error its read raised, for a refusal the session's client reads: the error's class or code and the command that says more, never the error's own message, which names files under the state root and identities' directory ids. A name two identities claim says so, since that is the person's to fix.
+ */
+function reasonOf(what: string, name: string, error: unknown): string {
+  if (error instanceof DuplicateIdentityNameError) {
+    return `identity name "${name}" is claimed by more than one identity, so nothing that names it can be resolved: rename all but one (agent-shim doctor names them)`;
+  }
+  return `the ${what} "${name}" cannot be read (${catalogueReadFault(error)}): agent-shim doctor says what is wrong`;
 }
 
 /**
@@ -46,12 +54,12 @@ export function poolRefusal(name: string, earliestReturn: { readonly identity: s
  * The selector state read from the person's configuration under `paths`, every read fresh at the moment it is asked, so a profile, identity or pool edited while a session runs is what its next request expands against. A pool is ranked as `agent-shim pool pick <pool>` ranks it from the directory `home`: the last pick recorded for that directory (the door does not know the session's own) and each member's provider as a launch from `home` resolves it, and records nothing. `home` is injected so a caller other than the door (a test) never reads the real home's picks or committed files.
  */
 export function realSelectorStatePorts(paths: LayoutPaths, now: () => number, home: string): SelectorStatePorts {
-  const lookUp = <T>(read: () => T | undefined): SelectorLookup<T> => {
+  const lookUp = <T>(what: string, name: string, read: () => T | undefined): SelectorLookup<T> => {
     try {
       const value = read();
       return value === undefined ? { kind: "absent" } : { kind: "found", value };
     } catch (error) {
-      return { kind: "invalid", reason: reasonOf(error) };
+      return { kind: "invalid", reason: reasonOf(what, name, error) };
     }
   };
   // The login an identity's stored account names, by the identity's directory id.
@@ -60,31 +68,40 @@ export function realSelectorStatePorts(paths: LayoutPaths, now: () => number, ho
     return read?.account === undefined ? undefined : loginKeyOf(read.account);
   };
   return {
-    profile: (name) => lookUp(() => (readProfile(paths, name) === undefined ? undefined : { provider: profileProvider(paths, name) })),
-    identity: (name) => lookUp(() => {
+    profile: (name) => lookUp("configuration profile", name, () => (readProfile(paths, name) === undefined ? undefined : { provider: profileProvider(paths, name) })),
+    identity: (name) => lookUp("identity", name, () => {
       const identity = readIdentity(paths, name);
       return identity === undefined ? undefined : { provider: identity.provider };
     }),
     pool: (name) => {
-      const found = lookUp(() => (ownEntry(readPools(paths), name) === undefined ? undefined : true));
+      const found = lookUp("pool", name, () => (ownEntry(readPools(paths), name) === undefined ? undefined : true));
       return found.kind === "found" ? { kind: "found", value: undefined } : found;
     },
     poolPick: (name): { readonly identity: string } | SelectorRefusal => {
-      const pools = readPools(paths);
-      const report = collectPoolPick({ paths, fs: realFsPort, usageFs: realFarmFs, poolName: name, pools, directory: home, nowMs: now(), providerOf: realMemberProviderResolver({ paths, cwd: home, env: {}, home }) });
-      return report.pick === undefined ? { refusal: poolRefusal(name, report.earliestReturn) } : { identity: report.pick };
+      try {
+        const pools = readPools(paths);
+        const report = collectPoolPick({ paths, fs: realFsPort, usageFs: realFarmFs, poolName: name, pools, directory: home, nowMs: now(), providerOf: realMemberProviderResolver({ paths, cwd: home, env: {}, home }) });
+        return report.pick === undefined ? { refusal: poolRefusal(name, report.earliestReturn) } : { identity: report.pick };
+      } catch (error) {
+        // A pool that cannot be ranked (a member pool nesting it, a member whose files cannot be read) is the person's configuration to fix, and `pool pick` names what.
+        return { refusal: `${reasonOf("pool", name, error)}, or run agent-shim pool pick ${name}` };
+      }
     },
     // The selected identity is found by its name as it is now, and compared by id with the session's, so a name a renamed identity used to hold, and another identity holds now, never stands for the session's.
     sameLogin: (identity, sessionIdentityId) => {
-      const id = identityIdOf(paths, identity);
-      if (id === undefined) {
-        return false;
+      try {
+        const id = identityIdOf(paths, identity);
+        if (id === undefined) {
+          return false;
+        }
+        if (id === sessionIdentityId) {
+          return true;
+        }
+        const login = loginOfId(id);
+        return login !== undefined && login === loginOfId(sessionIdentityId);
+      } catch (error) {
+        return { refusal: reasonOf("identity", identity, error) };
       }
-      if (id === sessionIdentityId) {
-        return true;
-      }
-      const login = loginOfId(id);
-      return login !== undefined && login === loginOfId(sessionIdentityId);
     },
   };
 }

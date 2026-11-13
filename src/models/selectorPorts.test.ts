@@ -131,6 +131,59 @@ describe("the selector state read from the person's files", () => {
     expect(result !== undefined && "refusal" in result ? result.refusal : "").toContain("names nothing");
   });
 
+  describe("a port whose read fails answers with a refusal, never a throw, naming no path or directory", () => {
+    /** The refusal `name` expands to, which must exist and name nothing under the state root. */
+    const refusalOf = (name: string, identityId = "me"): string => {
+      let result: ReturnType<typeof expandSelectorName>;
+      expect(() => {
+        result = expandSelectorName(name, cliSelectorPorts(paths, now, home), { identityId });
+      }).not.toThrow();
+      const refusal = result !== undefined && "refusal" in result ? result.refusal : "";
+      expect(refusal).not.toBe("");
+      expect(refusal).not.toContain(root);
+      expect(refusal).not.toContain("identities/");
+      return refusal;
+    };
+    const claimTwice = (name: string): void => {
+      write(path.join(paths.identitiesDir, "dup-a", "identity.json"), { name, allowAmbientCredential: false });
+      write(path.join(paths.identitiesDir, "dup-b", "identity.json"), { name, allowAmbientCredential: false });
+    };
+
+    it("a profile whose file is not a valid profile", () => {
+      expect(refusalOf("auto/profile:broken/claude-opus-5-5")).toContain("broken");
+    });
+
+    it("an identity name two identities claim", () => {
+      claimTwice("dup");
+      expect(refusalOf("auto/identity:dup/claude-opus-5-5")).toContain("dup");
+    });
+
+    it("a pool table config.json cannot give", () => {
+      fs.writeFileSync(paths.globalConfigFile, JSON.stringify({ pools: { subs: { identities: 5 } } }));
+      const state = realSelectorStatePorts(paths, now, home);
+      let found: ReturnType<typeof state.pool> | undefined;
+      expect(() => {
+        found = state.pool("subs");
+      }).not.toThrow();
+      const reason = found?.kind === "invalid" ? found.reason : "";
+      expect(reason).toContain("subs");
+      expect(reason).not.toContain(root);
+    });
+
+    it("a pool whose ranking cannot be made (a member pool that nests it)", () => {
+      write(paths.globalConfigFile, { pools: { a: { identities: ["pool:b"] }, b: { identities: ["pool:a"] } } });
+      expect(refusalOf("auto/pool:a/claude-opus-5-5")).toContain("a");
+    });
+
+    it("a pool whose pick is a name two identities claim, compared with the session's login", () => {
+      claimTwice("dup");
+      write(paths.globalConfigFile, { pools: { solo: { identities: ["work"] } } });
+      const state = realSelectorStatePorts(paths, now, home);
+      expect(() => state.sameLogin("dup", "me")).not.toThrow();
+      expect(state.sameLogin("dup", "me")).toMatchObject({ refusal: expect.stringContaining("dup") as unknown });
+    });
+  });
+
   it("ranks a pool to its only member", () => {
     expect(realSelectorStatePorts(paths, now, home).poolPick("subs")).toEqual({ identity: "work" });
   });
