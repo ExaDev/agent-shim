@@ -100,8 +100,8 @@ export interface SelectorPorts {
   readonly providerTarget: (provider: string, target: SelectorTarget) => { readonly name: string } | SelectorRefusal;
   /** Whether a model family of this canonical key is offered. */
   readonly family: (key: string) => boolean;
-  /** Whether `identity` holds the login the session runs on (the same identity, or another holding the same account in the same organisation). */
-  readonly sameLogin: (identity: string, sessionIdentity: string) => boolean;
+  /** Whether the identity named `identity` holds the login the session runs on: it is the identity stored under `sessionIdentityId` (a directory id, never a name), or another holding the same account in the same organisation. */
+  readonly sameLogin: (identity: string, sessionIdentityId: string) => boolean;
   /** The Claude model id the session last sent for a tier, as its own Claude Code resolved the tier: what a class is sent as on the Anthropic route. Undefined until the session has sent one. */
   readonly claudeNameOf: (tier: ClaudeTier) => string | undefined;
   /** The provider the session's main loop is on now (its launch's own, else the one its route context records), or undefined on the Anthropic route: where a class alone (`auto/<class>`) goes. */
@@ -152,7 +152,7 @@ function onAnthropic(ports: Readonly<SelectorPorts>, target: SelectorTarget, wha
 }
 
 /** An identity selected (by name or by a pool's pick): the provider it declares, the session's own login, or another login, which only a relaunch can serve. */
-function expandIdentity(ports: Readonly<SelectorPorts>, identity: string, target: SelectorTarget, session: Readonly<{ readonly identity?: string }>, asked: string, via: string): { readonly name: string } | SelectorRefusal {
+function expandIdentity(ports: Readonly<SelectorPorts>, identity: string, target: SelectorTarget, session: Readonly<{ readonly identityId?: string }>, asked: string, via: string): { readonly name: string } | SelectorRefusal {
   const found = ports.identity(identity);
   if (found.kind === "invalid") {
     return { refusal: found.reason };
@@ -163,7 +163,7 @@ function expandIdentity(ports: Readonly<SelectorPorts>, identity: string, target
   if (found.value.provider !== undefined) {
     return ports.providerTarget(found.value.provider, target);
   }
-  if (session.identity !== undefined && ports.sameLogin(identity, session.identity)) {
+  if (session.identityId !== undefined && ports.sameLogin(identity, session.identityId)) {
     return onAnthropic(ports, target, `identity "${identity}", the login this session already runs on`, asked, `${SELECTOR_PREFIX}${identity}`);
   }
   if (target.kind === "none") {
@@ -186,7 +186,7 @@ function unusable(found: SelectorLookup<unknown>, kind: SelectorKind, name: stri
 }
 
 /** Expands one selector whose kind is known. */
-function expandKind(ports: Readonly<SelectorPorts>, kind: SelectorKind, selector: Readonly<ParsedSelector>, session: Readonly<{ readonly identity?: string }>, asked: string): { readonly name: string } | SelectorRefusal {
+function expandKind(ports: Readonly<SelectorPorts>, kind: SelectorKind, selector: Readonly<ParsedSelector>, session: Readonly<{ readonly identityId?: string }>, asked: string): { readonly name: string } | SelectorRefusal {
   const { name, target } = selector;
   if (kind === "profile") {
     const profile = ports.profile(name);
@@ -217,9 +217,9 @@ function expandKind(ports: Readonly<SelectorPorts>, kind: SelectorKind, selector
 }
 
 /**
- * Expands `model` when it is the selector grammar: undefined when it is not, a refusal naming the cause and the next step when it cannot be routed, else the one name the door routes it by. An unprefixed word is looked up in every namespace, and a word found in more than one is refused naming each with the prefixed spelling of each: no kind outranks another, since a provider and a pool of one name are equally likely to be meant and a silent choice could move a session to an account the person did not mean. `session.identity` is the identity the session runs as, which an account selector is compared with.
+ * Expands `model` when it is the selector grammar: undefined when it is not, a refusal naming the cause and the next step when it cannot be routed, else the one name the door routes it by. An unprefixed word is looked up in every namespace, and a word found in more than one is refused naming each with the prefixed spelling of each: no kind outranks another, since a provider and a pool of one name are equally likely to be meant and a silent choice could move a session to an account the person did not mean. `session.identityId` is the directory id of the identity the session runs as (what the launcher's identity header carries), which an account selector's name is compared with.
  */
-export function expandSelectorName(model: string, ports: Readonly<SelectorPorts>, session: Readonly<{ readonly identity?: string }>): SelectorExpansion | SelectorRefusal | undefined {
+export function expandSelectorName(model: string, ports: Readonly<SelectorPorts>, session: Readonly<{ readonly identityId?: string }>): SelectorExpansion | SelectorRefusal | undefined {
   const parsed = parseSelectorName(model);
   if (parsed === undefined || "refusal" in parsed) {
     return parsed;

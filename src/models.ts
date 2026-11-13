@@ -1,3 +1,4 @@
+import os from "node:os";
 import type { Command } from "commander";
 
 import { printJson, reportMutation, withExamples, confirmRemoval, type CommandDeps } from "./cli/commandDeps";
@@ -20,6 +21,7 @@ import { cliSelectorPorts } from "./models/selectorPorts";
 import { expandSelectorName, parseSelectorName, type SelectorKind } from "./models/selectors";
 import { isBareClaudeName } from "./models/tiers";
 import { realFsPort } from "./realPorts";
+import { identityIdOf } from "./identityStore";
 import { createRouteOverridesReader, overrideMatches, scopeLabelOf } from "./routeOverridesStore";
 
 /** The quota facts for one provider, from the newest snapshot of any identity that records it: the identities this machine actually uses, each contributing what it last saw. */
@@ -97,9 +99,21 @@ function explainVirtualModel(paths: LayoutPaths, name: string): VirtualModelExpl
 /** What `explain` says of a selector: how it parsed, the kind it named and the name the door routes it by, or why the door refuses it. */
 type SelectorExplanation = { readonly name: string; readonly kind: SelectorKind | "class"; readonly routedAs: string } | { readonly name: string; readonly refusal: string };
 
+/** The session `explain` expands for: one running as the identity named `identity` (`--identity` takes a name; the door compares by the directory id its header carries), or one with no identity. A name no identity has is a usage error. */
+function sessionOf(paths: LayoutPaths, identity: string | undefined): { readonly identityId?: string } {
+  if (identity === undefined) {
+    return {};
+  }
+  const id = identityIdOf(paths, identity);
+  if (id === undefined) {
+    throw new UsageError(`No identity named "${identity}".`);
+  }
+  return { identityId: id };
+}
+
 /** Expands a selector exactly as the door would for a session running as `identity`, against the same files. */
 function explainSelector(paths: LayoutPaths, name: string, identity: string | undefined, provider: string | undefined): SelectorExplanation {
-  const expanded = expandSelectorName(name, cliSelectorPorts(paths, () => Date.now(), provider), identity === undefined ? {} : { identity });
+  const expanded = expandSelectorName(name, cliSelectorPorts(paths, () => Date.now(), os.homedir(), provider), sessionOf(paths, identity));
   if (expanded === undefined) {
     throw new UsageError(`"${name}" is not a selector.`);
   }
@@ -121,7 +135,7 @@ function explainOverride(paths: LayoutPaths, name: string, options: Readonly<{ i
   if (winner === undefined) {
     return { name };
   }
-  const expanded = expandSelectorName(winner.target, cliSelectorPorts(paths, () => Date.now()), options.identity === undefined ? {} : { identity: options.identity });
+  const expanded = expandSelectorName(winner.target, cliSelectorPorts(paths, () => Date.now(), os.homedir()), sessionOf(paths, options.identity));
   return {
     name,
     override: { scope: scopeLabelOf(winner.scope), target: winner.target, match: winner.match, ...(expanded === undefined ? {} : "refusal" in expanded ? { refusal: expanded.refusal } : { routedAs: expanded.name }) },

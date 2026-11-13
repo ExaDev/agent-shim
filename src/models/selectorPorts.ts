@@ -1,8 +1,7 @@
-import os from "node:os";
 
 import { readProfile } from "../configProfilesStore";
 import { loginKeyOf, readIdentityAccount } from "../identityAccounts";
-import { identityIdOf, readIdentity } from "../identityStore";
+import { createIdentityNameReader, identityIdOf, readIdentity } from "../identityStore";
 import type { LayoutPaths } from "../paths";
 import { collectPoolPick } from "../poolPickReport";
 import { realMemberProviderResolver } from "../poolProviderWiring";
@@ -43,9 +42,9 @@ export function poolRefusal(name: string, earliestReturn: { readonly identity: s
 }
 
 /**
- * The selector state read from the person's configuration under `paths`, every read fresh at the moment it is asked, so a profile, identity or pool edited while a session runs is what its next request expands against. A pool is ranked as `agent-shim pool pick <pool>` ranks it from the home directory: no directory's last pick and the provider each member declares, and records nothing.
+ * The selector state read from the person's configuration under `paths`, every read fresh at the moment it is asked, so a profile, identity or pool edited while a session runs is what its next request expands against. A pool is ranked as `agent-shim pool pick <pool>` ranks it from the directory `home`: the last pick recorded for that directory (the door does not know the session's own) and each member's provider as a launch from `home` resolves it, and records nothing. `home` is injected so a caller other than the door (a test) never reads the real home's picks or committed files.
  */
-export function realSelectorStatePorts(paths: LayoutPaths, now: () => number): SelectorStatePorts {
+export function realSelectorStatePorts(paths: LayoutPaths, now: () => number, home: string): SelectorStatePorts {
   const lookUp = <T>(read: () => T | undefined): SelectorLookup<T> => {
     try {
       const value = read();
@@ -54,9 +53,9 @@ export function realSelectorStatePorts(paths: LayoutPaths, now: () => number): S
       return { kind: "invalid", reason: reasonOf(error) };
     }
   };
-  const loginOf = (identity: string): string | undefined => {
-    const id = identityIdOf(paths, identity);
-    const read = id === undefined ? undefined : readIdentityAccount(realFarmFs, paths.identitiesDir, id);
+  // The login an identity's stored account names, by the identity's directory id.
+  const loginOfId = (id: string): string | undefined => {
+    const read = readIdentityAccount(realFarmFs, paths.identitiesDir, id);
     return read?.account === undefined ? undefined : loginKeyOf(read.account);
   };
   return {
@@ -71,16 +70,20 @@ export function realSelectorStatePorts(paths: LayoutPaths, now: () => number): S
     },
     poolPick: (name): { readonly identity: string } | SelectorRefusal => {
       const pools = readPools(paths);
-      const home = os.homedir();
-      const report = collectPoolPick({ paths, fs: realFsPort, usageFs: realFarmFs, poolName: name, pools, directory: home, nowMs: now(), providerOf: realMemberProviderResolver({ paths, cwd: home, env: {} }) });
+      const report = collectPoolPick({ paths, fs: realFsPort, usageFs: realFarmFs, poolName: name, pools, directory: home, nowMs: now(), providerOf: realMemberProviderResolver({ paths, cwd: home, env: {}, home }) });
       return report.pick === undefined ? { refusal: poolRefusal(name, report.earliestReturn) } : { identity: report.pick };
     },
-    sameLogin: (identity, sessionIdentity) => {
-      if (identity === sessionIdentity) {
+    // The selected identity is found by its name as it is now, and compared by id with the session's, so a name a renamed identity used to hold, and another identity holds now, never stands for the session's.
+    sameLogin: (identity, sessionIdentityId) => {
+      const id = identityIdOf(paths, identity);
+      if (id === undefined) {
+        return false;
+      }
+      if (id === sessionIdentityId) {
         return true;
       }
-      const login = loginOf(identity);
-      return login !== undefined && login === loginOf(sessionIdentity);
+      const login = loginOfId(id);
+      return login !== undefined && login === loginOfId(sessionIdentityId);
     },
   };
 }
@@ -88,11 +91,11 @@ export function realSelectorStatePorts(paths: LayoutPaths, now: () => number): S
 /**
  * Every port a selector is expanded against, as the CLI reads them, for a session on `routeProvider` (none: the Anthropic route): the configuration state above, the providers read as the door reads them (their default models and tier mappings, with their stored catalogues), and the families the providers' offered targets form under the global models block. What `agent-shim model explain` expands a selector with, so it says what the door would do with the same files.
  */
-export function cliSelectorPorts(paths: LayoutPaths, now: () => number, routeProvider?: string): SelectorPorts {
+export function cliSelectorPorts(paths: LayoutPaths, now: () => number, home: string, routeProvider?: string): SelectorPorts {
   const models = readModels(paths);
   const reads = createProviderReads({ fs: realFsPort, providersDir: paths.providersDir, models: () => models, catalogueModelsOf: servedModelPorts(paths, () => undefined).catalogueModelsOf });
   return {
-    ...realSelectorStatePorts(paths, now),
+    ...realSelectorStatePorts(paths, now, home),
     // No session is running, so none has sent a Claude id the CLI could name: a class on the Anthropic route is explained as the door refuses it before the session's first request of the tier.
     claudeNameOf: () => undefined,
     routeProvider: () => routeProvider,
@@ -105,7 +108,7 @@ export function cliSelectorPorts(paths: LayoutPaths, now: () => number, routePro
   };
 }
 
-/** The person's routing state the door reads per request besides the providers: what a selector names among profiles, identities and pools, and the route overrides, each read fresh (the overrides on change), so an edit reaches the next request with no restart. */
-export function doorRoutingState(paths: LayoutPaths, log: (line: string) => void): { readonly selectorState: SelectorStatePorts; readonly routeOverrides: () => RouteOverridesRead } {
-  return { selectorState: realSelectorStatePorts(paths, () => Date.now()), routeOverrides: createRouteOverridesReader(realFsPort, paths.routeOverridesFile, log) };
+/** The person's routing state the door reads per request besides the providers: what a selector names among profiles, identities and pools, the route overrides, and the name of the identity a session's header names by id, each read fresh (the overrides on change), so an edit reaches the next request with no restart. */
+export function doorRoutingState(paths: LayoutPaths, log: (line: string) => void, home: string): { readonly selectorState: SelectorStatePorts; readonly routeOverrides: () => RouteOverridesRead; readonly identityNameOf: (id: string) => string | undefined } {
+  return { selectorState: realSelectorStatePorts(paths, () => Date.now(), home), routeOverrides: createRouteOverridesReader(realFsPort, paths.routeOverridesFile, log), identityNameOf: createIdentityNameReader(paths).nameOf };
 }
