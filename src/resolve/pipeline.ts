@@ -48,7 +48,7 @@ function danglingDiagnostic(rel: string): Diagnostic {
     severity: "warning",
     message:
       `"${rel}" is shared, but ~/.claude/${rel} is a symlink that leads nowhere, so the farm does not link it and this identity keeps its own copy. ` +
-      "Once the symlink leads somewhere, the next launch links the entry.",
+      "Once the symlink leads somewhere, the next launch, or `agent-shim identity resync <identity>` in this directory, links the entry.",
     subject: rel,
   };
 }

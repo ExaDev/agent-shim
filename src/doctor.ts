@@ -11,7 +11,7 @@ export function registerDoctorCommand(program: Command, deps: CommandDeps): void
   const command = program
     .command("doctor")
     .description(
-      "Audit the whole ~/.agent-shim config graph: every identity, every configuration profile's extends " +
+      "Audit the whole ~/.agent-shim config graph: every identity and the links in its farm, every configuration profile's extends " +
         "chain, every provider, directory-rules.json, config.json, categories.local.json, active-identity, and real Claude " +
         "Code binary discoverability. Identity/directory-agnostic, unlike `check`. Exits 1 when any check fails.",
     )

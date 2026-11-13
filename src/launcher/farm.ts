@@ -64,6 +64,51 @@ export function readFarmManifest(fs: FarmFs, farmRoot: string): FarmManifest | u
   return result.success ? result.data : undefined;
 }
 
+/** A link in an identity's farm that leads nowhere. */
+export interface DanglingFarmLink {
+  /** The link's path relative to the farm root. */
+  readonly rel: string;
+  /** Where the farm's manifest records the link pointing; undefined for a link the manifest does not record. */
+  readonly target?: string;
+}
+
+/**
+ * The links in the farm at `farmRoot` that lead nowhere once followed to their end, in path order, read without writing anything and without the identity's lock.
+ *
+ * Two sets of links are looked at: every link the farm's manifest records, and every symlink on disk where a resync makes links, which is the farm's top level and the directories the manifest records as materialised (only the top level when there is no manifest this release can read, as for a farm an older version built). A link that dangles there was made by a resync when its target led somewhere and lost its target afterwards (a shared entry removed from `~/.claude` while the farm stood), or was made by a release that linked an entry without checking it. A launch's resync leaves such a link out, but a harness started with the farm as its configuration directory never resyncs, so the link stays until something does. Directories Claude Code created itself are not entered, so a symlink of its own inside one is not reported.
+ */
+export function danglingFarmLinks(fs: FarmFs, farmRoot: string): DanglingFarmLink[] {
+  const manifest = readFarmManifest(fs, farmRoot);
+  const recorded = new Map((manifest?.links ?? []).map((link) => [link.rel, link.target] as const));
+  const materialised = new Set(manifest?.materialised ?? []);
+  const candidates = new Set(recorded.keys());
+  const walk = (rel: string): void => {
+    const stat = fs.lstat(path.join(farmRoot, rel));
+    if (stat?.kind === "symlink") {
+      candidates.add(rel);
+    } else if (stat?.kind === "dir" && materialised.has(rel)) {
+      for (const name of fs.readdir(path.join(farmRoot, rel))) {
+        walk(`${rel}/${name}`);
+      }
+    }
+  };
+  for (const name of fs.readdir(farmRoot)) {
+    if (name !== FARM_MANIFEST_FILENAME && name !== LEGACY_FARM_MANIFEST_FILENAME) {
+      walk(name);
+    }
+  }
+  return [...candidates]
+    .sort()
+    .filter((rel) => {
+      const absolute = path.join(farmRoot, rel);
+      return fs.lstat(absolute)?.kind === "symlink" && !fs.resolves(absolute);
+    })
+    .map((rel) => {
+      const target = recorded.get(rel);
+      return target === undefined ? { rel } : { rel, target };
+    });
+}
+
 /** Everything `buildEntryFacts` needs. Everything except the tree itself is injected, so the fact manifest is reproducible from a fake filesystem, a fake clock, and a fake branch. */
 export interface BuildEntryFactsParams {
   readonly fs: FarmFs;
@@ -622,6 +667,8 @@ export interface ResyncFarmResult {
   readonly noOp: boolean;
   /** The manifest the farm now carries — the newly written one, or the existing one on a no-op. */
   readonly manifest: FarmManifest;
+  /** The manifest the farm carried before this resync, read under the lock; undefined when the farm had none this release can read. Comparing its links with `manifest`'s says which links this resync removed. */
+  readonly previousManifest?: FarmManifest;
   /** The fully resolved state, including the flattened cascade's launch flags, which the launcher goes on to use. */
   readonly resolved: ResolvedState;
   readonly adopted: readonly string[];
@@ -782,6 +829,7 @@ export function resyncFarm(params: ResyncFarmParams): ResyncFarmResult {
         farmRoot,
         noOp: true,
         manifest: previousManifest,
+        previousManifest,
         resolved,
         adopted: outcome.adopted,
         recovery,
@@ -810,6 +858,7 @@ export function resyncFarm(params: ResyncFarmParams): ResyncFarmResult {
       farmRoot,
       noOp: false,
       manifest,
+      ...(previousManifest === undefined ? {} : { previousManifest }),
       resolved,
       adopted: outcome.adopted,
       recovery,

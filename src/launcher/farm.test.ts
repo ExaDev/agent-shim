@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { createFakeFarmFs, fakeSleep, FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS, shippedClassification, type FakeFarmFs } from "../test-helpers";
 import type { CascadeInput } from "../resolve/walk";
-import { FARM_MANIFEST_FILENAME, IdentityGoneError, readFarmManifest, recoveryDiagnostics, resyncFarm, type RecoveryResult, type ResyncFarmParams } from "./farm";
+import { danglingFarmLinks, FARM_MANIFEST_FILENAME, IdentityGoneError, readFarmManifest, recoveryDiagnostics, resyncFarm, type RecoveryResult, type ResyncFarmParams } from "./farm";
 import { IdentityLockBusyError, identityLockPath } from "./lock";
 
 const IDENTITIES_DIR = `${FAKE_HOME}/.agent-shim/identities`;
@@ -515,5 +515,74 @@ describe("resyncFarm with a shared entry that is a symlink", () => {
     const fourth = resyncFarm(params(fs, { uniqueSuffix: "4444.44444444-0000-4000-8000-444444444444" }));
     expect(fourth.noOp).toBe(true);
     expect(farmWrites(fs)).toEqual([]);
+  });
+});
+
+describe("danglingFarmLinks", () => {
+  const SHARED_SESSIONS = { ...CANONICAL, [`${FAKE_CLAUDE_HOME}/sessions/123.json`]: "a session record", [`${FARM}/.claude.json`]: "the identity's own state" };
+
+  it("names nothing in a farm whose links all lead somewhere", () => {
+    const fs = createFakeFarmFs(SHARED_SESSIONS);
+    resyncFarm(params(fs));
+
+    expect(danglingFarmLinks(fs, FARM)).toEqual([]);
+  });
+
+  it("names a link whose shared entry was removed after the farm was built, with the target its manifest records", () => {
+    const fs = createFakeFarmFs(SHARED_SESSIONS);
+    resyncFarm(params(fs));
+    fs.removeRecursive(`${FAKE_CLAUDE_HOME}/sessions`);
+
+    expect(danglingFarmLinks(fs, FARM)).toEqual([{ rel: "sessions", target: `${FAKE_CLAUDE_HOME}/sessions` }]);
+  });
+
+  it("names a dangling top-level symlink in a farm with no manifest, as an older version left it, without entering the identity's own directories", () => {
+    const fs = createFakeFarmFs({
+      [`${FARM}/identity.json`]: '{"name":"work"}',
+      [`${FARM}/sessions`]: { symlink: `${FAKE_CLAUDE_HOME}/sessions` },
+      [`${FARM}/skills`]: { symlink: `${FAKE_CLAUDE_HOME}/skills` },
+      [`${FAKE_CLAUDE_HOME}/skills/commit/SKILL.md`]: "commit skill",
+      [`${FARM}/debug/latest`]: { symlink: `${FARM}/debug/gone.txt` },
+    });
+
+    expect(danglingFarmLinks(fs, FARM)).toEqual([{ rel: "sessions" }]);
+  });
+
+  it("names a dangling link inside a directory the manifest records as materialised, and a manifest link of its own, but nothing in a directory the farm did not build", () => {
+    const manifest = {
+      version: 1,
+      builtAtMs: FAKE_NOW_MS,
+      identity: "work",
+      cwd: `${FAKE_HOME}/work`,
+      claudeHome: FAKE_CLAUDE_HOME,
+      materialised: ["projects"],
+      links: [{ rel: "projects/-home-testuser-work", target: `${FAKE_CLAUDE_HOME}/projects/-home-testuser-work` }],
+    };
+    const fs = createFakeFarmFs({
+      [`${FARM}/${FARM_MANIFEST_FILENAME}`]: JSON.stringify(manifest),
+      [`${FARM}/projects/-home-testuser-work`]: { symlink: `${FAKE_CLAUDE_HOME}/projects/-home-testuser-work` },
+      [`${FARM}/projects/-home-testuser-other`]: { symlink: `${FAKE_CLAUDE_HOME}/projects/-home-testuser-other` },
+      [`${FARM}/projects/-home-testuser-own/latest`]: { symlink: `${FARM}/nowhere` },
+    });
+
+    expect(danglingFarmLinks(fs, FARM)).toEqual([
+      { rel: "projects/-home-testuser-other" },
+      { rel: "projects/-home-testuser-work", target: `${FAKE_CLAUDE_HOME}/projects/-home-testuser-work` },
+    ]);
+  });
+
+  it("is left with nothing to name once a resync removes the stale link, which keeps the identity's own entries and reports the link the previous manifest had", () => {
+    const fs = createFakeFarmFs(SHARED_SESSIONS);
+    resyncFarm(params(fs));
+    fs.removeRecursive(`${FAKE_CLAUDE_HOME}/sessions`);
+
+    const result = resyncFarm(params(fs, { uniqueSuffix: "2222.22222222-0000-4000-8000-222222222222" }));
+
+    expect(result.noOp).toBe(false);
+    expect(result.previousManifest?.links.map((link) => link.rel)).toContain("sessions");
+    expect(result.manifest.links.map((link) => link.rel)).not.toContain("sessions");
+    expect(fs.lstat(`${FARM}/sessions`)).toBeUndefined();
+    expect(fs.readFileUtf8(`${FARM}/.claude.json`)).toBe("the identity's own state");
+    expect(danglingFarmLinks(fs, FARM)).toEqual([]);
   });
 });

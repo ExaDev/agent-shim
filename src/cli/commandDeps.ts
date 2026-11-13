@@ -24,7 +24,7 @@ export function printJson(value: unknown): void {
 
 /** What a mutating command did, as the one object `--json` prints in place of its text output. */
 export interface MutationReport {
-  readonly action: "created" | "updated" | "removed" | "renamed" | "selected" | "planned";
+  readonly action: "created" | "updated" | "removed" | "renamed" | "selected" | "planned" | "resynced";
   /** The noun the command works on: `identity`, `profile`, `provider`, `pool` or `rule`. */
   readonly kind: string;
   readonly name: string;

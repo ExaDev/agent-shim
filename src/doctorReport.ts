@@ -20,6 +20,8 @@ import { probeProviderReachabilities, realBaseUrlBatchProbe, type BaseUrlBatchPr
 import { pushNameFinding } from "./doctorNameFinding";
 import { currentCatalogueSettings, pushCatalogueRedirectFinding } from "./doctorCatalogueRedirect";
 import { pushKeychainFindings } from "./doctorKeychain";
+import { pushFarmLinkFindings, type DoctorFarmLinksInput } from "./doctorFarmLinks";
+import { danglingFarmLinks } from "./launcher/farm";
 import { providersWithRedirectedCatalogue } from "./frontdoor/catalogueFailures";
 import { parseSiwcFile } from "./codex/siwcStore";
 import { SIWC_PLAN_SCOPE } from "./codex/siwc";
@@ -68,6 +70,7 @@ export const DOCTOR_SECTIONS = [
   "config-profile",
   "identity",
   "sign-in",
+  "farm-links",
   "pool",
   "provider",
   "keychain",
@@ -175,6 +178,8 @@ export interface RunDoctorParams {
   /** The Sign in with ChatGPT file. Omit to leave it out of the findings; with it, a codex provider whose `codex.login` is `chatgpt-sign-in` warns when there is no usable sign-in to spend. */
   readonly chatgptSignIn?: { readonly path: string; readonly raw: string | undefined };
   readonly identities: readonly DoctorIdentityInput[];
+  /** The links in each identity's farm that lead nowhere (`danglingFarmLinks`). Omit to leave the farm-links section out; with it, each such link warns, naming the identity, the entry and what brings the farm up to date. */
+  readonly farmLinks?: readonly DoctorFarmLinksInput[];
   /** Each identity's last recorded usage snapshot, by identity name. Omit to skip checking that pools and jobs read only windows their identities receive; an identity missing from it has no readable snapshot, so what it receives is unknown and nothing is reported for it. */
   readonly usageSnapshots?: Readonly<Record<string, UsageSnapshot>>;
   readonly configProfiles: readonly DoctorConfigProfileInput[];
@@ -693,6 +698,9 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   }
 
   pushKeychainFindings(push, params.platform, params.run, params.identities, validIdentityAgents);
+  if (params.farmLinks !== undefined) {
+    pushFarmLinkFindings(push, params.farmLinks, validIdentityAgents);
+  }
 
   if (params.directoryRules.raw === undefined) {
     push("directory-rules", "pass", "No directory-rules.json configured.");
@@ -965,6 +973,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
     chatgptSignIn: { path: paths.chatgptSignInFile, raw: realFsPort.readFileUtf8(paths.chatgptSignInFile) },
     installedClaudeVersions: realInstalledClaudeVersions(),
     identities,
+    farmLinks: identities.map(({ name, id, farmRoot }) => ({ name, id, dangling: danglingFarmLinks(realFarmFs, farmRoot) })),
     usageSnapshots,
     configProfiles,
     providers,

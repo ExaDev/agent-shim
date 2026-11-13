@@ -113,7 +113,7 @@ describe("buildProgram", () => {
 
   it("gives every noun the same verb vocabulary", () => {
     const built = program();
-    expect(subcommandNames(built, "identity")).toEqual(["add", "list", "remove", "rename", "resolve-conflicts", "set", "show", "use"]);
+    expect(subcommandNames(built, "identity")).toEqual(["add", "list", "remove", "rename", "resolve-conflicts", "resync", "set", "show", "use"]);
     expect(subcommandNames(built, "pool")).toEqual(["add", "list", "pick", "remove", "set", "show", "use"]);
     expect(subcommandNames(built, "job")).toEqual(["add", "list", "remove", "run", "show"]);
     expect(subcommandNames(built, "profile")).toEqual(["add", "list", "remove", "set", "show", "use"]);

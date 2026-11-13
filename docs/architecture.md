@@ -39,7 +39,8 @@ src/
     pool.ts               # resolves a `pool:<name>` selector to one member at launch (skips members that are not identities, refuses or waits when every member is refused, records the pick)
     memberProvider.ts     # the provider each pool member's launch would route through (flag, cascade over the member's profile, the member's own declaration), resolved with no credential, so the ranking reads the quota the launch spends
     spawn.ts              # spawnClaude — spawns the real binary, propagates its exit code
-  identityManager.ts      # the `identity` noun's commands: add/list/show/set/remove/use/resolve-conflicts, and the interactive wizard
+  identityManager.ts      # the `identity` noun's commands: add/list/show/set/remove/use/resync/resolve-conflicts, and the interactive wizard
+  identityResync.ts       # `identity resync`: one identity's farm brought up to date for a directory without launching, by the same recovery, profile decision and locked resync a launch runs, and the report of what it links and no longer links
   identityStore.ts        # the identity data layer: read/add/list/change identities and their errors, with no command-line dependencies, exported by the library; every lookup by name goes through the resolver to the identity's id
   identityNameRenameRecord.ts # the record a rename of the name alone keeps while it applies, which a run killed part way leaves, and the refusal of `identity add`, `identity remove` and another rename that it holds, naming the references already rewritten
   identityNamesLock.ts    # the one lock that serialises every change to which identity holds which name (`identity add`, `identity remove` and both renames), taken before any resync lock

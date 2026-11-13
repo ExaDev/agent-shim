@@ -17,7 +17,9 @@ import { IDENTITY_LABEL_RULE, IdentityLabelSchema } from "./config/names";
 import { requireProviderExists } from "./providersStore";
 import { poolNameOf } from "./launcher/identity";
 import type { LayoutPaths } from "./paths";
-import { realFarmFs } from "./realPorts";
+import { realFarmFs, realFsPort } from "./realPorts";
+import { buildFarmRuntime } from "./launchWiring";
+import { formatIdentityResync, resyncIdentityFarm } from "./identityResync";
 import { describeIdentityMove, describeIdentityRename, discardRenameJournal, moveIdentity, renameIdentity, type IdentityRenamePorts } from "./identityRename";
 import { realIdentityRenamePorts } from "./realIdentityRename";
 import { KEEP_KEYCHAIN_LOGIN_DESCRIPTION, KeychainCacheDeleteError, type KeychainProbe } from "./keychainLogin";
@@ -569,6 +571,40 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps, ren
         await selectIdentity(deps, name, renamePorts, options.json);
       }),
     ["agent-shim identity use work", "agent-shim @work"],
+  );
+
+  withExamples(
+    identity
+      .command("resync <name>")
+      .description(
+        "Bring the identity's farm up to date for the current directory without launching Claude Code: the locked, atomic resync a launch here runs. " +
+          "For a session started with the identity's directory as CLAUDE_CONFIG_DIR, which never resyncs it. Prints what the farm now links and what it no longer links.",
+      )
+      .option("--config-profile <profile>", "Resolve the cascade under this configuration profile, as `run --config-profile` does.")
+      .option("--json", "Print the result as JSON.")
+      .action((name: string, options: Readonly<{ configProfile?: string; json?: boolean }>) => {
+        const farm = buildFarmRuntime(paths, process.cwd());
+        const report = resyncIdentityFarm({
+          paths,
+          fs: realFsPort,
+          farm: farm.runtime,
+          name,
+          env: process.env,
+          ...(options.configProfile === undefined ? {} : { cliFlagConfigProfile: options.configProfile }),
+          ...(farm.directoryConfigProfile === undefined ? {} : { directoryConfigProfile: farm.directoryConfigProfile }),
+          ...(farm.globalDefaultConfigProfile === undefined ? {} : { globalDefaultConfigProfile: farm.globalDefaultConfigProfile }),
+          namesLock: realIdentityNamesLockPorts,
+          warn: (line) => {
+            console.error(line);
+          },
+        });
+        reportMutation(options.json, { action: "resynced", kind: "identity", name, value: report }, () => {
+          for (const line of formatIdentityResync(report)) {
+            console.log(line);
+          }
+        });
+      }),
+    ["agent-shim identity resync work", "agent-shim identity resync work --json"],
   );
 
   withExamples(
