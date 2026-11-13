@@ -1,6 +1,8 @@
 import { applyPatch } from "./config/store";
 import { GlobalConfigSchema, type FamilySettings, type ModelsConfig, type VirtualModel } from "./config/schema";
 import { readGlobalConfig } from "./configProfilesStore";
+import { UsageError } from "./cliError";
+import { reservedVirtualModelNameReason } from "./models/reservedModelNames";
 import type { LayoutPaths } from "./paths";
 
 /** The `models` block defined in `~/.agent-shim/config.json`, or undefined when none is. */
@@ -94,9 +96,13 @@ export function expandMembers(name: string, models: ModelsConfig | undefined): r
   return expanded;
 }
 
-/** Sets one virtual model, creating or replacing it, with the block written back. */
+/** Sets one virtual model, creating or replacing it, with the block written back. A new virtual model may not take a reserved name (`reservedVirtualModelNameReason`), which throws `UsageError` and writes nothing; one already defined under such a name can still be changed or removed. */
 export function setVirtualModel(paths: LayoutPaths, name: string, model: VirtualModel): void {
   const current = readModels(paths) ?? {};
+  const reserved = current.virtual?.[name] === undefined ? reservedVirtualModelNameReason(name) : undefined;
+  if (reserved !== undefined) {
+    throw new UsageError(`A virtual model cannot be called ${JSON.stringify(name)}: ${reserved}. Choose another name.`);
+  }
   writeModels(paths, { ...current, virtual: { ...(current.virtual ?? {}), [name]: model } });
 }
 

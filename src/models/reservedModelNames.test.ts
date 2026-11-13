@@ -10,7 +10,10 @@ import { buildLayoutPaths, type LayoutPaths } from "../paths";
 import { renameProvider, type ProviderRenamePorts } from "../providerRename";
 import { addProvider, providerExists } from "../providersStore";
 import { realFarmFs } from "../realPorts";
-import { reservedProviderNameReason, requireUnreservedProviderName } from "./reservedModelNames";
+import { UsageError } from "../cliError";
+import { readModels, setVirtualModel } from "../modelsStore";
+import { modelsFindings } from "./doctor";
+import { reservedProviderNameReason, reservedVirtualModelNameReason, requireUnreservedProviderName } from "./reservedModelNames";
 
 const RESERVED = ["auto", "opus", "sonnet", "haiku", "fable", "Opus", "default", "best", "opusplan", "Default", "OpusPlan", "claude-opus-5-5", "claude-sonnet-4-5[1m]", "auto[1m]", "auto[1M]", "default[1m]", "Default[1M]", "best[1m]", "opusplan[1m]", "opus[1m]"];
 const FREE = ["Auto", "AUTO", "spark", "z", "opusx", "automatic", "my-opus-gateway", "claudette", "defaults", "bestest", "opus-plan"];
@@ -61,5 +64,43 @@ describe("a provider may not be called a bare model name", () => {
   it("has the doctor say nothing of the sort about a free name", () => {
     const report = runDoctor(baseParams({ providers: [provider("spark", { displayName: "X", baseUrl: "https://example.test/anthropic", credential: { sources: [{ literal: "t" }] } })] }));
     expect(findingsFor(report, "provider").map((finding) => finding.message).join("\n")).not.toContain("bare model name");
+  });
+});
+
+const RESERVED_VIRTUAL = ["auto", "auto[1m]", "auto/", "auto/z", "auto/pool:subs/sonnet"];
+const FREE_VIRTUAL = ["fast", "Auto", "automatic", "z/auto", "autox/z"];
+
+describe("a virtual model may not be called auto or a selector", () => {
+  let root: string;
+  let paths: LayoutPaths;
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "reserved-virtual-test-"));
+    paths = buildLayoutPaths(root);
+  });
+
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it.each(RESERVED_VIRTUAL)("reserves %j, with the reason", (name) => {
+    expect(reservedVirtualModelNameReason(name)).toEqual(expect.any(String));
+  });
+
+  it.each(FREE_VIRTUAL)("leaves %j free", (name) => {
+    expect(reservedVirtualModelNameReason(name)).toBeUndefined();
+  });
+
+  it.each(RESERVED_VIRTUAL)("refuses defining a virtual model called %j, writing nothing", (name) => {
+    expect(() => {
+      setVirtualModel(paths, name, { mode: "ordered", members: ["z/glm-5.3"] });
+    }).toThrow(UsageError);
+    expect(readModels(paths)?.virtual?.[name]).toBeUndefined();
+  });
+
+  it("has the models doctor warn of an existing virtual model called a reserved name", () => {
+    const findings = modelsFindings({ models: { virtual: { auto: { mode: "ordered", members: ["z/glm-5.3"] }, fast: { mode: "ordered", members: ["z/glm-5.3"] } } }, providers: ["z"], identities: [] });
+    expect(findings.map((finding) => finding.severity)).toEqual(["warn"]);
+    expect(findings[0]?.message).toContain('Virtual model "auto"');
   });
 });
