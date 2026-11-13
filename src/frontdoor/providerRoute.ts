@@ -308,15 +308,17 @@ export function createProviderRouteResolver(deps: {
     poolPick: (name) => ({ refusal: `no pool named "${name}"` }),
     sameLogin: (identity, sessionIdentity) => identity === sessionIdentity,
   };
-  /** The live state one session's selector is expanded against: the configuration ports, the providers as this resolver reads them, and the families the providers' offered targets form under the session's models block. */
-  const selectorPortsFor = (session: RoutedRequest["session"]): SelectorPorts => ({
+  /** The live state one request's selector is expanded against: the configuration ports, the Claude ids the session has sent and the route it is on, the providers as this resolver reads them, and the families the providers' offered targets form under the session's models block. */
+  const selectorPortsFor = (context: Readonly<RenameContext>): SelectorPorts => ({
+    claudeNameOf: context.claudeNameOf,
+    routeProvider: context.routeProvider,
     ...(deps.selectorState ?? noState),
     provider: (name) => {
       const found = reads.lookupProvider(name);
       return found.kind === "found" ? { kind: "found", value: undefined } : found;
     },
-    providerTarget: (provider, target) => reads.selectorTarget(provider, target, session),
-    family: (key) => familyNamed(buildFamilies(deps.targets?.() ?? [], deps.models?.(session)), `${FAMILY_PREFIX}${key}`) !== undefined,
+    providerTarget: (provider, target) => reads.selectorTarget(provider, target, context.session),
+    family: (key) => familyNamed(buildFamilies(deps.targets?.() ?? [], deps.models?.(context.session)), `${FAMILY_PREFIX}${key}`) !== undefined,
   });
   /** The target of the route override that applies to a main-loop request for `model`, a refusal when the overrides cannot be read, or undefined. Only a bare Claude name is looked up, so no other request reads the table. */
   const overriddenName = (model: string, context: Readonly<RenameContext>): { readonly name: string } | RoutedRefusal | undefined => {
@@ -340,7 +342,7 @@ export function createProviderRouteResolver(deps: {
       return overridden;
     }
     const name = overridden?.name ?? model;
-    const expanded = expandSelectorName(name, selectorPortsFor(context.session), context.session.identity === undefined ? {} : { identity: context.session.identity });
+    const expanded = expandSelectorName(name, selectorPortsFor(context), context.session.identity === undefined ? {} : { identity: context.session.identity });
     if (expanded === undefined) {
       return overridden;
     }

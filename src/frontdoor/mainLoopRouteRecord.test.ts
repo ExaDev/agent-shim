@@ -151,6 +151,27 @@ describe("the main-loop route record", () => {
     record.record(a, { kind: "anthropic" });
     expect(writes).toEqual(["z", "y", "anthropic"]);
   });
+
+  it("keeps the Claude id each launch last sent per tier, never a bare alias or a qualified name, and drops it when the launch ends", () => {
+    const registry = registryOf();
+    registry.start(a);
+    registry.start(b);
+    const record = createMainLoopRouteRecord(registry);
+    record.noteClaudeName(a, "claude-sonnet-5-1");
+    record.noteClaudeName(a, "claude-sonnet-5-5[1m]");
+    record.noteClaudeName(a, "sonnet");
+    record.noteClaudeName(a, "z/claude-haiku-5-5");
+    record.noteClaudeName(a, "claude-haiku-5-5/variant");
+    record.noteClaudeName(a, "glm-5.3");
+    expect(record.claudeNameOf(a, "sonnet")).toBe("claude-sonnet-5-5");
+    expect(record.claudeNameOf(a, "haiku")).toBeUndefined();
+    expect(record.claudeNameOf(b, "sonnet")).toBeUndefined();
+    registry.end(a);
+    record.noteClaudeName(b, "claude-opus-5-5");
+    expect(record.claudeNameOf(a, "sonnet")).toBeUndefined();
+    record.noteClaudeName(a, "claude-opus-5-5");
+    expect(record.claudeNameOf(a, "opus")).toBeUndefined();
+  });
 });
 
 describe("a main-loop record whose store fails", () => {

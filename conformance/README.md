@@ -135,6 +135,7 @@ A test deleted without a case is a row here, in the same table form, with the re
 
 | file | test | reason |
 | --- | --- | --- |
+| frontdoor/servedModelReportOrder.repo.test.ts | the one place a main-loop request's context is recorded > leaves routeOf and begin, the other members of deps and the top-level recordServing alone | renamed in the same file to "leaves routeOf, begin, the note of Claude ids, the other members of deps and the top-level recordServing alone", which also names the note of Claude ids the recorder leaves alone |
 
 ## The deleted-test check
 
