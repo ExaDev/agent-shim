@@ -307,6 +307,38 @@ describe("runtime route overrides through the real door, read from a real file",
     }
   }, TIMEOUT_MS);
 
+  it("settles on one route when a provider-scoped override covers the provider a global override moves the session to", async () => {
+    set([[{ kind: "global" }, "opus", "z/glm-9"], [{ kind: "provider", name: "z" }, "opus", "anthropic/claude-opus-5-1"]]);
+    const world = await door();
+    try {
+      const routes: string[] = [];
+      for (let index = 0; index < REQUESTS; index += 1) {
+        await send(world, { model: OPUS, requestClass: "main" });
+        const context = world.contextNow();
+        routes.push(context?.kind === "provider" ? context.provider : String(context?.kind));
+      }
+      // The provider scope is the session's own route (the Anthropic route here), never the one the global override moved it to, so the global entry applies every time.
+      expect(routes).toEqual(Array<string>(REQUESTS).fill("z"));
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(Array<string>(REQUESTS).fill("glm-9"));
+      expect(world.anthropicModels).toEqual([]);
+    } finally {
+      await world.close();
+    }
+  }, TIMEOUT_MS);
+
+  it("covers by the provider scope a session the person moved to that provider, and a session launched on it", async () => {
+    set([[{ kind: "global" }, "opus", "anthropic/claude-opus-5-1"], [{ kind: "provider", name: "z" }, "opus", "z/by-scope"]]);
+    const world = await door();
+    try {
+      await send(world, { model: "z/chosen", requestClass: "main" });
+      await send(world, { model: OPUS, requestClass: "main" });
+      await send(world, { model: OPUS, requestClass: "main", provider: "z", session: "s-2" });
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["chosen", "by-scope", "by-scope"]);
+    } finally {
+      await world.close();
+    }
+  }, TIMEOUT_MS);
+
   it("leaves a session with no override where its context says", async () => {
     set([[{ kind: "session", name: "another" }, "sonnet", "z/elsewhere"]]);
     const world = await door();
