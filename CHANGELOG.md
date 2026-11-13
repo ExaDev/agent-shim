@@ -1,3 +1,21 @@
+## [14.3.0](https://github.com/ExaDev/agent-shim/compare/v14.2.4...v14.3.0) (2026-11-13)
+
+### Features
+
+* **frontdoor:** drop a provider's server tools by cutting their spans out of the request ([1122dd0](https://github.com/ExaDev/agent-shim/commit/1122dd0c21198c793bf3624d2785cf64c9acf3c9))
+* **frontdoor:** follow a provider's served model with the model auto ([ea1caf4](https://github.com/ExaDev/agent-shim/commit/ea1caf4da3959ffb2ca7c347d32550b30bae0add))
+* **frontdoor:** select a provider by its bare name and keep bare model names out of provider names ([904a1e7](https://github.com/ExaDev/agent-shim/commit/904a1e7d4b45d150aa6fe4c28541c494d6f87843))
+* **provider:** add a per-provider server-tools setting ([1df3330](https://github.com/ExaDev/agent-shim/commit/1df3330fe6f4be748999e191c51ee5b1a88ae8fb))
+
+### Bug Fixes
+
+* **catalogue:** bound a model-list read, never follow a redirect and strip a byte order mark ([8386dd0](https://github.com/ExaDev/agent-shim/commit/8386dd0316a4b0ccf833bbbfd14f243889a479c2))
+* end a remembered window when the clock has stepped back behind its stamp ([d5ec656](https://github.com/ExaDev/agent-shim/commit/d5ec65679a29f88b32e18dc22f16579db3990b8b))
+
+### Tests
+
+* hold a refused-connect port outside the range the system assigns ([60a9d68](https://github.com/ExaDev/agent-shim/commit/60a9d68982632d2e8f9dede6fa5b65a66e328ec3))
+
 ## [14.2.4](https://github.com/ExaDev/agent-shim/compare/v14.2.3...v14.2.4) (2026-11-13)
 
 ### Bug Fixes
