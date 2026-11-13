@@ -75,7 +75,8 @@ function scopesOf(ids: Readonly<OverrideScopeIds>): readonly RouteOverrideScope[
  * Every override that matches `model` for a request covered by `ids`, in precedence order: by scope (session, identity, provider, global) and, within a scope, the exact name before the class. The first is the one that applies; the rest are what it outranks. A model that is no bare Claude name matches nothing. The model is compared without its context marker. A constant number of lookups: two per scope.
  */
 export function overrideMatches(overrides: Readonly<RouteOverrides>, ids: Readonly<OverrideScopeIds>, model: string): readonly OverrideMatch[] {
-  const bare = withoutContextMarker(model);
+  // Keys are lower case (`canonicalOverrides`), and a Claude name in any case names the same model.
+  const bare = withoutContextMarker(model).toLowerCase();
   if (bare.includes("/")) {
     return [];
   }
@@ -99,6 +100,34 @@ export function overrideFor(overrides: Readonly<RouteOverrides>, ids: Readonly<O
 /** Reads the overrides: none when the file does not exist. A file that exists and is not valid throws (`ConfigFileNotJsonError`, `ConfigValidationError`), so a damaged file is reported, never read as no overrides. */
 export function readRouteOverrides(paths: LayoutPaths): RouteOverrides {
   return readJson(paths.routeOverridesFile, RouteOverridesSchema) ?? NO_ROUTE_OVERRIDES;
+}
+
+/**
+ * The overrides with every table's keys in lower case, as `route set` writes them, so a key a hand edit wrote in another case (`OPUS`) still matches. Two keys of one table that differ only in case are a clash: which one was meant cannot be told, so the file is refused rather than one silently chosen (`doctor` names them).
+ */
+function canonicalOverrides(overrides: Readonly<RouteOverrides>): { readonly overrides: RouteOverrides } | { readonly clash: string } {
+  let clash: string | undefined;
+  const lower = (table: Readonly<OverrideTable>, where: string): OverrideTable => {
+    const out: Record<string, string> = {};
+    for (const [key, target] of Object.entries(table)) {
+      const canonical = key.toLowerCase();
+      if (Object.hasOwn(out, canonical)) {
+        clash ??= `the ${where} table has two keys that differ only in case (${JSON.stringify(canonical)})`;
+      }
+      out[canonical] = target;
+    }
+    return out;
+  };
+  const lowerAll = (tables: Readonly<Record<string, OverrideTable>> | undefined, field: string): Record<string, OverrideTable> | undefined =>
+    tables === undefined ? undefined : Object.fromEntries(Object.entries(tables).map(([name, table]) => [name, lower(table, `${field} ${JSON.stringify(name)}`)] as const));
+  const global = overrides.global === undefined ? undefined : lower(overrides.global, "global");
+  const providers = lowerAll(overrides.providers, "providers");
+  const identities = lowerAll(overrides.identities, "identities");
+  const sessions = lowerAll(overrides.sessions, "sessions");
+  if (clash !== undefined) {
+    return { clash };
+  }
+  return { overrides: { ...overrides, ...(global === undefined ? {} : { global }), ...(providers === undefined ? {} : { providers }), ...(identities === undefined ? {} : { identities }), ...(sessions === undefined ? {} : { sessions }) } };
 }
 
 /** Throws `UsageError` for a session, identity or provider scope whose name is empty, which no reader accepts: a new entry must name what it applies to. A removal may name one, to repair a file a hand edit left that way. */
@@ -130,14 +159,16 @@ export function withRouteOverride(overrides: Readonly<RouteOverrides>, scope: Ro
     requireNamedScope(scope);
   }
   const table = tableOf(overrides, scope) ?? {};
-  if (target === undefined && !Object.hasOwn(table, key)) {
+  // A key is stored in lower case, and a removal also takes an entry a hand edit wrote in another case.
+  const canonical = key.toLowerCase();
+  if (target === undefined && !Object.keys(table).some((existing) => existing.toLowerCase() === canonical)) {
     throw new UsageError(`No override of ${JSON.stringify(key)} is set ${describeScope(scope)}.`);
   }
   const problem = target === undefined ? undefined : overrideTargetShapeProblem(target);
   if (problem !== undefined) {
     throw new UsageError(`An override cannot route ${JSON.stringify(key)} to ${JSON.stringify(target)}: ${problem}.`);
   }
-  const next = Object.fromEntries([...Object.entries(table).filter(([existing]) => existing !== key), ...(target === undefined ? [] : [[key, target] as const])]);
+  const next = Object.fromEntries([...Object.entries(table).filter(([existing]) => existing.toLowerCase() !== canonical), ...(target === undefined ? [] : [[canonical, target] as const])]);
   if (scope.kind === "global") {
     return withField(overrides, "global", Object.keys(next).length === 0 ? undefined : next);
   }
@@ -212,7 +243,11 @@ export function createRouteOverridesReader(fs: Readonly<Pick<FsPort, "fileRevisi
     }
     // A key this release does not know is ignored, as every configuration reader of this release ignores one (a newer release's setting), and doctor reports it.
     const result = parseIgnoringUnrecognisedKeys(RouteOverridesSchema, parsed);
-    return result.success ? { table: result.data } : { fault: `the route overrides file cannot be used: ${shapeFault(result.issues)}` };
+    if (!result.success) {
+      return { fault: `the route overrides file cannot be used: ${shapeFault(result.issues)}` };
+    }
+    const canonical = canonicalOverrides(result.data);
+    return "clash" in canonical ? { fault: `the route overrides file cannot be used: ${canonical.clash}` } : { table: canonical.overrides };
   };
   return () => {
     const before = revisionOf();
