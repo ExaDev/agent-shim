@@ -17,23 +17,23 @@ export function writeCatalogueStatus(fs: HeadroomFs, paths: LayoutPaths, pid: nu
 export const CATALOGUE_FAILURE_REASON_MAX_CHARS = 600;
 
 /** Records why `name`'s refresh failed, the reason cut to `CATALOGUE_FAILURE_REASON_MAX_CHARS`, and whether it was a redirect, as a field of its own that the cut cannot remove; a refresh that did not fail clears it (`reason` undefined). */
-export function writeCatalogueFailureReason(fs: HeadroomFs, paths: LayoutPaths, pid: number, generation: string, name: string, reason: string | undefined, failure: Readonly<{ readonly redirected?: true; readonly settings?: string }> = {}): void {
+export function writeCatalogueFailureReason(fs: HeadroomFs, paths: LayoutPaths, pid: number, generation: string, name: string, reason: string | undefined, failure: Readonly<{ readonly redirected?: true; readonly unlocated?: true; readonly settings?: string }> = {}): void {
   const file = catalogueFailureFile(paths, { pid, generation }, name);
   if (reason === undefined) {
     fs.removeRecursive(file);
     return;
   }
   fs.mkdirp(path.dirname(file));
-  fs.writeFilePrivate(file, JSON.stringify({ reason: reason.slice(0, CATALOGUE_FAILURE_REASON_MAX_CHARS), ...(failure.redirected === true ? { redirected: true } : {}), ...(failure.settings === undefined ? {} : { settings: failure.settings }) }));
+  fs.writeFilePrivate(file, JSON.stringify({ reason: reason.slice(0, CATALOGUE_FAILURE_REASON_MAX_CHARS), ...(failure.redirected === true ? { redirected: true } : {}), ...(failure.redirected === true && failure.unlocated === true ? { unlocated: true } : {}), ...(failure.settings === undefined ? {} : { settings: failure.settings }) }));
 }
 
 /** Reads why `name`'s last refresh failed in a supervisor generation, and whether it was a redirect, or undefined when none is recorded, the file cannot be read or it is not one this release wrote. */
-export function readCatalogueFailure(fs: Pick<HeadroomFs, "readFileUtf8">, paths: LayoutPaths, pid: number, generation: string, name: string): { readonly reason: string; readonly redirected: boolean; readonly settings: string | undefined } | undefined {
+export function readCatalogueFailure(fs: Pick<HeadroomFs, "readFileUtf8">, paths: LayoutPaths, pid: number, generation: string, name: string): { readonly reason: string; readonly redirected: boolean; readonly unlocated: boolean; readonly settings: string | undefined } | undefined {
   const raw = new StoredCatalogue(paths, skippingReader(fs)).failureText({ pid, generation }, name);
   if (raw === undefined) return undefined;
   try {
-    const value = z.strictObject({ reason: z.string().max(CATALOGUE_FAILURE_REASON_MAX_CHARS), redirected: z.literal(true).optional(), settings: z.string().optional() }).safeParse(JSON.parse(raw));
-    return value.success ? { reason: value.data.reason, redirected: value.data.redirected === true, settings: value.data.settings } : undefined;
+    const value = z.strictObject({ reason: z.string().max(CATALOGUE_FAILURE_REASON_MAX_CHARS), redirected: z.literal(true).optional(), unlocated: z.literal(true).optional(), settings: z.string().optional() }).safeParse(JSON.parse(raw));
+    return value.success ? { reason: value.data.reason, redirected: value.data.redirected === true, unlocated: value.data.redirected === true && value.data.unlocated === true, settings: value.data.settings } : undefined;
   } catch {
     return undefined;
   }

@@ -6,10 +6,10 @@ import { describe, expect, it } from "vitest";
 /**
  * The modules of this feature that put text into a log line or an error message. A text a provider supplies (a model id, a tool name, a catalogue entry) is quoted and cut by `quotedForLog` before it reaches a message, so a hostile one cannot start a line of its own or fill one. The guard follows every text that reaches a message: a template or a concatenation passed to a logging or error-building call, a `message` property, an error constructor, and a name that was bound to such a text first.
  */
-const SCANNED = ["frontdoor/httpRequestEdits.ts", "frontdoor/servedModel.ts", "catalogueKeeper.ts", "frontdoor/providerRoute.ts", "providerCatalogue.ts"];
+const SCANNED = ["frontdoor/httpRequestEdits.ts", "frontdoor/servedModel.ts", "catalogueKeeper.ts", "frontdoor/providerRoute.ts", "providerCatalogue.ts", "launcher/modelPicker.ts", "doctorCatalogueRedirect.ts"];
 
 /** The calls whose arguments are log lines or error messages, and which of their arguments carry the text (the others are status codes and responses); no index means every argument. */
-const MESSAGE_CALLS: ReadonlyMap<string, number | undefined> = new Map([["log", 0], ["refuse", 2], ["failed", 1], ["error", undefined], ["warn", undefined]]);
+const MESSAGE_CALLS: ReadonlyMap<string, number | undefined> = new Map([["log", 0], ["refuse", 2], ["failed", 1], ["error", undefined], ["warn", undefined], ["describedAs", 1], ["push", 2]]);
 
 /** The calls that make a text safe to write into a message. */
 const QUOTING_CALLS = new Set(["quotedForLog", "droppedRecord"]);
@@ -53,10 +53,16 @@ const RAW_OK: readonly RawAllowance[] = [
   { file: "frontdoor/providerRoute.ts", expression: "routed.refusal", sites: 1, why: "a refusal the resolver built from the person's own configuration" },
   { file: "frontdoor/providerRoute.ts", expression: "AMBIGUOUS_MODEL_MESSAGE", sites: 2, why: "a fixed message" },
   { file: "frontdoor/providerRoute.ts", expression: "claudeNameTier(requested)", sites: 3, why: "one of the fixed tier names" },
-  { file: "providerCatalogue.ts", expression: "{ redirected, unauthorised: refusedCandidates === failedCandidates }", sites: 1, why: "the error constructor's flags, two booleans the fetch tracked and no text" },
+  { file: "providerCatalogue.ts", expression: "{ redirected, unlocated: redirected && !locatedRedirect, unauthorised: refusedCandidates === failedCandidates }", sites: 1, why: "the error constructor's flags, three booleans the fetch tracked and no text" },
   { file: "providerCatalogue.ts", expression: 'outcomes.join("; ")', sites: 1, why: "outcomes the fetch built from redacted addresses, status codes and the door's own error text, never a body a server sent" },
   { file: "catalogueKeeper.ts", expression: "catalogueReadFault(error)", sites: 1, why: "the class or code of a login file's read failure, which names no path" },
   { file: "catalogueKeeper.ts", expression: "fault", sites: 1, why: "the class or code of a stored file's read failure, which names no path", declaredBy: /catalogueReadFault\(/ },
+  { file: "launcher/modelPicker.ts", expression: "model", sites: 1, why: "a model name from the person's own provider file, in the error of a row no tier reaches, which the row builder's callers never ask for", declaredBy: /^model: string$/ },
+  { file: "launcher/modelPicker.ts", expression: "[...serves, ...falls].join(\"; \")", sites: 1, why: "the fixed words of a description and the names of the fixed tiers" },
+  { file: "launcher/modelPicker.ts", expression: "entry.tier", sites: 1, why: "one of the fixed tier names, which the provider schema admits and no other" },
+  { file: "launcher/modelPicker.ts", expression: "model.name", sites: 1, why: "a display name a catalogue gave, which the catalogue parser and the stored schema hold to the rules of a display name (`isDisplayName`: no control or format character, a bounded length)" },
+  { file: "doctorCatalogueRedirect.ts", expression: "JSON.stringify(providerName)", sites: 1, why: "the provider's name, from the person's own configuration (a validated file name), in JSON escapes" },
+  { file: "doctorCatalogueRedirect.ts", expression: "JSON.stringify(redirect.reason)", sites: 1, why: "the reason the door recorded for the refresh, in the door's own words (a class name and a command, never a URL or a worker's message), cut to a bound and in JSON escapes" },
   { file: "catalogueKeeper.ts", expression: "error.message", sites: 2, why: "the message of an error the door's own refresh raised" },
   { file: "catalogueKeeper.ts", expression: "String(error)", sites: 2, why: "an error the door's own refresh raised" },
 ];
@@ -241,6 +247,8 @@ describe("the text a provider supplied, in a log line or an error message", () =
       ["console", "function f(served) { console.error(`no ${served.model}`); }", "served.model"],
       ["a helper's result", "function f(deps, served) { deps.log(describe(served)); }", "describe(served)"],
       ["a name the allowance does not cover in this file", "function f(deps, name) { deps.log(`for ${name}`); }", "name"],
+      ["a picker description that spells a name a catalogue gave", "function f(model) { return { description: describedAs(model.id, `Listed as ${model.display_name}`) }; }", "model.display_name"],
+      ["a doctor finding that spells a text a provider supplied", "function f(push, provider) { push(\"provider\", \"warn\", `reached ${provider.name}`, provider.name); }", "provider.name"],
     ])("%s", (_label, text, expression) => {
       expect(rawTexts(FILE, text).raw.map((found) => found.expression)).toEqual([expression]);
     });

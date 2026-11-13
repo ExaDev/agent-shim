@@ -1,5 +1,5 @@
 import { holdFrom } from "./elapsedWindow";
-import { CATALOGUE_RETRY_MS, catalogueMatchesSettings, catalogueSettingsFingerprint, isCatalogueStale, isRedirectedFailure, parseCatalogueCache, parseCatalogueSettings, type CatalogueCache } from "./providerCatalogue";
+import { CATALOGUE_RETRY_MS, catalogueMatchesSettings, catalogueSettingsFingerprint, isCatalogueStale, isRedirectedFailure, isUnlocatedRedirect, parseCatalogueCache, parseCatalogueSettings, type CatalogueCache } from "./providerCatalogue";
 import { isHttpProvider, type Provider } from "./config/schema";
 import { UnreadableCatalogueError, catalogueReadFault } from "./storedCatalogue";
 
@@ -18,7 +18,7 @@ export interface CatalogueKeeperDeps {
   readonly nowMs: () => number;
   readonly log: (message: string) => void;
   /** Records a provider's refresh state; a failed refresh also gives why (the error message), and its `failure` says whether it was a redirect and under which settings, which `doctor` and the launcher's wait read. */
-  readonly publishStatus?: (name: string, status: "running" | "ready" | "failed", fingerprint?: string, reason?: string, failure?: Readonly<{ readonly redirected?: true; readonly settings?: string }>) => void;
+  readonly publishStatus?: (name: string, status: "running" | "ready" | "failed", fingerprint?: string, reason?: string, failure?: Readonly<{ readonly redirected?: true; readonly unlocated?: true; readonly settings?: string }>) => void;
 }
 
 /** A tick of the catalogue keeper: starts a refresh for every provider whose catalogue is missing or stale. */
@@ -40,7 +40,7 @@ export function createCatalogueKeeper(deps: Readonly<CatalogueKeeperDeps>): Cata
   const credentialFailures = new Set<string>();
   const unreadable = new Set<string>();
   // What a failed refresh recorded, so the failure can be published again exactly as it was.
-  const failedAt = new Map<string, { readonly at: number; readonly fingerprint: string | undefined; readonly settings: string | undefined; readonly reason: string; readonly redirected: boolean }>();
+  const failedAt = new Map<string, { readonly at: number; readonly fingerprint: string | undefined; readonly settings: string | undefined; readonly reason: string; readonly redirected: boolean; readonly unlocated: boolean }>();
   return {
     status: (name) => running.has(name) ? "running" : failedAt.has(name) || credentialFailures.has(name) || unreadable.has(name) ? "failed" : undefined,
     tick: () => {
@@ -93,7 +93,7 @@ export function createCatalogueKeeper(deps: Readonly<CatalogueKeeperDeps>): Cata
               else deps.publishStatus?.(name, "ready", current);
             } else if (wasUnreadable && recordedFailure !== undefined) {
               // The files are readable again but there is no catalogue to use and the refresh's failure is still being waited out: the failure it recorded is its status again, not ready.
-              deps.publishStatus?.(name, "failed", recordedFailure.fingerprint, recordedFailure.reason, { ...(recordedFailure.redirected ? { redirected: true as const } : {}), ...(recordedFailure.settings === undefined ? {} : { settings: recordedFailure.settings }) });
+              deps.publishStatus?.(name, "failed", recordedFailure.fingerprint, recordedFailure.reason, { ...(recordedFailure.redirected ? { redirected: true as const } : {}), ...(recordedFailure.unlocated ? { unlocated: true as const } : {}), ...(recordedFailure.settings === undefined ? {} : { settings: recordedFailure.settings }) });
             }
           }
           continue;
@@ -109,8 +109,8 @@ export function createCatalogueKeeper(deps: Readonly<CatalogueKeeperDeps>): Cata
           })
           .catch((error: unknown) => {
             const reason = error instanceof Error ? error.message : String(error);
-            failedAt.set(name, { at: deps.nowMs(), fingerprint: current, settings, reason, redirected: isRedirectedFailure(error) });
-            deps.publishStatus?.(name, "failed", current, reason, { ...(isRedirectedFailure(error) ? { redirected: true as const } : {}), ...(settings === undefined ? {} : { settings }) });
+            failedAt.set(name, { at: deps.nowMs(), fingerprint: current, settings, reason, redirected: isRedirectedFailure(error), unlocated: isUnlocatedRedirect(error) });
+            deps.publishStatus?.(name, "failed", current, reason, { ...(isRedirectedFailure(error) ? { redirected: true as const } : {}), ...(isUnlocatedRedirect(error) ? { unlocated: true as const } : {}), ...(settings === undefined ? {} : { settings }) });
             deps.log(`catalogue refresh for provider ${name} failed: ${reason}`);
           })
           .finally(() => {

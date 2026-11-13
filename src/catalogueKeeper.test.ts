@@ -115,6 +115,23 @@ describe("createCatalogueKeeper", () => {
       expect(refresh).toHaveBeenCalledTimes(1);
     });
 
+    it("publishes that a redirect carried no Location with the failure, and again with it", async () => {
+      let broken = false;
+      const publishStatus = vi.fn<NonNullable<CatalogueKeeperDeps["publishStatus"]>>();
+      const { keeper, refresh } = setup({ publishStatus, readCache: () => (broken ? readFailure() : undefined) });
+      refresh.mockRejectedValue(new CatalogueFetchError("no catalogue: status 301", { redirected: true, unlocated: true }));
+      keeper.tick();
+      await settle();
+      broken = true;
+      keeper.tick();
+      broken = false;
+      keeper.tick();
+      const failures = publishStatus.mock.calls.filter(([, status, , reason]) => status === "failed" && reason?.includes("301") === true);
+      expect(failures).toHaveLength(2);
+      expect(failures[0]?.[4]).toEqual({ redirected: true, unlocated: true, settings: HTTP_SETTINGS });
+      expect(failures[1]).toEqual(failures[0]);
+    });
+
     it("keeps the settings and the redirect of the failure it publishes again", async () => {
       let broken = false;
       const publishStatus = vi.fn<NonNullable<CatalogueKeeperDeps["publishStatus"]>>();

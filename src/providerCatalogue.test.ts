@@ -233,6 +233,22 @@ describe("fetchCatalogue", () => {
     expect(error instanceof CatalogueFetchError && error.redirected).toBe(true);
   });
 
+  it.each([[true, false], [false, true], [undefined, false]])("says a redirect carried no Location (%j) only when none of the redirects it met did", async (located, unlocated) => {
+    const fetch = vi.fn<CatalogueFetch>().mockResolvedValue({ status: REDIRECT_PERMANENT, body: undefined, ...(located === undefined ? {} : { located }) });
+    const error: unknown = await fetchCatalogue(params(fetch)).catch((caught: unknown) => caught);
+    expect(error instanceof CatalogueFetchError && error.redirected).toBe(true);
+    expect(error instanceof CatalogueFetchError && error.unlocated).toBe(unlocated);
+  });
+
+  it("keeps a Location a first candidate's redirect carried when a later redirect carried none, and says none for a failure that was no redirect", async () => {
+    const mixed = vi.fn<CatalogueFetch>().mockResolvedValueOnce({ status: REDIRECT_PERMANENT, body: undefined, located: true }).mockResolvedValueOnce({ status: REDIRECT_PERMANENT, body: undefined, located: false });
+    const error: unknown = await fetchCatalogue(params(mixed)).catch((caught: unknown) => caught);
+    expect(error instanceof CatalogueFetchError && error.unlocated).toBe(false);
+    const plain = vi.fn<CatalogueFetch>().mockResolvedValue({ status: SERVER_ERROR, body: undefined });
+    const failure: unknown = await fetchCatalogue(params(plain)).catch((caught: unknown) => caught);
+    expect(failure instanceof CatalogueFetchError && failure.unlocated).toBe(false);
+  });
+
   it("falls through a refusal, an empty list and a thrown error to the next URL", async () => {
     const fetch = vi.fn<CatalogueFetch>().mockResolvedValueOnce({ status: 404, body: undefined }).mockResolvedValueOnce({ status: 200, body: { data: [{ id: "host-model" }] } });
 
@@ -313,6 +329,38 @@ describe("a model id a catalogue lists", () => {
   it("is taken at exactly the bound, and trimmed before it is measured", () => {
     const longest = "x".repeat(CATALOGUE_MODEL_ID_MAX_CHARS);
     expect(parseCatalogueBody({ data: [{ id: ` ${longest} ` }] })).toEqual([{ id: longest }]);
+  });
+});
+
+describe("a display name a catalogue gives a model", () => {
+  const UNSAFE_NAMES: readonly (readonly [string, string])[] = [
+    ["one made of control characters", "Alpha\nfront door: forged"],
+    ["one that holds a tab", "Al\tpha"],
+    ["one that holds DEL", "Al\u007fpha"],
+    ["one that holds a C1 control", "Al\u009bpha"],
+    ["one that holds a line separator", "Al\u2028pha"],
+    ["one that holds a zero-width joiner", "Al\u200dpha"],
+    ["one that holds a bidirectional override", "Al\u202epha"],
+    ["one past the bound", "x".repeat(CATALOGUE_MODEL_ID_MAX_CHARS + 1)],
+  ];
+
+  it.each(UNSAFE_NAMES)("is dropped, and the model listed under its id alone: %s, as display_name or as name", (_label, name) => {
+    expect(parseCatalogueBody({ data: [{ id: "a", display_name: name }, { id: "b", name }, { id: "c", display_name: name, name: "Fine" }] })).toEqual([{ id: "a" }, { id: "b" }, { id: "c" }]);
+  });
+
+  it("is dropped when it is empty or only blanks", () => {
+    expect(parseCatalogueBody({ data: [{ id: "a", display_name: "" }, { id: "b", name: "   " }] })).toEqual([{ id: "a" }, { id: "b" }]);
+  });
+
+  it("is kept at exactly the bound, trimmed before it is measured, and kept when it is plain", () => {
+    const longest = "x".repeat(CATALOGUE_MODEL_ID_MAX_CHARS);
+    expect(parseCatalogueBody({ data: [{ id: "a", display_name: ` ${longest} ` }, { id: "b", name: "Beta Two" }] })).toEqual([{ id: "a", name: longest }, { id: "b", name: "Beta Two" }]);
+  });
+
+  it.each(UNSAFE_NAMES)("makes a stored catalogue that holds it no catalogue, so it is fetched again: %s", (_label, name) => {
+    const cache = { fetchedAt: 1, url: "https://example.test", models: [{ id: "a", name }] };
+    expect(parseCatalogueCache(JSON.stringify(cache))).toBeUndefined();
+    expect(parseCatalogueCache(JSON.stringify({ ...cache, models: [{ id: "a", name: "Alpha" }] }))).toEqual({ ...cache, models: [{ id: "a", name: "Alpha" }] });
   });
 });
 

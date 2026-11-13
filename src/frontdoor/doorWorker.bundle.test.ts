@@ -23,6 +23,7 @@ import { writeFrontDoorCodexHome, writeFrontDoorState } from "./state";
 import { catalogueStatusPublisher, writeCatalogueFailureReason, writeCatalogueStatus } from "./catalogueState";
 
 /** The status the stand-in upstream answers every read with: a redirect the read never follows. */
+const MOVED_PERMANENTLY_STATUS = 301;
 const FOUND_STATUS = 302;
 /** The status the stand-in listing answers with. */
 const OK_STATUS = 200;
@@ -179,6 +180,7 @@ describe("a door worker running the real bundle", () => {
         }, { timeout: REAL_WORKER_TEST_BUDGET_MS });
         const recorded = fs.readFileSync(failureFile, "utf8");
         expect(JSON.parse(recorded)).toMatchObject({ redirected: true });
+        expect(JSON.parse(recorded)).not.toHaveProperty("unlocated");
         expect(recorded).not.toContain("LOCATION-SECRET");
         const redirectWarnings = (): readonly unknown[] => collectDoctorReport({ paths, env: { PATH: "" } }).findings.filter((finding) => finding.message.includes("reached a redirect")).map((finding) => finding.subject);
         expect(redirectWarnings()).toEqual(["r"]);
@@ -186,6 +188,8 @@ describe("a door worker running the real bundle", () => {
         const message = collectDoctorReport({ paths, env: { PATH: "" } }).findings.find((finding) => finding.message.includes("reached a redirect"))?.message ?? "";
         expect(message).toContain("refresh-catalogue failed in its worker: it ended with CatalogueFetchError");
         expect(message).toContain("agent-shim provider models <name> --refresh");
+        expect(message).toContain("Set the provider's base URL (or its catalogue.url) to the address it redirects to");
+        expect(message).not.toContain("carried no Location");
         expect(message).not.toContain(String(address.port));
         expect(message).not.toContain("elsewhere.example");
         // The doctor half of what follows (a fixed base URL clears the warning, a failure file with no settings is ignored) is also pinned over files alone by doctorProviderReachability.test.ts and catalogueFailures.test.ts; here it is run through the real worker for the refresh half.
@@ -233,6 +237,65 @@ describe("a door worker running the real bundle", () => {
             });
           });
         }
+      } finally {
+        host.stop();
+        await new Promise<void>((resolve) => {
+          upstream.closeAllConnections();
+          upstream.close(() => {
+            resolve();
+          });
+        });
+      }
+    },
+    REAL_WORKER_TEST_BUDGET_MS,
+  );
+
+  it(
+    "carries the fact that a redirect met by a catalogue read carried no Location out of a worker, so the keeper records it and doctor says there is no address to set",
+    async () => {
+      const upstream = http.createServer((_request, response) => {
+        response.writeHead(MOVED_PERMANENTLY_STATUS);
+        response.end();
+      });
+      await new Promise<void>((resolve) => {
+        upstream.listen(0, "127.0.0.1", resolve);
+      });
+      const address = upstream.address();
+      if (address === null || typeof address === "string") {
+        throw new Error("the stand-in upstream has no port");
+      }
+      const root = path.join(dir, "home-redirect-unlocated");
+      const paths = buildLayoutPaths(root);
+      fs.mkdirSync(paths.providersDir, { recursive: true });
+      fs.writeFileSync(path.join(paths.providersDir, "r.json"), JSON.stringify({ displayName: "R", baseUrl: `http://127.0.0.1:${String(address.port)}`, credential: { sources: [{ literal: "placeholder" }] }, catalogue: { tier: "haiku" } }));
+      const supervisor = process.pid;
+      const generation = "10000000-0000-4000-8000-000000000001";
+      writeFrontDoorState(realFarmFs, paths.frontdoorStateFile, { supervisorPid: supervisor });
+      writeFrontDoorCodexHome(realFarmFs, paths.frontdoorDir, supervisor, path.join(root, "codex"), generation);
+      const host = createDoorWorkerHost({ code, facts: { ownExecutablePath: bundlePath, contentSourcePath: bundlePath }, deadlineMs: { check: REAL_WORKER_TEST_BUDGET_MS, doctor: REAL_WORKER_TEST_BUDGET_MS, "refresh-catalogue": REAL_WORKER_TEST_BUDGET_MS }, log: () => undefined });
+      try {
+        const keeper = createCatalogueKeeper({
+          supervisorPid: supervisor,
+          providers: () => listProviders(paths).map(({ name, provider }) => [name, provider] as const),
+          readCache: () => undefined,
+          readSettings: () => undefined,
+          credentialFingerprint: () => undefined,
+          refresh: async (name) => {
+            await host.run("refresh-catalogue", { root, name, supervisorPid: supervisor, generation }, () => undefined);
+          },
+          nowMs: () => Date.now(),
+          log: () => undefined,
+          publishStatus: catalogueStatusPublisher(realFarmFs, paths, supervisor, generation, () => Date.now()),
+        });
+        keeper.tick();
+        const failureFile = path.join(paths.catalogueDir, "supervisors", String(supervisor), generation, "failures", "r.json");
+        await vi.waitFor(() => {
+          expect(fs.existsSync(failureFile)).toBe(true);
+        }, { timeout: REAL_WORKER_TEST_BUDGET_MS });
+        expect(JSON.parse(fs.readFileSync(failureFile, "utf8"))).toMatchObject({ redirected: true, unlocated: true });
+        const message = collectDoctorReport({ paths, env: { PATH: "" } }).findings.find((finding) => finding.message.includes("reached a redirect"))?.message ?? "";
+        expect(message).toContain("The redirect carried no Location, so there is no address to set");
+        expect(message).not.toContain("to the address it redirects to");
       } finally {
         host.stop();
         await new Promise<void>((resolve) => {

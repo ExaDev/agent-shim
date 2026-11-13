@@ -90,11 +90,24 @@ describe("doctor and a provider's base URL", () => {
 
 describe("doctor and a provider whose catalogue refresh met a redirect", () => {
   it("warns of it by name, saying where to set the address, and not of a provider that did not", () => {
-    const report = runDoctor(baseParams({ providers: [provider("spark", SPARK), provider("local", { ...SPARK, baseUrl: "http://127.0.0.1:9" })], catalogueRedirects: new Map([["spark", "no catalogue from http://192.0.2.1:8000/v1/models: status 308"]]) }));
+    const report = runDoctor(baseParams({ providers: [provider("spark", SPARK), provider("local", { ...SPARK, baseUrl: "http://127.0.0.1:9" })], catalogueRedirects: new Map([["spark", { reason: "no catalogue from http://192.0.2.1:8000/v1/models: status 308", unlocated: false }]]) }));
     const findings = findingsFor(report, "provider");
     const redirectFindings = findings.filter((finding) => finding.message.includes("reached a redirect, which a catalogue read never follows"));
     expect(redirectFindings.map((finding) => [finding.severity, finding.subject])).toEqual([["warn", "spark"]]);
     expect(redirectFindings[0]?.message).toContain(JSON.stringify("no catalogue from http://192.0.2.1:8000/v1/models: status 308"));
+  });
+
+  it("advises the address to set when the redirect carried a Location, and says there is none to give when it carried none", () => {
+    const adviceOf = (unlocated: boolean): string => {
+      const report = runDoctor(baseParams({ providers: [provider("spark", SPARK)], catalogueRedirects: new Map([["spark", { reason: "no catalogue from http://192.0.2.1:8000/v1/models: status 301", unlocated }]]) }));
+      return findingsFor(report, "provider").find((finding) => finding.message.includes("reached a redirect"))?.message ?? "";
+    };
+    const located = adviceOf(false);
+    expect(located).toContain("Set the provider's base URL (or its catalogue.url) to the address it redirects to");
+    expect(located).not.toContain("carried no Location");
+    const unlocated = adviceOf(true);
+    expect(unlocated).toContain("The redirect carried no Location, so there is no address to set");
+    expect(unlocated).not.toContain("to the address it redirects to");
   });
 
   it("says nothing when the recorded failures are not read", () => {

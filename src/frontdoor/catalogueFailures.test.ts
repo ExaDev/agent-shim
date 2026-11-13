@@ -93,11 +93,33 @@ describe("the keeper's status publisher", () => {
     const fs = createFakeFarmFs({});
     const publish = catalogueStatusPublisher(fs, paths, SUPERVISOR, GENERATION, () => RECORDED_AT);
     publish("spark", "failed", undefined, "no catalogue: status 308", { redirected: true, settings: SETTINGS });
-    expect(catalogueState.readCatalogueFailure(fs, paths, SUPERVISOR, GENERATION, "spark")).toEqual({ reason: "no catalogue: status 308", redirected: true, settings: SETTINGS });
+    expect(catalogueState.readCatalogueFailure(fs, paths, SUPERVISOR, GENERATION, "spark")).toEqual({ reason: "no catalogue: status 308", redirected: true, unlocated: false, settings: SETTINGS });
     publish("spark", "failed", undefined, "no catalogue: status 500");
-    expect(catalogueState.readCatalogueFailure(fs, paths, SUPERVISOR, GENERATION, "spark")).toEqual({ reason: "no catalogue: status 500", redirected: false, settings: undefined });
+    expect(catalogueState.readCatalogueFailure(fs, paths, SUPERVISOR, GENERATION, "spark")).toEqual({ reason: "no catalogue: status 500", redirected: false, unlocated: false, settings: undefined });
     publish("spark", "running", undefined, "x", { redirected: true });
     expect(catalogueState.readCatalogueFailure(fs, paths, SUPERVISOR, GENERATION, "spark")).toBeUndefined();
+  });
+
+  it("records that a redirect carried no Location only beside the redirect, and reads it back as the failure's own field", () => {
+    const fs = createFakeFarmFs({});
+    const publish = catalogueStatusPublisher(fs, paths, SUPERVISOR, GENERATION, () => RECORDED_AT);
+    publish("spark", "failed", undefined, "no catalogue: status 301", { redirected: true, unlocated: true, settings: SETTINGS });
+    expect(catalogueState.readCatalogueFailure(fs, paths, SUPERVISOR, GENERATION, "spark")).toEqual({ reason: "no catalogue: status 301", redirected: true, unlocated: true, settings: SETTINGS });
+    publish("spark", "failed", undefined, "no catalogue: status 500", { unlocated: true });
+    expect(catalogueState.readCatalogueFailure(fs, paths, SUPERVISOR, GENERATION, "spark")).toEqual({ reason: "no catalogue: status 500", redirected: false, unlocated: false, settings: undefined });
+  });
+
+  it("reads a failure file that says a redirect carried no Location without saying it met one as no redirect and no such fact", () => {
+    const fs = createFakeFarmFs({ [`${paths.catalogueDir}/supervisors/${String(SUPERVISOR)}/${GENERATION}/failures/spark.json`]: JSON.stringify({ reason: "no catalogue: status 500", unlocated: true }) });
+    expect(catalogueState.readCatalogueFailure(fs, paths, SUPERVISOR, GENERATION, "spark")).toEqual({ reason: "no catalogue: status 500", redirected: false, unlocated: false, settings: undefined });
+  });
+
+  it("names the redirect a provider's failure recorded with whether it carried a Location", () => {
+    const fs = world([[GENERATION, "spark", "failed", REDIRECT_REASON]]);
+    catalogueState.writeCatalogueFailureReason(fs, paths, SUPERVISOR, GENERATION, "spark", REDIRECT_TEXT, { redirected: true, unlocated: true, settings: SETTINGS });
+    expect(providersWithRedirectedCatalogue(fs, paths, current(["spark"])).get("spark")).toEqual({ reason: REDIRECT_TEXT, unlocated: true });
+    catalogueState.writeCatalogueFailureReason(fs, paths, SUPERVISOR, GENERATION, "spark", REDIRECT_TEXT, { redirected: true, settings: SETTINGS });
+    expect(providersWithRedirectedCatalogue(fs, paths, current(["spark"])).get("spark")).toEqual({ reason: REDIRECT_TEXT, unlocated: false });
   });
 
   it("records a failure with its reason, and clears the reason when the provider refreshes or runs again", () => {

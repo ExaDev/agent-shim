@@ -3,7 +3,7 @@ import type { DoctorRunOutputSchema } from "./controlSchemas";
 
 import { z } from "zod";
 
-import { isRedirectedFailure } from "../providerCatalogue";
+import { isRedirectedFailure, isUnlocatedRedirect } from "../providerCatalogue";
 
 /** What each task takes, read by the worker at the boundary: the door sends structured clone, and the worker trusts nothing that arrives. */
 export const doorWorkerInputSchemas = {
@@ -53,6 +53,8 @@ export interface DoorWorkerFailure {
   readonly name: string;
   readonly code?: string;
   readonly redirected?: true;
+  /** Whether a catalogue read met a redirect and none carried a `Location`; only with `redirected`. */
+  readonly unlocated?: true;
 }
 
 /** An error class name or code as a worker may post it: a short identifier, which cannot carry a message. */
@@ -62,7 +64,7 @@ const IDENTIFIER = /^[A-Za-z][A-Za-z0-9_]{0,63}$/u;
 export function identifiedFailure(error: unknown): DoorWorkerFailure {
   const name = error instanceof Error && isIdentifier(error.name) ? error.name : "Error";
   const code: unknown = error instanceof Error && "code" in error ? error.code : undefined;
-  return { name, ...(isIdentifier(code) ? { code } : {}), ...(isRedirectedFailure(error) ? { redirected: true as const } : {}) };
+  return { name, ...(isIdentifier(code) ? { code } : {}), ...(isRedirectedFailure(error) ? { redirected: true as const } : {}), ...(isUnlocatedRedirect(error) ? { unlocated: true as const } : {}) };
 }
 
 /** Whether `value` is a short identifier. */
@@ -83,5 +85,5 @@ export function isDoorWorkerMessage(value: unknown): value is DoorWorkerMessage 
   if (value.kind === "done") {
     return "value" in value && Object.keys(value).length === 2;
   }
-  return value.kind === "failed" && "name" in value && isIdentifier(value.name) && (!("code" in value) || isIdentifier(value.code)) && (!("redirected" in value) || value.redirected === true) && Object.keys(value).every((key) => key === "kind" || key === "name" || key === "code" || key === "redirected");
+  return value.kind === "failed" && "name" in value && isIdentifier(value.name) && (!("code" in value) || isIdentifier(value.code)) && (!("redirected" in value) || value.redirected === true) && (!("unlocated" in value) || (value.unlocated === true && "redirected" in value)) && Object.keys(value).every((key) => key === "kind" || key === "name" || key === "code" || key === "redirected" || key === "unlocated");
 }

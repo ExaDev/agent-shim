@@ -20,7 +20,7 @@ import { probeProviderReachabilities, realBaseUrlBatchProbe, type BaseUrlBatchPr
 import { pushNameFinding } from "./doctorNameFinding";
 import { currentCatalogueSettings, pushCatalogueRedirectFinding } from "./doctorCatalogueRedirect";
 import { pushKeychainFindings } from "./doctorKeychain";
-import { providersWithRedirectedCatalogue } from "./frontdoor/catalogueFailures";
+import { providersWithRedirectedCatalogue, type CatalogueRedirect } from "./frontdoor/catalogueFailures";
 import { parseSiwcFile } from "./codex/siwcStore";
 import { SIWC_PLAN_SCOPE } from "./codex/siwc";
 import { ConfigValidationError } from "./config/load";
@@ -184,7 +184,7 @@ export interface RunDoctorParams {
   /** Probes the base URLs of every valid http provider, up to `MAX_CONCURRENT_PROBES` distinct targets together and any more in rounds of that many, one connection each, each bounded by its provider's connect timeout. Omit to leave reachability out of the findings; with it, a valid http provider whose base URL accepts no connection fails, naming the URL. */
   readonly probeBaseUrls?: BaseUrlBatchProbe;
   /** The providers whose last catalogue refresh, as the serving front door recorded it, failed on a redirect it does not follow, each with the reason it recorded. Omit to leave the finding out. */
-  readonly catalogueRedirects?: ReadonlyMap<string, string>;
+  readonly catalogueRedirects?: ReadonlyMap<string, CatalogueRedirect>;
   /** The journals of identity renames that were left unfinished, and the files in their directory that are not journals. Omit to leave renames out of the findings. */
   readonly renameJournals?: RenameJournalListing;
   /** The entries of the identities directory that cannot be reached (a symlink the filesystem would not follow, or a directory nobody can enter), which are not counted as identities. Omit to leave them out of the findings. */
@@ -682,9 +682,9 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
       continue;
     }
     pushProvider(push, entry, params.credentialCache, params.chatgptSignIn, unreachableLines.get(entry.name));
-    const redirectReason = params.catalogueRedirects?.get(entry.name);
-    if (redirectReason !== undefined) {
-      pushCatalogueRedirectFinding(push, entry.name, redirectReason);
+    const redirect = params.catalogueRedirects?.get(entry.name);
+    if (redirect !== undefined) {
+      pushCatalogueRedirectFinding(push, entry.name, redirect);
     }
   }
   const providerNames = new Set(params.providers.map((entry) => entry.name));
