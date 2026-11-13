@@ -121,6 +121,23 @@ describe("a model name auto/<selector>[/<class>] through the real door", () => {
     }
   }, TIMEOUT_MS);
 
+  it("never forwards an account selector on another login from a helper either, and names the same relaunch an acct: name from a helper does", async () => {
+    const door = await world();
+    try {
+      const selector = await send(door, { model: "auto/work/sonnet", requestClass: "subagent", identity: "id-me" });
+      const account = await send(door, { model: "acct:work/sonnet", requestClass: "subagent", identity: "id-me" });
+      expect(selector.status).toBe(HTTP_STATUS.badRequest);
+      expect(selector.status).toBe(account.status);
+      expect(selector.text).toContain("claude @work --resume");
+      expect(account.text).toContain("claude @work --resume");
+      expect(door.upstream.seen).toEqual([]);
+      expect(door.toAnthropic).toEqual([]);
+      expect(door.contextNow()).toBeUndefined();
+    } finally {
+      await door.close();
+    }
+  }, TIMEOUT_MS);
+
   it("routes a helper that names a selector by it, and leaves the context where it was", async () => {
     const door = await world();
     try {
