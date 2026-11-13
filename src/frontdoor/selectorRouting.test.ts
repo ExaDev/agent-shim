@@ -187,6 +187,17 @@ describe("a model name auto/<selector>[/<class>] through the real door", () => {
     }
   }, TIMEOUT_MS);
 
+  it.each(["constructor", "toString", "__proto__", "auto/constructor", "auto/__proto__/opus", "auto/toString/claude-opus-5-5", "z/constructor"])("answers a name built from %j, which every object inherits, as no virtual model or selector, never with an internal error", async (name) => {
+    const record = mainLoopRoutesOfLiveSessions();
+    const door = await startWorld(record, HTTP_STATUS.ok, { virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } }, tiers: {} }, undefined, undefined, { selectorState: STATE });
+    try {
+      const answered = await send(door, { model: name, requestClass: "main", identity: "id-me" });
+      expect(answered.status).not.toBe(HTTP_STATUS.internalServerError);
+    } finally {
+      await door.close();
+    }
+  }, TIMEOUT_MS);
+
   it("passes a Messages body that names no model through unrenamed", async () => {
     const door = await world();
     try {

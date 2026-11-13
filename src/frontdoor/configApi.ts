@@ -65,6 +65,7 @@ import {
 import { removeRouteOverride, setRouteOverride } from "../routeOverrides";
 import { scopeLabelOf } from "../routeOverridesStore";
 import { doorApiAuth } from "./rcApi";
+import { ownEntry } from "../ownEntry";
 
 /**
  * The door's configuration management as a typed oRPC API: the writes the CLI's `identity`, `profile`, `pool`, `provider` and `rule` verbs make, (and `route set|remove`) as `config.<noun>.<verb>` procedures, every one behind the same per-generation control token as the rest of the mount.
@@ -396,7 +397,7 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
           .output(ConfigPoolUseOutputSchema)
           .handler(({ input }) =>
             guarded(() => {
-              if (readPools(paths)[input.name] === undefined) {
+              if (ownEntry(readPools(paths), input.name) === undefined) {
                 throw new PoolNotFoundError(input.name);
               }
               useIdentity(paths, `pool:${input.name}`, nonWaitingIdentityNamesLockPorts);

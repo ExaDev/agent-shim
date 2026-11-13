@@ -15,6 +15,7 @@ import { FAMILY_PREFIX, buildFamilies, familyNamed } from "./families";
 import { createRouteOverridesReader, type RouteOverridesRead } from "../routeOverridesStore";
 import type { SelectorLookup, SelectorPorts, SelectorRefusal } from "./selectors";
 import { targetRefs } from "./targets";
+import { ownEntry } from "../ownEntry";
 
 /** The part of a selector's live state that is the person's configuration (profiles, identities, pools and logins), as opposed to the providers and families the door reads itself. */
 export type SelectorStatePorts = Pick<SelectorPorts, "profile" | "identity" | "pool" | "poolPick" | "sameLogin">;
@@ -65,7 +66,7 @@ export function realSelectorStatePorts(paths: LayoutPaths, now: () => number, ho
       return identity === undefined ? undefined : { provider: identity.provider };
     }),
     pool: (name) => {
-      const found = lookUp(() => (readPools(paths)[name] === undefined ? undefined : true));
+      const found = lookUp(() => (ownEntry(readPools(paths), name) === undefined ? undefined : true));
       return found.kind === "found" ? { kind: "found", value: undefined } : found;
     },
     poolPick: (name): { readonly identity: string } | SelectorRefusal => {

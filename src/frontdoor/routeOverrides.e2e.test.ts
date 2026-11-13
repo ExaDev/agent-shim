@@ -213,6 +213,18 @@ describe("runtime route overrides through the real door, read from a real file",
     }
   }, TIMEOUT_MS);
 
+  it.each(["constructor", "toString", "__proto__"])("serves a session whose id is %j, a name every object inherits, as one with no override", async (sessionId) => {
+    set([[{ kind: "global" }, "sonnet", "z/by-global"]]);
+    const world = await door({ [sessionId]: sessionId });
+    try {
+      const answered = await send(world, { model: OPUS, requestClass: "main", session: sessionId, identity: sessionId });
+      expect(answered.status).toBe(HTTP_STATUS.badGateway);
+      expect(world.anthropicModels).toEqual([OPUS]);
+    } finally {
+      await world.close();
+    }
+  }, TIMEOUT_MS);
+
   it("leaves a session with no override where its context says", async () => {
     set([[{ kind: "session", name: "another" }, "sonnet", "z/elsewhere"]]);
     const world = await door();

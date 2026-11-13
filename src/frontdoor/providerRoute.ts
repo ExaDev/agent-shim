@@ -44,6 +44,7 @@ import { abandonBody } from "./cappedBody";
 import { MESSAGES_BODY_LIMIT_BYTES, bodyTooLargeMessage, isMessagesRequest } from "./messagesBodyLimit";
 import { encodedRequestMessage } from "./requestEncoding";
 import { createServedModels } from "./servedModel";
+import { ownEntry } from "../ownEntry";
 
 /** How often the door logs that one upstream could not be connected to, while it stays down. */
 export const COULD_NOT_CONNECT_LOG_INTERVAL_MS = 60_000;
@@ -146,7 +147,7 @@ function resolveRoutedModel(
     return provider === undefined || named === "" || (deps.definesProvider !== undefined && !deps.definesProvider(provider)) ? undefined : { provider, model: withoutContextMarker(named), ref: qualified };
   }
   const isFamily = model.startsWith(FAMILY_PREFIX);
-  const virtual = isFamily ? undefined : models?.virtual?.[model];
+  const virtual = isFamily ? undefined : ownEntry(models?.virtual, model);
   // The session's own provider serves a name when its targets list it or its `env` maps a model to it: the launch chose that provider, so such a name stays its own and neither the models block nor a provider's bare name takes it.
   // Asked only on the branches that need it: a bare name that is no provider's costs nothing here, and the targets of every provider are listed only when the session provider's `env` does not name the model.
   const servedBySessionProvider = (): boolean => providerName !== undefined && servesName(model, () => deps.envModelsOf?.(providerName) ?? [], () => targetModelsOf(deps, providerName));
@@ -178,7 +179,7 @@ function resolveRoutedModel(
     const candidate = candidateOf(ref, order, {
       quota: facts,
       ...(deps.observations?.(ref) === undefined ? {} : { observation: deps.observations(ref) }),
-      ...(models?.prices?.[ref] === undefined ? {} : { price: models.prices[ref] }),
+      ...(ownEntry(models?.prices, ref) === undefined ? {} : { price: ownEntry(models?.prices, ref) }),
     }, ref === current);
     return { candidate, capabilities: familyCapabilities(familyOfRef(families, ref)?.settings ?? {}) };
   });
@@ -203,7 +204,7 @@ function resolveAccountTarget(model: string, models: ModelsConfig | undefined): 
     const named = rest.join("/");
     return identity === undefined || !isFileName(identity) || named === "" ? undefined : { identity, model: named };
   }
-  const virtual = models?.virtual?.[model];
+  const virtual = ownEntry(models?.virtual, model);
   const first = virtual?.members.find((member) => member.startsWith("acct:"));
   return first === undefined ? undefined : resolveAccountTarget(first, undefined);
 }
@@ -706,7 +707,7 @@ export function createProviderRouteResolver(deps: {
       const snapshot = deps.usageSnapshotOf?.(current.session.identity);
       const providerQuota = Object.fromEntries(
         routes.flatMap((entry) => {
-          return [[entry.provider, quotaFactsOf(snapshot?.providers[entry.provider]?.rateLimit?.unified, Date.now())]];
+          return [[entry.provider, quotaFactsOf(ownEntry(snapshot?.providers, entry.provider)?.rateLimit?.unified, Date.now())]];
         }),
       );
       const scan = await scanUnderLimit(current, whole && isMessages);

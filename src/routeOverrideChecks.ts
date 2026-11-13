@@ -13,6 +13,7 @@ import { listProviderNames } from "./providersStore";
 import { realFsPort } from "./realPorts";
 import { isOverrideKey, overrideMatches, overrideTargetShapeProblem, type RouteOverrideScope } from "./routeOverridesStore";
 import type { RouteOverrides } from "./routeOverridesSchema";
+import { ownEntry } from "./ownEntry";
 
 /** The names a target or a scope may refer to: what is defined in the configuration as the checks see it. */
 export interface OverrideNames {
@@ -101,7 +102,7 @@ function scopesIn(overrides: Readonly<RouteOverrides>): readonly RouteOverrideSc
 
 /** The table one scope holds. */
 function entriesOf(overrides: Readonly<RouteOverrides>, scope: RouteOverrideScope): readonly (readonly [string, string])[] {
-  const table = scope.kind === "global" ? overrides.global : scope.kind === "session" ? overrides.sessions?.[scope.name] : scope.kind === "identity" ? overrides.identities?.[scope.name] : overrides.providers?.[scope.name];
+  const table = scope.kind === "global" ? overrides.global : scope.kind === "session" ? ownEntry(overrides.sessions, scope.name) : scope.kind === "identity" ? ownEntry(overrides.identities, scope.name) : ownEntry(overrides.providers, scope.name);
   return Object.entries(table ?? {});
 }
 
