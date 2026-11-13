@@ -755,7 +755,7 @@ export function createProviderRouteResolver(deps: {
     }
   };
 
-  /** The login the Anthropic route uses for a session, by name: the identity whose login it is, or the launch's own. */
+  /** The login the Anthropic route uses for a session, as the context records it: the identity whose login it is, by the directory id its header carries (a rename leaves it true), or the launch's own. */
   const loginOf = (session: RoutedRequest["session"]): string => (session.identity === undefined ? "the launch's login" : `identity ${session.identity} login`);
 
   return followingMainLoop(

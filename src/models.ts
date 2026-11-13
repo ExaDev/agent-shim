@@ -136,7 +136,8 @@ function explainOverride(paths: LayoutPaths, name: string, options: Readonly<{ i
   if (winner === undefined) {
     return { name };
   }
-  const expanded = expandSelectorName(winner.target, cliSelectorPorts(paths, () => Date.now(), os.homedir()), sessionOf(paths, options.identity));
+  // The session is on the provider `--provider` names, so a class alone (`auto/<class>`) is expanded there, as the door expands it.
+  const expanded = expandSelectorName(winner.target, cliSelectorPorts(paths, () => Date.now(), os.homedir(), options.provider), sessionOf(paths, options.identity));
   return {
     name,
     override: { scope: scopeLabelOf(winner.scope), target: winner.target, match: winner.match, ...(expanded === undefined ? {} : "refusal" in expanded ? { refusal: expanded.refusal } : { routedAs: expanded.name }) },

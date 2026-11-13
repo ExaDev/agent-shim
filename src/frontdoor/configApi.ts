@@ -63,7 +63,7 @@ import {
   ConfigRouteRemoveOutputSchema,
 } from "./configSchemas";
 import { removeRouteOverride, setRouteOverride } from "../routeOverrides";
-import { scopeLabelOf } from "../routeOverridesStore";
+import { overrideKeyOf, scopeLabelOf } from "../routeOverridesStore";
 import { doorApiAuth } from "./rcApi";
 import { ownEntry } from "../ownEntry";
 
@@ -525,7 +525,8 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
           .handler(({ input }) =>
             guarded(() => {
               setRouteOverride(paths, input.scope, input.model, input.target);
-              return { action: "updated" as const, kind: "route" as const, name: input.model, value: { scope: scopeLabelOf(input.scope), model: input.model, target: input.target } };
+              const stored = overrideKeyOf(input.model);
+              return { action: "updated" as const, kind: "route" as const, name: stored, value: { scope: scopeLabelOf(input.scope), model: stored, target: input.target } };
             }),
           ),
         remove: route("/rest/config/route/remove", "Remove one route override")

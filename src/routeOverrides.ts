@@ -4,7 +4,8 @@ import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDe
 import { UsageError } from "./cliError";
 import type { LayoutPaths } from "./paths";
 import { overrideNamesOf, overrideScopeProblem, overrideTargetProblem } from "./routeOverrideChecks";
-import { describeScope, readRouteOverrides, readRouteOverridesForRepair, requireNamedScope, ROUTE_OVERRIDE_SCOPES, scopeLabelOf, withRouteOverride, writeRouteOverrides, type RouteOverrideScope } from "./routeOverridesStore";
+import { routeTargetPorts } from "./models/selectorPorts";
+import { describeScope, overrideKeyOf, readRouteOverrides, readRouteOverridesForRepair, requireNamedScope, ROUTE_OVERRIDE_SCOPES, scopeLabelOf, withRouteOverride, writeRouteOverrides, type RouteOverrideScope } from "./routeOverridesStore";
 import type { RouteOverrides } from "./routeOverridesSchema";
 
 /** The scope flags one `route set` or `route remove` takes, at most one of them. */
@@ -55,7 +56,8 @@ export function setRouteOverride(paths: LayoutPaths, scope: RouteOverrideScope, 
   if (scopeProblem !== undefined) {
     throw new UsageError(`Cannot set an override ${describeScope(scope)}: ${scopeProblem}.`);
   }
-  const problem = overrideTargetProblem(target, names);
+  // The target is checked by the door's own expansion over the configuration, for a session on the provider a provider scope names.
+  const problem = overrideTargetProblem(target, names, routeTargetPorts(paths, scope.kind === "provider" ? scope.name : undefined));
   if (problem !== undefined) {
     throw new UsageError(`Cannot route ${JSON.stringify(model)} to ${JSON.stringify(target)}: ${problem}.`);
   }
@@ -89,8 +91,10 @@ export function registerRouteCommand(program: Command, deps: CommandDeps): void 
   ).action((model: string, target: string, options: Readonly<ScopeOptions & { json?: boolean }>) => {
     const scope = scopeOfOptions(options);
     setRouteOverride(paths, scope, model, target);
-    reportMutation(options.json, { action: "updated", kind: "route", name: model, value: { scope: scopeLabelOf(scope), model, target } }, () => {
-      console.log(`Routing ${model} to ${target} ${describeScope(scope)}, from each session's next request.`);
+    // The report names the key as stored, the lower-case spelling a request is matched by.
+    const stored = overrideKeyOf(model);
+    reportMutation(options.json, { action: "updated", kind: "route", name: stored, value: { scope: scopeLabelOf(scope), model: stored, target } }, () => {
+      console.log(`Routing ${stored} to ${target} ${describeScope(scope)}, from each session's next request.`);
     });
   });
   withExamples(

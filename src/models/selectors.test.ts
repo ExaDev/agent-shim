@@ -181,7 +181,7 @@ describe("expanding a selector against live state", () => {
     ["auto/nothing", ["no configuration profile, identity, pool, provider or model family is called \"nothing\""]],
     ["auto/both/sonnet", ["\"both\" is ambiguous", "configuration profile", "pool", "provider", "model family", "auto/pool:both/sonnet", "auto/provider:both/sonnet", "auto/profile:both/sonnet", "auto/family:both/sonnet"]],
     ["auto/glm-5-1/sonnet", ["model family", "takes no class or model"]],
-    ["auto/plain/haiku", ["Anthropic route", "no haiku request", "/model haiku"]],
+    ["auto/plain/haiku", ["Anthropic route", "no haiku request", "/model haiku", "anthropic/<model>"]],
     ["auto/plain", ["Anthropic route", "exact model"]],
     ["auto/me/fable", ["no fable request", "/model fable"]],
     ["auto/work", ["another login", "auto/work/<class>"]],

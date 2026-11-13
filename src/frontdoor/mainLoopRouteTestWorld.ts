@@ -12,6 +12,7 @@ import { createUsageMiddleware } from "../usage/middleware";
 import type { UsageRecord } from "../usage/schema";
 import { type MainLoopRouteRecord } from "./mainLoopRoute";
 import { serveRouted, type PipelineDeps, type RouteResolution } from "./pipeline";
+import { createProviderReads } from "./providerReads";
 import { createProviderRouteResolver } from "./providerRoute";
 import { AUTH_HEADER, IDENTITY_HEADER, PROVIDER_HEADER, SESSION_HEADER, type RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
@@ -191,6 +192,8 @@ export interface World {
   readonly toAnthropic: string[];
   /** Replaces a provider's file between two requests, as a person editing it does. */
   readonly setProvider: (name: string, definition: unknown) => void;
+  /** The provider reads over this world's provider files, for a test that checks something against the providers the door serves. */
+  readonly providerReads: ReturnType<typeof createProviderReads>;
   readonly close: () => Promise<void>;
 }
 
@@ -259,7 +262,7 @@ export async function startWorld(
   const handle = await listenFrontDoor(server);
   return { url: `http://127.0.0.1:${String(handle.port)}`, upstream, upstreamPort: upstream.port, codexCalls: codexFetch.calls, generated: gemini.generated, records, toAnthropic, anthropicModels, setProvider: (name, definition) => {
       providerFs.set(`${PROVIDERS_DIR}/${name}.json`, definition);
-    }, close: handle.close };
+    }, providerReads: createProviderReads({ fs: providerFs.fs, providersDir: PROVIDERS_DIR }), close: handle.close };
 }
 
 /** Sends one Messages request as a launch's child would: its capability, its session id, and, when given, the class Claude Code states and a launch provider. */

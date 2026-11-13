@@ -3,7 +3,8 @@ import { listProfiles } from "./configProfilesStore";
 import { listIdentities } from "./identityStore";
 import { FAMILY_PREFIX, buildFamilies, familyNamed } from "./models/families";
 import { withoutContextMarker } from "./models/identity";
-import { parseSelectorName, SELECTOR_KINDS, type SelectorKind } from "./models/selectors";
+import { expandSelectorName, type SelectorLookup, type SelectorPorts } from "./models/selectors";
+import { ANTHROPIC_ROUTE_NAME } from "./frontdoor/mainLoopRoute";
 import { targetRefs } from "./models/targets";
 import { isBareClaudeName } from "./models/tiers";
 import { readModels } from "./modelsStore";
@@ -39,44 +40,57 @@ export function overrideNamesOf(paths: LayoutPaths): OverrideNames {
   };
 }
 
-/** Whether `names` defines `word` as a thing of `kind`. */
-function defines(names: Readonly<OverrideNames>, kind: SelectorKind, word: string): boolean {
-  const sets: Readonly<Record<Exclude<SelectorKind, "family">, ReadonlySet<string>>> = { profile: names.profiles, identity: names.identities, pool: names.pools, provider: names.providers };
-  return kind === "family" ? names.family(word) : sets[kind].has(word);
+/**
+ * The selector ports a check reads when it has nothing but `names`: each name found or not, a provider's target taken as served under the name the request gives it. What `doctor` checks a file with when it is not handed the configuration's own ports.
+ */
+function namesSelectorPorts(names: Readonly<OverrideNames>): SelectorPorts {
+  const found = <T>(present: boolean, value: T): SelectorLookup<T> => (present ? { kind: "found", value } : { kind: "absent" });
+  return {
+    profile: (name) => found(names.profiles.has(name), { provider: undefined }),
+    identity: (name) => found(names.identities.has(name), { provider: undefined }),
+    pool: (name) => found(names.pools.has(name), undefined),
+    // A pool is taken to pick one of the defined identities: which one, only a ranking at the moment of a request says.
+    poolPick: (name) => {
+      const [member] = names.identities;
+      return member === undefined ? { refusal: `pool "${name}" has no identity to pick` } : { identity: member };
+    },
+    provider: (name) => found(names.providers.has(name), undefined),
+    providerTarget: (provider, target) => ({ name: `${provider}/${target.kind === "none" ? "default" : target.kind === "class" ? target.tier : target.model}` }),
+    family: names.family,
+    sameLogin: () => false,
+    claudeNameOf: (tier) => `claude-${tier}`,
+    routeProvider: () => undefined,
+  };
 }
 
 /**
- * Why `target` cannot be an override's target given what `names` defines, or undefined when it names something the door routes: a selector naming exactly one thing (or the thing its kind prefix names), an account model of a defined identity, a family the providers offer, a provider model of a defined provider (or `anthropic/<model>`, the Anthropic route, when no provider has that name), a virtual model, a bare provider name, or a Claude name.
+ * Why `target` cannot be an override's target, or undefined when the door routes it: a selector is expanded by the door's own `expandSelectorName` over `ports` (the configuration as `staticSelectorPorts` reads it for a running session), and whatever it expands to is held to the same rules as a target written out: an account model of a defined identity with a model after it, a family the providers offer, a provider model of a defined provider with a model after the provider part (or `anthropic/<model>`, the Anthropic route, when no provider has that name), a virtual model, a bare provider name, or a Claude name. `ports` defaults to what `names` alone says (`namesSelectorPorts`).
  */
-export function overrideTargetProblem(target: string, names: Readonly<OverrideNames>): string | undefined {
+export function overrideTargetProblem(target: string, names: Readonly<OverrideNames>, ports: Readonly<SelectorPorts> = namesSelectorPorts(names)): string | undefined {
   const shape = overrideTargetShapeProblem(target);
   if (shape !== undefined) {
     return shape;
   }
-  const parsed = parseSelectorName(target);
-  if (parsed !== undefined) {
-    if ("refusal" in parsed) {
-      return parsed.refusal;
-    }
-    const { kind, name } = parsed.selector;
-    const found = kind === undefined ? SELECTOR_KINDS.filter((candidate) => defines(names, candidate, name)) : defines(names, kind, name) ? [kind] : [];
-    if (found.length === 0) {
-      return `the selector names nothing: no ${kind ?? "configuration profile, identity, pool, provider or model family"} is called ${JSON.stringify(name)}`;
-    }
-    return found.length > 1 ? `the selector's ${JSON.stringify(name)} is ambiguous (it names a ${found.join(", a ")}): give it a kind prefix, such as auto/${found[0] ?? ""}:${name}` : undefined;
+  const expanded = expandSelectorName(target, ports, {});
+  if (expanded !== undefined && "refusal" in expanded) {
+    return expanded.refusal;
   }
-  if (target.startsWith("acct:")) {
-    const [identity, ...rest] = target.slice("acct:".length).split("/");
+  const routed = expanded?.name ?? target;
+  if (routed.startsWith("acct:")) {
+    const [identity, ...rest] = routed.slice("acct:".length).split("/");
     return identity === undefined || rest.join("/") === "" ? "an account target is acct:<identity>/<model>" : names.identities.has(identity) ? undefined : `no identity "${identity}" is defined`;
   }
-  if (target.startsWith(FAMILY_PREFIX)) {
-    return names.family(target.slice(FAMILY_PREFIX.length)) ? undefined : `no target the providers offer belongs to ${target}`;
+  if (routed.startsWith(FAMILY_PREFIX)) {
+    return names.family(routed.slice(FAMILY_PREFIX.length)) ? undefined : `no target the providers offer belongs to ${routed}`;
   }
-  if (target.includes("/")) {
-    const [provider = ""] = target.split("/");
-    return names.providers.has(provider) || provider === "anthropic" ? undefined : `no provider "${provider}" is defined`;
+  if (routed.includes("/")) {
+    const [provider = "", ...rest] = routed.split("/");
+    if (rest.join("/") === "") {
+      return `${JSON.stringify(routed)} names no model after the provider: write ${provider}/<model>`;
+    }
+    return names.providers.has(provider) || provider === ANTHROPIC_ROUTE_NAME ? undefined : `no provider "${provider}" is defined`;
   }
-  const bare = withoutContextMarker(target);
+  const bare = withoutContextMarker(routed);
   return names.virtualModels.has(bare) || names.providers.has(bare) || isBareClaudeName(bare) ? undefined : `${JSON.stringify(target)} names no provider, virtual model, family or Claude model`;
 }
 
@@ -112,9 +126,9 @@ function scopeLabel(scope: RouteOverrideScope): string {
 }
 
 /**
- * Checks the overrides against what `names` defines: every key a bare Claude name or class, every identity and provider scope defined, every target routable (`overrideTargetProblem`), and every target that is itself a Claude name another entry of the same scopes would override, which the door does not follow (an override is applied once): a chain is a warning naming where the request goes, a chain that comes back to its start is a failure. Linear in the entries: each chain is followed through at most as many entries as its scope's tables hold.
+ * Checks the overrides against what `names` defines: every key a bare Claude name or class, every identity and provider scope defined, every target routable (`overrideTargetProblem`, over the ports `portsFor` gives the scope: a provider scope's session is on that provider), and every target that is itself a Claude name another entry of the same scopes would override, which the door does not follow (an override is applied once): a chain is a warning naming where the request goes, a chain that comes back to its start is a failure. Linear in the entries: each chain is followed through at most as many entries as its scope's tables hold.
  */
-export function routeOverrideFindings(overrides: Readonly<RouteOverrides>, names: Readonly<OverrideNames>): readonly OverrideFinding[] {
+export function routeOverrideFindings(overrides: Readonly<RouteOverrides>, names: Readonly<OverrideNames>, portsFor: (scope: RouteOverrideScope) => Readonly<SelectorPorts> = () => namesSelectorPorts(names)): readonly OverrideFinding[] {
   const findings: OverrideFinding[] = [];
   for (const scope of scopesIn(overrides)) {
     const label = scopeLabel(scope);
@@ -140,7 +154,7 @@ export function routeOverrideFindings(overrides: Readonly<RouteOverrides>, names
         findings.push({ severity: "fail", message: `Route overrides: ${label} has the key ${JSON.stringify(key)}, which is no bare Claude name or class, so no request is ever routed by it.` });
         continue;
       }
-      const problem = overrideTargetProblem(target, names);
+      const problem = overrideTargetProblem(target, names, portsFor(scope));
       if (problem !== undefined) {
         findings.push({ severity: "fail", message: `Route overrides: ${label} routes ${JSON.stringify(key)} to ${JSON.stringify(target)}, which cannot be routed: ${problem}.` });
         continue;
@@ -176,6 +190,8 @@ export function routeOverrideDoctorFindings(
   file: string,
   validated: { readonly ok: true; readonly data: RouteOverrides } | { readonly ok: false; readonly message: string } | undefined,
   defined: Readonly<{ readonly providers: readonly string[]; readonly identities: readonly string[]; readonly profiles: readonly string[]; readonly pools: readonly string[]; readonly models: ModelsConfig | undefined; readonly targets: readonly string[] }>,
+  /** The configuration's own selector ports for a session on a provider (or none), as `route set` checks with; absent, what the names alone say. */
+  portsFor?: (routeProvider: string | undefined) => Readonly<SelectorPorts>,
 ): readonly (OverrideFinding | { readonly severity: "pass"; readonly message: string })[] {
   if (validated === undefined) {
     return [{ severity: "pass", message: "No route overrides are set." }];
@@ -192,6 +208,6 @@ export function routeOverrideDoctorFindings(
     virtualModels: new Set(Object.keys(models?.virtual ?? {})),
     family: (key) => familyNamed(buildFamilies(defined.targets, models), `${FAMILY_PREFIX}${key}`) !== undefined,
   };
-  const findings = routeOverrideFindings(validated.data, names);
+  const findings = routeOverrideFindings(validated.data, names, portsFor === undefined ? undefined : (scope) => portsFor(scope.kind === "provider" ? scope.name : undefined));
   return findings.length === 0 ? [{ severity: "pass", message: `${file} is consistent.` }] : findings;
 }
