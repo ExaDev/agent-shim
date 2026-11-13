@@ -36,6 +36,8 @@ export const FAKE_CLAUDE_HOME = `${FAKE_HOME}/.claude`;
 export interface FakeEntrySpec {
   readonly dir?: boolean;
   readonly symlink?: boolean;
+  /** A symlink that points at nothing; only meaningful with `symlink`. */
+  readonly dangling?: boolean;
   readonly mtimeMs?: number;
   readonly sizeBytes?: number;
 }
@@ -122,6 +124,7 @@ export function makeFacts(
       relPath: rel,
       isDirectory: directory,
       isSymlink: spec.symlink ?? false,
+      isDanglingSymlink: spec.dangling ?? false,
       mtimeMs: spec.mtimeMs ?? FAKE_NOW_MS,
       latestMtimeMs,
       sizeBytes: spec.sizeBytes ?? (directory ? 0 : 1),
@@ -251,6 +254,36 @@ export function createFakeFarmFs(initial: Readonly<Record<string, FakeFsSeed>> =
     lstat: (target: string) => {
       const node = nodes.get(path.resolve(target));
       return node === undefined ? undefined : statOf(node);
+    },
+    resolves: (target: string) => {
+      // Follows a symlink at any component of the path, as the real `stat` does, giving up after the same number of hops the kernel allows before it reports a loop.
+      const maxHops = 40;
+      let pending = path.resolve(target).split("/").filter((part) => part !== "");
+      let current = "";
+      let hops = 0;
+      while (pending.length > 0) {
+        const [part, ...rest] = pending;
+        if (part === undefined) {
+          break;
+        }
+        const candidate = `${current}/${part}`;
+        const node = nodes.get(candidate);
+        if (node === undefined) {
+          return false;
+        }
+        if (node.kind === "symlink") {
+          hops += 1;
+          if (hops > maxHops) {
+            return false;
+          }
+          pending = [...path.resolve(current === "" ? "/" : current, node.target).split("/").filter((piece) => piece !== ""), ...rest];
+          current = "";
+          continue;
+        }
+        current = candidate;
+        pending = rest;
+      }
+      return true;
     },
     readdir: (dirPath: string) => {
       const resolved = path.resolve(dirPath);

@@ -41,6 +41,18 @@ export function descendPolicyFor(cascade: CascadeInput, home: string): DescendPo
   return descendPolicy(flattenLayers(assembleCascade(cascade).layers, { home }).rules.values());
 }
 
+/** The warning for a shared entry the farm left out because its `~/.claude` path is a symlink that reaches nothing (see `planFarm`). A warning, so `check --strict` fails on it: the entry is configured to be shared and is not. */
+function danglingDiagnostic(rel: string): Diagnostic {
+  return {
+    code: "SHARED_ENTRY_DANGLING",
+    severity: "warning",
+    message:
+      `"${rel}" is shared, but ~/.claude/${rel} is a symlink that leads nowhere, so the farm does not link it and this identity keeps its own copy. ` +
+      "Once the symlink leads somewhere, the next launch links the entry.",
+    subject: rel,
+  };
+}
+
 /**
  * Runs the whole pipeline for one launch: assemble the ordered layer sequence, flatten it, classify the real `~/.claude` entries, decide every path, and plan the resulting farm.
  */
@@ -64,6 +76,6 @@ export function resolveDecisions(input: ResolveDecisionsInput): ResolvedState {
     classification,
     decisions: resolved.decisions,
     farm,
-    diagnostics: [...assembled.diagnostics, ...resolved.diagnostics],
+    diagnostics: [...assembled.diagnostics, ...resolved.diagnostics, ...farm.dangling.map(danglingDiagnostic)],
   };
 }

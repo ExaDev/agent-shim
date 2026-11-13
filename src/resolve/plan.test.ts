@@ -57,6 +57,26 @@ describe("uniform subtrees", () => {
   });
 });
 
+describe("symlinked entries", () => {
+  it("leaves out a shared entry whose symlink reaches nothing and names it, but links one that leads somewhere", () => {
+    const facts = makeFacts({
+      sessions: { symlink: true, dangling: true },
+      "history.jsonl": { symlink: true },
+      "skills/commit/SKILL.md": true,
+    });
+    const farmPlan = plan([], facts);
+    expect(kindOf(farmPlan, "sessions")).toBe("omit");
+    expect(farmPlan.dangling).toEqual(["sessions"]);
+    expect(farmPlan.links.map((link) => link.rel)).toEqual(["history.jsonl", "skills"]);
+  });
+
+  it("does not name a dangling entry that is not shared", () => {
+    const farmPlan = plan([layer(1, { categories: { history: false } })], makeFacts({ sessions: { symlink: true, dangling: true } }));
+    expect(kindOf(farmPlan, "sessions")).toBe("omit");
+    expect(farmPlan.dangling).toEqual([]);
+  });
+});
+
 describe("split subtrees", () => {
   const facts = makeFacts({ "skills/commit/SKILL.md": true, "skills/other/SKILL.md": true });
 

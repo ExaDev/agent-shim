@@ -26,6 +26,8 @@ export interface FarmPlan {
   /** Directories the farm builds itself, in plan order. Written into the farm manifest so the next resync can tell them apart from directories Claude Code created. */
   readonly materialised: readonly string[];
   readonly links: readonly { readonly rel: string; readonly target: string }[];
+  /** Shared entries left out of the farm because their `~/.claude` path is a symlink that reaches nothing, in plan order. */
+  readonly dangling: readonly string[];
 }
 
 /** Everything `planFarm` needs, all of it already resolved. */
@@ -66,6 +68,8 @@ export function buildChildIndex(facts: EntryFacts): Map<string, string[]> {
  * - its subtree's decisions genuinely disagree, so no single symlink can express the outcome; or
  * - **any** conditional entries rule could reach something under it, even when today's evaluation happens to be uniform. This second case is the one a naive "is the decision uniform right now" check gets wrong: a symlinked directory freezes the decision for every file Claude Code creates *after* the resync, so a `newerThan` condition meant to share recent sessions would never see a session written five minutes from now. The bug only surfaces for files that do not exist yet, which is precisely why the check has to be structural rather than observational.
  *
+ * A farm link always leads somewhere when it is made: a shared entry whose `~/.claude` path is a symlink reaching nothing is left out, exactly as an entry `~/.claude` does not hold at all, and listed in `dangling`. Linking it would hand Claude Code a path it cannot write through (a `sessions/` record written there is lost, so the session is missing from `claude agents`), while leaving it out lets the identity keep its own copy until the entry leads somewhere, when the next resync links it (and holds any copy the identity kept meanwhile in the superseded farm for `identity resolve-conflicts`, as for any entry `~/.claude` gains). Nothing is created for it: what a dangling symlink should point at, a directory or a file, is not known, and the link shared nothing while it dangled, so leaving it out changes nothing that is shared.
+ *
  * Every symlink target is `<claudeHome>/<rel>`, unconditionally. That matters for the entries inside a materialised directory that are themselves relative symlinks escaping `~/.claude` (a real condition, not a hypothetical one — a skills directory linked out to a separate dotfiles repository, for instance). Copying such a link's own relative target verbatim would resolve to a different place from the farm's own depth, and copying its resolved absolute target would pin the farm to wherever that link pointed at resync time. Linking at `<claudeHome>/<rel>` and letting the OS follow the remaining hops from there is the only form that stays correct.
  */
 export function planFarm(params: PlanFarmParams): FarmPlan {
@@ -73,6 +77,7 @@ export function planFarm(params: PlanFarmParams): FarmPlan {
   const entries: FarmPlanEntry[] = [];
   const materialised: string[] = [];
   const links: { rel: string; target: string }[] = [];
+  const dangling: string[] = [];
 
   const conditionalPatterns = [...params.flattened.rules.values()]
     .filter((rule) => rule.when !== undefined)
@@ -115,7 +120,10 @@ export function planFarm(params: PlanFarmParams): FarmPlan {
     }
 
     if (!fact.isDirectory) {
-      if (decision?.shared === true) {
+      if (decision?.shared === true && fact.isDanglingSymlink) {
+        entries.push({ kind: "omit", rel });
+        dangling.push(rel);
+      } else if (decision?.shared === true) {
         entries.push({ kind: "link", rel, target: linkTarget(rel) });
         links.push({ rel, target: linkTarget(rel) });
       } else {
@@ -155,5 +163,5 @@ export function planFarm(params: PlanFarmParams): FarmPlan {
     visit(rel);
   }
 
-  return { entries, materialised, links };
+  return { entries, materialised, links, dangling };
 }

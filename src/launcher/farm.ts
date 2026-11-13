@@ -110,6 +110,7 @@ export function buildEntryFacts(params: BuildEntryFactsParams): EntryFacts {
       relPath: rel,
       isDirectory,
       isSymlink: stat.kind === "symlink",
+      isDanglingSymlink: stat.kind === "symlink" && !params.fs.resolves(absolute),
       mtimeMs: stat.mtimeMs,
       latestMtimeMs,
       sizeBytes: stat.sizeBytes,

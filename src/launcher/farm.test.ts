@@ -431,3 +431,89 @@ describe("resyncFarm for an identity that is gone", () => {
     expect(seen).toEqual([true]);
   });
 });
+
+describe("resyncFarm with a shared entry that is a symlink", () => {
+  const ELSEWHERE = `${FAKE_HOME}/elsewhere`;
+
+  /** Every farm write that lands in the canonical tree or the place its symlinks lead, which a resync never makes for a shared entry. */
+  function writesOutsideFarm(fs: FakeFarmFs): string[] {
+    return farmWrites(fs).filter((write) => write.includes(FAKE_CLAUDE_HOME) || write.includes(ELSEWHERE));
+  }
+
+  it("leaves out a shared directory entry whose symlink leads nowhere, so Claude Code can write the identity's own, and says why", () => {
+    const fs = createFakeFarmFs({ ...CANONICAL, [`${FAKE_CLAUDE_HOME}/sessions`]: { symlink: `${ELSEWHERE}/sessions` } });
+
+    const result = resyncFarm(params(fs));
+
+    expect(fs.lstat(`${FARM}/sessions`)).toBeUndefined();
+    expect(result.manifest.links.map((link) => link.rel)).not.toContain("sessions");
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "SHARED_ENTRY_DANGLING").map((diagnostic) => diagnostic.subject)).toEqual(["sessions"]);
+    // Nothing is created for it: what the symlink should lead to is not known.
+    expect(fs.lstat(`${ELSEWHERE}/sessions`)).toBeUndefined();
+    expect(writesOutsideFarm(fs)).toEqual([]);
+    fs.mkdirp(`${FARM}/sessions`);
+    expect(fs.resolves(`${FARM}/sessions`)).toBe(true);
+  });
+
+  it("links a shared file entry whose symlink leads to a file, and a plain shared file, creating nothing for either", () => {
+    const fs = createFakeFarmFs({
+      ...CANONICAL,
+      [`${ELSEWHERE}/history.jsonl`]: "{}\n",
+      [`${FAKE_CLAUDE_HOME}/history.jsonl`]: { symlink: `${ELSEWHERE}/history.jsonl` },
+      [`${FAKE_CLAUDE_HOME}/CLAUDE.md`]: "instructions",
+    });
+
+    const result = resyncFarm(params(fs));
+
+    expect(fs.linkTarget(`${FARM}/history.jsonl`)).toBe(`${FAKE_CLAUDE_HOME}/history.jsonl`);
+    expect(fs.resolves(`${FARM}/history.jsonl`)).toBe(true);
+    expect(fs.linkTarget(`${FARM}/CLAUDE.md`)).toBe(`${FAKE_CLAUDE_HOME}/CLAUDE.md`);
+    expect(fs.readFileUtf8(`${ELSEWHERE}/history.jsonl`)).toBe("{}\n");
+    expect(result.diagnostics).toEqual([]);
+    expect(writesOutsideFarm(fs)).toEqual([]);
+  });
+
+  it("links a shared directory that exists, directly or through a symlink, and leaves its contents untouched", () => {
+    const fs = createFakeFarmFs({
+      ...CANONICAL,
+      [`${FAKE_CLAUDE_HOME}/sessions/123.json`]: "a session record",
+      [`${ELSEWHERE}/agents/reviewer.md`]: "an agent",
+      [`${FAKE_CLAUDE_HOME}/agents`]: { symlink: `${ELSEWHERE}/agents` },
+    });
+    const outsideFarm = (): string[] => [...fs.snapshot(FAKE_CLAUDE_HOME), ...fs.snapshot(ELSEWHERE)];
+    const before = outsideFarm();
+
+    const result = resyncFarm(params(fs));
+
+    expect(fs.linkTarget(`${FARM}/sessions`)).toBe(`${FAKE_CLAUDE_HOME}/sessions`);
+    expect(fs.linkTarget(`${FARM}/agents`)).toBe(`${FAKE_CLAUDE_HOME}/agents`);
+    expect(fs.resolves(`${FARM}/agents/reviewer.md`)).toBe(true);
+    expect(fs.readFileUtf8(`${FAKE_CLAUDE_HOME}/sessions/123.json`)).toBe("a session record");
+    expect(outsideFarm()).toEqual(before);
+    expect(result.diagnostics).toEqual([]);
+    expect(writesOutsideFarm(fs)).toEqual([]);
+  });
+
+  it("writes nothing on a resync while the symlink still leads nowhere, and links the entry on the first resync after it leads somewhere", () => {
+    const fs = createFakeFarmFs({ ...CANONICAL, [`${FAKE_CLAUDE_HOME}/sessions`]: { symlink: `${ELSEWHERE}/sessions` } });
+    resyncFarm(params(fs));
+
+    fs.writes.length = 0;
+    const second = resyncFarm(params(fs, { uniqueSuffix: "2222.22222222-0000-4000-8000-222222222222" }));
+    expect(second.noOp).toBe(true);
+    expect(farmWrites(fs)).toEqual([]);
+    expect(second.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["SHARED_ENTRY_DANGLING"]);
+
+    fs.seed({ [`${ELSEWHERE}/sessions`]: { dir: true } });
+    const third = resyncFarm(params(fs, { uniqueSuffix: "3333.33333333-0000-4000-8000-333333333333" }));
+    expect(third.noOp).toBe(false);
+    expect(fs.linkTarget(`${FARM}/sessions`)).toBe(`${FAKE_CLAUDE_HOME}/sessions`);
+    expect(fs.resolves(`${FARM}/sessions`)).toBe(true);
+    expect(third.diagnostics).toEqual([]);
+
+    fs.writes.length = 0;
+    const fourth = resyncFarm(params(fs, { uniqueSuffix: "4444.44444444-0000-4000-8000-444444444444" }));
+    expect(fourth.noOp).toBe(true);
+    expect(farmWrites(fs)).toEqual([]);
+  });
+});

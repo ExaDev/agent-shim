@@ -130,6 +130,10 @@ export const realFarmFs: FarmFs = {
     const kind = stat.isSymbolicLink() ? "symlink" : stat.isDirectory() ? "dir" : "file";
     return { kind, mtimeMs: stat.mtimeMs, sizeBytes: stat.size };
   },
+  resolves(filePath) {
+    // `throwIfNoEntry: false` answers a missing path, a dangling symlink included, with undefined; a loop or a refusal is thrown, since the farm cannot tell what such an entry is.
+    return fs.statSync(filePath, { throwIfNoEntry: false }) !== undefined;
+  },
   readdir(dirPath) {
     try {
       return fs.readdirSync(dirPath);

@@ -41,6 +41,8 @@ interface PrivateWriteOptions {
 export interface FarmFs {
   /** Stats one path without following symlinks, or returns undefined when nothing is there. */
   readonly lstat: (path: string) => FarmStat | undefined;
+  /** Whether `path` reaches something once every symlink along it is followed to its end: false when nothing is there, or when a symlink on the way points at nothing. Used to tell a symlink that leads somewhere from one that dangles, which `lstat` alone cannot. */
+  readonly resolves: (path: string) => boolean;
   /** Lists one directory's immediate child names, or an empty list when it does not exist. */
   readonly readdir: (path: string) => readonly string[];
   /** Creates a directory and any missing parents, succeeding silently when it already exists. */

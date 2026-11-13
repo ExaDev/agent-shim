@@ -113,6 +113,8 @@ One more boundary worth naming: an IDE extension's own UI-level preferences (VS 
 
 **Unclassified entries never disappear silently.** When `agent-shim` finds a top-level file or directory the map does not recognise, it excludes the entry and reports it. Run `agent-shim configure` to choose a category or leave it unclassified; answers are written to the local overlay (`~/.agent-shim/categories.local.json`) without changing the shipped map. Cancelling the classification prompts writes no answers. An unanswered entry stays excluded and is reported again.
 
+**A shared entry is linked only when it leads somewhere.** The farm links an entry that `~/.claude` holds, and nothing for one it does not hold: the identity's own Claude Code writes its own copy instead, until `~/.claude` has the entry and a later launch links it (a copy the identity wrote meanwhile is then kept in the superseded farm for `agent-shim identity resolve-conflicts`). An entry of `~/.claude` that is itself a symlink reaching nothing counts as not held: a farm link to it would give Claude Code a path it cannot write through (a session's record under `sessions/` would be lost, so the session would be missing from `claude agents`), so the launch leaves it out and warns with `SHARED_ENTRY_DANGLING`, which `agent-shim check` reports and `check --strict` fails on. Nothing is created for such an entry, since whether it should be a directory or a file is not known. Once the symlink leads somewhere, the next launch links it.
+
 ### Path-level overrides
 
 Any configuration layer — a profile, a directory rule, a committed `.agent-shim.json` — can override sharing for one specific path, not just a whole category, and path keys may use glob wildcards:

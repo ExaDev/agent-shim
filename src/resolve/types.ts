@@ -45,6 +45,8 @@ export interface EntryFact {
   readonly isDirectory: boolean;
   /** True when the entry is itself a symlink (including the relative, tree-escaping symlinks that already exist inside a real `~/.claude`). */
   readonly isSymlink: boolean;
+  /** True when the entry is a symlink that reaches nothing once followed to its end, so what it would be is unknown; false for every other entry. */
+  readonly isDanglingSymlink: boolean;
   /** The entry's own mtime. */
   readonly mtimeMs: number;
   /** The most recent mtime anywhere in this entry's subtree — its own mtime for a plain file. A directory-scoped `newerThan` must read this, never the directory's own inode mtime, which does not change when a file three levels down is rewritten. */
@@ -165,6 +167,8 @@ export const DIAGNOSTIC_CODES = [
   "FARM_SWAP_RECOVERED",
   /** A superseded farm could not be discarded because it still held data the new farm has its own entry for, so it was left on disk for the user to look at. */
   "FARM_PREVIOUS_RETAINED",
+  /** A shared `~/.claude` entry is a symlink that reaches nothing, so the farm does not link it and the identity keeps its own copy until the entry leads somewhere. */
+  "SHARED_ENTRY_DANGLING",
 ] as const;
 type DiagnosticCode = (typeof DIAGNOSTIC_CODES)[number];
 

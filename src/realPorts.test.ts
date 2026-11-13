@@ -122,6 +122,26 @@ describe("realFarmFs.appendFilePrivate", () => {
   });
 });
 
+describe("realFarmFs.resolves", () => {
+  it.skipIf(process.platform === "win32")("follows symlinks to their end, telling one that leads somewhere from one that dangles", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "farm-resolves-"));
+    try {
+      fs.mkdirSync(path.join(dir, "real"));
+      fs.symlinkSync(path.join(dir, "real"), path.join(dir, "to-real"));
+      fs.symlinkSync(path.join(dir, "to-real"), path.join(dir, "to-to-real"));
+      fs.symlinkSync(path.join(dir, "missing"), path.join(dir, "dangling"));
+      fs.symlinkSync(path.join(dir, "dangling"), path.join(dir, "to-dangling"));
+      expect(realFarmFs.resolves(path.join(dir, "real"))).toBe(true);
+      expect(realFarmFs.resolves(path.join(dir, "to-to-real"))).toBe(true);
+      expect(realFarmFs.resolves(path.join(dir, "dangling"))).toBe(false);
+      expect(realFarmFs.resolves(path.join(dir, "to-dangling"))).toBe(false);
+      expect(realFarmFs.resolves(path.join(dir, "missing"))).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("resolveContentSourcePath", () => {
   it("uses execPath when running as a single executable application", () => {
     const result = resolveContentSourcePath({ isSea: true, execPath: "/opt/homebrew/Cellar/agent-shim/0.2.3/bin/agent-shim", argv1: "agent-shim" });

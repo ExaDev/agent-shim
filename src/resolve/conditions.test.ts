@@ -26,6 +26,7 @@ function fact(overrides: Partial<EntryFact>): EntryFact {
     relPath: "projects/-a-b",
     isDirectory: false,
     isSymlink: false,
+    isDanglingSymlink: false,
     mtimeMs: FAKE_NOW_MS,
     latestMtimeMs: FAKE_NOW_MS,
     sizeBytes: 1,
