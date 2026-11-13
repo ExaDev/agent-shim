@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { HTTP_STATUS } from "../codex/http";
 import { mainLoopRoutesOfLiveSessions } from "../test-helpers";
 import { isMessagesInferencePath } from "./messagesBodyLimit";
-import { launchOfSession, send, startWorld, tokenOf, type World } from "./mainLoopRouteTestWorld";
+import { launchOfSession, send, startWorld, tokenOf, type ModelPorts, type World } from "./mainLoopRouteTestWorld";
 import type { MainLoopRouteRecord } from "./mainLoopRoute";
 import { AUTH_HEADER, PROVIDER_HEADER, SESSION_HEADER } from "./route";
 
@@ -126,6 +126,10 @@ const bySendingModel = (model: string) => async (world: World): Promise<void> =>
 };
 const spark = (port: number): unknown => ({ displayName: "spark", baseUrl: `http://127.0.0.1:${String(port)}`, credential: { sources: [{ literal: "t" }] }, env: { ANTHROPIC_DEFAULT_SONNET_MODEL: "spark-main" } });
 
+/** The Claude name every world's global route override sends to provider `z`; no path class's own body names it, so the override moves only the sessions that establish their context by it. */
+const OVERRIDDEN = "claude-opus-5-5";
+const OVERRIDES: NonNullable<ModelPorts["routeOverrides"]> = () => ({ table: { schemaVersion: 1, global: { [OVERRIDDEN]: "z/glm-5.3" } } });
+
 const SESSION_KINDS: readonly SessionKind[] = [
   { label: "no context", reaches: "anthropic", establish: noContext, headers: MAIN },
   { label: "no context, a helper", reaches: "anthropic", establish: noContext, headers: HELPER },
@@ -134,6 +138,8 @@ const SESSION_KINDS: readonly SessionKind[] = [
   { label: "provider context, a helper", reaches: "provider", establish: bySendingModel("z/glm-5.3"), headers: HELPER },
   { label: "provider context chosen by a selector", reaches: "provider", establish: bySendingModel("auto/z/sonnet"), headers: MAIN },
   { label: "provider context chosen by a selector, a helper", reaches: "provider", establish: bySendingModel("auto/provider:z"), headers: HELPER },
+  { label: "provider context an override chose", reaches: "provider", establish: bySendingModel(OVERRIDDEN), headers: MAIN },
+  { label: "provider context an override chose, a helper", reaches: "provider", establish: bySendingModel(OVERRIDDEN), headers: HELPER },
   { label: "Anthropic context after anthropic/<model>", reaches: "anthropic", establish: bySendingModel("anthropic/claude-sonnet-5-5"), headers: MAIN },
   { label: "Anthropic context, a helper", reaches: "anthropic", establish: bySendingModel("anthropic/claude-sonnet-5-5"), headers: HELPER },
   { label: "a session launched on the provider", reaches: "provider", launched: true, establish: noContext, headers: { ...MAIN, [PROVIDER_HEADER]: "z" } },
@@ -167,7 +173,7 @@ describe.each(SESSION_KINDS)("a request of a session with $label", (kind) => {
       it(`${chunked ? "chunked" : "with a length"}: it is answered, reaches ${reaches === "provider" ? "the provider unchanged" : "the Anthropic route"}, and leaves the context`, async () => {
         const upstream = await recordingUpstream();
         const record = mainLoopRoutesOfLiveSessions();
-        const world = await startWorld(record);
+        const world = await startWorld(record, undefined, undefined, undefined, undefined, { routeOverrides: OVERRIDES });
         try {
           world.setProvider("z", { displayName: "Z", baseUrl: `http://127.0.0.1:${String(upstream.port)}`, credential: { sources: [{ literal: "z-token" }] }, env: { ANTHROPIC_DEFAULT_SONNET_MODEL: "z-main" } });
           world.setProvider("spark", spark(upstream.port));

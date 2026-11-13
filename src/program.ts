@@ -23,6 +23,7 @@ import { registerPoolCommand } from "./pools";
 import { registerProviderCommand } from "./providers";
 import { registerModelsCommand } from "./models";
 import { registerRuleCommand } from "./directoryRules";
+import { registerRouteCommand } from "./routeOverrides";
 import { runCodex } from "./codex/launch";
 import { registerRunCommand } from "./runCommand";
 import { registerUpdateCommand } from "./update/commands";
@@ -113,6 +114,7 @@ export function buildProgram(deps: ProgramDeps): Command {
   registerHeadlessCommands(program, deps);
   registerProviderCommand(program, deps);
   registerModelsCommand(program, deps);
+  registerRouteCommand(program, deps);
   registerRuleCommand(program, deps);
   registerCredentialCommand(program, deps, deps.credentialPorts);
   registerCheckCommand(program, deps);

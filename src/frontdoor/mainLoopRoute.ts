@@ -11,7 +11,7 @@ import { declaredLength, withoutContentLength } from "./contentLength";
 import { REQUEST_SCAN_CAP_BYTES, type RequestScan, scanRequestHead } from "./requestScan";
 import { isMessagesInferencePath, isMessagesRequest } from "./messagesBodyLimit";
 import { AMBIGUOUS_MODEL_MESSAGE, topLevelModel } from "./topLevelModel";
-import { claudeNameTier } from "../models/tiers";
+import { isBareClaudeName } from "../models/tiers";
 import { MAX_CONTEXT_TEXT_LENGTH, launchKeyOf, type FrontDoorLaunch, type MainLoopRouteStore, type RouteContext } from "./state";
 
 /**
@@ -207,7 +207,7 @@ export interface MainLoopRoutingDeps {
 }
 
 /** What a renaming knows of the request whose model it may replace. */
-interface RenameContext {
+export interface RenameContext {
   readonly session: RoutedRequest["session"];
   /** Whether the request is the main loop's (class `main`, or no class and no agent id). */
   readonly main: boolean;
@@ -227,11 +227,6 @@ function servedProviderOf(url: string): string | undefined {
 
 /** The prefix by which a person selects an Anthropic model by name once their session is on a provider: `/model anthropic/claude-sonnet-5-5`. */
 const ANTHROPIC_PREFIX = "anthropic/";
-
-/** Whether a model name is a bare Claude name (`claude-sonnet-5-5`, `opus`): one that selects a tier and names no provider. */
-function isBareClaudeName(model: string): boolean {
-  return !model.includes("/") && claudeNameTier(model) !== undefined;
-}
 
 /** The text of a model or credential name, or none when it is too long to keep in the context: a name is a fact about the route, never worth a rejected file. */
 function boundedName(text: string | undefined): string | undefined {

@@ -68,7 +68,7 @@ import { createProviderRouteResolver } from "./providerRoute";
 import { createMainLoopRouteRecord } from "./mainLoopRoute";
 import { readModels } from "../modelsStore";
 import { servedModelPorts } from "./cachedCatalogue";
-import { realSelectorStatePorts } from "../models/selectorPorts";
+import { doorRoutingState } from "../models/selectorPorts";
 import { FRONTDOOR_START_TIMEOUT_MS } from "./ensure";
 import type { ListenSource, Predecessor } from "./handover";
 import { predecessorOfThisProcess, realHandOverListeners } from "./realHandover";
@@ -317,7 +317,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       accountMoves: async (sessionId, to, model) => await requestAccountMove({ fs: realFarmFs, paths, runningAmong: realRunningAmong, idOf: (name) => identityIdOf(paths, name), now: () => Date.now() }, sessionId, to, model),
       ...(rcSelfHostSurface === undefined ? {} : { rcSelfHostRoute: rcSelfHostSurface.route }),
       ...(capture === undefined ? {} : { observeAnthropicPassthrough: (request: RoutedRequest) => { capture.routedForward(request); } }),
-      ...servedModelPorts(paths, log), selectorState: realSelectorStatePorts(paths, () => Date.now()), log, now: () => Date.now(), mainLoopRoutes: createMainLoopRouteRecord({ holdsLaunch: sessionRegistry.holdsLaunch, stored: launchRouteStore(realFarmFs, paths.frontdoorSessionsDir, log), log }),
+      ...servedModelPorts(paths, log), ...doorRoutingState(paths, log), log, now: () => Date.now(), mainLoopRoutes: createMainLoopRouteRecord({ holdsLaunch: sessionRegistry.holdsLaunch, stored: launchRouteStore(realFarmFs, paths.frontdoorSessionsDir, log), log }),
     }),
     rcTracker,
     rcHub,

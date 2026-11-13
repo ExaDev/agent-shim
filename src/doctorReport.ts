@@ -34,6 +34,8 @@ import { realCredentialCacheEnv } from "./realCredentialCache";
 import { isMovingGitSource } from "./headroom/source";
 import { modelsFindings } from "./models/doctor";
 import { targetRefs } from "./models/targets";
+import { routeOverrideDoctorFindings } from "./routeOverrideChecks";
+import { RouteOverridesSchema } from "./routeOverridesSchema";
 import { readGlobalConfig } from "./configProfilesStore";
 import { diagnoseAllowlistDrift } from "./headroom/allowlistDrift";
 import { earlierReleaseDaemon } from "./headroom/earlierRelease";
@@ -83,6 +85,7 @@ export const DOCTOR_SECTIONS = [
   "headroom",
   "frontdoor",
   "models",
+  "route-overrides",
 ] as const;
 export type DoctorSection = (typeof DOCTOR_SECTIONS)[number];
 
@@ -204,6 +207,8 @@ export interface RunDoctorParams {
   readonly models?: ModelsConfig;
   /** Every target the defined providers offer as `<provider>/<model>` refs, for checking a `family:` member against the families they form. Omit to skip that check. */
   readonly modelTargets?: readonly string[];
+  /** The route overrides file. Omit to skip the route override checks; a missing file is a pass (nothing is overridden). */
+  readonly routeOverrides?: DoctorFileInput;
   readonly categoriesLocal: DoctorFileInput;
   readonly activeIdentity: DoctorFileInput;
   readonly binaryDiscovery: DoctorBinaryDiscovery;
@@ -769,6 +774,12 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     }
   }
 
+  if (params.routeOverrides !== undefined) {
+    for (const finding of routeOverrideDoctorFindings(params.routeOverrides.path, params.routeOverrides.raw === undefined ? undefined : validate(RouteOverridesSchema, params.routeOverrides, "route-overrides"), { providers: params.providers.map((entry) => entry.name), identities: params.identities.map((entry) => entry.name), profiles: params.configProfiles.map((entry) => entry.name), pools: Object.keys(pools), models: params.models, targets: params.modelTargets ?? [] })) {
+      push("route-overrides", finding.severity, finding.message);
+    }
+  }
+
   if (params.categoriesLocal.raw === undefined) {
     push("categories-local", "pass", "No categories.local.json configured.");
   } else {
@@ -993,6 +1004,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
     globalConfig: { path: paths.globalConfigFile, raw: realFsPort.readFileUtf8(paths.globalConfigFile) },
     models: readableOr(() => readGlobalConfig(paths)?.models, undefined),
     modelTargets: targetRefs(paths),
+    routeOverrides: { path: paths.routeOverridesFile, raw: realFsPort.readFileUtf8(paths.routeOverridesFile) },
     categoriesLocal: { path: paths.categoriesLocalFile, raw: realFsPort.readFileUtf8(paths.categoriesLocalFile) },
     activeIdentity: { path: paths.activeIdentityFile, raw: realFsPort.readFileUtf8(paths.activeIdentityFile) },
     binaryDiscovery,

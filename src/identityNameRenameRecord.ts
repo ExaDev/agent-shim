@@ -9,6 +9,7 @@ import { listDirectoryRules } from "./directoryRulesStore";
 import { renameAccountModelRefs } from "./modelRefs";
 import type { LayoutPaths } from "./paths";
 import { readableOr } from "./readableConfig";
+import { readRouteOverrides, routeOverridesRenamed } from "./routeOverridesStore";
 import { realFarmFs } from "./realPorts";
 import { picksWithIdentityRenamed } from "./usage/poolPick";
 import { identityRecordsOver, type IdentityRecord } from "./identityRecords";
@@ -94,7 +95,7 @@ function probeName(name: string): string {
 }
 
 /**
- * Where the configuration names identity `name`: the pools listing it, the jobs running as it, the directory rules pinning it or holding an `acct:<name>/` model ref, the global configuration and the profiles holding one, the active selection, and the directories whose last pool pick it is. The recorded picks are counted by the rewrite a rename makes, asked to rename the name to itself, which changes nothing and reports how many name it. A configuration file that cannot be read holds no reference here (see `readableOr`).
+ * Where the configuration names identity `name`: the pools listing it, the jobs running as it, the directory rules pinning it or holding an `acct:<name>/` model ref, the global configuration and the profiles holding one, the active selection, the route overrides (its scope, or a target naming it), and the directories whose last pool pick it is. The recorded picks are counted by the rewrite a rename makes, asked to rename the name to itself, which changes nothing and reports how many name it. A configuration file that cannot be read holds no reference here (see `readableOr`).
  */
 function referencesToName(paths: LayoutPaths, name: string): readonly string[] {
   const config = readableOr(() => readGlobalConfig(paths), undefined);
@@ -104,9 +105,11 @@ function referencesToName(paths: LayoutPaths, name: string): readonly string[] {
   const profiles = readableOr(() => listProfiles(paths, () => undefined), []).flatMap(({ name: profile, profile: stored }) => (stored.models !== undefined && renameAccountModelRefs(stored.models, name, probeName(name)) !== undefined ? [`profile ${profile}`] : []));
   const rules = readableOr(() => listDirectoryRules(paths), []).flatMap((rule) => (rule.identity === name || (rule.models !== undefined && renameAccountModelRefs(rule.models, name, probeName(name)) !== undefined) ? [`rule ${rule.path}`] : []));
   const active = fs.existsSync(paths.activeIdentityFile) && fs.readFileSync(paths.activeIdentityFile, "utf8").trim() === name ? ["the active selection"] : [];
+  const overrides = readableOr(() => readRouteOverrides(paths), undefined);
+  const routed = overrides !== undefined && routeOverridesRenamed(overrides, "identity", name, probeName(name)) !== undefined ? ["route overrides"] : [];
   const picksText = fs.existsSync(paths.usagePicksFile) ? fs.readFileSync(paths.usagePicksFile, "utf8") : undefined;
   const picked = picksText === undefined ? undefined : picksWithIdentityRenamed(picksText, name, name)?.renamed;
-  return [...pools, ...jobs, ...models, ...profiles, ...rules, ...active, ...(picked === undefined ? [] : [`${String(picked)} recorded pool pick${picked === 1 ? "" : "s"}`])];
+  return [...pools, ...jobs, ...models, ...profiles, ...rules, ...active, ...routed, ...(picked === undefined ? [] : [`${String(picked)} recorded pool pick${picked === 1 ? "" : "s"}`])];
 }
 
 /** Raised when a command would act on a name an interrupted rename of the name alone holds: it has rewritten references to `to` and not yet the identity's own name. */

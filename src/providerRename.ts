@@ -14,6 +14,7 @@ import { listUsageSnapshots, snapshotPath, type UsageReadFs } from "./usage/read
 import { readDirectoryRules, writeDirectoryRules } from "./directoryRulesStore";
 import { requireNewProviderName } from "./config/names";
 import { requireUnreservedProviderName } from "./models/reservedModelNames";
+import { readRouteOverrides, routeOverridesRenamed, writeRouteOverrides } from "./routeOverridesStore";
 import { mapModelRefs } from "./modelRefs";
 import { listIdentities, requireNoUnreachableIdentities, setIdentityProvider } from "./identityStore";
 import type { LayoutPaths } from "./paths";
@@ -57,7 +58,7 @@ export interface ProviderRenamePorts {
 export interface ProviderRenameReport {
   readonly from: string;
   readonly to: string;
-  /** Everything that named the provider and now names its new name or holds its state under it: `config.json`, `profile <name>`, `identity <name>`, `rule <path>`, `provider <name> routes`, `usage <identity>`, `catalogue` and `credential cache`. */
+  /** Everything that named the provider and now names its new name or holds its state under it: `config.json`, `profile <name>`, `identity <name>`, `rule <path>`, `provider <name> routes`, `route overrides`, `usage <identity>`, `catalogue` and `credential cache`. */
   readonly updated: readonly string[];
 }
 
@@ -160,7 +161,7 @@ function moveState(paths: LayoutPaths, from: string, to: string, ports: Provider
   return moved;
 }
 
-/** Rewrites every reference to provider `from` in the configuration this installation owns, returning where it found one. */
+/** Rewrites every reference to provider `from` in the configuration this installation owns (the route overrides' provider scope and targets among it), returning where it found one. */
 function rewriteReferences(paths: LayoutPaths, from: string, to: string): readonly string[] {
   const rewritten: string[] = [];
   const global = readGlobalConfig(paths);
@@ -198,6 +199,11 @@ function rewriteReferences(paths: LayoutPaths, from: string, to: string): readon
   });
   if (renamedRules.some((rule, index) => rule !== rules.rules[index])) {
     writeDirectoryRules(paths, { ...rules, rules: renamedRules });
+  }
+  const overrides = routeOverridesRenamed(readRouteOverrides(paths), "provider", from, to);
+  if (overrides !== undefined) {
+    writeRouteOverrides(paths, overrides.value);
+    rewritten.push("route overrides");
   }
   for (const { name, provider } of listProviders(paths)) {
     if (isHttpProvider(provider) && provider.routes?.some((route) => route.provider === from) === true) {

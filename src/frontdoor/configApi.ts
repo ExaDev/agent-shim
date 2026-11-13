@@ -57,11 +57,16 @@ import {
   ConfigRuleRemoveOutputSchema,
   ConfigRuleSetInputSchema,
   ConfigRuleSetOutputSchema,
+  ConfigRouteSetInputSchema,
+  ConfigRouteSetOutputSchema,
+  ConfigRouteUnsetInputSchema,
+  ConfigRouteUnsetOutputSchema,
 } from "./configSchemas";
+import { routeScopeName, setRouteOverride, unsetRouteOverride } from "../routeOverrides";
 import { doorApiAuth } from "./rcApi";
 
 /**
- * The door's configuration management as a typed oRPC API: the writes the CLI's `identity`, `profile`, `pool`, `provider` and `rule` verbs make, as `config.<noun>.<verb>` procedures, every one behind the same per-generation control token as the rest of the mount.
+ * The door's configuration management as a typed oRPC API: the writes the CLI's `identity`, `profile`, `pool`, `provider` and `rule` verbs make, (and `route set|unset`) as `config.<noun>.<verb>` procedures, every one behind the same per-generation control token as the rest of the mount.
  *
  * Each procedure makes the checks its verb makes and calls the store function it calls (and the shared rules extracted beside them), so a write through the API and a write through the CLI are the same write: the same validation, the same atomic store write, the same refusals. The one check that reaches outside the stores is `config.identity.add`'s question to the macOS Keychain, asked through the asynchronous runner in `deps.keychain` so the door's event loop is never held, by the function the CLI asks it with. A refusal is the CLI's own message carried as an oRPC error (`NOT_FOUND` for a name that does not exist, `CONFLICT` for one that already does or for a Keychain login in the way, `BAD_REQUEST` for anything else the store refuses, and the retryable `SERVICE_UNAVAILABLE` for a Keychain that could not be asked), and every outcome is the `--json` object the verb prints.
  *
@@ -510,6 +515,26 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
               return { action: "removed" as const, kind: "rule" as const, name: input.path };
             });
           }),
+      },
+      route: {
+        set: route("/rest/config/route/set", "Route a Claude model name or class to a target in one scope, from each session's next request")
+          .input(ConfigRouteSetInputSchema)
+          .output(ConfigRouteSetOutputSchema)
+          .handler(({ input }) =>
+            guarded(() => {
+              setRouteOverride(paths, input.scope, input.model, input.target);
+              return { action: "updated" as const, kind: "route" as const, name: input.model, value: { scope: routeScopeName(input.scope), model: input.model, target: input.target } };
+            }),
+          ),
+        unset: route("/rest/config/route/unset", "Remove one route override")
+          .input(ConfigRouteUnsetInputSchema)
+          .output(ConfigRouteUnsetOutputSchema)
+          .handler(({ input }) =>
+            guarded(() => {
+              unsetRouteOverride(paths, input.scope, input.model);
+              return { action: "removed" as const, kind: "route" as const, name: input.model };
+            }),
+          ),
       },
     },
   };
