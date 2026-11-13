@@ -257,8 +257,10 @@ function servedProviderOf(url: string): string | undefined {
   return parseProviderPath(new URL(url, "http://127.0.0.1").pathname)?.provider;
 }
 
+/** The provider part that names the Anthropic route in a qualified name, unless a provider file of that name claims it. */
+export const ANTHROPIC_ROUTE_NAME = "anthropic";
 /** The prefix by which a person selects an Anthropic model by name once their session is on a provider: `/model anthropic/claude-sonnet-5-5`. */
-const ANTHROPIC_PREFIX = "anthropic/";
+export const ANTHROPIC_PREFIX = `${ANTHROPIC_ROUTE_NAME}/`;
 
 /** The text of a model or credential name, or none when it is too long to keep in the context: a name is a fact about the route, never worth a rejected file. */
 function boundedName(text: string | undefined): string | undefined {
@@ -396,7 +398,7 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
       // A helper is placed by the context before anything resolves it. Only a Messages request carries a model, so only its head is read: any other request on a Messages sub-resource goes on with its body untouched.
       const scan = isMessagesRequest(request.method, path) ? await scanRequestHead(request) : undefined;
       const helper = scan?.replayed ?? request;
-      if (scan?.model?.startsWith(ANTHROPIC_PREFIX) === true && !deps.definesProvider("anthropic")) {
+      if (scan?.model?.startsWith(ANTHROPIC_PREFIX) === true && !deps.definesProvider(ANTHROPIC_ROUTE_NAME)) {
         return (await toAnthropic(helper, scan.model)).resolution;
       }
       if (current === undefined || current.kind === "anthropic") {
@@ -415,7 +417,7 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
     if (served === undefined) {
       // The resolver left the request on the Anthropic route, which a request that chose it by `anthropic/<model>` is entitled to; any other goes where the context says. Under a provider context that is the provider, whatever the request names (a name no provider claims and that is no Claude name, a name with a typo, no model at all, a body that is no JSON): it is served as asked, and never by the launch's account.
       const base = resolution.request ?? request;
-      if (requested?.startsWith(ANTHROPIC_PREFIX) === true && !deps.definesProvider("anthropic")) {
+      if (requested?.startsWith(ANTHROPIC_PREFIX) === true && !deps.definesProvider(ANTHROPIC_ROUTE_NAME)) {
         const placed = await toAnthropic(base, requested);
         if (placed.resolution.ok) {
           recordServing(launch, ticket, placed.resolution, (servedModel) => contextOf({ kind: "anthropic" }, deps.loginOf(request.session), recordedAs, servedModel), placed.served);

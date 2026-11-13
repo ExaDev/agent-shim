@@ -198,6 +198,21 @@ describe("runtime route overrides through the real door, read from a real file",
     }
   }, TIMEOUT_MS);
 
+  it("refuses an override to the Anthropic route in a session launched on a provider, and serves it in one launched without", async () => {
+    set([[{ kind: "global" }, "opus", "anthropic/claude-opus-5-1"]]);
+    const world = await door();
+    try {
+      const refused = await send(world, { model: OPUS, requestClass: "main", provider: "z" });
+      expect(refused.status).toBe(HTTP_STATUS.badRequest);
+      expect(refused.text).toContain("launched on provider");
+      expect(world.upstream.seen).toEqual([]);
+      await send(world, { model: OPUS, requestClass: "main", session: "s-2" });
+      expect(world.anthropicModels).toEqual(["claude-opus-5-1"]);
+    } finally {
+      await world.close();
+    }
+  }, TIMEOUT_MS);
+
   it("leaves a session with no override where its context says", async () => {
     set([[{ kind: "session", name: "another" }, "sonnet", "z/elsewhere"]]);
     const world = await door();
