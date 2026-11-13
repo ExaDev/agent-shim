@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { printJson, withExamples, type CommandDeps } from "./cli/commandDeps";
-import { collectDoctorReport, formatDoctorReport } from "./doctorReport";
+import { formatDoctorReport } from "./doctorFormat";
+import { collectDoctorReport } from "./doctorReport";
 
 /**
  * Registers `agent-shim doctor` onto `program`: asks `collectDoctorReport` (in `src/doctorReport.ts`, which performs the real I/O and is exported by the library) for the report, and prints it as text or JSON.

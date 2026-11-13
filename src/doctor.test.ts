@@ -3,7 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { collectDoctorReport, formatDoctorReport, refinePathShadow, runDoctor, type DoctorConfigProfileInput, type RunDoctorParams } from "./doctorReport";
+import { formatDoctorReport } from "./doctorFormat";
+import { collectDoctorReport, refinePathShadow, runDoctor, type DoctorConfigProfileInput, type RunDoctorParams } from "./doctorReport";
 import { baseParams, findingsFor, identity, provider } from "./doctorTestFixtures";
 import type { CredentialCacheEnv } from "./credential";
 import type { RunPort } from "./launcher/ports";

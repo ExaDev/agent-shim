@@ -553,9 +553,9 @@ export {
 } from "./checkReport";
 export { CHECK_CREDENTIAL_APPLIES, CheckReportJsonSchema, type CheckReportJson } from "./checkReportSchema";
 export { resolveLaunchSelection, type LaunchSelection, type ResolveLaunchSelectionParams } from "./launchSelection";
+export { formatDoctorReport } from "./doctorFormat";
 export {
   collectDoctorReport,
-  formatDoctorReport,
   runDoctor,
   type CollectDoctorReportParams,
   type DoctorReport,
