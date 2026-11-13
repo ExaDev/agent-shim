@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { HTTP_STATUS } from "../codex/http";
 import type { SelectorStatePorts } from "../models/selectorPorts";
 import { mainLoopRoutesOfLiveSessions } from "../test-helpers";
-import { HAIKU_NAME, Z_HAIKU_MODEL, Z_OPUS_MODEL, Z_SONNET_MODEL, launchOfSession, send, startWorld } from "./mainLoopRouteTestWorld";
+import { PROVIDERS_DIR, HAIKU_NAME, Z_HAIKU_MODEL, Z_OPUS_MODEL, Z_SONNET_MODEL, launchOfSession, send, startWorld } from "./mainLoopRouteTestWorld";
 
 /** The configuration a selector reads: the session's own identity `me` and its twin `twin` (one login), another login `work`, an identity `zid` on provider `z`, a pool `subs` picking `work`, a pool `mine` picking `twin`, a pool named like the provider `z`, a profile `zprof` on `z` and a profile `plain` with no provider. */
 const STATE: SelectorStatePorts = {
@@ -238,6 +238,25 @@ describe("a model name auto/<selector>[/<class>] through the real door", () => {
       expect(refused.text).toContain("without --provider");
       expect(door.upstream.seen).toEqual([]);
       expect(door.toAnthropic).toEqual([]);
+    } finally {
+      await door.close();
+    }
+  }, TIMEOUT_MS);
+
+  it("refuses a selector and a qualified name on a provider whose file is of another shape, naming the fault and never the file's path", async () => {
+    const fault = "displayName";
+    const door = await world();
+    try {
+      door.setProvider("z", { displayName: 5 });
+      for (const name of ["auto/provider:z/sonnet", "z/glm-5.3"]) {
+        const refused = await send(door, { model: name, requestClass: "main", identity: "id-me" });
+        expect(refused.status).toBe(HTTP_STATUS.badRequest);
+        expect(refused.text).toContain('provider \\"z\\" cannot be used because its file is invalid');
+        expect(refused.text).toContain(fault);
+        expect(refused.text).not.toContain(PROVIDERS_DIR);
+        expect(refused.text).not.toContain("z.json");
+      }
+      expect(door.upstream.seen).toEqual([]);
     } finally {
       await door.close();
     }
