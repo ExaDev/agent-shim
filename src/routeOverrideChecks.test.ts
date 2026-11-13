@@ -60,6 +60,14 @@ describe("the route overrides check", () => {
     expect(cycle.filter((line) => line.startsWith("fail: ") && line.includes("come back round"))).toHaveLength(2);
   });
 
+  it("finds nothing in a named scope's class pinned to one of its own models", () => {
+    expect(over({ schemaVersion: 1, identities: { work: { opus: "claude-opus-5-1" } }, sessions: { abc: { haiku: "claude-haiku-5-1" } } })).toEqual([]);
+  });
+
+  it("follows a chain through a session scope's own table", () => {
+    expect(over({ schemaVersion: 1, sessions: { abc: { opus: "claude-sonnet-5-5", sonnet: "z/glm" } } })).toEqual([expect.stringMatching(/^warn: .*session table for "abc".*opus -> sonnet/)]);
+  });
+
   it("follows a chain through the scopes a request of the entry's scope is covered by", () => {
     expect(over({ schemaVersion: 1, identities: { work: { opus: "claude-sonnet-5-5" } }, global: { sonnet: "z/glm" } })).toEqual([expect.stringMatching(/^warn: .*identity table for "work".*opus -> sonnet/)]);
   });
@@ -73,5 +81,7 @@ describe("the doctor's route overrides section", () => {
     expect(sectionOf(JSON.stringify({ schemaVersion: 2 }))[0]).toMatch(/^fail: /);
     expect(sectionOf(JSON.stringify({ schemaVersion: 1, global: { opus: "nowhere/x" } }))[0]).toMatch(/^fail: .*no provider "nowhere"/);
     expect(sectionOf(JSON.stringify({ schemaVersion: 1 }))).toEqual(["pass: /state/route-overrides.json is consistent."]);
+    const family = (targets: readonly string[]) => findingsFor(runDoctor(baseParams({ routeOverrides: { path: "/state/route-overrides.json", raw: JSON.stringify({ schemaVersion: 1, global: { opus: "family:glm-5-1" } }) }, modelTargets: targets })), "route-overrides").map((finding) => finding.severity);
+    expect(family([])).toEqual(["fail"]);
   });
 });

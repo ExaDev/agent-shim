@@ -171,3 +171,28 @@ describe("renaming what the overrides name", () => {
     expect(routeOverridesRenamed(overrides, "identity", "nobody", "else")).toBeUndefined();
   });
 });
+
+describe("the store's edges", () => {
+  it("keeps a $schema pointer across a change, and drops an emptied global table", () => {
+    const withSchema: RouteOverrides = { $schema: "./schema/RouteOverrides.schema.json", schemaVersion: 1, global: { opus: "z/a" } };
+    expect(withRouteOverride(withSchema, { kind: "global" }, "opus", undefined)).toEqual({ $schema: "./schema/RouteOverrides.schema.json", schemaVersion: 1 });
+  });
+
+  it("names the scope in a refusal", () => {
+    expect(() => withRouteOverride(NO_ROUTE_OVERRIDES, { kind: "global" }, "opus", undefined)).toThrow('No override of "opus" is set globally.');
+    expect(() => withRouteOverride(NO_ROUTE_OVERRIDES, { kind: "identity", name: "work" }, "opus", undefined)).toThrow('No override of "opus" is set for identity "work".');
+  });
+
+  it("logs nothing for a file it can use", () => {
+    const lines: string[] = [];
+    const read = createRouteOverridesReader({ fileRevision: () => "r1", readFileUtf8: () => JSON.stringify(TABLE) }, FILE, (line) => {
+      lines.push(line);
+    });
+    read();
+    expect(lines).toEqual([]);
+  });
+
+  it("adds no global table when renaming in a file that has none", () => {
+    expect(routeOverridesRenamed({ schemaVersion: 1, identities: { work: { opus: "z/a" } } }, "identity", "work", "client")?.value).toEqual({ schemaVersion: 1, identities: { client: { opus: "z/a" } } });
+  });
+});

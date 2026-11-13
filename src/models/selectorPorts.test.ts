@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { addIdentity, setIdentityProvider } from "../identityStore";
 import { buildLayoutPaths, type LayoutPaths } from "../paths";
-import { cliSelectorPorts, realSelectorStatePorts } from "./selectorPorts";
+import { cliSelectorPorts, poolRefusal, realSelectorStatePorts } from "./selectorPorts";
 import { expandSelectorName } from "./selectors";
 
 /** Writes one JSON file of the layout, making its directory. */
@@ -55,6 +55,26 @@ describe("the selector state read from the person's files", () => {
     expect(state.pool("none")).toEqual({ kind: "absent" });
     expect(state.sameLogin("me", "me")).toBe(true);
     expect(state.sameLogin("work", "me")).toBe(false);
+  });
+
+  it("treats two identities holding one account in one organisation as one login, and others as not", () => {
+    addIdentity(paths, "twin");
+    const login = (identity: string, account: string, organisation: string): void => {
+      write(path.join(paths.identitiesDir, identity, ".claude.json"), { oauthAccount: { accountUuid: account, organizationUuid: organisation } });
+    };
+    login("me", "acc-1", "org-1");
+    login("twin", "acc-1", "org-1");
+    login("work", "acc-1", "org-2");
+    const state = realSelectorStatePorts(paths, now);
+    expect(state.sameLogin("twin", "me")).toBe(true);
+    expect(state.sameLogin("work", "me")).toBe(false);
+    expect(state.sameLogin("zid", "me")).toBe(false);
+    expect(state.sameLogin("nobody", "me")).toBe(false);
+  });
+
+  it("names the member back soonest when a pool picks nobody", () => {
+    expect(poolRefusal("subs", { identity: "work", at: "2026-11-13T15:00:00.000Z" })).toBe('every member of pool "subs" is refused right now; the earliest back is work at 2026-11-13T15:00:00.000Z');
+    expect(poolRefusal("subs", undefined)).toBe('every member of pool "subs" is refused right now');
   });
 
   it("ranks a pool to its only member", () => {

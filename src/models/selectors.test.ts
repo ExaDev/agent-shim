@@ -191,6 +191,10 @@ describe("expanding a selector against live state", () => {
     for (const kind of SELECTOR_KINDS) expect(result).toContain(`auto/${kind}:x`);
   });
 
+  it("offers each kind's spelling with no trailing part when the selector names no class", () => {
+    expect(expanded("auto/both")).toBe('refused: "both" is ambiguous: it names a configuration profile, a pool, a provider, a model family; say which with auto/profile:both, auto/pool:both, auto/provider:both, auto/family:both');
+  });
+
   it("treats a session with no identity as never on the selected login", () => {
     expect(expanded("auto/me/claude-opus-5-5", {})).toBe("acct:me/claude-opus-5-5");
   });
