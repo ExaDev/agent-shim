@@ -60,6 +60,8 @@ const EXPECTED_REST_PATHS = [
   "/rest/config/provider/add",
   "/rest/config/provider/remove",
   "/rest/config/provider/set",
+  "/rest/config/route/set",
+  "/rest/config/route/unset",
   "/rest/config/rule/add",
   "/rest/config/rule/remove",
   "/rest/config/rule/set",

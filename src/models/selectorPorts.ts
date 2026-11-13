@@ -13,6 +13,7 @@ import { servedModelPorts } from "../frontdoor/cachedCatalogue";
 import { createProviderReads } from "../frontdoor/providerReads";
 import { readModels } from "../modelsStore";
 import { FAMILY_PREFIX, buildFamilies, familyNamed } from "./families";
+import { createRouteOverridesReader, type RouteOverridesRead } from "../routeOverridesStore";
 import type { SelectorLookup, SelectorPorts, SelectorRefusal } from "./selectors";
 import { targetRefs } from "./targets";
 
@@ -97,4 +98,9 @@ export function cliSelectorPorts(paths: LayoutPaths, now: () => number): Selecto
     providerTarget: (provider, target) => reads.selectorTarget(provider, target, {}),
     family: (key) => familyNamed(buildFamilies(targetRefs(paths), models), `${FAMILY_PREFIX}${key}`) !== undefined,
   };
+}
+
+/** The person's routing state the door reads per request besides the providers: what a selector names among profiles, identities and pools, and the route overrides, each read fresh (the overrides on change), so an edit reaches the next request with no restart. */
+export function doorRoutingState(paths: LayoutPaths, log: (line: string) => void): { readonly selectorState: SelectorStatePorts; readonly routeOverrides: () => RouteOverridesRead } {
+  return { selectorState: realSelectorStatePorts(paths, () => Date.now()), routeOverrides: createRouteOverridesReader(realFsPort, paths.routeOverridesFile, log) };
 }

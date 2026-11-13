@@ -166,6 +166,7 @@ describe("moveIdentity", () => {
         "move credentials/work.token to credentials/client.token",
         "move the cached credential of identity work to identity client, if one is stored",
         "rewrite config.json: pool subs, pool fleet, job burn, models",
+      "rewrite route-overrides.json: global, identities work -> client",
         "rewrite config-profiles/client.json: models",
         "rewrite directory-rules.json: rule /example/project, rule /example/pooled",
         "rewrite active-identity",
