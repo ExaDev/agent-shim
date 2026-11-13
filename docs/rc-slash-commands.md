@@ -98,7 +98,7 @@ That grant limits which tools the MCP server lists, and nothing else. It is not 
 
 ## Verified end to end
 
-On Claude Code 2.1.319 in the isolated self-hosted lab (`scripts/rc-self-host-lab.mts`, whose leak check found nothing forwarded upstream and no blind tunnel beyond the CLI's updater and marketplace dials), through the lab door's `frontdoor rc` verbs:
+On Claude Code 2.1.319 in the isolated self-hosted lab (`scripts/rc-self-host-lab.mts`, whose leak checks found nothing forwarded upstream and no blind tunnel dialled: the door refused the CLI's updater and marketplace dials), through the lab door's `frontdoor rc` verbs:
 
 - A supervised Remote Control session (a pool with `resumeOnLimit`, launched with `--remote-control`) was found by its `bridge-session` row, and every verb took the supervised route: goal get with none set, goal set, goal get with the goal, a second goal set naming the goal it replaced, goal clear, compact, and compact with instructions. A goal set starts a turn (its directive reaches the model); a request that arrives while that turn waits on a permission prompt is answered only once the session is idle, which is why every request is bounded by the wait.
 - On the same door, a session no supervisor owns took the self-hosted route for goal set, get and clear and for compact, which ended on a `trigger: "manual"` boundary.

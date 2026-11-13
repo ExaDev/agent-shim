@@ -5,7 +5,7 @@
 /**
  * The only variables a lab process inherits from the environment that runs the lab: enough for a shell, the toolchains on `PATH` and a terminal, and nothing that names an account, a configuration directory, a proxy or a credential. Everything else is left behind on purpose: an inherited `CLAUDE_CONFIG_DIR` makes the launched CLI run as the operator's real login (ExaDev/agent-shim#725), an inherited `HTTPS_PROXY` would route the CLI around the lab door, and the session running the lab carries provider keys of its own.
  */
-export const LAB_INHERITED_VARIABLES: readonly string[] = ["PATH", "USER", "LOGNAME", "SHELL", "LANG", "TERM", "TMPDIR"];
+export const LAB_INHERITED_VARIABLES: readonly string[] = ["PATH", "USER", "LOGNAME", "SHELL", "LANG", "TERM"];
 
 /**
  * The Claude Code version the lab runs unless told otherwise: the release the self-hosted surface's protocol and the isolation work were verified against. A pin the machine does not have installed fails the launch loudly rather than falling back to another version.
@@ -20,6 +20,8 @@ export interface LabEnvInputs {
   readonly claudeHome: string;
   /** The lab's own `HOME`, inside the lab directory: the CLI reads user-level files (`~/.claude/CLAUDE.md`, `~/.ssh`, `~/.gitconfig`) from `HOME` whatever its configuration directory, so the operator's are out of reach only under a home of the lab's own. */
   readonly userHome: string;
+  /** The lab's own temporary directory (`TMPDIR`), inside the lab directory: the launcher stages each launch's control plugin there, and the CLI writes its own scratch files there, so neither lands in a temporary directory other sessions share. */
+  readonly tmpDir: string;
   /** The directory, inside the lab directory, holding the `ssh` stand-in (see `SSH_STAND_IN`) that comes first on every lab process's `PATH`. */
   readonly stubBin: string;
 }
@@ -53,7 +55,7 @@ export function labRefusal(operator: Readonly<Record<string, string | undefined>
 }
 
 /**
- * The environment every lab process starts with: the inherited minimum, the lab's own `HOME`, `AGENT_SHIM_HOME` and `AGENT_SHIM_CLAUDE_HOME`, git's SSH transport disabled, an `ssh` stand-in first on `PATH`, and a terminal type the CLI renders against. `CLAUDE_CONFIG_DIR` is never in it, whatever the operator's environment holds.
+ * The environment every lab process starts with: the inherited minimum, the lab's own `HOME`, `TMPDIR`, `AGENT_SHIM_HOME` and `AGENT_SHIM_CLAUDE_HOME`, Claude Code's updater off, git's SSH transport disabled, an `ssh` stand-in first on `PATH`, and a terminal type the CLI renders against. `CLAUDE_CONFIG_DIR` is never in it, whatever the operator's environment holds.
  */
 export function labBaseEnv(operator: Readonly<Record<string, string | undefined>>, inputs: LabEnvInputs): Record<string, string> {
   const env: Record<string, string> = {};
@@ -66,6 +68,9 @@ export function labBaseEnv(operator: Readonly<Record<string, string | undefined>
   env.TERM = "xterm-256color";
   env.PATH = env.PATH === undefined ? inputs.stubBin : `${inputs.stubBin}:${env.PATH}`;
   env.HOME = inputs.userHome;
+  env.TMPDIR = inputs.tmpDir;
+  // The lab runs one pinned version, and its HOME's versions directory is a link to the operator's own: an update the CLI installed would land among the operator's installed versions and move their `claude` link, so the updater never runs in the lab.
+  env.DISABLE_AUTOUPDATER = "1";
   env.AGENT_SHIM_HOME = inputs.home;
   env.AGENT_SHIM_CLAUDE_HOME = inputs.claudeHome;
   // Git over SSH ignores HTTPS_PROXY, so the CLI's plugin marketplace clone (git@github.com) would dial out around the door: every SSH transport is replaced by one that fails before connecting, and git never prompts for what it lacks.
@@ -84,6 +89,17 @@ export function labLaunchVariables(transparentPort: number): Record<string, stri
     AGENT_SHIM_FRONTDOOR_CAPTURE: "1",
     AGENT_SHIM_CATEGORY_OVERRIDE: "all=false",
   };
+}
+
+/**
+ * The Remote Control route a lab session is brought up for (see `docs/rc-slash-commands.md`): `launched`, a session the launcher starts with no supervisor, which loads the in-process control plugin; `supervised`, a session of a pool with `resumeOnLimit`, which loads its supervisor's plugin; `self-hosted`, a launched session whose control record the lab removes once it is up, so no plugin reaches it and the door's own surface is the one route left.
+ */
+const LAB_ROUTES = ["launched", "supervised", "self-hosted"] as const;
+export type LabRoute = (typeof LAB_ROUTES)[number];
+
+/** Reads a `--route` value, or undefined for anything that is not a lab route. */
+export function parseLabRoute(value: string): LabRoute | undefined {
+  return LAB_ROUTES.find((route) => route === value);
 }
 
 /** Quotes one word for a POSIX shell: single quotes, with an embedded single quote closed, escaped and reopened. */
