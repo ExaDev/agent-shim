@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { CredentialSourceSchema, type CredentialCache, type CredentialCacheStore } from "./config/schema";
 import { formatAge } from "./usage/preflight";
+import { ownEntry } from "./ownEntry";
 
 const MS_PER_UNIT: Readonly<Record<string, number>> = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
 
@@ -45,7 +46,7 @@ export function ttlMs(cache: Readonly<CredentialCache>): number | undefined {
   if (cache.ttl === undefined) {
     return undefined;
   }
-  const multiplier = MS_PER_UNIT[cache.ttl.slice(-1)];
+  const multiplier = ownEntry(MS_PER_UNIT, cache.ttl.slice(-1));
   if (multiplier === undefined) {
     throw new Error(`credential cache ttl "${cache.ttl}" has no recognised unit`);
   }

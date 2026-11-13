@@ -6,6 +6,7 @@ import { AccountMetadataError, isIdentityId } from "./account";
 import { overageFactsOf, parseUnifiedRateLimit } from "./rateLimit";
 import { listLogSegments, readUsageSnapshot, segmentDay, segmentName, snapshotPath, UsageSnapshotError } from "./read";
 import { USAGE_SCHEMA_VERSION, UsageRecordSchema, UsageSnapshotSchema, type AccountMetadata, type ProviderQuota, type ProviderUsageState, type RateLimitState, type UsageRecord, type UsageSnapshot } from "./schema";
+import { ownEntry } from "../ownEntry";
 
 /** The filesystem effects the usage store's writer performs, all owner-only. */
 export type UsageFs = Pick<FarmFs, "mkdirPrivate" | "writeFilePrivate" | "appendFilePrivate" | "readFileUtf8" | "readdir" | "removeRecursive">;
@@ -165,12 +166,12 @@ export function createUsageStore(deps: UsageStoreDeps): UsageStore {
       fs.appendFilePrivate(path.join(paths.usageLogDir, segmentName(day, deps.pid)), `${JSON.stringify(record)}\n`);
       deps.onRecord?.(record);
       if (record.identity !== undefined) {
-        rewriteSnapshot(record.identity, (current) => ({ ...current?.providers, [record.provider]: foldProviderState(current?.providers[record.provider], record) }));
+        rewriteSnapshot(record.identity, (current) => ({ ...current?.providers, [record.provider]: foldProviderState(ownEntry(current?.providers, record.provider), record) }));
       }
     },
     recordQuota: (identity, provider, quota) =>
       rewriteSnapshot(identity, (current) => {
-        const state = current?.providers[provider];
+        const state = ownEntry(current?.providers, provider);
         if (current === undefined || state === undefined) {
           return undefined;
         }
@@ -179,7 +180,7 @@ export function createUsageStore(deps: UsageStoreDeps): UsageStore {
       }),
     recordRateLimit: (identity, provider, rateLimit) =>
       rewriteSnapshot(identity, (current) => {
-        const state: ProviderUsageState = current?.providers[provider] ?? {};
+        const state: ProviderUsageState = ownEntry(current?.providers, provider) ?? {};
         const keep = state.rateLimit !== undefined && state.rateLimit.observedAt.localeCompare(rateLimit.observedAt) > 0;
         const earlier = state.rateLimit;
         // An answer without a state to give (the usage endpoint has no plan windows for the account) leaves what response headers recorded in place and only notes that the question was asked, so the account's own responses stay its source.

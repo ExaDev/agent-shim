@@ -2,6 +2,7 @@ import { isIPv6 } from "node:net";
 import { domainToASCII } from "node:url";
 
 import { dnsNameProblem, isDottedDecimalIpv4 } from "./hostName";
+import { ownEntry } from "./ownEntry";
 
 /** The largest port a TCP listener can have. */
 export const MAX_TCP_PORT = 65535;
@@ -144,7 +145,7 @@ const DEFAULT_PORTS: Readonly<Record<string, number>> = { "http:": 80, "https:":
  */
 export function dialTargetOf(baseUrl: string): { readonly host: string; readonly port: number } {
   const url = new URL(baseUrl);
-  const defaultPort = DEFAULT_PORTS[url.protocol];
+  const defaultPort = ownEntry(DEFAULT_PORTS, url.protocol);
   if (defaultPort === undefined) {
     throw new Error(`${url.protocol} is not a scheme a provider's base URL can have`);
   }

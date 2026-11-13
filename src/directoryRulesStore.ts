@@ -6,6 +6,7 @@ import { readIdentity, identityNotFound } from "./identityStore";
 import { PoolNotFoundError, readPools } from "./poolStore";
 import { renameAccountModelRefs } from "./modelRefs";
 import type { LayoutPaths } from "./paths";
+import { ownEntry } from "./ownEntry";
 
 /** Raised by `removeDirectoryRule`, `updateDirectoryRule` and `rule show` when no rule matches the given path exactly. */
 export class DirectoryRuleNotFoundError extends CliError {
@@ -138,7 +139,7 @@ export function removeDirectoryRule(paths: LayoutPaths, rulePath: string): void 
 export function requireRuleSelector(paths: LayoutPaths, selector: string): void {
   if (selector.startsWith(POOL_SELECTOR_PREFIX)) {
     const poolName = selector.slice(POOL_SELECTOR_PREFIX.length);
-    if (readPools(paths)[poolName] === undefined) {
+    if (ownEntry(readPools(paths), poolName) === undefined) {
       throw new PoolNotFoundError(poolName);
     }
   } else if (readIdentity(paths, selector) === undefined) {

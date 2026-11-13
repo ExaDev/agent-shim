@@ -2,6 +2,7 @@ import { QUOTA_EXPIRING_EVENT_SOURCE, USAGE_EVENT_SOURCE, UsageChangeEventSchema
 import type { DoorEventHub } from "./eventHub";
 import { FIVE_HOUR_WINDOW_MS, SEVEN_DAY_WINDOW_MS } from "../usage/windowLengths";
 import type { UsageSnapshot } from "../usage/schema";
+import { ownEntry } from "../ownEntry";
 
 /**
  * The expiring-quota publisher: an identity's window with allowance still unspent that is about to reset, published once when it enters its final span, so a scheduler can spend what would otherwise be lost. Computed from the same per-identity snapshots and unified windows the pool ranking reads (`rankPool`'s own inputs), without the ranking itself: the event is finer than a pick, one identity, one provider, one window, independent of any pool.
@@ -49,7 +50,7 @@ export function createQuotaExpiringPublisher(hub: DoorEventHub, deps: { readonly
   const windowsOf = (snapshot: UsageSnapshot): readonly { readonly provider: string; readonly view: WindowView }[] => {
     const views: { provider: string; view: WindowView }[] = [];
     for (const provider of Object.keys(snapshot.providers).sort()) {
-      const unified = snapshot.providers[provider]?.rateLimit?.unified;
+      const unified = ownEntry(snapshot.providers, provider)?.rateLimit?.unified;
       // A window without both a utilisation and a reset instant cannot be judged for expiry, so it is not one of this source's facts; the schema's own optionality is the honest statement of that.
       const fiveHour = unified?.fiveHour;
       if (fiveHour?.utilization !== undefined && fiveHour.resetsAt !== undefined) {

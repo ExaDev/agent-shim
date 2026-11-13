@@ -145,5 +145,5 @@ export function inventoryKeys(): readonly string[] {
 
 /** The inventory's keys that `PARITY` has no entry for: what remains to be built or ruled out. */
 export function parityGaps(): readonly string[] {
-  return inventoryKeys().filter((key) => !(key in PARITY));
+  return inventoryKeys().filter((key) => !(Object.hasOwn(PARITY, key)));
 }

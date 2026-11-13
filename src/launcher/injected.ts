@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import { parseAnthropicCustomHeaders, withoutAnthropicCustomHeaders } from "../headroom/headers";
+import { ownEntry } from "../ownEntry";
 
 /**
  * The environment variable a launcher leaves in its child's environment, naming what it wrote there itself: a JSON object from each variable to the SHA-256 of the value written, with two kinds of entry for variables whose value the person's own settings share: `ANTHROPIC_CUSTOM_HEADERS:<lowercased header name>` holds the digest of one custom header's value, and `<NO_PROXY or no_proxy>,appended` lists, in the clear, the lowercased hosts the launcher put in that bypass list (they are not secret, and a digest per host would make the marker grow several times faster than the list). A launch started from inside that child reads it to tell what its parent launcher injected, which it must not inherit, from what the person set, which it must treat as theirs. The only things written to the environment and not recorded are `CLAUDE_CONFIG_DIR` (the child's own directory, replaced by every launch that resolves an identity) and the variables a launch unsets.
@@ -103,7 +104,7 @@ export function recordInjections(base: Readonly<Environment>): InjectionRecorder
 
 /** `value` (a comma-separated host list) without the hosts the marker records for `list`; `value` itself when none is. */
 function withoutRecordedHosts(list: string, value: string, digests: Readonly<Record<string, string>>): string {
-  const recordedHosts = new Set(digests[listKey(list)]?.split(","));
+  const recordedHosts = new Set(ownEntry(digests, listKey(list))?.split(","));
   const entries = value.split(",");
   const kept = entries.filter((entry) => !recordedHosts.has(entry.trim().toLowerCase()));
   return kept.length === entries.length ? value : kept.join(",");
@@ -129,7 +130,7 @@ export function withoutInjected(env: Readonly<Environment>): Environment {
       return [[name, value]];
     }
     if (name === CUSTOM_HEADERS_ENV) {
-      const remaining = withoutAnthropicCustomHeaders(value, (entry) => digests[`${HEADER_KEY_PREFIX}${entry.name.toLowerCase()}`] === digest(entry.value));
+      const remaining = withoutAnthropicCustomHeaders(value, (entry) => ownEntry(digests, `${HEADER_KEY_PREFIX}${entry.name.toLowerCase()}`) === digest(entry.value));
       // A block emptied by the removal goes with it; one that was empty to begin with is the person's and stays.
       return remaining !== value && remaining.trim() === "" ? [] : [[name, remaining]];
     }
@@ -137,7 +138,7 @@ export function withoutInjected(env: Readonly<Environment>): Environment {
       const remaining = withoutRecordedHosts(name, value, digests);
       return remaining !== value && remaining.split(",").every((entry) => entry.trim() === "") ? [] : [[name, remaining]];
     }
-    return digests[name] === digest(value) ? [] : [[name, value]];
+    return ownEntry(digests, name) === digest(value) ? [] : [[name, value]];
   });
   return Object.fromEntries(entries);
 }

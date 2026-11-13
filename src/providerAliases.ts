@@ -5,6 +5,7 @@ import { ConfigValidationError } from "./config/load";
 import { readJson, writeJsonAtomic } from "./config/store";
 import type { FsPort } from "./launcher/ports";
 import type { LayoutPaths } from "./paths";
+import { ownEntry } from "./ownEntry";
 
 /**
  * The former names of renamed providers, by the old name: `{ "z": "zai" }` means a request or a launch that names `z` is served by the provider now called `zai`.
@@ -52,7 +53,7 @@ export function canonicalProviderName(name: string, defined: (name: string) => b
   if (defined(name)) {
     return name;
   }
-  return aliases()[name] ?? name;
+  return ownEntry(aliases(), name) ?? name;
 }
 
 /**
@@ -85,7 +86,7 @@ export function aliasesOf(aliases: Readonly<ProviderAliases>, name: string): rea
 /** Forgets the former name `alias`, so a session still launched under it stops being served. Throws `ProviderAliasNotFoundError` when it is not recorded. */
 export function removeProviderAlias(paths: LayoutPaths, alias: string): void {
   const aliases = readProviderAliases(paths);
-  if (!(alias in aliases)) {
+  if (!(Object.hasOwn(aliases, alias))) {
     throw new ProviderAliasNotFoundError(alias);
   }
   writeProviderAliases(paths, Object.fromEntries(Object.entries(aliases).filter(([name]) => name !== alias)));

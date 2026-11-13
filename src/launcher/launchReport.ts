@@ -7,6 +7,7 @@ import { effectiveWindow, formatAge } from "../usage/preflight";
 import { formatPeriod } from "../usage/resets";
 import type { AccountMetadata, QuotaWindow, UsageSnapshot } from "../usage/schema";
 import type { ReportRow } from "./ports";
+import { ownEntry } from "../ownEntry";
 
 /** What a launch reads to say which account it bills and how much of that account's quota is left, as recorded: nothing here is fetched at launch. */
 export interface BillingFacts {
@@ -99,7 +100,7 @@ export function accountRows(billing: Readonly<BillingFacts> | undefined): readon
     return [];
   }
   if (billing.provider !== undefined) {
-    const quota = billing.snapshot?.providers[billing.provider]?.quota;
+    const quota = ownEntry(billing.snapshot?.providers, billing.provider)?.quota;
     const parts = [quota?.account?.email, quota?.level].filter((part) => part !== undefined);
     return parts.length === 0 ? [] : [{ label: "account", value: parts.join(", "), detail: `provider ${billing.provider}` }];
   }
@@ -120,7 +121,7 @@ export function quotaRows(billing: Readonly<BillingFacts> | undefined): readonly
     return [];
   }
   const { nowMs } = billing;
-  const state = billing.snapshot?.providers[billing.provider ?? ANTHROPIC_PROVIDER];
+  const state = ownEntry(billing.snapshot?.providers, billing.provider ?? ANTHROPIC_PROVIDER);
   const recorded =
     billing.provider === undefined
       ? {

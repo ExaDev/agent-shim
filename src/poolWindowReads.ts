@@ -4,6 +4,7 @@ import { referencesFact } from "./resolve/conditions";
 import { ANTHROPIC_PROVIDER } from "./usage/middleware";
 import { soleOverageWindow } from "./usage/rateLimit";
 import type { UsageSnapshot } from "./usage/schema";
+import { ownEntry } from "./ownEntry";
 
 /** A quota window a condition, compaction trigger or job can read, named as the condition facts name it. */
 type QuotaWindowName = "fiveHour" | "sevenDay" | "extraUsage";
@@ -43,7 +44,7 @@ function identitiesOf(selector: string, pools: Readonly<Record<string, Pool>>, v
   if (nested === undefined) {
     return [selector];
   }
-  const pool = pools[nested];
+  const pool = ownEntry(pools, nested);
   if (pool === undefined || visited.has(nested)) {
     return [];
   }

@@ -10,6 +10,7 @@ import { realMemberProviderResolver } from "./poolProviderWiring";
 import { PoolNotFoundError } from "./poolStore";
 import { realFarmFs, realFsPort } from "./realPorts";
 import type { PoolPickReport } from "./usage/pickReportSchema";
+import { ownEntry } from "./ownEntry";
 
 /** What `resolveLaunchSelection` needs from its caller. */
 export interface ResolveLaunchSelectionParams {
@@ -65,7 +66,7 @@ export function selectLaunch(params: ResolveLaunchSelectionParams, loaded: Loade
   let poolPick: PoolPickReport | undefined;
   if (decidedIdentity.pool !== undefined) {
     const pools = loaded.globalConfig?.pools ?? {};
-    if (pools[decidedIdentity.pool] === undefined) {
+    if (ownEntry(pools, decidedIdentity.pool) === undefined) {
       throw new PoolNotFoundError(decidedIdentity.pool);
     }
     const providerOf = realMemberProviderResolver({ paths, cwd, env: params.env, ...(params.configProfile === undefined ? {} : { cliFlagConfigProfile: params.configProfile }), loaded });

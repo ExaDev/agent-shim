@@ -6,6 +6,7 @@ import { CONTEXT_MARKER_1M, withoutContextMarker } from "../models/identity";
 import { FAMILY_PREFIX, accountRefsOf, buildFamilies, expandFamilyMembers, familyMode, sharedFamilies } from "../models/families";
 import { expandMembers } from "../modelsStore";
 import { TIER_ENV_VARIABLES } from "../models/tiers";
+import { ownEntry } from "../ownEntry";
 
 type Tier = ClaudeTier;
 
@@ -105,7 +106,7 @@ function codexRows(provider: Extract<Provider, { kind: "codex" }>): readonly Mod
 function httpRows(provider: Extract<Provider, { kind?: "http" }>): readonly ModelPickerRow[] {
   const env = provider.env ?? {};
   const table = CLAUDE_TIERS.flatMap((tier): readonly (readonly [Tier, readonly string[]])[] => {
-    const model = env[TIER_ENV_VARIABLES[tier]];
+    const model = ownEntry(env, TIER_ENV_VARIABLES[tier]);
     return model === undefined || model === "" ? [] : [[tier, [model]]];
   });
   return rowsOfTable(table);
@@ -180,7 +181,7 @@ function safeExpand(name: string, models: ModelsConfig): readonly string[] {
   try {
     return expandMembers(name, models);
   } catch {
-    return models.virtual?.[name]?.members ?? [];
+    return ownEntry(models.virtual, name)?.members ?? [];
   }
 }
 

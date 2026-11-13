@@ -1,4 +1,5 @@
 import { decodedLiteral, skipWhitespace, startOfBody } from "./topLevelModel";
+import { ownEntry } from "../ownEntry";
 
 /**
  * The one structural walk over a whole request body, as text edits' coordinates: the members of its top-level object with the offsets of their values. The text is the body's bytes viewed one character each (`latin1`), the view the offsets of `topLevelModel` are in: the walk looks only at ASCII structure, which a multi-byte character never contains, so its offsets are right in that view and a name it decodes is the characters of that view (a multi-byte character is several), which only the ASCII names the door compares against survive.
@@ -99,7 +100,7 @@ function endOfValue(text: string, from: number): number | undefined {
         return at;
       }
       at = skipWhitespace(text, at);
-      if (text[at] === CLOSERS[container]) {
+      if (text[at] === ownEntry(CLOSERS, container)) {
         open.pop();
         at += 1;
         continue;

@@ -61,6 +61,7 @@ import type { RunPort } from "./launcher/ports";
 import { lineariseProfile, type ProfileLoader, type ProfileSource } from "./resolve/extends";
 import { claudeCodeVersionGate } from "./supervise/verifiedVersions";
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
+import { ownEntry } from "./ownEntry";
 
 export const DOCTOR_SEVERITIES = ["pass", "warn", "fail"] as const;
 export type DoctorSeverity = (typeof DOCTOR_SEVERITIES)[number];
@@ -435,7 +436,7 @@ function pushLegacyName(
   push: (section: DoctorSection, severity: DoctorSeverity, message: string, subject?: string) => void,
   params: Pick<RunDoctorParams, "env" | "rootPath">,
 ): void {
-  const legacyVariables = Object.keys(params.env).filter((name) => name.startsWith(LEGACY_ENV_PREFIX) && params.env[name] !== undefined).sort();
+  const legacyVariables = Object.keys(params.env).filter((name) => name.startsWith(LEGACY_ENV_PREFIX) && ownEntry(params.env, name) !== undefined).sort();
   if (legacyVariables.length === 0 && path.basename(params.rootPath) !== LEGACY_HOME_DIRNAME) {
     push("legacy-name", "pass", "Nothing here still uses the former `claude-use` name.");
     return;
@@ -645,7 +646,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     const missing = pool.identities.filter((member) => poolNameOf(poolMemberIdentity(member)) === undefined && !validIdentityAgents.has(poolMemberIdentity(member)));
     const undefinedPools = pool.identities.flatMap((member) => {
       const nested = poolNameOf(poolMemberIdentity(member));
-      return nested === undefined || nested in pools ? [] : [nested];
+      return nested === undefined || Object.hasOwn(pools, nested) ? [] : [nested];
     });
     if (missing.length === 0 && undefinedPools.length === 0) {
       push("pool", "pass", `${poolName} is valid (${pool.identities.map(poolMemberIdentity).join(", ")}).`, poolName);
@@ -678,7 +679,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   // A window an identity does not receive answers nothing, so whatever reads it for that identity stays undecided or idle without failing.
   const { usageSnapshots } = params;
   if (usageSnapshots !== undefined) {
-    const windowsOf = (identityName: string) => receivedWindows(usageSnapshots[identityName]);
+    const windowsOf = (identityName: string) => receivedWindows(ownEntry(usageSnapshots, identityName));
     for (const finding of poolWindowReadFindings(pools, windowsOf)) {
       push("pool", "warn", finding.message, finding.subject);
     }
@@ -690,7 +691,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   /** Whether what a rule or the active-identity file selects (an identity, or `pool:<name>`) exists. */
   const selectionExists = (selector: string): boolean => {
     const poolName = poolNameOf(selector);
-    return poolName === undefined ? validIdentityAgents.has(selector) : poolName in pools;
+    return poolName === undefined ? validIdentityAgents.has(selector) : Object.hasOwn(pools, poolName);
   };
 
   // Every http provider's base URL is probed in one batch before any finding is pushed, up to `MAX_CONCURRENT_PROBES` distinct targets at once, so their bounds run together within a round and add only across rounds.

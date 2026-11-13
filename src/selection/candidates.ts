@@ -1,6 +1,7 @@
 import type { SelectionCandidate } from "./engine";
 import type { TargetObservation } from "./signals";
 import { blendedPricePerMTok } from "./signals";
+import { ownEntry } from "../ownEntry";
 
 /** One window's facts as the candidate builder reads them: the shape `windowFacts` returns. */
 export interface CandidateWindowFacts {
@@ -35,13 +36,13 @@ export function candidateOf(ref: string, order: number, facts: CandidateFacts, i
       ? undefined
       : Math.max(
           ...present.map((window) => {
-            const period = WINDOW_PERIOD_HOURS[window.name] ?? Number.NaN;
+            const period = ownEntry(WINDOW_PERIOD_HOURS, window.name) ?? Number.NaN;
             return period > 0 && window.hoursUntilReset > 0 ? window.remaining / (window.hoursUntilReset / period) : Number.NaN;
           }),
         );
   // The observed pace is the window's own: the allowance spent so far over the time elapsed since the window opened. Projected forward it says whether the remainder lasts to the reset, which is what separates a candidate with allowance left from one that will not have it when the request is served.
   const runsDry = present.some((window) => {
-    const period = WINDOW_PERIOD_HOURS[window.name] ?? Number.NaN;
+    const period = ownEntry(WINDOW_PERIOD_HOURS, window.name) ?? Number.NaN;
     const elapsed = period - window.hoursUntilReset;
     if (!(elapsed >= period * MIN_PROJECTION_ELAPSED_SHARE) || window.hoursUntilReset <= 0) {
       return false;
