@@ -300,6 +300,11 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
   /** `base` placed on the Anthropic route under its bare model name, for a request that asked for `requested` as `anthropic/<model>`. */
   const toAnthropic = async (base: RoutedRequest, requested: string): Promise<{ readonly resolution: RouteResolution; readonly served: string }> => {
     const served = requested.slice(ANTHROPIC_PREFIX.length);
+    // `anthropic/` alone names no model, and the Anthropic route would be sent an empty one.
+    if (withoutContextMarker(served).trim() === "") {
+      abandonBody(base.body);
+      return { resolution: { ok: false, status: HTTP_STATUS.badRequest, message: `the model name ${JSON.stringify(requested)} names no model after ${JSON.stringify(ANTHROPIC_PREFIX)}: write ${ANTHROPIC_PREFIX}<model>` }, served };
+    }
     // The rewrite below changes only the first of two model fields, so the head is inspected for a second one first: this site always rewrites, so it always inspects those bytes (the whole body when it ends sooner).
     const found = await scanRequestHead(base);
     const scan = await scanRequestHead(found.replayed, false, REQUEST_SCAN_CAP_BYTES);

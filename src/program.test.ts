@@ -1,91 +1,18 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { Help, type Command } from "commander";
 import { isRouterProvider, type Provider } from "./config/schema";
 import { STATUSLINE_HEADER_SEGMENTS } from "./config/statusline";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { EXIT_FAILURE, EXIT_USAGE } from "./cliError";
-import { reportFatalError } from "./cliReport";
 import { addIdentity, readActiveIdentity, readIdentity, useIdentity } from "./identityStore";
 import { readJobs } from "./jobStore";
 import { createProfile, readGlobalConfig, readProfile } from "./configProfilesStore";
 import { readProvider } from "./providersStore";
 import { listDirectoryRules } from "./directoryRulesStore";
-import { createRouteOverridesReader, readRouteOverrides } from "./routeOverridesStore";
-import { realFsPort } from "./realPorts";
-import { buildLayoutPaths, type LayoutPaths } from "./paths";
-import { buildProgram } from "./program";
-import { fakeCommandDeps } from "./test-helpers";
-
-let root: string;
-let paths: LayoutPaths;
-
-beforeEach(() => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-program-"));
-  paths = buildLayoutPaths(root);
-  process.exitCode = undefined;
-});
-
-afterEach(() => {
-  vi.restoreAllMocks();
-  process.exitCode = undefined;
-  fs.rmSync(root, { recursive: true, force: true });
-});
-
-interface CliResult {
-  readonly code: number;
-  readonly stdout: string;
-  readonly stderr: string;
-}
-
-type RunClaude = (args: readonly string[]) => Promise<void>;
-
-function program(runClaude: RunClaude = vi.fn<RunClaude>(), options: Parameters<typeof fakeCommandDeps>[1] = {}): Command {
-  return buildProgram({ ...fakeCommandDeps(paths, options), runClaude });
-}
-
-/** Runs one `agent-shim` invocation against the throwaway layout the way `src/cli.ts` does, capturing both streams and the exit status `reportFatalError` or the command itself decided. */
-async function cli(argv: readonly string[], options: Parameters<typeof fakeCommandDeps>[1] = {}): Promise<CliResult> {
-  const out: string[] = [];
-  const err: string[] = [];
-  vi.spyOn(console, "log").mockImplementation((...args: readonly unknown[]) => {
-    out.push(`${args.map(String).join(" ")}\n`);
-  });
-  vi.spyOn(console, "error").mockImplementation((...args: readonly unknown[]) => {
-    err.push(`${args.map(String).join(" ")}\n`);
-  });
-  vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
-    out.push(String(chunk));
-    return true;
-  });
-  vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
-    err.push(String(chunk));
-    return true;
-  });
-  let code: number;
-  try {
-    await program(vi.fn<RunClaude>(), options).parseAsync([...argv], { from: "user" });
-    code = typeof process.exitCode === "number" ? process.exitCode : 0;
-  } catch (error) {
-    code = reportFatalError(error, {
-      writeErr: (line) => {
-        err.push(`${line}\n`);
-      },
-      env: {},
-    });
-  } finally {
-    vi.restoreAllMocks();
-    process.exitCode = undefined;
-  }
-  return { code, stdout: out.join(""), stderr: err.join("") };
-}
-
-function parseJson(text: string): unknown {
-  return JSON.parse(text);
-}
+import { cli, parseJson, paths, program, root, type RunClaude } from "./programTestWorld";
 
 function subcommandNames(command: Command, name: string): string[] {
   const noun = command.commands.find((candidate) => candidate.name() === name);
@@ -524,117 +451,6 @@ describe("profile commands", () => {
     expect((await cli(["profile", "remove", "acme"])).code).toBe(EXIT_USAGE);
     expect((await cli(["profile", "remove", "acme", "--yes"])).code).toBe(0);
     expect(readProfile(paths, "acme")).toBeUndefined();
-  });
-});
-
-describe("route commands", () => {
-  const addZ = ["provider", "add", "z", "--display-name", "z.ai", "--base-url", "https://api.z.ai/api/anthropic", "--credential", "env:Z_API_TOKEN"];
-
-  it("sets, lists and unsets an override per scope, with one report object under --json", async () => {
-    expect((await cli(addZ)).code).toBe(0);
-    expect((await cli(["identity", "add", "work"])).code).toBe(0);
-    const set = await cli(["route", "set", "opus", "z/glm-5.3", "--json"]);
-    expect(set.code).toBe(0);
-    expect(parseJson(set.stdout)).toEqual({ action: "updated", kind: "route", name: "opus", value: { scope: "global", model: "opus", target: "z/glm-5.3" } });
-    expect((await cli(["route", "set", "claude-sonnet-5-5", "auto/z/sonnet", "--identity", "work"])).code).toBe(0);
-    expect((await cli(["route", "set", "haiku", "z/air", "--session", "abc"])).code).toBe(0);
-    const list = await cli(["route", "list", "--json"]);
-    expect(parseJson(list.stdout)).toEqual([
-      { scope: "session:abc", model: "haiku", target: "z/air" },
-      { scope: "identity:work", model: "claude-sonnet-5-5", target: "auto/z/sonnet" },
-      { scope: "global", model: "opus", target: "z/glm-5.3" },
-    ]);
-    expect((await cli(["route", "remove", "opus"])).code).toBe(EXIT_USAGE);
-    expect(parseJson((await cli(["route", "remove", "opus", "--yes", "--json"])).stdout)).toEqual({ action: "removed", kind: "route", name: "opus" });
-    expect((await cli(["route", "list"])).stdout).toContain("identity:work  claude-sonnet-5-5 -> auto/z/sonnet");
-    expect(readRouteOverrides(paths)).toEqual({ schemaVersion: 1, identities: { work: { "claude-sonnet-5-5": "auto/z/sonnet" } }, sessions: { abc: { haiku: "z/air" } } });
-  });
-
-  it.each<[readonly string[]]>([[["--session", ""]], [["--identity", ""]], [["--provider", ""]]])("refuses an empty scope name, %j, and leaves no file a reader cannot use", async (scope) => {
-    const result = await cli(["route", "set", "opus", "claude-sonnet-5-5", ...scope]);
-    expect(result.code).not.toBe(0);
-    expect(result.stderr).toContain("empty");
-    expect(fs.existsSync(paths.routeOverridesFile)).toBe(false);
-  });
-
-  it("repairs a file an entry it cannot read made unusable, by removing that entry", async () => {
-    fs.writeFileSync(paths.routeOverridesFile, JSON.stringify({ schemaVersion: 1, global: { haiku: "claude-haiku-5-1" }, sessions: { "": { opus: "claude-sonnet-5-5" } } }));
-    expect(createRouteOverridesReader(realFsPort, paths.routeOverridesFile, () => undefined)()).toHaveProperty("fault");
-    expect((await cli(["route", "remove", "opus", "--session", "", "--yes"])).code).toBe(0);
-    expect(createRouteOverridesReader(realFsPort, paths.routeOverridesFile, () => undefined)()).toEqual({ table: { schemaVersion: 1, global: { haiku: "claude-haiku-5-1" } } });
-  });
-
-  it("says when no override is set", async () => {
-    expect((await cli(["route", "list"])).stdout).toBe("No route overrides are set.\n");
-  });
-
-  it.each<[readonly string[], string]>([
-    [["route", "set", "z/opus", "z/glm"], "bare Claude name"],
-    [["route", "set", "opus", "nowhere/glm"], 'no provider "nowhere"'],
-    [["route", "set", "opus", "auto"], "<provider>/auto"],
-    [["route", "set", "opus", "auto/nothing"], "names nothing"],
-    [["route", "set", "opus", "acct:ghost/opus"], 'no identity "ghost"'],
-    [["route", "set", "opus", "z/glm", "--identity", "ghost"], 'no identity "ghost"'],
-    [["route", "set", "opus", "z/glm", "--provider", "ghost"], 'no provider "ghost"'],
-    [["route", "set", "opus", "z/glm", "--identity", "a", "--session", "b"], "at most one"],
-    [["route", "remove", "opus", "--yes"], "No override"],
-  ])("refuses %j, naming why, and writes nothing", async (argv, fragment) => {
-    expect((await cli(addZ)).code).toBe(0);
-    const result = await cli(argv);
-    expect(result.code).not.toBe(0);
-    expect(result.stderr).toContain(fragment);
-    expect(fs.existsSync(paths.routeOverridesFile)).toBe(false);
-  });
-});
-
-describe("model explain for a selector and a Claude name", () => {
-  const addZ = ["provider", "add", "z", "--display-name", "z.ai", "--base-url", "https://api.z.ai/api/anthropic", "--credential", "env:Z_API_TOKEN", "--env", "ANTHROPIC_DEFAULT_SONNET_MODEL=glm-4.7"];
-
-  it("says what a selector is routed as, or why it is refused", async () => {
-    expect((await cli(addZ)).code).toBe(0);
-    expect(parseJson((await cli(["model", "explain", "auto/z/sonnet", "--json"])).stdout)).toEqual({ name: "auto/z/sonnet", kind: "provider", routedAs: "z/glm-4.7" });
-    expect((await cli(["model", "explain", "auto/z/sonnet"])).stdout).toContain("auto/z/sonnet selects the provider and is routed as z/glm-4.7");
-    const refused = parseJson((await cli(["model", "explain", "auto/nothing", "--json"])).stdout);
-    expect(refused).toMatchObject({ name: "auto/nothing" });
-    expect(JSON.stringify(refused)).toContain("names nothing");
-  });
-
-  it("names the route override that applies to a Claude name in the given scopes, what its target is routed as, and what it outranks", async () => {
-    expect((await cli(addZ)).code).toBe(0);
-    expect((await cli(["identity", "add", "work"])).code).toBe(0);
-    expect((await cli(["route", "set", "opus", "z/glm-5.3"])).code).toBe(0);
-    expect((await cli(["route", "set", "claude-opus-5-5", "auto/z/sonnet", "--identity", "work"])).code).toBe(0);
-    expect(parseJson((await cli(["model", "explain", "claude-opus-5-5", "--identity", "work", "--json"])).stdout)).toEqual({
-      name: "claude-opus-5-5",
-      override: { scope: "identity:work", target: "auto/z/sonnet", match: "exact", routedAs: "z/glm-4.7" },
-      outranks: [{ scope: "global", target: "z/glm-5.3" }],
-    });
-    const text = (await cli(["model", "explain", "claude-opus-5-1"])).stdout;
-    expect(text).toContain("claude-opus-5-1 is routed to z/glm-5.3 by the global override of its class");
-    expect((await cli(["model", "explain", "claude-haiku-5-5"])).stdout).toContain("No route override applies to claude-haiku-5-5");
-    expect((await cli(["route", "set", "haiku", "auto/z", "--session", "s1"])).code).toBe(0);
-    expect(parseJson((await cli(["model", "explain", "claude-haiku-5-5", "--session", "s1", "--json"])).stdout)).toMatchObject({ override: { scope: "session:s1", target: "auto/z" } });
-    expect((await cli(["route", "set", "sonnet", "auto/work/sonnet"])).code).toBe(0);
-    expect((await cli(["model", "explain", "claude-sonnet-5-5", "--identity", "work"])).stdout).toContain("which is refused:");
-    expect(parseJson((await cli(["model", "explain", "claude-sonnet-5-5", "--json"])).stdout)).toMatchObject({ override: { routedAs: "acct:work/sonnet" } });
-  });
-
-  it("compares an account selector with the identity --identity names", async () => {
-    expect((await cli(["identity", "add", "work"])).code).toBe(0);
-    expect(parseJson((await cli(["model", "explain", "auto/work/claude-opus-5-5", "--json"])).stdout)).toMatchObject({ routedAs: "acct:work/claude-opus-5-5" });
-    expect(parseJson((await cli(["model", "explain", "auto/work/claude-opus-5-5", "--identity", "work", "--json"])).stdout)).toMatchObject({ routedAs: "anthropic/claude-opus-5-5" });
-  });
-
-  it("still explains a virtual model, as text and as JSON", async () => {
-    expect((await cli(addZ)).code).toBe(0);
-    expect((await cli(["model", "add", "fast", "--mode", "ordered", "--member", "z/glm-5.3"])).code).toBe(0);
-    expect((await cli(["model", "explain", "fast"])).stdout).toContain("fast (ordered) chooses z/glm-5.3:");
-    expect(parseJson((await cli(["model", "explain", "fast", "--json"])).stdout)).toMatchObject({ name: "fast", mode: "ordered", chooses: "z/glm-5.3", candidates: ["z/glm-5.3"] });
-    expect((await cli(["identity", "add", "work"])).code).toBe(0);
-    expect((await cli(["model", "add", "mine", "--mode", "ordered", "--member", "acct:work/opus"])).code).toBe(0);
-    const accountOnly = (await cli(["model", "explain", "mine"])).stdout;
-    expect(accountOnly).toContain("mine (ordered) chooses nothing by quota:");
-    expect(accountOnly).toContain("served by relaunching the session");
   });
 });
 
