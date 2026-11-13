@@ -61,6 +61,11 @@ describe("a provider may not be called a bare model name", () => {
     expect(warned.map((finding) => finding.message)).toContainEqual(expect.stringContaining("is called a bare model name"));
   });
 
+  it("has the doctor name the selector spelling for a provider called auto, whose qualified name is the selector grammar", () => {
+    const report = runDoctor(baseParams({ providers: [provider("auto", { displayName: "X", baseUrl: "https://example.test/anthropic", credential: { sources: [{ literal: "t" }] } })] }));
+    expect(findingsFor(report, "provider").map((finding) => finding.message).join("\n")).toContain('"auto/provider:auto/<model>"');
+  });
+
   it("has the doctor say nothing of the sort about a free name", () => {
     const report = runDoctor(baseParams({ providers: [provider("spark", { displayName: "X", baseUrl: "https://example.test/anthropic", credential: { sources: [{ literal: "t" }] } })] }));
     expect(findingsFor(report, "provider").map((finding) => finding.message).join("\n")).not.toContain("bare model name");

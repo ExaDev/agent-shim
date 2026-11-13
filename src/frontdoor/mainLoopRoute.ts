@@ -6,7 +6,8 @@ import type { RouteResolution, ServedModelReport } from "./pipeline";
 import { RequestClassSchema, type RequestClass } from "../usage/schema";
 import { AUTO_MODEL } from "../models/reservedModelNames";
 import { PROVIDER_PATH_PREFIX, internalHeaderValue, parseProviderPath, type RoutedRequest } from "./route";
-import { withoutContentLength } from "./contentLength";
+import { abandonBody } from "./cappedBody";
+import { declaredLength, withoutContentLength } from "./contentLength";
 import { REQUEST_SCAN_CAP_BYTES, type RequestScan, scanRequestHead } from "./requestScan";
 import { isMessagesInferencePath, isMessagesRequest } from "./messagesBodyLimit";
 import { AMBIGUOUS_MODEL_MESSAGE, topLevelModel } from "./topLevelModel";
@@ -201,7 +202,23 @@ export interface MainLoopRoutingDeps {
   readonly loginOf: (session: RoutedRequest["session"]) => string;
   /** Whether a provider file defines `name`: `anthropic/<model>` names the Anthropic route only when no provider is called `anthropic`. */
   readonly definesProvider: (name: string) => boolean;
+  /** Replaces a Messages request's model name with the one it is routed by before anything else reads it (a selector's expansion, a route override's target), or leaves it, for a body no longer than `bodyLimitBytes` declares (a body that declares more is left to the resolver, which refuses it before reading any of it). Absent, no name is replaced. */
+  readonly rename?: { readonly model: RenameModel; readonly bodyLimitBytes: number };
 }
+
+/** What a renaming knows of the request whose model it may replace. */
+interface RenameContext {
+  readonly session: RoutedRequest["session"];
+  /** Whether the request is the main loop's (class `main`, or no class and no agent id). */
+  readonly main: boolean;
+  /** Whether the request's path names no provider: the session's own request, as against one a routing layer or the headroom hop scoped. */
+  readonly unscoped: boolean;
+  /** The provider the request would reach before any renaming: the launch's own, else the provider the launch's main loop was last served on; undefined on the Anthropic route. Asked only when needed, since it reads the route context. */
+  readonly routeProvider: () => string | undefined;
+}
+
+/** Replaces one model name: the name to route by, a refusal the request is answered with (a 400), or undefined to leave the name as it is. */
+export type RenameModel = (model: string, context: Readonly<RenameContext>) => { readonly name: string } | { readonly refusal: string } | undefined;
 
 /** The provider a served request target names, or undefined for a bare target (the Anthropic route, or a path the session's launch provider scoped). */
 function servedProviderOf(url: string): string | undefined {
@@ -295,7 +312,47 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
     return { resolution: { ...resolution, request: resolution.request, ...(requested === undefined ? {} : { requestedModel: requested }) }, requested, served: choice.kind === "mapped" ? choice.model : requested, credential };
   };
 
-  return async (request) => {
+  /**
+   * `request` with its model renamed by `deps.rename`, and the name it asked for, when the rename replaced it: only a Messages request carries a model, and only its head is read and rewritten, the rest streaming through unread. A request that names the model field twice is refused where it would be rewritten, since only the first field would change. A request the rename leaves alone goes on as the scan's replay, its bytes as they came.
+   */
+  const renamed = async (request: RoutedRequest, rename: RenameModel, bodyLimitBytes: number): Promise<{ readonly request: RoutedRequest; readonly asked?: string } | { readonly refused: RouteResolution }> => {
+    const path = new URL(request.url, "http://127.0.0.1").pathname;
+    // A body that declares more than the limit is refused by the resolver from its declared length before any of it is read, so it is not read here either.
+    if (!isMessagesRequest(request.method, path) || declaredLength(request.headers) > bodyLimitBytes) {
+      return { request };
+    }
+    const found = await scanRequestHead(request);
+    const asked = found.model;
+    const requestClass = requestClassOf(request.headers);
+    const { launch } = request.session;
+    const decided = asked === undefined ? undefined : rename(asked, {
+      session: request.session,
+      main: requestClass === undefined || requestClass === MAIN_REQUEST_CLASS,
+      unscoped: parseProviderPath(path) === undefined,
+      routeProvider: () => {
+        if (request.session.provider !== undefined) {
+          return request.session.provider;
+        }
+        const context = launch === undefined ? undefined : deps.record.routeOf(launch);
+        return context?.kind === "provider" ? context.provider : undefined;
+      },
+    });
+    if (decided === undefined || asked === undefined) {
+      return { request: found.replayed };
+    }
+    if ("refusal" in decided) {
+      abandonBody(found.replayed.body);
+      return { refused: { ok: false, status: HTTP_STATUS.badRequest, message: decided.refusal } };
+    }
+    const scan = await scanRequestHead(found.replayed, false, REQUEST_SCAN_CAP_BYTES);
+    if (scan.hasSeveralModelFields()) {
+      abandonBody(scan.replayed.body);
+      return { refused: { ok: false, status: HTTP_STATUS.badRequest, message: AMBIGUOUS_MODEL_MESSAGE } };
+    }
+    return { request: withModelInHead(scan.replayed, scan.headBytes, asked, decided.name), asked };
+  };
+
+  const routed = async (request: RoutedRequest, asked: string | undefined): Promise<RouteResolution> => {
     const { launch, provider } = request.session;
     const path = new URL(request.url, "http://127.0.0.1").pathname;
     if (launch === undefined || provider !== undefined || !isMessagesInferencePath(path)) {
@@ -321,6 +378,8 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
       return resolution;
     }
     const requested = resolution.requestedModel;
+    // The name the session asked for is what the context records, whatever it was renamed to: the selector or Claude name, never its expansion.
+    const recordedAs = asked ?? requested;
     const served = servedProviderOf(resolution.request?.url ?? request.url);
     if (served === undefined) {
       // The resolver left the request on the Anthropic route, which a request that chose it by `anthropic/<model>` is entitled to; any other goes where the context says. Under a provider context that is the provider, whatever the request names (a name no provider claims and that is no Claude name, a name with a typo, no model at all, a body that is no JSON): it is served as asked, and never by the launch's account.
@@ -328,7 +387,7 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
       if (requested?.startsWith(ANTHROPIC_PREFIX) === true && !deps.definesProvider("anthropic")) {
         const placed = await toAnthropic(base, requested);
         if (placed.resolution.ok) {
-          recordServing(launch, ticket, placed.resolution, (servedModel) => contextOf({ kind: "anthropic" }, deps.loginOf(request.session), requested, servedModel), placed.served);
+          recordServing(launch, ticket, placed.resolution, (servedModel) => contextOf({ kind: "anthropic" }, deps.loginOf(request.session), recordedAs, servedModel), placed.served);
         }
         return placed.resolution;
       }
@@ -336,7 +395,7 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
         const placed = await toProvider(base, current.provider, request.session);
         // Only a Claude name asked for on the main loop is a fact about it worth recording, and the route stays what it was: a request that chose no route moves nothing.
         if (placed.resolution.ok && requested !== undefined && (isBareClaudeName(requested) || requested === AUTO_MODEL)) {
-          recordServing(launch, ticket, placed.resolution, (servedModel) => contextOf({ kind: "provider", provider: current.provider }, placed.credential, requested, servedModel), unlessAuto(placed.served));
+          recordServing(launch, ticket, placed.resolution, (servedModel) => contextOf({ kind: "provider", provider: current.provider }, placed.credential, recordedAs, servedModel), unlessAuto(placed.served));
         }
         return placed.resolution;
       }
@@ -350,8 +409,21 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
     const servedModel = resolution.servedModel ?? (served === undefined ? requested : undefined);
     // The credential is named from the provider's file as read for this request, which is read for every request anyway, so an edited credential block shows its new name at the next one.
     const credential = served === undefined ? deps.loginOf(request.session) : deps.providerMapping(served, request.session, "").credential;
-    recordServing(launch, ticket, resolution, (model) => contextOf(route, credential, requested, model), served === undefined ? servedModel : unlessAuto(servedModel));
+    recordServing(launch, ticket, resolution, (model) => contextOf(route, credential, recordedAs, model), served === undefined ? servedModel : unlessAuto(servedModel));
     return resolution;
+  };
+
+  return async (request) => {
+    if (deps.rename === undefined) {
+      return await routed(request, undefined);
+    }
+    const named = await renamed(request, deps.rename.model, deps.rename.bodyLimitBytes);
+    if ("refused" in named) {
+      return named.refused;
+    }
+    const resolution = await routed(named.request, named.asked);
+    // The usage log records the name the request asked for, as the context does.
+    return resolution.ok && named.asked !== undefined ? { ...resolution, requestedModel: named.asked } : resolution;
   };
 }
 

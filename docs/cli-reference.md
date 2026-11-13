@@ -115,7 +115,7 @@ agent-shim model distinct <left> <right>   # assert two alike names are two mode
 agent-shim model unassert <ref>
 agent-shim model family <key> [--mode <mode>] [--name <ref>]... [--context <tokens>] [--[no-]vision|tools|thinking] | --clear
 agent-shim model list [--json]
-agent-shim model explain <name>   # which member the virtual model's mode picks now, and why
+agent-shim model explain <name> [--identity <name>] [--json]   # which member the virtual model's mode picks now, and why; for a selector (auto/<selector>[/<class>]), the name the door routes it by for a session running as the identity, or why it refuses it
 agent-shim provider remove <name> [--yes]              # deletes its definition and file-cached credential, not a Keychain-cached credential
 agent-shim provider rename <old> <new> [--json]
 agent-shim provider unalias <alias> [--json]

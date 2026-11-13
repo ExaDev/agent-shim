@@ -1,0 +1,231 @@
+import { CLAUDE_TIERS, type ClaudeTier } from "../config/schema";
+import { FAMILY_PREFIX } from "./families";
+import { withoutContextMarker } from "./identity";
+import { SELECTOR_PREFIX } from "./reservedModelNames";
+
+/**
+ * The model-name grammar that routes a request by what it names rather than by a model: `auto/[<kind>:]<word>[/<class-or-model>]`. The word names a configuration profile, an identity, a pool, a provider or a model family, and the optional kind prefix says which when the word names more than one; the class is a Claude tier (`opus`, `sonnet`, `haiku`, `fable`) and any other rest is an exact model, which may carry slashes of its own (an aggregator's `vendor/model`). A trailing `[1m]` context marker is no part of a name and is taken off first. Bare `auto` is not this grammar: it is the model that follows a provider's live served model.
+ *
+ * The expansion turns a selector into one name the door already routes (`<provider>/<model>`, `family:<key>`, `anthropic/<model>`, `acct:<identity>/<model>`, or a ref a router's tier pointer names), against the live state the ports read, so the door and `agent-shim model explain` expand a selector by the same rules.
+ */
+
+/** The kinds of thing a selector names, in the order a refusal lists them and the kind prefixes that say which is meant. */
+export const SELECTOR_KINDS = ["profile", "identity", "pool", "provider", "family"] as const;
+export type SelectorKind = (typeof SELECTOR_KINDS)[number];
+
+/** How each kind is named in a message. */
+const KIND_NOUNS: Readonly<Record<SelectorKind, string>> = { profile: "configuration profile", identity: "identity", pool: "pool", provider: "provider", family: "model family" };
+
+/** The grammar as one line, for refusals. */
+const GRAMMAR = `${SELECTOR_PREFIX}<selector>[/<class>]`;
+
+/** What follows the selector: nothing, a Claude tier, or an exact model. */
+export type SelectorTarget = { readonly kind: "none" } | { readonly kind: "class"; readonly tier: ClaudeTier } | { readonly kind: "model"; readonly model: string };
+
+/** A parsed selector: the kind its prefix named (absent when it named none), the word, and what follows. */
+export interface ParsedSelector {
+  readonly kind?: SelectorKind;
+  readonly name: string;
+  readonly target: SelectorTarget;
+}
+
+/** What a selector expanded to: the name the door routes it by, the kind the selector named, and the selector as parsed. */
+export interface SelectorExpansion {
+  readonly name: string;
+  readonly kind: SelectorKind;
+  readonly selector: ParsedSelector;
+}
+
+/** Why a name could not be routed: the request is answered with this text (a 400). */
+export interface SelectorRefusal {
+  readonly refusal: string;
+}
+
+/** The kind prefix of `word` when it names one of `SELECTOR_KINDS` (`pool:subs`), with the name after it; any other colon is part of the name. */
+function kindOf(word: string): { readonly kind?: SelectorKind; readonly name: string } {
+  const colon = word.indexOf(":");
+  const prefix = colon < 0 ? undefined : SELECTOR_KINDS.find((kind) => kind === word.slice(0, colon));
+  return prefix === undefined ? { name: word } : { kind: prefix, name: word.slice(colon + 1) };
+}
+
+/** The target `rest` names: a Claude tier when it is exactly one (in any case), else the exact model it spells. */
+function targetOf(rest: string | undefined): SelectorTarget {
+  if (rest === undefined) {
+    return { kind: "none" };
+  }
+  const lower = rest.toLowerCase();
+  const tier = CLAUDE_TIERS.find((candidate) => candidate === lower);
+  return tier === undefined ? { kind: "model", model: rest } : { kind: "class", tier };
+}
+
+/**
+ * Parses `model` as the selector grammar: undefined when it is not the grammar (it does not start `auto/` once its context marker is off), a refusal when it starts so but names no selector or ends in an empty target, else the parts. Linear in the name's length: one search for each of two slashes and one for a colon.
+ */
+export function parseSelectorName(model: string): { readonly selector: ParsedSelector } | SelectorRefusal | undefined {
+  const bare = withoutContextMarker(model);
+  if (!bare.startsWith(SELECTOR_PREFIX)) {
+    return undefined;
+  }
+  const afterPrefix = bare.slice(SELECTOR_PREFIX.length);
+  const slash = afterPrefix.indexOf("/");
+  const word = slash < 0 ? afterPrefix : afterPrefix.slice(0, slash);
+  const rest = slash < 0 ? undefined : afterPrefix.slice(slash + 1);
+  const { kind, name } = kindOf(word);
+  if (name === "") {
+    return { refusal: `the model name ${JSON.stringify(model)} names no selector: write ${GRAMMAR}, where the selector is a configuration profile, an identity, a pool, a provider or a model family` };
+  }
+  if (rest === "") {
+    return { refusal: `the model name ${JSON.stringify(model)} ends in an empty class: write ${GRAMMAR}, where the class is fable, opus, sonnet or haiku or an exact model, or leave the class off` };
+  }
+  return { selector: { ...(kind === undefined ? {} : { kind }), name, target: targetOf(rest) } };
+}
+
+/** What a lookup of one name in one namespace found: nothing, a usable entry, or an entry that exists and cannot be used (its reason names it). */
+export type SelectorLookup<T> = { readonly kind: "absent" } | { readonly kind: "found"; readonly value: T } | { readonly kind: "invalid"; readonly reason: string };
+
+/** The live state a selector is expanded against, read at the moment of the request. */
+export interface SelectorPorts {
+  /** A configuration profile by name, with the provider its `launch` names (through its `extends` chain), if any. */
+  readonly profile: (name: string) => SelectorLookup<{ readonly provider: string | undefined }>;
+  /** An identity by name, with the provider its own file declares, if any. */
+  readonly identity: (name: string) => SelectorLookup<{ readonly provider: string | undefined }>;
+  /** Whether a pool of this name is defined. */
+  readonly pool: (name: string) => SelectorLookup<undefined>;
+  /** The member a pool's ranking picks right now, or why it picks none: asked only once the selector is known to be that pool, since ranking reads every member's usage. */
+  readonly poolPick: (name: string) => { readonly identity: string } | SelectorRefusal;
+  /** Whether a provider of this name is defined (exactly, as the providers directory lists it). */
+  readonly provider: (name: string) => SelectorLookup<undefined>;
+  /** The name a provider serves a target under: its default model for none, its own tier mapping for a class (a router's tier pointer, which is a ref of its own), the model itself for an exact model. */
+  readonly providerTarget: (provider: string, target: SelectorTarget) => { readonly name: string } | SelectorRefusal;
+  /** Whether a model family of this canonical key is offered. */
+  readonly family: (key: string) => boolean;
+  /** Whether `identity` holds the login the session runs on (the same identity, or another holding the same account in the same organisation). */
+  readonly sameLogin: (identity: string, sessionIdentity: string) => boolean;
+}
+
+/** One lookup of `name` in `kind`'s namespace. */
+function lookUp(ports: Readonly<SelectorPorts>, kind: SelectorKind, name: string): SelectorLookup<unknown> {
+  const lookups: Readonly<Record<SelectorKind, (name: string) => SelectorLookup<unknown>>> = {
+    profile: ports.profile,
+    identity: ports.identity,
+    pool: ports.pool,
+    provider: ports.provider,
+    family: (key) => (ports.family(key) ? { kind: "found", value: undefined } : { kind: "absent" }),
+  };
+  return lookups[kind](name);
+}
+
+/** The text of a selector as written, with one kind prefix and the target the request gave, for a refusal that offers the spelling to use. */
+function spelling(kind: SelectorKind, name: string, rest: string | undefined): string {
+  return `${SELECTOR_PREFIX}${kind}:${name}${rest === undefined ? "" : `/${rest}`}`;
+}
+
+/** The target as the person wrote it, for a spelling. */
+function restOf(target: SelectorTarget): string | undefined {
+  return target.kind === "none" ? undefined : target.kind === "class" ? target.tier : target.model;
+}
+
+/** The kinds `name` is found in (an invalid entry counts, so its reason is what is reported), or the one a prefix named. */
+function candidatesFor(ports: Readonly<SelectorPorts>, selector: Readonly<ParsedSelector>): readonly SelectorKind[] {
+  return selector.kind === undefined ? SELECTOR_KINDS.filter((kind) => lookUp(ports, kind, selector.name).kind !== "absent") : [selector.kind];
+}
+
+/** A target on the Anthropic route of the session's own login: an exact model goes there by name; a class is refused, since the door has no source for the model a tier names there (Claude Code resolves a tier itself), and `/model <class>` already chooses it. */
+function onAnthropic(target: SelectorTarget, what: string, asked: string, written: string): { readonly name: string } | SelectorRefusal {
+  if (target.kind === "model") {
+    return { name: `anthropic/${target.model}` };
+  }
+  const next = target.kind === "class" ? `choose the class with /model ${target.tier}` : "choose the model with /model <class>";
+  return { refusal: `${asked} selects ${what}, which runs on the Anthropic route, where the door cannot name the model a class means: ${next}, or name an exact model as ${written}/<model>` };
+}
+
+/** An identity selected (by name or by a pool's pick): the provider it declares, the session's own login, or another login, which only a relaunch can serve. */
+function expandIdentity(ports: Readonly<SelectorPorts>, identity: string, target: SelectorTarget, session: Readonly<{ readonly identity?: string }>, asked: string, via: string): { readonly name: string } | SelectorRefusal {
+  const found = ports.identity(identity);
+  if (found.kind === "invalid") {
+    return { refusal: found.reason };
+  }
+  if (found.kind === "absent") {
+    return { refusal: `${asked} ${via}identity "${identity}", which does not exist` };
+  }
+  if (found.value.provider !== undefined) {
+    return ports.providerTarget(found.value.provider, target);
+  }
+  if (session.identity !== undefined && ports.sameLogin(identity, session.identity)) {
+    return target.kind === "model"
+      ? { name: `anthropic/${target.model}` }
+      : { refusal: `${asked} ${via}identity "${identity}", the login this session already runs on: ${target.kind === "class" ? `choose the class with /model ${target.tier}` : "choose the model with /model <class>"}, or name an exact model as ${SELECTOR_PREFIX}${identity}/<model>` };
+  }
+  if (target.kind === "none") {
+    return { refusal: `${asked} ${via}identity "${identity}", another login, which only a relaunch under it can serve: name the class or model to resume with, as ${SELECTOR_PREFIX}${identity}/<class>` };
+  }
+  return { name: `acct:${identity}/${target.kind === "class" ? target.tier : target.model}` };
+}
+
+/** The refusal for a kind that has no entry of the name. */
+function absent(kind: SelectorKind, name: string, asked: string): SelectorRefusal {
+  return { refusal: `${asked} names no ${KIND_NOUNS[kind]}: no ${KIND_NOUNS[kind]} is called ${JSON.stringify(name)}` };
+}
+
+/** The refusal for a lookup that found nothing usable (the entry's own reason when it exists and is invalid), or undefined when it found a usable entry. */
+function unusable(found: SelectorLookup<unknown>, kind: SelectorKind, name: string, asked: string): SelectorRefusal | undefined {
+  if (found.kind === "invalid") {
+    return { refusal: found.reason };
+  }
+  return found.kind === "absent" ? absent(kind, name, asked) : undefined;
+}
+
+/** Expands one selector whose kind is known. */
+function expandKind(ports: Readonly<SelectorPorts>, kind: SelectorKind, selector: Readonly<ParsedSelector>, session: Readonly<{ readonly identity?: string }>, asked: string): { readonly name: string } | SelectorRefusal {
+  const { name, target } = selector;
+  if (kind === "profile") {
+    const profile = ports.profile(name);
+    if (profile.kind === "invalid") {
+      return { refusal: profile.reason };
+    }
+    if (profile.kind === "absent") {
+      return absent(kind, name, asked);
+    }
+    const { provider } = profile.value;
+    return provider === undefined ? onAnthropic(target, `the configuration profile "${name}"`, asked, `${SELECTOR_PREFIX}${selector.kind === undefined ? "" : `${selector.kind}:`}${name}`) : ports.providerTarget(provider, target);
+  }
+  const refused = unusable(lookUp(ports, kind, name), kind, name, asked);
+  if (refused !== undefined) {
+    return refused;
+  }
+  if (kind === "provider") {
+    return ports.providerTarget(name, target);
+  }
+  if (kind === "family") {
+    return target.kind === "none" ? { name: `${FAMILY_PREFIX}${name}` } : { refusal: `${asked} selects the model family "${name}", which is one model and takes no class or model: write ${SELECTOR_PREFIX}${name}` };
+  }
+  if (kind === "identity") {
+    return expandIdentity(ports, name, target, session, asked, "selects ");
+  }
+  const pick = ports.poolPick(name);
+  return "refusal" in pick ? pick : expandIdentity(ports, pick.identity, target, session, asked, `selects pool "${name}", whose ranking picks `);
+}
+
+/**
+ * Expands `model` when it is the selector grammar: undefined when it is not, a refusal naming the cause and the next step when it cannot be routed, else the one name the door routes it by. An unprefixed word is looked up in every namespace, and a word found in more than one is refused naming each with the prefixed spelling of each: no kind outranks another, since a provider and a pool of one name are equally likely to be meant and a silent choice could move a session to an account the person did not mean. `session.identity` is the identity the session runs as, which an account selector is compared with.
+ */
+export function expandSelectorName(model: string, ports: Readonly<SelectorPorts>, session: Readonly<{ readonly identity?: string }>): SelectorExpansion | SelectorRefusal | undefined {
+  const parsed = parseSelectorName(model);
+  if (parsed === undefined || "refusal" in parsed) {
+    return parsed;
+  }
+  const { selector } = parsed;
+  const asked = JSON.stringify(withoutContextMarker(model));
+  const candidates = candidatesFor(ports, selector);
+  const only = candidates[0];
+  if (only === undefined) {
+    return { refusal: `${asked} names nothing: no configuration profile, identity, pool, provider or model family is called ${JSON.stringify(selector.name)}` };
+  }
+  if (candidates.length > 1) {
+    const named = candidates.map((kind) => `a ${KIND_NOUNS[kind]}`).join(", ");
+    const spellings = candidates.map((kind) => spelling(kind, selector.name, restOf(selector.target))).join(", ");
+    return { refusal: `${JSON.stringify(selector.name)} is ambiguous: it names ${named}; say which with ${spellings}` };
+  }
+  const expanded = expandKind(ports, only, selector, session, asked);
+  return "refusal" in expanded ? expanded : { name: expanded.name, kind: only, selector };
+}

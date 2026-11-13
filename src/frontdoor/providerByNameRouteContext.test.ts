@@ -147,7 +147,10 @@ describe("a bare provider name and the route context", () => {
       expect(contextOfSession(record)).toMatchObject({ kind: "provider", provider: "z" });
       expect(world.upstream.seen.map((seen) => seen.model).slice(1)).not.toContain(SPARK_MAIN_MODEL);
       expect(world.toAnthropic).toEqual([]);
-      expect((await send(world, { model: `${name}/chosen`, requestClass: "main" })).status).toBe(HTTP_STATUS.ok);
+      // A name starting `auto/` is the selector grammar, so a provider called `auto` is qualified through a selector that names it as a provider.
+      const qualified = name === "auto" ? "auto/provider:auto/chosen" : `${name}/chosen`;
+      expect((await send(world, { model: qualified, requestClass: "main" })).status).toBe(HTTP_STATUS.ok);
+      expect(world.upstream.seen.at(-1)?.model).toBe("chosen");
       expect(contextOfSession(record)).toMatchObject({ kind: "provider", provider: name });
     } finally {
       await world.close();
