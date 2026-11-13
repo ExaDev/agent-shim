@@ -12,7 +12,8 @@ import { fakeAsyncCredentials, followsLaunchFlag, mainLoopRoutesOfLiveSessions }
 import { createDoorPipelines } from "./assembly";
 import { createCredentialCustody } from "./custody";
 import { CONNECT_INTERCEPT_HOST, CONNECT_INTERCEPT_HOSTS, CONNECT_TAP_HOSTS, createLeafCache, generateCa, startConnectServer, type CaMaterial } from "./connect";
-import { lateRcEventDial, lateRcStreamDial, realConnectEffects, type RcDialTarget } from "./connectEffects";
+import { realConnectEffects, type RcDialTarget } from "./connectEffects";
+import { rcSelfHostEventDial, rcSelfHostStreamDial, type RcSelfHostDialSource } from "./rcSelfHostDial";
 import { createProviderRouteResolver } from "./providerRoute";
 import { serveRouted } from "./pipeline";
 import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog, type RcSessionEventLog } from "./rcEventLog";
@@ -137,7 +138,7 @@ describe("the self-hosted Remote Control mode end to end", () => {
   let transparentPort: number;
   let dialTarget: RcDialTarget | undefined;
   /** The door's own client-half write dial, resolved per call at the door's own surface, exactly the production wiring. */
-  let writeDial: ReturnType<typeof lateRcEventDial>;
+  let writeDial: ReturnType<typeof rcSelfHostEventDial>;
   /** The fan-out the door's held client stream publishes to, hoisted so a test can subscribe the way `frontdoor rc watch` does. */
   let fanout: ReturnType<typeof createRcEventFanout>;
 
@@ -165,14 +166,14 @@ describe("the self-hosted Remote Control mode end to end", () => {
     tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: 45_000, onTransition: sessionEvents.append, onClose: sessionEvents.close });
     fanout = createRcEventFanout();
     /** The door's own client half dials the door's own transparent surface: the target is known only once the listener has bound, exactly the production wiring. */
-    const resolveTarget = (): RcDialTarget | undefined => dialTarget;
+    const dialSource: RcSelfHostDialSource = { resolve: () => dialTarget, unboundReason: () => "the test's surface is not bound yet" };
     hub = createRcStreamHub({
       now: () => Date.now(),
       credentialOf: tracker.credentialOf,
       trackedSessions: () => tracker.list().map((session) => session.id),
       fileStreamEvent: tracker.fileStreamEvent,
       sequenceNumOf: tracker.sequenceNumOf,
-      dial: lateRcStreamDial(resolveTarget),
+      dial: rcSelfHostStreamDial(dialSource),
       fanout,
       newClientId: randomUuidSequence(),
       backoffMs: 50,
@@ -241,7 +242,7 @@ describe("the self-hosted Remote Control mode end to end", () => {
     );
     transparentPort = connectHandle.transparentPort ?? 0;
     dialTarget = { host: "127.0.0.1", port: transparentPort, servername: CONNECT_INTERCEPT_HOST, ca: [ca.certPem] };
-    writeDial = lateRcEventDial(() => dialTarget);
+    writeDial = rcSelfHostEventDial(dialSource);
   }, KEYGEN_TIMEOUT_MS);
 
   afterAll(async () => {
@@ -263,6 +264,10 @@ describe("the self-hosted Remote Control mode end to end", () => {
     // The tracker observed the create through the same wrapper the real door wraps every resolved route with, so the door's client half already holds the credential and the attachment follows.
     await waitUntil(() => tracker.list().some((session) => session.id === sessionId));
     expect(tracker.credentialOf(sessionId)?.authorization).toBe(`Bearer ${MINTED_OAUTH_TOKEN}`);
+    // The surface owns the session it holds, and any session presented with the credential it minted, but not a native session carrying some other account's token.
+    expect(surface.ownsSession(sessionId, undefined)).toBe(true);
+    expect(surface.ownsSession("cse_00000000-0000-4000-8000-0000000000aa", `Bearer ${MINTED_OAUTH_TOKEN}`)).toBe(true);
+    expect(surface.ownsSession("cse_00000000-0000-4000-8000-0000000000aa", "Bearer a-native-account-token")).toBe(false);
 
     const bridgeSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
     const bridged = await requestOn(bridgeSocket, rawRequest("POST", `/v1/code/sessions/${sessionId}/bridge`, { Authorization: `Bearer ${MINTED_OAUTH_TOKEN}`, "Content-Type": "application/json" }, "{}"));

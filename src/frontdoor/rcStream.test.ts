@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
 import { createRcSessionTracker, type RcSessionTracker } from "./rcSessions";
-import { createRcEventFanout, createRcStreamHub, createSseParser, parseRcStreamEnvelope, type RcPresenceAnswer, type RcStreamAnswer, type RcStreamDial, type SseParsedEvent } from "./rcStream";
+import { createRcEventFanout, createRcStreamHub, createSseParser, parseRcStreamEnvelope, perSessionRcStreamDial, type RcPresenceAnswer, type RcStreamAnswer, type RcStreamDial, type SseParsedEvent } from "./rcStream";
 
 /** A made-up session id of the protocol's shape. */
 const SESSION_ID = "cse_00000000-0000-4000-8000-000000000001";
@@ -657,5 +657,39 @@ describe("the client read stream attachment", () => {
     await tick();
     expect(scripted.presenceCalls[scripted.presenceCalls.length - 1]).toEqual({ sessionId: SESSION_ID, headers: { accept: "text/event-stream", authorization: CREATE_BEARER }, clientId: "door-client-id", clear: true });
     expect(scripted.presenceCalls.filter((call) => call.clear)).toHaveLength(1);
+  });
+});
+
+describe("the per-session stream dial", () => {
+  const sent: string[] = [];
+  const noChunks: AsyncIterable<Uint8Array> = { [Symbol.asyncIterator]: (): AsyncIterator<Uint8Array> => ({ next: async () => await Promise.resolve({ done: true, value: undefined }) }) };
+  const recording = (name: string): RcStreamDial => ({
+    announcePresence: async (sessionId) => {
+      sent.push(`${name}:presence:${sessionId}`);
+      return await Promise.resolve({ status: 200, body: "{}" });
+    },
+    markRead: async (sessionId) => {
+      sent.push(`${name}:mark-read:${sessionId}`);
+      return await Promise.resolve({ status: 200, body: "{}" });
+    },
+    openStream: async (sessionId) => {
+      sent.push(`${name}:stream:${sessionId}`);
+      return await Promise.resolve({ status: 200, chunks: noChunks });
+    },
+  });
+
+  it("attaches a session the self-hosted service owns to it and every other session to the real service", async () => {
+    sent.length = 0;
+    const owned = "cse_00000000-0000-4000-8000-000000000001";
+    const native = "cse_00000000-0000-4000-8000-000000000002";
+    const dial = perSessionRcStreamDial((id) => id === owned, recording("self-hosted"), recording("service"));
+    const signal = new AbortController().signal;
+    await dial.announcePresence(owned, {}, "client", false);
+    await dial.markRead(owned, {}, undefined);
+    await dial.openStream(owned, {}, undefined, signal);
+    await dial.announcePresence(native, {}, "client", false);
+    await dial.markRead(native, {}, undefined);
+    await dial.openStream(native, {}, undefined, signal);
+    expect(sent).toEqual([`self-hosted:presence:${owned}`, `self-hosted:mark-read:${owned}`, `self-hosted:stream:${owned}`, `service:presence:${native}`, `service:mark-read:${native}`, `service:stream:${native}`]);
   });
 });

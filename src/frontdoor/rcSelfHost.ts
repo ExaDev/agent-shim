@@ -10,6 +10,7 @@ import { createRcSelfHostLocal, type RcSelfHostLocal } from "./rcSelfHostLocal";
 import { RC_WEB_FETCH_MAX_BYTES, type RcWebFetcher } from "./rcWebFetch";
 import type { FrontDoorRoute, RoutedRequest, RoutedResponse } from "./route";
 import type { RcStreamEnvelope } from "./rcSchemas";
+import type { RcSelfHostedChoice } from "./rcWrites";
 
 /**
  * The self-hosted Remote Control service: the door serving, locally, the CCR surface it normally only observes (ExaDev/agent-shim#207). When the mode is on, a Claude Code session activates Remote Control against this surface and is controlled through it with no Anthropic credential anywhere: the door answers the session family itself instead of piping it to the real API host, so the `cse_` sessions, their sequence numbers, their worker and client streams and their event writes all live on this machine.
@@ -335,6 +336,15 @@ export interface RcSelfHostSurface {
   readonly local: RcSelfHostLocal;
   /** Stops the service's timers and retires every open stream. The sessions themselves are unreachable the moment the door drops them. */
   readonly close: () => void;
+  /**
+   * Whether the session is this service's: it holds it (created against it and not yet archived or retired), or `authorization` is the credential this service minted. The second clause keeps the answer true after a door restart or a retirement, when nothing is held but a session's persisted credential still names whose it is. A session that is neither is a native one, whose calls belong to the real service.
+   */
+  readonly ownsSession: (sessionId: string, authorization: string | undefined) => boolean;
+}
+
+/** The per-call choice of backend the door's dials make (`perSessionRcEventDial`, `perSessionRcStreamDial`): a call is the self-hosted service's when it names a session the service owns, by the headers' credential as well as by what the service holds. */
+export function rcSelfHostedChoiceOf(surface: Pick<RcSelfHostSurface, "ownsSession">): RcSelfHostedChoice {
+  return (sessionId, headers) => surface.ownsSession(sessionId, headers.authorization);
 }
 
 /** Creates the self-hosted Remote Control service. One per door process; everything it holds dies with it. */
@@ -932,6 +942,7 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
   return {
     route,
     local,
+    ownsSession: (sessionId, authorization) => sessions.has(sessionId) || (authorization !== undefined && presentsCredential({ authorization })),
     close: () => {
       clearInterval(timer);
       clearInterval(keepalive);
