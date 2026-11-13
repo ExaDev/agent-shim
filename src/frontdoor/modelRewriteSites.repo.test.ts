@@ -11,9 +11,9 @@ import { AUTH_HEADER, SESSION_HEADER } from "./route";
 /** A body naming its model twice, as a client that wants a server's last-wins parse to read another model than the door rewrote would send. */
 const twice = (first: string): string => `{"model":"${first}","model":"other","stream":false,"max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`;
 
-/** The calls of `withModel` in `providerRoute.ts` (the name-resolving scan and the routes list) and of `withModelInHead` in `mainLoopRoute.ts` (the Anthropic way back and the tier mapping), each of which has a row above. */
+/** The calls of `withModel` in `providerRoute.ts` (the name-resolving scan and the routes list) and of `withModelInHead` in `mainLoopRoute.ts` (the Anthropic way back, the tier mapping and the renaming of a selector), each of which has a row above. */
 const PROVIDER_ROUTE_CALLS = 2;
-const MAIN_LOOP_CALLS = 2;
+const MAIN_LOOP_CALLS = 3;
 
 interface Site {
   /** Where the rewrite is made: the file and the call it uses. */
@@ -37,6 +37,7 @@ const SITES: Readonly<Record<string, Site>> = {
   "the main loop's Claude name under a provider context": { rewrite: "mainLoopRoute.ts: withModelInHead", drive: async (world) => await underZ(world, { model: "", rawBody: twice("claude-opus-5-5"), requestClass: "main" }) },
   "a helper's Claude name under a provider context": { rewrite: "mainLoopRoute.ts: withModelInHead", drive: async (world) => await underZ(world, { model: "", rawBody: twice(HAIKU_NAME), requestClass: "auxiliary" }) },
   "the main loop's anthropic/ name": { rewrite: "mainLoopRoute.ts: withModelInHead", drive: async (world) => await underZ(world, { model: "", rawBody: twice("anthropic/claude-opus-5-5"), requestClass: "main" }) },
+  "a selector's expansion": { rewrite: "mainLoopRoute.ts: withModelInHead", drive: async (world) => await send(world, { model: "", rawBody: twice("auto/provider:z/sonnet"), requestClass: "main" }) },
   "a helper's anthropic/ name": { rewrite: "mainLoopRoute.ts: withModelInHead", drive: async (world) => await underZ(world, { model: "", rawBody: twice("anthropic/claude-haiku-5-5"), requestClass: "auxiliary" }) },
 };
 

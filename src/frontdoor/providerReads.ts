@@ -11,6 +11,7 @@ import { TIER_ENV_VARIABLES, claudeNameTier } from "../models/tiers";
 import type { CatalogueModel } from "../providerCatalogue";
 import { listProviderNames, loadProvider } from "../providersStore";
 import { catalogueReadFault } from "../storedCatalogue";
+import type { SelectorTarget } from "../models/selectors";
 import type { MappedModel } from "./mainLoopRoute";
 
 /**
@@ -62,6 +63,8 @@ export interface ProviderReads {
   readonly defaultModelOf: (name: string) => ProviderDefault | undefined;
   /** What `provider` does with a bare Claude model name a session on it asks for, and the credential it uses, named never valued (see `followingMainLoop`). */
   readonly providerMapping: (provider: string, session: Readonly<{ readonly sessionId?: string }>, requested: string) => { readonly model: MappedModel; readonly credential: string | undefined };
+  /** The name a selector that resolved to `provider` is routed by (see `SelectorPorts.providerTarget`). */
+  readonly selectorTarget: (provider: string, target: SelectorTarget, session: Readonly<{ readonly sessionId?: string }>) => { readonly name: string } | RoutedRefusal;
 }
 
 /**
@@ -211,5 +214,32 @@ export function createProviderReads(deps: Readonly<ProviderReadsDeps>): Provider
     const pointer = deps.models?.(session)?.tiers?.[tier];
     return { model: pointer === undefined ? { kind: "refused", message: `provider "${provider}" routes by model name and the models block has no ${tier} tier pointer, so this ${tier}-tier request of the session cannot be routed; set models.tiers.${tier}` } : { kind: "mapped", model: pointer }, credential };
   };
-  return { providerOf, lookupProvider, providerFaultOf, definesProvider, envModelsOf, catalogueModels, defaultModelFor, defaultModelOf, providerMapping };
+  /**
+   * The name a selector that resolved to `provider` is routed by, through the same default and tier mapping a bare provider name and a helper's Claude name get on it: no target is its default model (`<provider>/<model>`), a class is the model its tier mapping names (a router's tier pointer is a ref of its own and is routed as itself; a provider that maps by tier in its own translator, or names no model for the tier, is sent the tier name), and an exact model is that model on the provider.
+   */
+  const selectorTarget = (provider: string, target: SelectorTarget, session: Readonly<{ readonly sessionId?: string }>): { readonly name: string } | RoutedRefusal => {
+    const found = lookupProvider(provider);
+    if (found.kind === "invalid") {
+      return { refusal: found.reason };
+    }
+    if (found.kind === "absent") {
+      return { refusal: `no provider named "${provider}"` };
+    }
+    if (target.kind === "model") {
+      return { name: `${provider}/${target.model}` };
+    }
+    if (target.kind === "none") {
+      const selected = defaultModelFor(provider, found.definition);
+      return "refusal" in selected ? selected : { name: `${provider}/${withoutContextMarker(selected.model)}` };
+    }
+    const mapped = providerMapping(provider, session, target.tier).model;
+    if (mapped.kind === "refused") {
+      return { refusal: mapped.message };
+    }
+    if (mapped.kind === "as-is") {
+      return { name: `${provider}/${target.tier}` };
+    }
+    return isRouterProvider(found.definition) ? { name: mapped.model } : { name: `${provider}/${mapped.model}` };
+  };
+  return { providerOf, lookupProvider, providerFaultOf, definesProvider, envModelsOf, catalogueModels, defaultModelFor, defaultModelOf, providerMapping, selectorTarget };
 }

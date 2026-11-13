@@ -6,7 +6,7 @@ import { claudeNameTier } from "./tiers";
 export const AUTO_MODEL = "auto";
 
 /** What every model name of the selector grammar starts with (`auto/<selector>[/<class>]`): a name with this prefix is the door's to expand, never a virtual model's or a provider's. */
-const SELECTOR_PREFIX = `${AUTO_MODEL}/`;
+export const SELECTOR_PREFIX = `${AUTO_MODEL}/`;
 
 /** The model aliases Claude Code resolves itself that name no tier: `default` (the session's default model), `best` (the most capable model) and `opusplan` (Opus in plan mode, Sonnet otherwise). Read from the strings of Claude Code 2.1.309's build, which holds each as a bare alias beside the tier names. */
 const CLAUDE_CODE_ALIASES: ReadonlySet<string> = new Set(["default", "best", "opusplan"]);
