@@ -105,11 +105,6 @@ function entriesOf(overrides: Readonly<RouteOverrides>, scope: RouteOverrideScop
   return Object.entries(table ?? {});
 }
 
-/** Whether two scopes are one. */
-function sameScope(left: RouteOverrideScope, right: RouteOverrideScope): boolean {
-  return left.kind === right.kind && (left.kind === "global" || (right.kind !== "global" && left.name === right.name));
-}
-
 /** A scope as a finding names it. */
 function scopeLabel(scope: RouteOverrideScope): string {
   return scope.kind === "global" ? "the global table" : `the ${scope.kind} table for ${JSON.stringify(scope.name)}`;
@@ -144,8 +139,8 @@ export function routeOverrideFindings(overrides: Readonly<RouteOverrides>, names
       }
       const chain = [key];
       let next = overrideMatches(overrides, ids, target)[0];
-      // An entry whose target its own key matches (`opus` to `claude-opus-5-1`) pins the class to one model: the door sends that model, which is what it says.
-      if (next?.key === key && sameScope(next.scope, scope)) {
+      // An entry whose target its own key matches (`opus` to `claude-opus-5-1`) pins the class to one model: the door sends that model, which is what it says. The match is always this entry, since its own scope covers the lookup and holds the key.
+      if (next?.key === key) {
         continue;
       }
       // Each turn adds a key not yet in the chain, so the walk ends within the number of distinct keys.
