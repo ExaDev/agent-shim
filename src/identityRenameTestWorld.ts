@@ -105,6 +105,7 @@ export function createWorld(platform: NodeJS.Platform = "linux"): World {
       { path: "/example/pooled", identity: "pool:subs", models: { tiers: { opus: "acct:work/opus" } } },
     ],
   });
+  writeJson(paths.routeOverridesFile, { schemaVersion: 1, global: { opus: "acct:work/opus", haiku: "auto/identity:work/haiku" }, identities: { work: { sonnet: "z/glm-5.3" }, personal: { sonnet: "acct:personal/sonnet" } } });
   writeFile(paths.activeIdentityFile, "work\n");
   writeJson(path.join(paths.usageSnapshotsDir, "work.json"), { schemaVersion: 1, identity: "work", updatedAt: "2026-10-30T10:00:00.000Z", providers: {} }, PRIVATE_FILE_MODE);
   writeJson(path.join(paths.usageSnapshotsDir, "personal.json"), { schemaVersion: 1, identity: "personal", updatedAt: "2026-10-30T10:00:00.000Z", providers: {} }, PRIVATE_FILE_MODE);

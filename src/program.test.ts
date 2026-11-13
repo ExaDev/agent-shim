@@ -14,6 +14,7 @@ import { readJobs } from "./jobStore";
 import { createProfile, readGlobalConfig, readProfile } from "./configProfilesStore";
 import { readProvider } from "./providersStore";
 import { listDirectoryRules } from "./directoryRulesStore";
+import { readRouteOverrides } from "./routeOverridesStore";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { buildProgram } from "./program";
 import { fakeCommandDeps } from "./test-helpers";
@@ -105,7 +106,7 @@ describe("buildProgram", () => {
     const built = program(runClaude);
 
     expect(built.commands.map((command) => command.name()).sort()).toEqual(
-      ["__frontdoor-supervisor", "__headroom-supervisor", "__identity-lock-v1", "__open-window", "__run-job", "__supervise-mark", "account", "check", "codex", "completion", "configure", "credential", "doctor", "frontdoor", "headroom", "identity", "job", "mcp", "model", "pool", "profile", "provider", "rule", "run", "session", "shim", "statusline", "update", "usage"].sort(),
+      ["__frontdoor-supervisor", "__headroom-supervisor", "__identity-lock-v1", "__open-window", "__run-job", "__supervise-mark", "account", "check", "codex", "completion", "configure", "credential", "doctor", "frontdoor", "headroom", "identity", "job", "mcp", "model", "pool", "profile", "provider", "route", "rule", "run", "session", "shim", "statusline", "update", "usage"].sort(),
     );
     expect(runClaude).not.toHaveBeenCalled();
     expect(fs.readdirSync(root)).toEqual([]);
@@ -119,6 +120,7 @@ describe("buildProgram", () => {
     expect(subcommandNames(built, "profile")).toEqual(["add", "list", "remove", "set", "show", "use"]);
     expect(subcommandNames(built, "provider")).toEqual(["add", "list", "models", "remove", "rename", "set", "show", "unalias"]);
     expect(subcommandNames(built, "rule")).toEqual(["add", "list", "remove", "set", "show"]);
+    expect(subcommandNames(built, "route")).toEqual(["list", "set", "unset"]);
     expect(subcommandNames(built, "credential")).toEqual(["forget", "push", "store", "warm"]);
   });
 
@@ -521,6 +523,46 @@ describe("profile commands", () => {
     expect((await cli(["profile", "remove", "acme"])).code).toBe(EXIT_USAGE);
     expect((await cli(["profile", "remove", "acme", "--yes"])).code).toBe(0);
     expect(readProfile(paths, "acme")).toBeUndefined();
+  });
+});
+
+describe("route commands", () => {
+  const addZ = ["provider", "add", "z", "--display-name", "z.ai", "--base-url", "https://api.z.ai/api/anthropic", "--credential", "env:Z_API_TOKEN"];
+
+  it("sets, lists and unsets an override per scope, with one report object under --json", async () => {
+    expect((await cli(addZ)).code).toBe(0);
+    expect((await cli(["identity", "add", "work"])).code).toBe(0);
+    const set = await cli(["route", "set", "opus", "z/glm-5.3", "--json"]);
+    expect(set.code).toBe(0);
+    expect(parseJson(set.stdout)).toEqual({ action: "updated", kind: "route", name: "opus", value: { scope: "global", model: "opus", target: "z/glm-5.3" } });
+    expect((await cli(["route", "set", "claude-sonnet-5-5", "auto/z/sonnet", "--identity", "work"])).code).toBe(0);
+    expect((await cli(["route", "set", "haiku", "z/air", "--session", "abc"])).code).toBe(0);
+    const list = await cli(["route", "list", "--json"]);
+    expect(parseJson(list.stdout)).toEqual([
+      { scope: "session:abc", model: "haiku", target: "z/air" },
+      { scope: "identity:work", model: "claude-sonnet-5-5", target: "auto/z/sonnet" },
+      { scope: "global", model: "opus", target: "z/glm-5.3" },
+    ]);
+    expect(parseJson((await cli(["route", "unset", "opus", "--json"])).stdout)).toEqual({ action: "removed", kind: "route", name: "opus" });
+    expect(readRouteOverrides(paths)).toEqual({ schemaVersion: 1, identities: { work: { "claude-sonnet-5-5": "auto/z/sonnet" } }, sessions: { abc: { haiku: "z/air" } } });
+  });
+
+  it.each<[readonly string[], string]>([
+    [["route", "set", "z/opus", "z/glm"], "bare Claude name"],
+    [["route", "set", "opus", "nowhere/glm"], 'no provider "nowhere"'],
+    [["route", "set", "opus", "auto"], "<provider>/auto"],
+    [["route", "set", "opus", "auto/nothing"], "names nothing"],
+    [["route", "set", "opus", "acct:ghost/opus"], 'no identity "ghost"'],
+    [["route", "set", "opus", "z/glm", "--identity", "ghost"], 'no identity "ghost"'],
+    [["route", "set", "opus", "z/glm", "--provider", "ghost"], 'no provider "ghost"'],
+    [["route", "set", "opus", "z/glm", "--identity", "a", "--session", "b"], "at most one"],
+    [["route", "unset", "opus"], "No override"],
+  ])("refuses %j, naming why, and writes nothing", async (argv, fragment) => {
+    expect((await cli(addZ)).code).toBe(0);
+    const result = await cli(argv);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain(fragment);
+    expect(fs.existsSync(paths.routeOverridesFile)).toBe(false);
   });
 });
 

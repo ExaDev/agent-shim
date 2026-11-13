@@ -77,7 +77,7 @@ describe("a rename of the name alone that was killed part way", () => {
     fs.writeFileSync(world.paths.directoryRulesFile, "{");
     fs.writeFileSync(path.join(world.paths.configProfilesDir, "client.json"), "{");
     const record = { version: 1, id: "work", from: "work", to: "client", startedAt: "2026-10-30T10:00:00.000Z" } as const;
-    expect(describeInterruptedNameRename(world.paths, record)).toContain('A rename of identity "work" to "client" was interrupted and has already rewritten references to "client" (the active selection, 1 recorded pool pick). Finish it');
+    expect(describeInterruptedNameRename(world.paths, record)).toContain('A rename of identity "work" to "client" was interrupted and has already rewritten references to "client" (the active selection, route overrides, 1 recorded pool pick). Finish it');
     expect(() => unfinishedNameRenames(world.paths)).not.toThrow();
     const report = collectDoctorReport({ paths: world.paths, env: { PATH: "" } });
     expect(findingsFor(report, "identity").some((entry) => entry.message.includes("was interrupted"))).toBe(true);

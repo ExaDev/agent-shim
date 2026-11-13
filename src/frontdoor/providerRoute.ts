@@ -30,7 +30,9 @@ import type { UsageSnapshot } from "../usage/schema";
 import { PROVIDER_PATH_PREFIX, directOrigin, parseProviderPath, type FrontDoorRoute, type ModelChoice, type RoutedRequest } from "./route";
 import { AMBIGUOUS_MODEL_MESSAGE } from "./topLevelModel";
 import { reservedProviderNameReason } from "../models/reservedModelNames";
-import { followingMainLoop, withModel, type MainLoopRouteRecord, type RenameModel } from "./mainLoopRoute";
+import { followingMainLoop, withModel, type MainLoopRouteRecord, type RenameContext, type RenameModel } from "./mainLoopRoute";
+import { overrideFor, type RouteOverridesRead } from "../routeOverridesStore";
+import { isBareClaudeName } from "../models/tiers";
 import { expandSelectorName, type SelectorPorts } from "../models/selectors";
 import type { SelectorStatePorts } from "../models/selectorPorts";
 import { createProviderReads, servesName, type ProviderDefault, type RoutedRefusal } from "./providerReads";
@@ -252,6 +254,8 @@ export function createProviderRouteResolver(deps: {
   readonly catalogueModelsOf?: (name: string, provider: HttpProvider) => readonly CatalogueModel[];
   /** Told of every request the routed pass-through to Claude Code's own API is dispatched, before it is dialled, whether the route serves it or the headroom hop in front of it forwards it (the daemon's default upstream is that API): the door's capture records each one, so a record of everything that left for the real API covers the routed pipeline as well as the connect surface's piped exchanges. A throw refuses the request before anything is dialled. */
   readonly observeAnthropicPassthrough?: (request: RoutedRequest) => void;
+  /** The runtime route overrides as they stand now (see `createRouteOverridesReader`): a main-loop request whose model is a bare Claude name is routed by the target of the override that applies to it. Absent, nothing is overridden. */
+  readonly routeOverrides?: () => RouteOverridesRead;
   /** The person's configuration a selector (`auto/<selector>[/<class>]`) names besides providers and families: profiles, identities, pools and logins, read fresh per request. Absent, no profile, identity or pool is a selector's to name, and providers and families still are. */
   readonly selectorState?: SelectorStatePorts;
 }): (request: RoutedRequest) => Promise<RouteResolution> {
@@ -314,8 +318,37 @@ export function createProviderRouteResolver(deps: {
     providerTarget: (provider, target) => reads.selectorTarget(provider, target, session),
     family: (key) => familyNamed(buildFamilies(deps.targets?.() ?? [], deps.models?.(session)), `${FAMILY_PREFIX}${key}`) !== undefined,
   });
-  /** Replaces a selector with the name it expands to, before anything routes the request. */
-  const rename: RenameModel = (model, context) => expandSelectorName(model, selectorPortsFor(context.session), context.session.identity === undefined ? {} : { identity: context.session.identity });
+  /** The target of the route override that applies to a main-loop request for `model`, a refusal when the overrides cannot be read, or undefined. Only a bare Claude name is looked up, so no other request reads the table. */
+  const overriddenName = (model: string, context: Readonly<RenameContext>): { readonly name: string } | RoutedRefusal | undefined => {
+    if (deps.routeOverrides === undefined || !context.main || !context.unscoped || !isBareClaudeName(model)) {
+      return undefined;
+    }
+    const read = deps.routeOverrides();
+    if ("fault" in read) {
+      return { refusal: `${read.fault}, so the door cannot tell where to route ${JSON.stringify(model)}; fix or remove the file (agent-shim doctor names what is wrong)` };
+    }
+    const { sessionId, identity } = context.session;
+    // The provider scope is read off the route context only when the table has one, since that costs a stat of the context file.
+    const provider = read.table.providers === undefined ? undefined : context.routeProvider();
+    const match = overrideFor(read.table, { ...(sessionId === undefined ? {} : { sessionId }), ...(identity === undefined ? {} : { identity }), ...(provider === undefined ? {} : { provider }) }, model);
+    return match === undefined ? undefined : { name: match.target };
+  };
+  /** Replaces a main-loop Claude name with its override's target, and a selector (the request's own name or the target) with the name it expands to, before anything routes the request. An override is applied once: its target is never looked up again. */
+  const rename: RenameModel = (model, context) => {
+    const overridden = overriddenName(model, context);
+    if (overridden !== undefined && "refusal" in overridden) {
+      return overridden;
+    }
+    const name = overridden?.name ?? model;
+    const expanded = expandSelectorName(name, selectorPortsFor(context.session), context.session.identity === undefined ? {} : { identity: context.session.identity });
+    if (expanded === undefined) {
+      return overridden;
+    }
+    if ("refusal" in expanded) {
+      return overridden === undefined ? expanded : { refusal: `the route override of ${JSON.stringify(model)} routes it by ${JSON.stringify(name)}, which cannot be routed: ${expanded.refusal}` };
+    }
+    return { name: expanded.name };
+  };
   // The most a Messages body is read whole under: the same bound the editing wrapper reads under, so neither of the resolver's whole-body scans holds more of a body than that.
   const messagesBodyLimitBytes = deps.messagesBodyLimitBytes ?? MESSAGES_BODY_LIMIT_BYTES;
   /** A scan of `request`'s head, or of the whole body under `messagesBodyLimitBytes` when `whole`: both whole-body scans of the resolver go through it, so neither can hold more of a body than the limit. */
