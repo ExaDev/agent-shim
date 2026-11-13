@@ -1,3 +1,9 @@
+## [14.2.3](https://github.com/ExaDev/agent-shim/compare/v14.2.2...v14.2.3) (2026-11-13)
+
+### Bug Fixes
+
+* resolve @hono/node-server at or above the patched release ([f6d9f95](https://github.com/ExaDev/agent-shim/commit/f6d9f9568ad3375a36bd897a5ed18ecb20be337f)), references [#793](https://github.com/ExaDev/agent-shim/issues/793)
+
 ## [14.2.2](https://github.com/ExaDev/agent-shim/compare/v14.2.1...v14.2.2) (2026-11-11)
 
 ### Bug Fixes
