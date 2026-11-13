@@ -1,3 +1,4 @@
+import { applyingOverrides, createRouteOverridesReader, type ApplyingOverride, type RouteOverridesRead } from "./routeOverridesStore";
 import os from "node:os";
 import { UsageError } from "./cliError";
 import { CODEX_CATEGORIES } from "./codex/categories";
@@ -308,6 +309,8 @@ export interface RunCheckParams {
   readonly credentialCache?: CredentialCacheEnv;
   /** Opens one connection to the selected http provider's base URL, bounded by its connect timeout. Omit to leave reachability out of the report. */
   readonly probeBaseUrl?: BaseUrlProbe;
+  /** The route overrides as the door would read them. Omit to leave them out of the report; with them, the report lists the entries that apply to a launch here (its identity's, its provider's and the global ones). */
+  readonly routeOverrides?: RouteOverridesRead;
 }
 
 /** Whether the selected http provider's base URL accepted a connection, as `check` reports it. */
@@ -331,6 +334,8 @@ export interface CheckReport {
   readonly claudeVersion?: ClaudeVersionReport;
   /** Whether the selected provider's base URL accepts a connection, when an http provider is selected and a probe was given. */
   readonly providerReachability?: ProviderReachabilityReport;
+  /** The route overrides that apply to a launch here, or why the file cannot be used, when the overrides were given. */
+  readonly routeOverrides?: { readonly applying: readonly ApplyingOverride[] } | { readonly fault: string };
 }
 
 /** Which Claude Code version a launch would run: the pin and where it comes from, with whether it is installed, or the highest installed version when nothing pins one. */
@@ -417,6 +422,7 @@ export function runCheck(params: RunCheckParams): CheckReport {
     credential: buildCredentialReport(params.provider, params.identity, params.identityId, params.credentialCache),
     ...(claudeVersion === undefined ? {} : { claudeVersion }),
     ...(providerReachability === undefined ? {} : { providerReachability }),
+    ...(params.routeOverrides === undefined ? {} : { routeOverrides: "fault" in params.routeOverrides ? { fault: params.routeOverrides.fault } : { applying: applyingOverrides(params.routeOverrides.table, { ...(params.identityName === undefined ? {} : { identity: params.identityName }), ...(params.provider === undefined ? {} : { provider: params.provider.name }) }) } }),
   };
 }
 
@@ -513,6 +519,20 @@ export function formatCheckReport(report: CheckReport): string[] {
           .join("\n"),
   );
 
+  if (report.routeOverrides !== undefined) {
+    lines.push("", "Route overrides (the main loop's requests for these names are routed by the target):");
+    if ("fault" in report.routeOverrides) {
+      lines.push(`  ${report.routeOverrides.fault}: the front door refuses the main loop's requests for Claude names until it is fixed (agent-shim doctor).`);
+    } else if (report.routeOverrides.applying.length === 0) {
+      lines.push("  none apply here.");
+    } else {
+      for (const entry of report.routeOverrides.applying) {
+        const outranked = entry.outranks.length === 0 ? "" : ` (outranks ${entry.outranks.map((other) => `${other.scope} -> ${other.target}`).join(", ")})`;
+        lines.push(`  ${entry.model} -> ${entry.target} [${entry.scope}]${outranked}`);
+      }
+    }
+  }
+
   if (report.keychain !== undefined) {
     lines.push("", "macOS Keychain:");
     lines.push(`  ${report.keychain.note}`);
@@ -562,11 +582,12 @@ export function checkReportToJson(report: CheckReport): CheckReportJson {
     credential: report.credential,
     ...(report.claudeVersion === undefined ? {} : { claudeVersion: report.claudeVersion }),
     ...(report.providerReachability === undefined ? {} : { providerReachability: report.providerReachability }),
+    ...(report.routeOverrides === undefined ? {} : { routeOverrides: report.routeOverrides }),
   };
 }
 
 /**
- * Whether a report carries anything `check --strict` fails on: a resolver diagnostic of warning or error severity, an ambiguous `history/projects/` encoding, an ambient credential a launch would refuse, a selected provider a launch could not use, or one whose base URL accepts no connection. Informational diagnostics and the settings-exposure advisory (names and counts only, for a person to review) never fail it.
+ * Whether a report carries anything `check --strict` fails on: a resolver diagnostic of warning or error severity, an ambiguous `history/projects/` encoding, an ambient credential a launch would refuse, a selected provider a launch could not use, one whose base URL accepts no connection, or a route overrides file the door cannot use. Informational diagnostics and the settings-exposure advisory (names and counts only, for a person to review) never fail it.
  */
 export function checkReportHasWarnings(report: CheckReport): boolean {
   return (
@@ -575,7 +596,8 @@ export function checkReportHasWarnings(report: CheckReport): boolean {
     !report.ambientCredential.ok ||
     report.credential.provider?.problem !== undefined ||
     report.providerReachability?.ok === false ||
-    report.claudeVersion?.pinned?.installed === false
+    report.claudeVersion?.pinned?.installed === false ||
+    (report.routeOverrides !== undefined && "fault" in report.routeOverrides)
   );
 }
 
@@ -668,6 +690,7 @@ export function collectCheckReport(params: CollectCheckReportParams): CheckRepor
     platform: process.platform,
     ...(provider === undefined ? {} : { provider }),
     probeBaseUrl: realBaseUrlProbe,
+    routeOverrides: createRouteOverridesReader(realFsPort, paths.routeOverridesFile, () => undefined)(),
   });
   return report;
 }

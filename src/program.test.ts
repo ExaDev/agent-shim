@@ -566,6 +566,34 @@ describe("route commands", () => {
   });
 });
 
+describe("model explain for a selector and a Claude name", () => {
+  const addZ = ["provider", "add", "z", "--display-name", "z.ai", "--base-url", "https://api.z.ai/api/anthropic", "--credential", "env:Z_API_TOKEN", "--env", "ANTHROPIC_DEFAULT_SONNET_MODEL=glm-4.7"];
+
+  it("says what a selector is routed as, or why it is refused", async () => {
+    expect((await cli(addZ)).code).toBe(0);
+    expect(parseJson((await cli(["model", "explain", "auto/z/sonnet", "--json"])).stdout)).toEqual({ name: "auto/z/sonnet", kind: "provider", routedAs: "z/glm-4.7" });
+    expect((await cli(["model", "explain", "auto/z/sonnet"])).stdout).toContain("auto/z/sonnet selects the provider and is routed as z/glm-4.7");
+    const refused = parseJson((await cli(["model", "explain", "auto/nothing", "--json"])).stdout);
+    expect(refused).toMatchObject({ name: "auto/nothing" });
+    expect(JSON.stringify(refused)).toContain("names nothing");
+  });
+
+  it("names the route override that applies to a Claude name in the given scopes, what its target is routed as, and what it outranks", async () => {
+    expect((await cli(addZ)).code).toBe(0);
+    expect((await cli(["identity", "add", "work"])).code).toBe(0);
+    expect((await cli(["route", "set", "opus", "z/glm-5.3"])).code).toBe(0);
+    expect((await cli(["route", "set", "claude-opus-5-5", "auto/z/sonnet", "--identity", "work"])).code).toBe(0);
+    expect(parseJson((await cli(["model", "explain", "claude-opus-5-5", "--identity", "work", "--json"])).stdout)).toEqual({
+      name: "claude-opus-5-5",
+      override: { scope: "identity:work", target: "auto/z/sonnet", match: "exact", routedAs: "z/glm-4.7" },
+      outranks: [{ scope: "global", target: "z/glm-5.3" }],
+    });
+    const text = (await cli(["model", "explain", "claude-opus-5-1"])).stdout;
+    expect(text).toContain("claude-opus-5-1 is routed to z/glm-5.3 by the global override of its class");
+    expect((await cli(["model", "explain", "claude-haiku-5-5"])).stdout).toContain("No route override applies to claude-haiku-5-5");
+  });
+});
+
 describe("provider commands", () => {
   const addZ = ["provider", "add", "z", "--display-name", "z.ai", "--base-url", "https://api.z.ai/api/anthropic", "--credential", "env:Z_API_TOKEN"];
 

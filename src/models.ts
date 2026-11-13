@@ -18,6 +18,9 @@ import type { UsageSnapshot } from "./usage/schema";
 import { selectMember } from "./selection/engine";
 import { cliSelectorPorts } from "./models/selectorPorts";
 import { expandSelectorName, parseSelectorName, type SelectorKind } from "./models/selectors";
+import { isBareClaudeName } from "./models/tiers";
+import { realFsPort } from "./realPorts";
+import { createRouteOverridesReader, overrideMatches, scopeLabelOf } from "./routeOverridesStore";
 
 /** The quota facts for one provider, from the newest snapshot of any identity that records it: the identities this machine actually uses, each contributing what it last saw. */
 function providerQuotaOf(paths: LayoutPaths): (provider: string) => Readonly<Partial<Record<"fiveHour" | "sevenDay" | "extraUsage", CandidateWindowFacts>>> {
@@ -103,6 +106,39 @@ function explainSelector(paths: LayoutPaths, name: string, identity: string | un
   return "refusal" in expanded ? { name, refusal: expanded.refusal } : { name, kind: expanded.kind, routedAs: expanded.name };
 }
 
+/** What `explain` says of a Claude name: the route override that applies to a main-loop request for it in the given scopes, with those it outranks and what its target is routed as, or that none applies, or why the overrides cannot be used. */
+type OverrideExplanation =
+  | { readonly name: string; readonly override: { readonly scope: string; readonly target: string; readonly match: "exact" | "class"; readonly routedAs?: string; readonly refusal?: string }; readonly outranks: readonly { readonly scope: string; readonly target: string }[] }
+  | { readonly name: string; readonly override?: never; readonly fault?: string };
+
+/** The route override a main-loop request for `name` meets in the scopes `options` names, read as the door reads the file, and, when its target is a selector, what that expands to for the identity. */
+function explainOverride(paths: LayoutPaths, name: string, options: Readonly<{ identity?: string; session?: string; provider?: string }>): OverrideExplanation {
+  const read = createRouteOverridesReader(realFsPort, paths.routeOverridesFile, () => undefined)();
+  if ("fault" in read) {
+    return { name, fault: read.fault };
+  }
+  const [winner, ...rest] = overrideMatches(read.table, { ...(options.session === undefined ? {} : { sessionId: options.session }), ...(options.identity === undefined ? {} : { identity: options.identity }), ...(options.provider === undefined ? {} : { provider: options.provider }) }, name);
+  if (winner === undefined) {
+    return { name };
+  }
+  const expanded = expandSelectorName(winner.target, cliSelectorPorts(paths, () => Date.now()), options.identity === undefined ? {} : { identity: options.identity });
+  return {
+    name,
+    override: { scope: scopeLabelOf(winner.scope), target: winner.target, match: winner.match, ...(expanded === undefined ? {} : "refusal" in expanded ? { refusal: expanded.refusal } : { routedAs: expanded.name }) },
+    outranks: rest.map((match) => ({ scope: scopeLabelOf(match.scope), target: match.target })),
+  };
+}
+
+/** `explainOverride`'s answer as text lines. */
+function describeOverride(explained: Readonly<OverrideExplanation>): readonly string[] {
+  if (explained.override === undefined) {
+    return [explained.fault === undefined ? `No route override applies to ${explained.name} in these scopes.` : `${explained.fault}: the front door refuses the main loop's requests for Claude names until it is fixed (agent-shim doctor).`];
+  }
+  const { override } = explained;
+  const routed = override.routedAs === undefined ? (override.refusal === undefined ? "" : `, which is refused: ${override.refusal}`) : `, routed as ${override.routedAs}`;
+  return [`${explained.name} is routed to ${override.target} by the ${override.scope} override of its ${override.match === "exact" ? "name" : "class"}${routed}`, ...explained.outranks.map((other) => `  outranks ${other.scope} -> ${other.target}`)];
+}
+
 /** Groups the models whose names are the same model across providers (a family, with the user's assertions applied), and lists the pairs that are merely similar, across every provider given. */
 export function matchModels(models: readonly ProviderModel[], config?: ModelsConfig): { readonly same: readonly (readonly ProviderModel[])[]; readonly similar: readonly [ProviderModel, ProviderModel][] } {
   const refOf = (model: ProviderModel): string => `${model.provider}/${model.model}`;
@@ -139,10 +175,23 @@ export function registerModelsCommand(program: Command, deps: CommandDeps): void
   withExamples(
     modelsCommand
       .command("explain <name>")
-      .description("Show which member a virtual model's (or a family row's) mode picks over the live signals, and why each candidate stands where it does; or what a selector (auto/<selector>[/<class>]) is routed as.")
-      .option("--identity <name>", "The identity the session runs as, which an account selector is compared with.")
+      .description("Show which member a virtual model's (or a family row's) mode picks over the live signals, and why each candidate stands where it does; what a selector (auto/<selector>[/<class>]) is routed as; or, for a Claude name, the route override that applies to it in the given scopes and the ones it outranks.")
+      .option("--identity <name>", "The identity the session runs as, which an account selector is compared with and an identity's route overrides cover.")
+      .option("--session <id>", "The launch session whose route overrides apply, for a Claude name.")
+      .option("--provider <name>", "The provider the session's request would reach, whose route overrides apply, for a Claude name.")
       .option("--json", "Print the explanation as JSON.")
-      .action((name: string, options: Readonly<{ identity?: string; json?: boolean }>) => {
+      .action((name: string, options: Readonly<{ identity?: string; session?: string; provider?: string; json?: boolean }>) => {
+        if (isBareClaudeName(name)) {
+          const explained = explainOverride(paths, name, options);
+          if (options.json === true) {
+            printJson(explained);
+            return;
+          }
+          for (const line of describeOverride(explained)) {
+            console.log(line);
+          }
+          return;
+        }
         if (parseSelectorName(name) !== undefined) {
           const explained = explainSelector(paths, name, options.identity);
           if (options.json === true) {
@@ -162,7 +211,7 @@ export function registerModelsCommand(program: Command, deps: CommandDeps): void
           console.log(`  ${line}`);
         }
       }),
-    ["agent-shim model explain fast", "agent-shim model explain auto/z/sonnet", "agent-shim model explain auto/pool:subs/sonnet --identity work --json"],
+    ["agent-shim model explain fast", "agent-shim model explain auto/z/sonnet", "agent-shim model explain auto/pool:subs/sonnet --identity work --json", "agent-shim model explain claude-opus-5-5 --identity work --provider z"],
   );
   withExamples(modelsCommand, ["agent-shim model match", "agent-shim model add fast --mode soonest-reset --member z/glm-5.3 --member m/MiniMax-M3"]);
   withExamples(
