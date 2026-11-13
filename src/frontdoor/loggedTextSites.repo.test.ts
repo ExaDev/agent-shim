@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 /**
  * The modules of this feature that put text into a log line or an error message. A text a provider supplies (a model id, a tool name, a catalogue entry) is quoted and cut by `quotedForLog` before it reaches a message, so a hostile one cannot start a line of its own or fill one. The guard follows every text that reaches a message: a template or a concatenation passed to a logging or error-building call, a `message` property, an error constructor, and a name that was bound to such a text first.
  */
-const SCANNED = ["frontdoor/httpRequestEdits.ts", "frontdoor/servedModel.ts", "catalogueKeeper.ts", "frontdoor/providerRoute.ts", "providerCatalogue.ts"];
+const SCANNED = ["frontdoor/httpRequestEdits.ts", "frontdoor/servedModel.ts", "catalogueKeeper.ts", "frontdoor/providerRoute.ts", "frontdoor/providerReads.ts", "providerCatalogue.ts"];
 
 /** The calls whose arguments are log lines or error messages, and which of their arguments carry the text (the others are status codes and responses); no index means every argument. */
 const MESSAGE_CALLS: ReadonlyMap<string, number | undefined> = new Map([["log", 0], ["refuse", 2], ["failed", 1], ["error", undefined], ["warn", undefined]]);
@@ -42,7 +42,7 @@ const RAW_OK: readonly RawAllowance[] = [
   { file: "frontdoor/providerRoute.ts", expression: "bodyTooLargeMessage(limitBytes, provider)", sites: 1, why: "the limit message the door builds from its own limit and the provider named in the request path, which is the client's own text and goes back to it in a JSON error body" },
   { file: "frontdoor/providerRoute.ts", expression: "path", sites: 2, why: "the request path the client sent, echoed back to that client in a JSON error body (an unknown endpoint, and a self-hosted session's request the door never passes to the real API)" },
   { file: "frontdoor/providerRoute.ts", expression: "JSON.stringify(provider)", sites: 1, why: "the provider name from the request path, quoted with JSON escapes, in a JSON error body to the client that sent it" },
-  { file: "frontdoor/providerRoute.ts", expression: "provider", sites: 3, why: "a provider name: from the person's own configuration or, in a refusal, the request path the client sent, in a JSON error body to that client" },
+  { file: "frontdoor/providerRoute.ts", expression: "provider", sites: 2, why: "a provider name: from the person's own configuration or, in a refusal, the request path the client sent, in a JSON error body to that client" },
   { file: "frontdoor/providerRoute.ts", expression: "error.message", sites: 1, why: "the message of a configuration error naming the person's own provider file and the keys it got wrong" },
   { file: "frontdoor/providerRoute.ts", expression: "String(error)", sites: 1, why: "a configuration error on the person's own provider file" },
   { file: "frontdoor/providerRoute.ts", expression: "res.message", sites: 1, why: "the door's own credential resolution message" },
@@ -52,7 +52,8 @@ const RAW_OK: readonly RawAllowance[] = [
   { file: "frontdoor/providerRoute.ts", expression: "account.identity", sites: 3, why: "an identity name from the person's own models block, validated as a file name" },
   { file: "frontdoor/providerRoute.ts", expression: "routed.refusal", sites: 1, why: "a refusal the resolver built from the person's own configuration" },
   { file: "frontdoor/providerRoute.ts", expression: "AMBIGUOUS_MODEL_MESSAGE", sites: 2, why: "a fixed message" },
-  { file: "frontdoor/providerRoute.ts", expression: "claudeNameTier(requested)", sites: 3, why: "one of the fixed tier names" },
+  { file: "frontdoor/providerReads.ts", expression: "provider", sites: 1, why: "a provider name from the person's own configuration, in a refusal to the client whose session is on it" },
+  { file: "frontdoor/providerReads.ts", expression: "claudeNameTier(requested)", sites: 3, why: "one of the fixed tier names" },
   { file: "providerCatalogue.ts", expression: "{ redirected, unauthorised: refusedCandidates === failedCandidates }", sites: 1, why: "the error constructor's flags, two booleans the fetch tracked and no text" },
   { file: "providerCatalogue.ts", expression: 'outcomes.join("; ")', sites: 1, why: "outcomes the fetch built from redacted addresses, status codes and the door's own error text, never a body a server sent" },
   { file: "catalogueKeeper.ts", expression: "catalogueReadFault(error)", sites: 1, why: "the class or code of a login file's read failure, which names no path" },
