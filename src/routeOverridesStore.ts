@@ -34,6 +34,11 @@ function tableOf(overrides: Readonly<RouteOverrides>, scope: RouteOverrideScope)
   return scope.kind === "global" ? overrides.global : ownEntry(overrides[SCOPE_KEYS[scope.kind]], scope.name);
 }
 
+/** The key an override of `model` is stored under: its lower-case spelling, which a request's Claude name is matched against in any case. */
+export function overrideKeyOf(model: string): string {
+  return model.toLowerCase();
+}
+
 /** Whether `name` can be an override's key: a bare Claude name or class (`claude-opus-5-5`, `opus`), with no provider and no context marker. */
 export function isOverrideKey(name: string): boolean {
   return !name.includes("/") && withoutContextMarker(name) === name && claudeNameTier(name) !== undefined;
@@ -161,7 +166,7 @@ export function withRouteOverride(overrides: Readonly<RouteOverrides>, scope: Ro
   }
   const table = tableOf(overrides, scope) ?? {};
   // A key is stored in lower case, and a removal also takes an entry a hand edit wrote in another case.
-  const canonical = key.toLowerCase();
+  const canonical = overrideKeyOf(key);
   if (target === undefined && !Object.keys(table).some((existing) => existing.toLowerCase() === canonical)) {
     throw new UsageError(`No override of ${JSON.stringify(key)} is set ${describeScope(scope)}.`);
   }

@@ -1,3 +1,5 @@
+import os from "node:os";
+
 
 import { readProfile } from "../configProfilesStore";
 import { loginKeyOf, readIdentityAccount } from "../identityAccounts";
@@ -6,6 +8,7 @@ import type { LayoutPaths } from "../paths";
 import { collectPoolPick } from "../poolPickReport";
 import { realMemberProviderResolver } from "../poolProviderWiring";
 import { readPools } from "../poolStore";
+import { readableOr } from "../readableConfig";
 import { realFarmFs, realFsPort } from "../realPorts";
 import { lineariseProfile } from "../resolve/extends";
 import { servedModelPorts } from "../frontdoor/cachedCatalogue";
@@ -110,7 +113,8 @@ export function realSelectorStatePorts(paths: LayoutPaths, now: () => number, ho
  * Every port a selector is expanded against, as the CLI reads them, for a session on `routeProvider` (none: the Anthropic route): the configuration state above, the providers read as the door reads them (their default models and tier mappings, with their stored catalogues), and the families the providers' offered targets form under the global models block. What `agent-shim model explain` expands a selector with, so it says what the door would do with the same files.
  */
 export function cliSelectorPorts(paths: LayoutPaths, now: () => number, home: string, routeProvider?: string): SelectorPorts {
-  const models = readModels(paths);
+  // A config.json that cannot be read holds no models block here; `doctor` reports the file itself.
+  const models = readableOr(() => readModels(paths), undefined);
   const reads = createProviderReads({ fs: realFsPort, providersDir: paths.providersDir, models: () => models, catalogueModelsOf: servedModelPorts(paths, () => undefined).catalogueModelsOf });
   return {
     ...realSelectorStatePorts(paths, now, home),
@@ -129,4 +133,29 @@ export function cliSelectorPorts(paths: LayoutPaths, now: () => number, home: st
 /** The person's routing state the door reads per request besides the providers: what a selector names among profiles, identities and pools, the route overrides, and the name of the identity a session's header names by id, each read fresh (the overrides on change), so an edit reaches the next request with no restart. */
 export function doorRoutingState(paths: LayoutPaths, log: (line: string) => void, home: string): { readonly selectorState: SelectorStatePorts; readonly routeOverrides: () => RouteOverridesRead; readonly identityNameOf: (id: string) => string | undefined } {
   return { selectorState: realSelectorStatePorts(paths, () => Date.now(), home), routeOverrides: createRouteOverridesReader(realFsPort, paths.routeOverridesFile, log), identityNameOf: createIdentityNameReader(paths).nameOf };
+}
+
+/**
+ * `live` as a check made outside any session sees it, to decide whether a selector can be routed at all rather than where one session's request goes: the facts a session supplies as it runs are taken as a running session supplies them. A class on the Anthropic route has an id to go by (the session has sent one of the tier by then), the selected identity is another login (so an account selector needs a class, as it does for every session but its own login's), a pool's ranking picks a member even when every member is refused right now (`memberOf` names one), and the session is on `routeProvider`, the provider a check's scope names, or on the Anthropic route.
+ */
+export function staticSelectorPorts(live: Readonly<SelectorPorts>, memberOf: (pool: string) => string | undefined, routeProvider: string | undefined): SelectorPorts {
+  return {
+    ...live,
+    claudeNameOf: (tier) => `claude-${tier}`,
+    sameLogin: () => false,
+    routeProvider: () => routeProvider,
+    poolPick: (name) => {
+      const pick = live.poolPick(name);
+      const member = "refusal" in pick ? memberOf(name) : pick.identity;
+      return member === undefined ? pick : { identity: member };
+    },
+  };
+}
+
+/** The selector ports an override's target is checked with, by `route set`, `config.route.set` and `doctor`: the configuration under `paths` as the CLI reads it, through `staticSelectorPorts`, for a session on `routeProvider`. */
+export function routeTargetPorts(paths: LayoutPaths, routeProvider: string | undefined): SelectorPorts {
+  return staticSelectorPorts(cliSelectorPorts(paths, () => Date.now(), os.homedir(), routeProvider), (pool) => {
+    const [first] = ownEntry(readableOr(() => readPools(paths), {}), pool)?.identities ?? [];
+    return first === undefined ? undefined : typeof first === "string" ? first : first.identity;
+  }, routeProvider);
 }

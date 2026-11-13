@@ -13,6 +13,9 @@ import { SELECTOR_PREFIX } from "./reservedModelNames";
 export const SELECTOR_KINDS = ["profile", "identity", "pool", "provider", "family"] as const;
 export type SelectorKind = (typeof SELECTOR_KINDS)[number];
 
+/** The exact name of an Anthropic model, as a refusal offers it in place of a class the door cannot resolve. */
+const ANTHROPIC_SELECTOR_HINT = "anthropic/<model>";
+
 /** How each kind is named in a message. */
 const KIND_NOUNS: Readonly<Record<SelectorKind, string>> = { profile: "configuration profile", identity: "identity", pool: "pool", provider: "provider", family: "model family" };
 
@@ -145,7 +148,7 @@ function onAnthropic(ports: Readonly<SelectorPorts>, target: SelectorTarget, wha
   if (target.kind === "class") {
     const seen = ports.claudeNameOf(target.tier);
     return seen === undefined
-      ? { refusal: `${asked} selects ${what}, which runs on the Anthropic route, and this session has sent no ${target.tier} request the door has seen, so it cannot tell which model the class means there: choose it once with /model ${target.tier}, or name an exact model as ${written}/<model>` }
+      ? { refusal: `${asked} selects ${what} on the Anthropic route, and this session has sent no ${target.tier} request the door has seen, so it cannot tell which model the class means there: choose it once with /model ${target.tier}, or name the exact model as ${ANTHROPIC_SELECTOR_HINT}` }
       : { name: `anthropic/${seen}` };
   }
   return { refusal: `${asked} selects ${what}, which runs on the Anthropic route, where a selector needs a class or an exact model: write ${written}/<class> or ${written}/<model>` };
@@ -237,7 +240,7 @@ export function expandSelectorName(model: string, ports: Readonly<SelectorPorts>
   if (alone !== undefined && only === undefined) {
     const provider = ports.routeProvider();
     const target: SelectorTarget = { kind: "class", tier: alone };
-    const routed = provider === undefined ? onAnthropic(ports, target, `the ${alone} class of the Anthropic route this session is on`, asked, SELECTOR_PREFIX.slice(0, -1)) : ports.providerTarget(provider, target);
+    const routed = provider === undefined ? onAnthropic(ports, target, `the ${alone} class of the session's route`, asked, SELECTOR_PREFIX.slice(0, -1)) : ports.providerTarget(provider, target);
     return "refusal" in routed ? routed : { name: routed.name, kind: "class", selector };
   }
   if (only === undefined) {

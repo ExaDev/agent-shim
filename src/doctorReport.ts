@@ -35,6 +35,8 @@ import { isMovingGitSource } from "./headroom/source";
 import { modelsFindings } from "./models/doctor";
 import { targetRefs } from "./models/targets";
 import { routeOverrideDoctorFindings } from "./routeOverrideChecks";
+import { routeTargetPorts } from "./models/selectorPorts";
+import type { SelectorPorts } from "./models/selectors";
 import { RouteOverridesSchema } from "./routeOverridesSchema";
 import { readGlobalConfig } from "./configProfilesStore";
 import { diagnoseAllowlistDrift } from "./headroom/allowlistDrift";
@@ -210,6 +212,8 @@ export interface RunDoctorParams {
   readonly modelTargets?: readonly string[];
   /** The route overrides file. Omit to skip the route override checks; a missing file is a pass (nothing is overridden). */
   readonly routeOverrides?: DoctorFileInput;
+  /** The configuration's selector ports a target is checked with, for a session on a provider or none, as `route set` checks it. Omit to check by the defined names alone. */
+  readonly routeOverrideTargetPorts?: (routeProvider: string | undefined) => SelectorPorts;
   readonly categoriesLocal: DoctorFileInput;
   readonly activeIdentity: DoctorFileInput;
   readonly binaryDiscovery: DoctorBinaryDiscovery;
@@ -776,7 +780,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   }
 
   if (params.routeOverrides !== undefined) {
-    for (const finding of routeOverrideDoctorFindings(params.routeOverrides.path, params.routeOverrides.raw === undefined ? undefined : validate(RouteOverridesSchema, params.routeOverrides, "route-overrides"), { providers: params.providers.map((entry) => entry.name), identities: params.identities.map((entry) => entry.name), profiles: params.configProfiles.map((entry) => entry.name), pools: Object.keys(pools), models: params.models, targets: params.modelTargets ?? [] })) {
+    for (const finding of routeOverrideDoctorFindings(params.routeOverrides.path, params.routeOverrides.raw === undefined ? undefined : validate(RouteOverridesSchema, params.routeOverrides, "route-overrides"), { providers: params.providers.map((entry) => entry.name), identities: params.identities.map((entry) => entry.name), profiles: params.configProfiles.map((entry) => entry.name), pools: Object.keys(pools), models: params.models, targets: params.modelTargets ?? [] }, params.routeOverrideTargetPorts)) {
       push("route-overrides", finding.severity, finding.message);
     }
   }
@@ -1006,6 +1010,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
     models: readableOr(() => readGlobalConfig(paths)?.models, undefined),
     modelTargets: targetRefs(paths),
     routeOverrides: { path: paths.routeOverridesFile, raw: realFsPort.readFileUtf8(paths.routeOverridesFile) },
+    routeOverrideTargetPorts: (routeProvider) => routeTargetPorts(paths, routeProvider),
     categoriesLocal: { path: paths.categoriesLocalFile, raw: realFsPort.readFileUtf8(paths.categoriesLocalFile) },
     activeIdentity: { path: paths.activeIdentityFile, raw: realFsPort.readFileUtf8(paths.activeIdentityFile) },
     binaryDiscovery,
