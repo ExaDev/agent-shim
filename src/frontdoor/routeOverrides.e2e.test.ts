@@ -240,6 +240,73 @@ describe("runtime route overrides through the real door, read from a real file",
     }
   }, TIMEOUT_MS);
 
+  it("puts a session back where it would be once the override that moved it is removed", async () => {
+    set([[{ kind: "global" }, "opus", "z/glm-9"]]);
+    const world = await door();
+    try {
+      await send(world, { model: OPUS, requestClass: "main" });
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-9"]);
+      expect(world.contextNow()).toMatchObject({ kind: "provider", provider: "z", movedBy: "override" });
+      writeRouteOverrides(paths, NO_ROUTE_OVERRIDES);
+      await send(world, { model: OPUS, requestClass: "main" });
+      expect(world.anthropicModels).toEqual([OPUS]);
+      expect(world.upstream.seen).toHaveLength(1);
+      expect(world.contextNow()).toMatchObject({ kind: "anthropic", requestedModel: OPUS });
+      expect(world.contextNow()).not.toHaveProperty("movedBy");
+      // The helpers follow the main loop back.
+      await send(world, { model: HAIKU_NAME, requestClass: "auxiliary" });
+      expect(world.anthropicModels).toEqual([OPUS, HAIKU_NAME]);
+    } finally {
+      await world.close();
+    }
+  }, TIMEOUT_MS);
+
+  it("follows a changed target at the next request", async () => {
+    set([[{ kind: "global" }, "opus", "z/first"]]);
+    const world = await door();
+    try {
+      await send(world, { model: OPUS, requestClass: "main" });
+      set([[{ kind: "global" }, "opus", "anthropic/claude-opus-5-1"]]);
+      await send(world, { model: OPUS, requestClass: "main" });
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["first"]);
+      expect(world.anthropicModels).toEqual(["claude-opus-5-1"]);
+      set([[{ kind: "global" }, "sonnet", "z/other"]]);
+      await send(world, { model: OPUS, requestClass: "main" });
+      expect(world.anthropicModels).toEqual(["claude-opus-5-1", OPUS]);
+    } finally {
+      await world.close();
+    }
+  }, TIMEOUT_MS);
+
+  it("keeps a session the person moved to a provider with /model there, whatever the overrides say", async () => {
+    set([[{ kind: "global" }, "sonnet", "z/unrelated"]]);
+    const world = await door();
+    try {
+      await send(world, { model: "z/chosen", requestClass: "main" });
+      writeRouteOverrides(paths, NO_ROUTE_OVERRIDES);
+      await send(world, { model: OPUS, requestClass: "main" });
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["chosen", Z_OPUS_MODEL]);
+      expect(world.anthropicModels).toEqual([]);
+      expect(world.contextNow()).toMatchObject({ kind: "provider", provider: "z" });
+      expect(world.contextNow()).not.toHaveProperty("movedBy");
+    } finally {
+      await world.close();
+    }
+  }, TIMEOUT_MS);
+
+  it("keeps a session an override moved where it is while the session asks for no Claude name", async () => {
+    set([[{ kind: "global" }, "opus", "z/glm-9"]]);
+    const world = await door();
+    try {
+      await send(world, { model: OPUS, requestClass: "main" });
+      writeRouteOverrides(paths, NO_ROUTE_OVERRIDES);
+      await send(world, { model: "glm-typo", requestClass: "main" });
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-9", "glm-typo"]);
+    } finally {
+      await world.close();
+    }
+  }, TIMEOUT_MS);
+
   it("leaves a session with no override where its context says", async () => {
     set([[{ kind: "session", name: "another" }, "sonnet", "z/elsewhere"]]);
     const world = await door();
