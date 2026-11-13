@@ -1,3 +1,9 @@
+## [14.2.4](https://github.com/ExaDev/agent-shim/compare/v14.2.3...v14.2.4) (2026-11-13)
+
+### Bug Fixes
+
+* resolve hono at or above the patched release ([c8d36a7](https://github.com/ExaDev/agent-shim/commit/c8d36a7700793fd2d6998f8c6fdf12d40fda0914)), references [#796](https://github.com/ExaDev/agent-shim/issues/796)
+
 ## [14.2.3](https://github.com/ExaDev/agent-shim/compare/v14.2.2...v14.2.3) (2026-11-13)
 
 ### Bug Fixes
