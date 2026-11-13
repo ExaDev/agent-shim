@@ -201,6 +201,20 @@ describe("a model name auto/<selector>[/<class>] through the real door", () => {
     }
   }, TIMEOUT_MS);
 
+  it.each(["auto/plain/claude-opus-5-5", "auto/me/claude-opus-5-5", "auto/pool:mine/claude-opus-5-5"])("refuses %j in a session launched on a provider, whose requests carry no Anthropic login, naming the relaunch", async (name) => {
+    const door = await world();
+    try {
+      const refused = await send(door, { model: name, requestClass: "main", identity: "id-me", provider: "z" });
+      expect(refused.status).toBe(HTTP_STATUS.badRequest);
+      expect(refused.text).toContain("launched on provider");
+      expect(refused.text).toContain("without --provider");
+      expect(door.upstream.seen).toEqual([]);
+      expect(door.toAnthropic).toEqual([]);
+    } finally {
+      await door.close();
+    }
+  }, TIMEOUT_MS);
+
   it("expands a selector in a session launched on a provider too", async () => {
     const door = await world();
     try {
