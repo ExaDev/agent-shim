@@ -583,7 +583,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         // The pool table is read per call, not captured here, so a pool created or removed after the door started is ranked or refused by its live name the same moment the CLI would see it. The door's own environment is never a substitute for a caller's, so each member's provider is resolved from the directory's configuration and the member's own declaration alone.
         poolPick: (pool: string, directory: string) => {
           const pools = readPools(paths);
-          return pools[pool] === undefined ? undefined : collectPoolPick({ paths, fs: realFsPort, usageFs: realFarmFs, poolName: pool, pools, directory, nowMs: Date.now(), providerOf: realMemberProviderResolver({ paths, cwd: directory, env: {} }) });
+          return !Object.hasOwn(pools, pool) ? undefined : collectPoolPick({ paths, fs: realFsPort, usageFs: realFarmFs, poolName: pool, pools, directory, nowMs: Date.now(), providerOf: realMemberProviderResolver({ paths, cwd: directory, env: {} }) });
         },
         poolNames: () => Object.keys(readPools(paths)).sort(),
         // A read-only resolution of what a launch from one directory would do: the launcher's own decision with its effects left out, so a read never recovers or resyncs a farm, starts a daemon, records a pool pick or runs a credential command.

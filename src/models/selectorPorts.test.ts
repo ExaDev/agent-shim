@@ -120,6 +120,17 @@ describe("the selector state read from the person's files", () => {
     expect(realSelectorStatePorts(paths, now, home).poolPick("both")).toEqual({ identity: "work" });
   });
 
+  it.each(["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"])("finds no profile, identity, pool, provider or family called %j, a name every object inherits", (name) => {
+    const ports = cliSelectorPorts(paths, now, home);
+    expect(ports.pool(name)).toEqual({ kind: "absent" });
+    expect(ports.profile(name)).toEqual({ kind: "absent" });
+    expect(ports.identity(name)).toEqual({ kind: "absent" });
+    expect(ports.provider(name)).toEqual({ kind: "absent" });
+    expect(ports.family(name)).toBe(false);
+    const result = expandSelectorName(`auto/${name}/opus`, ports, { identityId: "me" });
+    expect(result !== undefined && "refusal" in result ? result.refusal : "").toContain("names nothing");
+  });
+
   it("ranks a pool to its only member", () => {
     expect(realSelectorStatePorts(paths, now, home).poolPick("subs")).toEqual({ identity: "work" });
   });

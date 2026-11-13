@@ -11,6 +11,7 @@ import { claudeNameTier } from "./models/tiers";
 import type { LayoutPaths } from "./paths";
 import { catalogueReadFault } from "./storedCatalogue";
 import { RepairableRouteOverridesSchema, RouteOverridesSchema, type OverrideTable, type RouteOverrides } from "./routeOverridesSchema";
+import { ownEntry } from "./ownEntry";
 
 /**
  * The runtime route overrides: per scope, a table from a bare Claude model name or class to the name a request asking for it is routed by instead. Stored at `LayoutPaths.routeOverridesFile`, written by `agent-shim route set|remove` and `config.route.set|remove`, and read by the door on change (`createRouteOverridesReader`), so an edit applies to the next request with no restart and nothing changed in Claude Code.
@@ -30,7 +31,7 @@ const SCOPE_KEYS = { provider: "providers", identity: "identities", session: "se
 
 /** The table one scope holds, or none. */
 function tableOf(overrides: Readonly<RouteOverrides>, scope: RouteOverrideScope): OverrideTable | undefined {
-  return scope.kind === "global" ? overrides.global : overrides[SCOPE_KEYS[scope.kind]]?.[scope.name];
+  return scope.kind === "global" ? overrides.global : ownEntry(overrides[SCOPE_KEYS[scope.kind]], scope.name);
 }
 
 /** Whether `name` can be an override's key: a bare Claude name or class (`claude-opus-5-5`, `opus`), with no provider and no context marker. */
@@ -86,8 +87,8 @@ export function overrideMatches(overrides: Readonly<RouteOverrides>, ids: Readon
   }
   return scopesOf(ids).flatMap((scope) => {
     const table = tableOf(overrides, scope);
-    const exact = bare === tier ? undefined : table?.[bare];
-    const byClass = table?.[tier];
+    const exact = bare === tier ? undefined : ownEntry(table, bare);
+    const byClass = ownEntry(table, tier);
     return [...(exact === undefined ? [] : [{ scope, key: bare, target: exact, match: "exact" } as const]), ...(byClass === undefined ? [] : [{ scope, key: tier, target: byClass, match: "class" } as const])];
   });
 }
@@ -293,7 +294,7 @@ export function routeOverridesRenamed(overrides: Readonly<RouteOverrides>, kind:
   const changes: string[] = [];
   const renameTable = (table: Readonly<OverrideTable>, where: string): OverrideTable => {
     const next = Object.fromEntries(Object.entries(table).map(([key, target]) => [key, renamedTarget(target, kind, from, to)] as const));
-    if (Object.entries(next).some(([key, target]) => table[key] !== target)) {
+    if (Object.entries(next).some(([key, target]) => ownEntry(table, key) !== target)) {
       changes.push(where);
     }
     return next;
@@ -303,13 +304,13 @@ export function routeOverridesRenamed(overrides: Readonly<RouteOverrides>, kind:
       return undefined;
     }
     const renamed = Object.fromEntries(Object.entries(tables).map(([name, table]) => [name, renameTable(table, `${field} ${name}`)] as const));
-    const moved = field === SCOPE_KEYS[kind] ? renamed[from] : undefined;
+    const moved = field === SCOPE_KEYS[kind] ? ownEntry(renamed, from) : undefined;
     if (moved === undefined) {
       return renamed;
     }
     changes.push(`${field} ${from} -> ${to}`);
     const rest = Object.fromEntries(Object.entries(renamed).filter(([name]) => name !== from));
-    return { ...rest, [to]: { ...rest[to], ...moved } };
+    return { ...rest, [to]: { ...ownEntry(rest, to), ...moved } };
   };
   const global = overrides.global === undefined ? undefined : renameTable(overrides.global, "global");
   const providers = renameTables(overrides.providers, "providers");
