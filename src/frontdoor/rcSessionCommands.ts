@@ -21,7 +21,7 @@ import { runSelfHostedSlashCommand, runSelfHostedTurn, type RcSelfHostCommandDep
  */
 
 /** The Claude Code versions both routes were verified on end to end; a session reporting any other version is refused. */
-export const RC_SESSION_COMMAND_VERIFIED_VERSIONS: readonly string[] = ["2.1.319"];
+export const RC_SESSION_COMMAND_VERIFIED_VERSIONS: readonly string[] = ["2.1.319", "2.1.325"];
 
 /** The arguments the 2.1.319 `/goal` command reads as a request to clear the goal rather than set one, compared case-insensitively; a condition that is one of these words cannot be set through `/goal`, so the set verb refuses it rather than clear the goal by accident. */
 export const RC_GOAL_CLEAR_WORDS: readonly string[] = ["clear", "stop", "off", "reset", "none", "cancel"];

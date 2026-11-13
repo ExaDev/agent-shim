@@ -1,3 +1,6 @@
+import nodeFs from "node:fs";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import type { CompactionResult } from "../supervise/realCompact";
@@ -373,5 +376,21 @@ describe("a person's turn over Remote Control, by route", () => {
     expect(settled).toBe(false);
     await waiting;
     expect(world.submitted).toEqual(["carry on"]);
+  });
+});
+
+/** The document that records what each verified version was checked with. */
+const RC_SLASH_COMMANDS_DOC = path.join(__dirname, "..", "..", "docs", "rc-slash-commands.md");
+
+describe("the verified versions", () => {
+  it("are each named as verified in the document's supported versions section, so a version is added to the gate only with the record of its checks", () => {
+    const doc = nodeFs.readFileSync(RC_SLASH_COMMANDS_DOC, "utf8");
+    const versions = /^## Supported versions\n\nThe goal, compaction and turn verbs are verified on Claude Code (?<versions>[^(\n]+) \(/mu.exec(doc)?.groups?.versions;
+    if (versions === undefined) {
+      throw new Error(`${RC_SLASH_COMMANDS_DOC} no longer opens its supported versions section with the sentence naming the verified versions`);
+    }
+    const documented = versions.split(/, | and /u).map((version) => version.trim());
+    expect(RC_SESSION_COMMAND_VERIFIED_VERSIONS.length).toBeGreaterThan(0);
+    expect([...documented].sort()).toEqual([...RC_SESSION_COMMAND_VERIFIED_VERSIONS].sort());
   });
 });
