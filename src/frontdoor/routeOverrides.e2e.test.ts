@@ -42,13 +42,13 @@ describe("runtime route overrides through the real door, read from a real file",
   }
 
   /** A door whose overrides are read from the file under `root` through the real file system, counting each read of it. */
-  async function door() {
+  async function door(identityNames: Readonly<Record<string, string>> = { me: "me" }) {
     const counting = { fileRevision: realFsPort.fileRevision, readFileUtf8: (file: string) => {
       if (file === paths.routeOverridesFile) reads += 1;
       return realFsPort.readFileUtf8(file);
     } };
     const record = mainLoopRoutesOfLiveSessions();
-    const started = await startWorld(record, HTTP_STATUS.ok, undefined, undefined, undefined, { routeOverrides: createRouteOverridesReader(counting, paths.routeOverridesFile, () => undefined) });
+    const started = await startWorld(record, HTTP_STATUS.ok, undefined, undefined, undefined, { routeOverrides: createRouteOverridesReader(counting, paths.routeOverridesFile, () => undefined), identityNameOf: (id) => identityNames[id] });
     return { ...started, contextNow: () => record.routeOf(launchOfSession("s-1")) };
   }
 
@@ -88,6 +88,23 @@ describe("runtime route overrides through the real door, read from a real file",
       await send(world, { model: "z/start", requestClass: "main", identity: "me" });
       await send(world, { model: OPUS, requestClass: "main", identity: "me" });
       expect(world.upstream.seen.at(-1)?.model).toBe("higher");
+    } finally {
+      await world.close();
+    }
+  }, TIMEOUT_MS);
+
+  it("looks the identity scope up by the name of the identity whose id the session's header carries", async () => {
+    set([[{ kind: "identity", name: "work" }, "opus", "z/by-identity"]]);
+    // The identity created as "work" (id "work") was renamed "personal"; another identity, id "work-2", is now "work".
+    const world = await door({ work: "personal", "work-2": "work" });
+    try {
+      // The session on the renamed identity is not covered by the "work" scope, so it stays on the Anthropic route.
+      await send(world, { model: OPUS, requestClass: "main", identity: "work" });
+      expect(world.anthropicModels).toEqual([OPUS]);
+      expect(world.upstream.seen).toEqual([]);
+      // The session on the identity now called "work" is.
+      await send(world, { model: OPUS, requestClass: "main", identity: "work-2", session: "s-2" });
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["by-identity"]);
     } finally {
       await world.close();
     }

@@ -128,7 +128,8 @@ function ports(overrides: Partial<SelectorPorts> = {}): SelectorPorts {
       return target.kind === "none" ? { name: "z/glm-4.7" } : target.kind === "class" ? { name: target.tier === "sonnet" ? "z/glm-4.7" : `z/${target.tier}` } : { name: `z/${target.model}` };
     },
     family: (key) => key === "glm-5-1" || key === "both",
-    sameLogin: (identity, sessionIdentity) => sessionIdentity === "me" && (identity === "me" || identity === "twin"),
+    // The session runs on the identity whose directory id is "id-me"; its name is "me", and "twin" holds the same login.
+    sameLogin: (identity, sessionIdentityId) => sessionIdentityId === "id-me" && (identity === "me" || identity === "twin"),
     // The session has sent a sonnet and an opus id on the Anthropic route, and no haiku or fable one.
     claudeNameOf: (tier) => (tier === "sonnet" ? "claude-sonnet-5-5" : tier === "opus" ? "claude-opus-5-5" : undefined),
     routeProvider: () => undefined,
@@ -136,10 +137,11 @@ function ports(overrides: Partial<SelectorPorts> = {}): SelectorPorts {
   };
 }
 
-const ME = { identity: "me" };
+/** The session, by the identity id the launcher puts in its header, which differs from the identity's name. */
+const ME = { identityId: "id-me" };
 
 /** An expansion as the table writes it: the name, or the refusal's text. */
-function expanded(name: string, session: Readonly<{ readonly identity?: string }> = ME, given: SelectorPorts = ports()): string | undefined {
+function expanded(name: string, session: Readonly<{ readonly identityId?: string }> = ME, given: SelectorPorts = ports()): string | undefined {
   const result = expandSelectorName(name, given, session);
   return result === undefined ? undefined : "refusal" in result ? `refused: ${result.refusal}` : result.name;
 }
