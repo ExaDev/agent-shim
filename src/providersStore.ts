@@ -34,6 +34,8 @@ import type { LayoutPaths } from "./paths";
 import { FAMILY_PREFIX, buildFamilies, expandFamilyMembers, type Family } from "./models/families";
 import { isStoredName, providerFilePath, requireNewProviderName, UnsafeNameError } from "./config/names";
 import { requireUnreservedProviderName } from "./models/reservedModelNames";
+import { isSystemReadError } from "./readableConfig";
+import { configFaultOf } from "./config/load";
 
 /** Raised by any operation that requires a provider to already exist, when it does not. */
 export class ProviderNotFoundError extends CliError {
@@ -192,7 +194,7 @@ export interface ProviderListEntry {
   readonly provider: Provider;
 }
 
-/** Lists every provider under `providersDir` that has a valid `<name>.json`. A file that fails validation or is not JSON is skipped here and reported through `onInvalid` (standard error by default); `provider list` is the place a broken definition gets surfaced, not a launch. */
+/** Lists every provider under `providersDir` that has a valid `<name>.json`. A file that fails validation, is not JSON or cannot be read is skipped here and reported through `onInvalid` (standard error by default); `provider list` is the place a broken definition gets surfaced, not a launch. */
 export function listProviders(paths: LayoutPaths, onInvalid: (name: string, message: string) => void = reportInvalidProvider): readonly ProviderListEntry[] {
   const names = listProviderNames(
     (dir) => fs.readdirSync(dir),
@@ -204,10 +206,14 @@ export function listProviders(paths: LayoutPaths, onInvalid: (name: string, mess
     try {
       provider = readProvider(paths, name);
     } catch (error) {
-      if (!(error instanceof ConfigValidationError || error instanceof LegacyProviderFileError || error instanceof ConfigFileNotJsonError || error instanceof UnsafeNameError)) {
+      if (error instanceof ConfigValidationError || error instanceof LegacyProviderFileError || error instanceof ConfigFileNotJsonError || error instanceof UnsafeNameError) {
+        onInvalid(name, error.message);
+        continue;
+      }
+      if (!isSystemReadError(error)) {
         throw error;
       }
-      onInvalid(name, error.message);
+      onInvalid(name, `its file cannot be read (${configFaultOf(error)})`);
       continue;
     }
     if (provider !== undefined) {
