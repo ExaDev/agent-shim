@@ -138,6 +138,55 @@ describe("a model name auto/<selector>[/<class>] through the real door", () => {
     }
   }, TIMEOUT_MS);
 
+  it.each<[string, string]>([
+    ["acct:me/claude-opus-5-1", "claude-opus-5-1"],
+    ["acct:twin/claude-opus-5-1", "claude-opus-5-1"],
+    ["acct:me/opus", "claude-opus-5-5"],
+  ])("serves %j, an account target on the session's own login, on its own credential as the selector would, never as a relaunch", async (name, sent) => {
+    const moves: string[] = [];
+    const record = mainLoopRoutesOfLiveSessions();
+    const door = await startWorld(record, HTTP_STATUS.ok, undefined, undefined, undefined, { selectorState: STATE, accountMoves: async (_sessionId, to) => { moves.push(to); return await Promise.resolve(true); } });
+    try {
+      await send(door, { model: "claude-opus-5-5", requestClass: "auxiliary", identity: "id-me" });
+      const answered = await send(door, { model: name, requestClass: "main", identity: "id-me" });
+      expect(answered.status).toBe(HTTP_STATUS.badGateway);
+      expect(door.anthropicModels.at(-1)).toBe(sent);
+      expect(moves).toEqual([]);
+      expect(record.routeOf(launchOfSession("s-1"))).toMatchObject({ kind: "anthropic", requestedModel: name });
+    } finally {
+      await door.close();
+    }
+  }, TIMEOUT_MS);
+
+  it("refuses an account target on the session's own login naming a class it has sent no request of, as the selector does", async () => {
+    const door = await world();
+    try {
+      const refused = await send(door, { model: "acct:me/haiku", requestClass: "main", identity: "id-me" });
+      expect(refused.status).toBe(HTTP_STATUS.badRequest);
+      expect(refused.text).toContain("no haiku request");
+      expect(refused.text).not.toContain("--resume");
+    } finally {
+      await door.close();
+    }
+  }, TIMEOUT_MS);
+
+  it("still asks for a relaunch for an account target on another login, from a virtual model's member too", async () => {
+    const moves: string[] = [];
+    const door = await startWorld(mainLoopRoutesOfLiveSessions(), HTTP_STATUS.ok, { virtual: { mine: { mode: "ordered", members: ["acct:me/claude-opus-5-1"] }, theirs: { mode: "ordered", members: ["acct:work/opus"] } } }, undefined, undefined, { selectorState: STATE, accountMoves: async (_sessionId, to) => { moves.push(to); return await Promise.resolve(true); } });
+    try {
+      await send(door, { model: "acct:work/opus", requestClass: "main", identity: "id-me" });
+      await send(door, { model: "theirs", requestClass: "main", identity: "id-me" });
+      expect(moves).toEqual(["work", "work"]);
+      // A virtual model whose account member is the session's own login is served on its own credential.
+      await send(door, { model: "mine", requestClass: "main", identity: "id-me" });
+      expect(moves).toEqual(["work", "work"]);
+      expect(door.anthropicModels.at(-1)).toBe("claude-opus-5-1");
+      expect(door.upstream.seen).toEqual([]);
+    } finally {
+      await door.close();
+    }
+  }, TIMEOUT_MS);
+
   it("routes a helper that names a selector by it, and leaves the context where it was", async () => {
     const door = await world();
     try {
