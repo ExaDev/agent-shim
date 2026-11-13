@@ -167,6 +167,20 @@ describe("runtime route overrides through the real door, read from a real file",
     }
   }, TIMEOUT_MS);
 
+  it("refuses a request whose override routes it by a selector that cannot be routed, naming the override", async () => {
+    // Written by hand, since `route set` refuses a target naming nothing.
+    fs.writeFileSync(paths.routeOverridesFile, JSON.stringify({ schemaVersion: 1, global: { opus: "auto/nothing" } }));
+    const world = await door();
+    try {
+      const refused = await send(world, { model: OPUS, requestClass: "main" });
+      expect(refused.status).toBe(HTTP_STATUS.badRequest);
+      expect(refused.text).toContain(`the route override of \\"${OPUS}\\" routes it by \\"auto/nothing\\"`);
+      expect(world.upstream.seen).toEqual([]);
+    } finally {
+      await world.close();
+    }
+  }, TIMEOUT_MS);
+
   it("leaves a session with no override where its context says", async () => {
     set([[{ kind: "session", name: "another" }, "sonnet", "z/elsewhere"]]);
     const world = await door();

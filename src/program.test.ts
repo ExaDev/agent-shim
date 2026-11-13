@@ -544,7 +544,12 @@ describe("route commands", () => {
       { scope: "global", model: "opus", target: "z/glm-5.3" },
     ]);
     expect(parseJson((await cli(["route", "unset", "opus", "--json"])).stdout)).toEqual({ action: "removed", kind: "route", name: "opus" });
+    expect((await cli(["route", "list"])).stdout).toContain("identity:work  claude-sonnet-5-5 -> auto/z/sonnet");
     expect(readRouteOverrides(paths)).toEqual({ schemaVersion: 1, identities: { work: { "claude-sonnet-5-5": "auto/z/sonnet" } }, sessions: { abc: { haiku: "z/air" } } });
+  });
+
+  it("says when no override is set", async () => {
+    expect((await cli(["route", "list"])).stdout).toBe("No route overrides are set.\n");
   });
 
   it.each<[readonly string[], string]>([
@@ -591,6 +596,29 @@ describe("model explain for a selector and a Claude name", () => {
     const text = (await cli(["model", "explain", "claude-opus-5-1"])).stdout;
     expect(text).toContain("claude-opus-5-1 is routed to z/glm-5.3 by the global override of its class");
     expect((await cli(["model", "explain", "claude-haiku-5-5"])).stdout).toContain("No route override applies to claude-haiku-5-5");
+    expect((await cli(["route", "set", "haiku", "auto/z", "--session", "s1"])).code).toBe(0);
+    expect(parseJson((await cli(["model", "explain", "claude-haiku-5-5", "--session", "s1", "--json"])).stdout)).toMatchObject({ override: { scope: "session:s1", target: "auto/z" } });
+    expect((await cli(["route", "set", "sonnet", "auto/work/sonnet"])).code).toBe(0);
+    expect((await cli(["model", "explain", "claude-sonnet-5-5", "--identity", "work"])).stdout).toContain("which is refused:");
+    expect(parseJson((await cli(["model", "explain", "claude-sonnet-5-5", "--json"])).stdout)).toMatchObject({ override: { routedAs: "acct:work/sonnet" } });
+  });
+
+  it("compares an account selector with the identity --identity names", async () => {
+    expect((await cli(["identity", "add", "work"])).code).toBe(0);
+    expect(parseJson((await cli(["model", "explain", "auto/work/claude-opus-5-5", "--json"])).stdout)).toMatchObject({ routedAs: "acct:work/claude-opus-5-5" });
+    expect(parseJson((await cli(["model", "explain", "auto/work/claude-opus-5-5", "--identity", "work", "--json"])).stdout)).toMatchObject({ routedAs: "anthropic/claude-opus-5-5" });
+  });
+
+  it("still explains a virtual model, as text and as JSON", async () => {
+    expect((await cli(addZ)).code).toBe(0);
+    expect((await cli(["model", "add", "fast", "--mode", "ordered", "--member", "z/glm-5.3"])).code).toBe(0);
+    expect((await cli(["model", "explain", "fast"])).stdout).toContain("fast (ordered) chooses z/glm-5.3:");
+    expect(parseJson((await cli(["model", "explain", "fast", "--json"])).stdout)).toMatchObject({ name: "fast", mode: "ordered", chooses: "z/glm-5.3", candidates: ["z/glm-5.3"] });
+    expect((await cli(["identity", "add", "work"])).code).toBe(0);
+    expect((await cli(["model", "add", "mine", "--mode", "ordered", "--member", "acct:work/opus"])).code).toBe(0);
+    const accountOnly = (await cli(["model", "explain", "mine"])).stdout;
+    expect(accountOnly).toContain("mine (ordered) chooses nothing by quota:");
+    expect(accountOnly).toContain("served by relaunching the session");
   });
 });
 

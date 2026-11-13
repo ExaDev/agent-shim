@@ -36,6 +36,12 @@ function profileProvider(paths: LayoutPaths, name: string): string | undefined {
   return order.reduce<string | undefined>((provider, candidate) => readProfile(paths, candidate)?.launch?.provider ?? provider, undefined);
 }
 
+/** Why pool `name` picks no member: every one is refused right now, naming the one back soonest when the ranking knows it. */
+export function poolRefusal(name: string, earliestReturn: { readonly identity: string; readonly at: string } | undefined): string {
+  const back = earliestReturn === undefined ? "" : `; the earliest back is ${earliestReturn.identity} at ${earliestReturn.at}`;
+  return `every member of pool "${name}" is refused right now${back}`;
+}
+
 /**
  * The selector state read from the person's configuration under `paths`, every read fresh at the moment it is asked, so a profile, identity or pool edited while a session runs is what its next request expands against. A pool is ranked as `agent-shim pool pick <pool>` ranks it from the home directory: no directory's last pick and the provider each member declares, and records nothing.
  */
@@ -67,11 +73,7 @@ export function realSelectorStatePorts(paths: LayoutPaths, now: () => number): S
       const pools = readPools(paths);
       const home = os.homedir();
       const report = collectPoolPick({ paths, fs: realFsPort, usageFs: realFarmFs, poolName: name, pools, directory: home, nowMs: now(), providerOf: realMemberProviderResolver({ paths, cwd: home, env: {} }) });
-      if (report.pick !== undefined) {
-        return { identity: report.pick };
-      }
-      const back = report.earliestReturn === undefined ? "" : `; the earliest back is ${report.earliestReturn.identity} at ${report.earliestReturn.at}`;
-      return { refusal: `every member of pool "${name}" is refused right now${back}` };
+      return report.pick === undefined ? { refusal: poolRefusal(name, report.earliestReturn) } : { identity: report.pick };
     },
     sameLogin: (identity, sessionIdentity) => {
       if (identity === sessionIdentity) {

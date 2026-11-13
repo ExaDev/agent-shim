@@ -130,6 +130,20 @@ describe("a model name auto/<selector>[/<class>] through the real door", () => {
     }
   }, TIMEOUT_MS);
 
+  it("passes a Messages body that names no model through unrenamed", async () => {
+    const door = await world();
+    try {
+      const answered = await send(door, { model: "", rawBody: JSON.stringify({ max_tokens: 1, messages: [] }), requestClass: "main", identity: "me", provider: "z" });
+      expect(answered.status).toBe(HTTP_STATUS.ok);
+      expect(door.upstream.seen.map((seen) => seen.model)).toEqual([undefined]);
+      // A request the rename leaves alone keeps the usage log's name as the resolver read it.
+      await send(door, { model: "z/glm-9", requestClass: "main", identity: "me" });
+      expect(door.records.at(-1)?.requestedModel).toBe("z/glm-9");
+    } finally {
+      await door.close();
+    }
+  }, TIMEOUT_MS);
+
   it("expands a selector in a session launched on a provider too", async () => {
     const door = await world();
     try {
