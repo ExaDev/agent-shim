@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { generateCa, LOOPBACK_LEAF_NAMES, mintLeaf, type CaMaterial } from "./connect";
 import { KEYGEN_TIMEOUT_MS } from "./connectTestWorld";
 import { createRcApiNodeHandler, frontDoorRcApiClient } from "./rcApi";
-import { RC_GOAL_CONDITION_MAX_CHARS, RC_SESSION_COMMAND_MAX_WAIT_MS, type RcCompactOptions, type RcSessionCommandResult } from "./rcSessionCommands";
+import { RC_GOAL_CONDITION_MAX_CHARS, RC_SESSION_COMMAND_MAX_WAIT_MS, RC_TURN_TEXT_MAX_CHARS, type RcCompactOptions, type RcSessionCommandResult } from "./rcSessionCommands";
 import { createRcEventFanout } from "./rcStream";
 import { HTTP_STATUS } from "../codex/http";
 import { createRcSessionTracker, RC_IDLE_EXPIRY_MS } from "./rcSessions";
@@ -28,6 +28,7 @@ const COMPACT_POST_TOKENS = 300;
 
 /** The wait bound the set call names, so the procedure is seen to hand it through. */
 const COMMAND_WAIT_MS = 30_000;
+const TURN_UUID = "00000000-0000-4000-8000-0000000000a1";
 
 const SEQUENCE_NUMS = [ANSWERED_SEQUENCE_NUM];
 
@@ -78,6 +79,8 @@ describe("the wider control-verb family on the door's typed API, end to end over
       goalGet: async (session, options) => noteCommand("goalGet", [session, withoutSignal(options)], { route: "supervised" as const, goal: { condition: "the build is green", iterations: 2, lastCheck: "one test still fails" } }),
       goalSet: async (session, condition, options) => noteCommand("goalSet", [session, condition, withoutSignal(options)], { route: "self-hosted" as const, condition, superseded: "the docs are updated" }),
       goalClear: async (session, options) => noteCommand("goalClear", [session, withoutSignal(options)], { route: "supervised" as const, cleared: null }),
+      turn: async (session, text, options) => noteCommand("turn", [session, text, withoutSignal(options)], { route: "supervised" as const, uuid: TURN_UUID }),
+      routeOf: async () => await Promise.resolve({ route: null, refused: "unexercised" }),
       compact: async (session, options) => noteCommand("compact", [session, withoutSignal(options), options.signal instanceof AbortSignal], { route: "supervised" as const, trigger: "plugin", preTokens: COMPACT_PRE_TOKENS, postTokens: COMPACT_POST_TOKENS }),
       fanout: createRcEventFanout(),
     });
@@ -131,7 +134,7 @@ describe("the wider control-verb family on the door's typed API, end to end over
     ]);
   });
 
-  it("serves the goal and compaction verbs, each answer carrying the session's report and the route that served it, with the request's signal handed through and the wait bounded", async () => {
+  it("serves the goal, compaction and turn verbs, each answer carrying the session's report and the route that served it, with the request's signal handed through and the wait bounded", async () => {
     const api = frontDoorRcApiClient(port, ca.certPem, CONTROL_TOKEN);
     const before = calls.length;
     expect(await api.rc.goalGet({ session: SESSION_ID })).toEqual({ session: SESSION_ID, route: "supervised", goal: { condition: "the build is green", iterations: 2, lastCheck: "one test still fails" } });
@@ -144,12 +147,17 @@ describe("the wider control-verb family on the door's typed API, end to end over
     const fits = "x".repeat(RC_GOAL_CONDITION_MAX_CHARS);
     expect(await api.rc.goalSet({ session: SESSION_ID, condition: `  ${fits}  ` })).toMatchObject({ condition: fits });
     calls.pop();
+    // A person's turn is carried as typed, surrounding whitespace included; text that is only whitespace is the router's to refuse, and the wait bound is the same.
+    expect(await api.rc.turn({ session: SESSION_ID, text: "  carry on  ", waitMs: COMMAND_WAIT_MS })).toEqual({ session: SESSION_ID, route: "supervised", uuid: TURN_UUID });
+    await expect(api.rc.turn({ session: SESSION_ID, text: "" })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(api.rc.turn({ session: SESSION_ID, text: "x".repeat(RC_TURN_TEXT_MAX_CHARS + 1) })).rejects.toMatchObject({ code: "BAD_REQUEST" });
     expect(calls.slice(before)).toEqual([
       { op: "goalGet", args: [SESSION_ID, {}] },
       { op: "goalSet", args: [SESSION_ID, "the build is green", { waitMs: COMMAND_WAIT_MS }] },
       { op: "goalClear", args: [SESSION_ID, {}] },
       { op: "compact", args: [SESSION_ID, {}, true] },
       { op: "compact", args: [SESSION_ID, { instructions: "keep the decisions" }, true] },
+      { op: "turn", args: [SESSION_ID, "  carry on  ", { waitMs: COMMAND_WAIT_MS }] },
     ]);
   });
 
@@ -188,6 +196,8 @@ describe("the wider control-verb family on the door's typed API, end to end over
       goalSet: async () => await Promise.resolve({ ok: false as const, message: "unexercised" }),
       goalClear: async () => await Promise.resolve({ ok: false as const, message: "unexercised" }),
       compact: async () => await Promise.resolve({ ok: false as const, message: "unexercised" }),
+      turn: async () => await Promise.resolve({ ok: false as const, message: "unexercised" }),
+      routeOf: async () => await Promise.resolve({ route: null, refused: "unexercised" }),
       fanout: createRcEventFanout(),
     });
     const server = createFrontDoorServer(
@@ -246,6 +256,8 @@ describe("the wider control-verb family on the door's typed API, end to end over
       goalSet: unusedCommand,
       goalClear: unusedCommand,
       compact: unusedCommand,
+      turn: unusedCommand,
+      routeOf: async (id: string) => await Promise.resolve({ route: null, refused: `no route for ${id}` }),
       fanout: createRcEventFanout(),
     });
     const server = createFrontDoorServer(
@@ -267,6 +279,9 @@ describe("the wider control-verb family on the door's typed API, end to end over
       // The shared schema refuses choices that come with a denial before the operation is reached.
       await expect(api.rc.answer({ session, request: "req_typed", approve: false, choices: [["lint"]] })).rejects.toMatchObject({ code: "BAD_REQUEST" });
       expect(decisions).toHaveLength(1);
+      // The status read carries, beside each session, the route the goal, compaction and turn verbs would take for it, read through the same router they use.
+      const status = await api.rc.status({ session });
+      expect(status.statuses.map((entry) => [entry.id, entry.route])).toEqual([[session, { route: null, refused: `no route for ${session}` }]]);
     } finally {
       await handle.close();
     }

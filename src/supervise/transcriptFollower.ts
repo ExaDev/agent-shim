@@ -1,17 +1,19 @@
 import { open, stat } from "node:fs/promises";
 
 import { goalAfterLine, type TranscriptGoal } from "./sessionGoal";
+import { NO_PLUGIN_TURNS, pluginTurnsAfterLine, type PluginTurns } from "./sessionPluginTurns";
 
 /**
  * What the front door reads out of a supervised session's transcript, kept up to date by reading only what was appended since the last read: the transcript is append-only JSON Lines, and a live one grows every turn, so reading the whole file each time would put a read the size of the conversation on the door's event loop for every goal or compaction verb.
  *
- * Two facts are kept: the bridge session id the latest `bridge-session` row names, which joins a Remote Control session to its supervised launch, and the goal the `goal_status` rows leave active (`sessionGoal.ts`). A file that shrank since the last read (a transcript rewritten in place) is read again from the start.
+ * Three facts are kept: the bridge session id the latest `bridge-session` row names, which joins a Remote Control session to its supervised launch, the goal the `goal_status` rows leave active (`sessionGoal.ts`), and the turns the control plugin submitted as the person's words (`sessionPluginTurns.ts`). A file that shrank since the last read (a transcript rewritten in place) is read again from the start.
  */
 
 /** The facts the transcript states as of its last read. */
 interface TranscriptFacts {
   readonly bridgeSessionId: string | undefined;
   readonly goal: TranscriptGoal | null;
+  readonly pluginTurns: PluginTurns;
 }
 
 /** How a follower reads a file: its size, and the bytes from an offset to the end. In production both are asynchronous file reads; tests read an in-memory file. */
@@ -48,11 +50,11 @@ interface Followed {
 
 /** The facts after one complete line. */
 function factsAfterLine(facts: TranscriptFacts, line: string): TranscriptFacts {
-  return { bridgeSessionId: bridgeSessionIdOfLine(line) ?? facts.bridgeSessionId, goal: goalAfterLine(facts.goal, line) };
+  return { bridgeSessionId: bridgeSessionIdOfLine(line) ?? facts.bridgeSessionId, goal: goalAfterLine(facts.goal, line), pluginTurns: pluginTurnsAfterLine(facts.pluginTurns, line) };
 }
 
 /** The facts of an empty transcript. */
-const NO_FACTS: TranscriptFacts = { bridgeSessionId: undefined, goal: null };
+const NO_FACTS: TranscriptFacts = { bridgeSessionId: undefined, goal: null, pluginTurns: NO_PLUGIN_TURNS };
 
 /** A transcript follower: `factsOf` reads a transcript's appended bytes since the last call for the same path and returns its facts, or undefined when the file does not exist. */
 export interface TranscriptFollower {

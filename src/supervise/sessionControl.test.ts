@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { compactInSession, RESULT_POLL_MS, runGoalInSession, sessionControlReady, sessionControlVersion } from "./sessionControl";
+import { compactInSession, RESULT_POLL_MS, runGoalInSession, sessionControlReady, sessionControlVersion, submitTurnInSession } from "./sessionControl";
 import { stageSessionControlPlugin, type SessionControlPlugin } from "./sessionControlPlugin";
 
 /** The one request a caller has written, read back as the plugin would read it. */
@@ -94,6 +94,25 @@ describe("the in-process control requests", () => {
       expect(readdirSync(plugin.results)).toEqual([]);
       answer(plugin, request.id, { kind: "ran" });
       await pending;
+    } finally {
+      plugin.release();
+    }
+  });
+
+  it("sends a turn's text as given and reads whether the engine stamped it as the person's words, refusing empty text unsent", async () => {
+    const plugin = stageSessionControlPlugin();
+    try {
+      writeFileSync(plugin.ready, "{}");
+      await expect(submitTurnInSession(plugin, "conversation", " ", { signal: NEVER, expiresInMs: EXPIRY_MS })).rejects.toThrow("needs text");
+      expect(readdirSync(plugin.requests)).toEqual([]);
+      const asUser = submitTurnInSession(plugin, "conversation", " carry on ", { signal: NEVER, expiresInMs: EXPIRY_MS });
+      const request = await pendingRequest(plugin);
+      expect(request).toMatchObject({ op: "turn", conversationId: "conversation", text: " carry on " });
+      answer(plugin, request.id, { kind: "submitted", text: " carry on ", origin: { kind: "plugin", name: "agent-shim-control", asUser: true } });
+      await expect(asUser).resolves.toEqual({ text: " carry on ", asUser: true });
+      const framed = submitTurnInSession(plugin, "conversation", "carry on", { signal: NEVER, expiresInMs: EXPIRY_MS });
+      answer(plugin, (await pendingRequest(plugin)).id, { kind: "submitted", text: "carry on", origin: { kind: "plugin", name: "agent-shim-control" } });
+      await expect(framed).resolves.toEqual({ text: "carry on", asUser: false });
     } finally {
       plugin.release();
     }

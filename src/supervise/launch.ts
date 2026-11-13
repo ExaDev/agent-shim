@@ -96,7 +96,7 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
   const markSettings = markHooksSettings(selfInvocation([]), paths.root, pool, first.sessionId);
   const settingsArgs = [...params.extraFlags, ...params.passthrough];
   const settings = hasSettingsArgument(settingsArgs) ? combineCallerSettings(settingsArgs, markSettings, (name) => farm.fs.readFileUtf8(path.resolve(farm.cwd, name))) : undefined;
-  // Every supervised launch loads the control plugin: the supervisor compacts through it when the pool asks for that, and the door reaches the session through it for the goal and compaction verbs, finding it through the directory the registry entry names.
+  // Every supervised launch loads the control plugin: the supervisor compacts through it when the pool asks for that, and the door reaches the session through it for the goal, compaction and turn verbs, finding it through the directory the registry entry names.
   const plugin = stageSessionControlPlugin();
   if (policy?.compactBeforeLimit === true) {
       const baseCompaction = createCompactionDeps({

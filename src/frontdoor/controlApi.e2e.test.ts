@@ -145,6 +145,8 @@ describe("the door's typed API with the control plane mounted beside Remote Cont
       goalSet: unexercisedCommand,
       goalClear: unexercisedCommand,
       compact: unexercisedCommand,
+      turn: unexercisedCommand,
+      routeOf: async () => await Promise.resolve({ route: null, refused: "unexercised" }),
       fanout: rcFanout,
       sessionEvents: createRcSessionEventLog({ generation: "00000000-0000-4000-8000-0000000000ee", capacity: RC_SESSION_EVENT_LOG_CAPACITY }),
       events: doorEvents,

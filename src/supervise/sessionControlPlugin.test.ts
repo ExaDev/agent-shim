@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { stageSessionControlPlugin, withSessionControlPlugin, type SessionControlPlugin } from "./sessionControlPlugin";
+import { SESSION_CONTROL_PLUGIN_NAME, stageSessionControlPlugin, withSessionControlPlugin, type SessionControlPlugin } from "./sessionControlPlugin";
 
 /** The plugin's hook for one event, read from the module the stager wrote. */
 async function hookOf(plugin: SessionControlPlugin, name: string): Promise<(...args: readonly unknown[]) => unknown> {
@@ -97,6 +97,34 @@ describe("the in-process control plugin", () => {
       // A request whose expiry has come is refused, never run, as one a crashed caller left behind is.
       expect(files.get(path.join(plugin.results, "6.json"))).toContain("the request expired");
       expect(JSON.parse(readFileSync(path.join(plugin.directory, "hooks", "hooks.json"), "utf8"))).toEqual({ modules: ["./register.js"] });
+    } finally {
+      plugin.release();
+    }
+  });
+
+  it("submits a turn as the person's words with the text as given, reports what the engine answered, and refuses an empty turn or one a hook dropped", async () => {
+    const plugin = stageSessionControlPlugin();
+    try {
+      const start = await hookOf(plugin, "session.start");
+      const files = new Map([
+        [path.join(plugin.requests, "1.json"), JSON.stringify({ id: "1", op: "turn", conversationId: "conversation-1", text: " carry on ", expiresAt: LIVE })],
+        [path.join(plugin.requests, "2.json"), JSON.stringify({ id: "2", op: "turn", conversationId: "conversation-1", text: "  ", expiresAt: LIVE })],
+        [path.join(plugin.requests, "3.json"), JSON.stringify({ id: "3", op: "turn", conversationId: "conversation-1", text: "dropped", expiresAt: LIVE })],
+      ]);
+      const fs = memoryFs(files);
+      const origin = { kind: "plugin", name: SESSION_CONTROL_PLUGIN_NAME, asUser: true };
+      const submit = vi.fn((input: { readonly text: string }) => (input.text === "dropped" ? { drop: "a hook refused it" } : { text: input.text, origin }));
+      let tick: unknown;
+      await start({ clock: { every: (_ms: number, callback: unknown) => { tick = callback; }, now: () => NOW }, fs, session: { id: () => "conversation-1", version: () => ({ version: "2.1.319" }) }, prompt: { submit } }, {}, () => "started");
+      if (typeof tick !== "function") throw new Error("plugin did not schedule its request reader");
+      for (let turn = 0; turn <= files.size; turn += 1) {
+        await Reflect.apply(tick, undefined, []);
+      }
+      expect(submit.mock.calls).toEqual([[{ text: " carry on ", asUser: true }], [{ text: "dropped", asUser: true }]]);
+      expect(files.get(path.join(plugin.results, "1.json"))).toBe(JSON.stringify({ id: "1", kind: "submitted", text: " carry on ", origin }));
+      expect(files.get(path.join(plugin.results, "2.json"))).toContain("no operation this plugin performs");
+      expect(files.get(path.join(plugin.results, "3.json"))).toContain("a hook dropped the prompt: a hook refused it");
+      expect(JSON.parse(readFileSync(path.join(plugin.directory, ".claude-plugin", "plugin.json"), "utf8"))).toMatchObject({ name: SESSION_CONTROL_PLUGIN_NAME });
     } finally {
       plugin.release();
     }

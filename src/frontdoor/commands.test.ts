@@ -149,9 +149,10 @@ describe("frontdoor rc", () => {
   it("formats the session status, the worker facts, and the pending requests, with plain lines for what was never observed", () => {
     const createdAt = 1_000;
     expect(formatRcSessionStatus([])).toEqual(["no Remote Control sessions observed"]);
-    expect(formatRcSessionStatus([{ id: "cse_1", createdAt, lastSeenAt: createdAt, workerState: undefined, workerIdleSeconds: undefined, pending: [] }])).toEqual([
+    expect(formatRcSessionStatus([{ id: "cse_1", createdAt, lastSeenAt: createdAt, workerState: undefined, workerIdleSeconds: undefined, pending: [], route: { route: null, refused: "no channel" } }])).toEqual([
       "cse_1  created 1970-01-01T00:00:01.000Z  last seen 1970-01-01T00:00:01.000Z",
       "  worker: not observed",
+      "  goal, compaction and turn verbs: refused: no channel",
       "  pending: none",
     ]);
     expect(
@@ -163,11 +164,13 @@ describe("frontdoor rc", () => {
           workerState: { value: "WORKER_STATUS_RUNNING", observedAt: createdAt },
           workerIdleSeconds: { value: 7, observedAt: createdAt + ONE_HEARTBEAT_MS },
           pending: [{ sessionId: "cse_1", requestId: "req_1", type: "can_use_tool", summary: 'Bash {"command":"pnpm test"}', observedAt: createdAt }],
+          route: { route: "supervised" },
         },
       ]),
     ).toEqual([
       "cse_1  created 1970-01-01T00:00:01.000Z  last seen 1970-01-01T00:00:01.020Z",
       "  worker: state WORKER_STATUS_RUNNING since 1970-01-01T00:00:01.000Z, idle 7 s as of 1970-01-01T00:00:01.020Z",
+      "  goal, compaction and turn verbs: supervised route",
       "  pending:",
       '    cse_1  req_1  can_use_tool  Bash {"command":"pnpm test"}  observed 1970-01-01T00:00:01.000Z',
     ]);
@@ -176,17 +179,19 @@ describe("frontdoor rc", () => {
   it("states what identifies a session on a line of its own, only for the facts present", () => {
     const createdAt = 1_000;
     const lines = formatRcSessionStatus([
-      { id: "cse_1", createdAt, lastSeenAt: createdAt, workerState: undefined, workerIdleSeconds: undefined, pending: [], name: "fix the thing", identity: "work", model: "claude-opus-4", pid: 4_001, cwd: "/repo" },
-      { id: "cse_2", createdAt, lastSeenAt: createdAt, workerState: undefined, workerIdleSeconds: undefined, pending: [], pid: 4_002 },
+      { id: "cse_1", createdAt, lastSeenAt: createdAt, workerState: undefined, workerIdleSeconds: undefined, pending: [], name: "fix the thing", identity: "work", model: "claude-opus-4", pid: 4_001, cwd: "/repo", route: { route: "self-hosted" } },
+      { id: "cse_2", createdAt, lastSeenAt: createdAt, workerState: undefined, workerIdleSeconds: undefined, pending: [], pid: 4_002, route: { route: "supervised" } },
     ]);
     expect(lines).toEqual([
       "cse_1  created 1970-01-01T00:00:01.000Z  last seen 1970-01-01T00:00:01.000Z",
       '  session: name "fix the thing"  identity work  model claude-opus-4  pid 4001  cwd "/repo"',
       "  worker: not observed",
+      "  goal, compaction and turn verbs: self-hosted route",
       "  pending: none",
       "cse_2  created 1970-01-01T00:00:01.000Z  last seen 1970-01-01T00:00:01.000Z",
       "  session: pid 4002",
       "  worker: not observed",
+      "  goal, compaction and turn verbs: supervised route",
       "  pending: none",
     ]);
   });

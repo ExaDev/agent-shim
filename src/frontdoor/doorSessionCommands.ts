@@ -3,13 +3,13 @@ import type { LayoutPaths } from "../paths";
 import { COMPACT_TIMEOUT_MS } from "../supervise/compactTimeout";
 import { supervisedSessionOfBridge } from "../supervise/registry";
 import { createTranscriptFollower, realTranscriptReadPort } from "../supervise/transcriptFollower";
-import { compactInSession, runGoalInSession, sessionControlVersion } from "../supervise/sessionControl";
+import { compactInSession, runGoalInSession, sessionControlVersion, submitTurnInSession } from "../supervise/sessionControl";
 import { sessionControlPluginPaths } from "../supervise/sessionControlPlugin";
 import type { RcClaudeCodeVersions, RcPersonWriteDeps } from "./rcSelfHostCommands";
 import { createRcSessionCommands, type RcSessionCommands } from "./rcSessionCommands";
 import type { RcEventFanout } from "./rcStream";
 
-/** What the door hands its goal and compaction verbs: its state paths, its tracker's view of the sessions, and, only when it serves Remote Control itself, the self-hosted route's write and stream. */
+/** What the door hands its goal, compaction and turn verbs: its state paths, its tracker's view of the sessions, and, only when it serves Remote Control itself, the self-hosted route's write and stream. */
 export interface DoorRcSessionCommandsDeps {
   readonly paths: LayoutPaths;
   /** Whether the tracker holds the session. */
@@ -28,7 +28,7 @@ export interface DoorRcSessionCommandsDeps {
 }
 
 /**
- * The door's goal and compaction verbs over the real machine (`rcSessionCommands.ts` holds the routing): a supervised session is reached through its supervisor's in-process control plugin, found by the bridge-session row in its own transcript; a session on the door's own self-hosted surface gets the command written there as a person's app, over a dial that reaches that surface and nothing else (it refuses rather than fall back to the real API host when the surface is not bound, and the route refuses first with the reason); anything else is refused with the reason.
+ * The door's goal, compaction and turn verbs over the real machine (`rcSessionCommands.ts` holds the routing): a supervised session is reached through its supervisor's in-process control plugin, found by the bridge-session row in its own transcript; a session on the door's own self-hosted surface gets the command written there as a person's app, over a dial that reaches that surface and nothing else (it refuses rather than fall back to the real API host when the surface is not bound, and the route refuses first with the reason); anything else is refused with the reason.
  */
 export function createDoorRcSessionCommands(deps: DoorRcSessionCommandsDeps): RcSessionCommands {
   const { selfHost } = deps;
@@ -52,9 +52,11 @@ export function createDoorRcSessionCommands(deps: DoorRcSessionCommandsDeps): Rc
         version: sessionControlVersion(plugin),
         compact: async (signal, instructions, waitMs) => await compactInSession(plugin, conversationId, { signal, expiresInMs: waitMs }, instructions),
         runGoal: async (args, signal, waitMs) => await runGoalInSession(plugin, conversationId, args, { signal, expiresInMs: waitMs }),
+        submitTurn: async (text, signal, waitMs) => await submitTurnInSession(plugin, conversationId, text, { signal, expiresInMs: waitMs }),
       };
     },
     goalOf: async (file) => (await follower.factsOf(file))?.goal,
+    pluginTurnsOf: async (file) => (await follower.factsOf(file))?.pluginTurns,
     isObserved: deps.isTracked,
     selfHost:
       selfHost === undefined

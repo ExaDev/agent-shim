@@ -113,3 +113,19 @@ export async function runGoalInSession(plugin: Readonly<PluginPaths>, conversati
   if (value.kind !== "ran") throw new Error("the control plugin returned an invalid goal result");
   return typeof value.text === "string" ? { text: value.text } : {};
 }
+
+/** What the plugin API answered for a submitted turn: the text that entered the session, and whether the origin the engine stamped on it is the control plugin's own submission as the person's words. */
+export interface SubmittedTurn {
+  readonly text: string;
+  readonly asUser: boolean;
+}
+
+/** Asks the live Claude process to submit `text` as the person's own words (`$.prompt.submit` with `asUser`), a turn of its own once the session is idle; `text` is never empty. Resolves once the prompt entered the session or queued behind the running turn, with what the plugin API reported; the transcript row that records it is read separately. */
+export async function submitTurnInSession(plugin: Readonly<PluginPaths>, conversationId: string, text: string, options: SessionControlRequestOptions): Promise<SubmittedTurn> {
+  if (text.trim() === "") throw new Error("a turn submitted in process needs text");
+  const value = await requestInSession(plugin, { op: "turn", conversationId, text }, options);
+  if (value.kind !== "submitted" || typeof value.text !== "string") throw new Error("the control plugin returned an invalid turn result");
+  const origin = value.origin;
+  const asUser = typeof origin === "object" && origin !== null && "kind" in origin && origin.kind === "plugin" && "asUser" in origin && origin.asUser === true;
+  return { text: value.text, asUser };
+}

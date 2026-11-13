@@ -5,7 +5,7 @@ import type { RcEventFanout } from "./rcStream";
 import { buildRcEventWriteBody, buildRcUserMessagePayload, noOAuthCredentialResult, rcEventWriteResultFromAnswer, rcSessionNotObservedMessage, rcWriteHeaders, type RcDialAnswer, type RcEventDial, type RcEventWriteResult, type RcInjectDeps } from "./rcWrites";
 
 /**
- * Slash commands on the door's own self-hosted Remote Control surface: the route the goal and compaction verbs take for a session no supervisor owns when the door serves Remote Control itself (`rcSessionCommands.ts` chooses the route).
+ * Slash commands and a person's turns on the door's own self-hosted Remote Control surface: the route the goal, compaction and turn verbs take for a session no supervisor owns when the door serves Remote Control itself (`rcSessionCommands.ts` chooses the route).
  *
  * On that surface the door is the service, so stamping the writer's platform onto an event is its own job (the real service does the same from each writer's `anthropic-client-platform` header), and writing a command under a person's app is the service vouching for its own client. The worker runs an inbound slash command only when its `client_platform` names a person's app: the 2.1.319 bridge treats `ios`, `android`, `web_claude_ai` and `desktop_app` as a person and demotes any other value to a peer message, which the model reads as text. The door's own browser page is `web_claude_ai`, so that is the value written here. This module never writes to any other host: the router reaches it only when the door serves the surface.
  *
@@ -167,7 +167,7 @@ export function rcManualCompactBoundaryOf(event: RcStreamEvent): ReportOf<{ kind
   return { trigger: metadata.trigger, preTokens: metadata.pre_tokens, postTokens: metadata.post_tokens };
 }
 
-/** Whether this stream event is the worker passing `text` on to its model as a peer's message, which is what it does with a command it will not run. */
+/** Whether this stream event is the worker passing `text` on to its model as a peer's message, which is what it does with a write it does not take as a person's. */
 function isPeerDelivery(event: RcStreamEvent, text: string): boolean {
   const payload = event.envelope.payload;
   if (!isRecord(payload) || payload.type !== "user" || !isRecord(payload.origin) || payload.origin.kind !== "peer" || !isRecord(payload.message)) {
@@ -246,14 +246,12 @@ function recognise(command: RcSelfHostCommand, event: RcStreamEvent, name: strin
 }
 
 /**
- * Runs one slash command on the self-hosted surface and resolves with the worker's answer. Subscribes before writing, so an answer can never arrive between the write and the subscription; judges only worker events numbered after the command's own write, matching a goal command's answer by command and exact arguments (so another command's output, or the same command run with other arguments, never answers this one) and a compaction by the first manual compaction boundary after the write. That correlation is by order, not by identity: the worker's answer names no id the door wrote, so the same command with the same arguments typed by a person in an app at the same moment, or a person's own `/compact`, can answer in this command's place; fails at once when the worker passes the command to its model as a peer's message; and fails once the wait passes or the signal aborts. The router serialises verbs per session.
+ * Writes `text` as a person's app on the self-hosted surface and resolves with the first outcome `recognise` reads off a worker event numbered after the write. Subscribes before writing, so an answer can never arrive between the write and the subscription; fails at once when the worker passes the text to its model as a peer's message (which is what it does with a write it does not take as a person's), and fails once the wait passes or the signal aborts. Correlation is by order, not identity: an answer that names nothing the door wrote can be one to the same text a person typed in an app at the same moment. The router serialises verbs per session.
  */
-export async function runSelfHostedSlashCommand<C extends RcSelfHostCommand>(deps: RcSelfHostCommandDeps, sessionId: string, command: C, waitMs: number | undefined, signal: AbortSignal): Promise<Outcome<ReportOf<C>>> {
-  const { name, args } = commandLine(command);
-  const text = args === "" ? `/${name}` : `/${name} ${args}`;
+async function writeAsPersonAndAwait<T>(deps: RcSelfHostCommandDeps, sessionId: string, text: string, recogniseEvent: (event: RcStreamEvent) => Outcome<T> | undefined, waitMs: number | undefined, signal: AbortSignal): Promise<Outcome<T>> {
   const early: RcStreamEvent[] = [];
   let after: number | undefined;
-  let settle: ((result: Outcome<ReportOf<C>>) => void) | undefined;
+  let settle: ((result: Outcome<T>) => void) | undefined;
   const judge = (event: RcStreamEvent): void => {
     if (after === undefined) {
       early.push(event);
@@ -263,10 +261,10 @@ export async function runSelfHostedSlashCommand<C extends RcSelfHostCommand>(dep
       return;
     }
     if (isPeerDelivery(event, text)) {
-      settle?.({ ok: false, message: `session ${sessionId}'s worker passed ${text} to its model as a peer's message instead of running it, so it did not read the write as a person's` });
+      settle?.({ ok: false, message: `session ${sessionId}'s worker passed ${text} to its model as a peer's message, so it did not read the write as a person's` });
       return;
     }
-    const outcome = recognise(command, event, name, args);
+    const outcome = recogniseEvent(event);
     if (outcome !== undefined) {
       settle?.(outcome);
     }
@@ -278,7 +276,7 @@ export async function runSelfHostedSlashCommand<C extends RcSelfHostCommand>(dep
   };
   signal.addEventListener("abort", onAbort, { once: true });
   try {
-    const answered = new Promise<Outcome<ReportOf<C>>>((resolve) => {
+    const answered = new Promise<Outcome<T>>((resolve) => {
       settle = resolve;
     });
     const written = await writeRcPersonMessage(deps.personWrite, sessionId, text);
@@ -302,6 +300,51 @@ export async function runSelfHostedSlashCommand<C extends RcSelfHostCommand>(dep
     cancelTimer?.();
     detach();
   }
+}
+
+/**
+ * Runs one slash command on the self-hosted surface and resolves with the worker's answer, matching a goal command's answer by command and exact arguments (so another command's output, or the same command run with other arguments, never answers this one) and a compaction by the first manual compaction boundary after the write. The same command with the same arguments typed by a person in an app at the same moment, or a person's own `/compact`, can answer in this command's place (`writeAsPersonAndAwait`).
+ */
+export async function runSelfHostedSlashCommand<C extends RcSelfHostCommand>(deps: RcSelfHostCommandDeps, sessionId: string, command: C, waitMs: number | undefined, signal: AbortSignal): Promise<Outcome<ReportOf<C>>> {
+  const { name, args } = commandLine(command);
+  const text = args === "" ? `/${name}` : `/${name} ${args}`;
+  return await writeAsPersonAndAwait(deps, sessionId, text, (event) => recognise(command, event, name, args), waitMs, signal);
+}
+
+/** The text of a user event's message: its string content, or its text blocks joined, as the worker mirrors a transcript row. */
+function userTextOf(message: Record<string, unknown>): string | undefined {
+  if (typeof message.content === "string") {
+    return message.content;
+  }
+  if (!Array.isArray(message.content)) {
+    return undefined;
+  }
+  const blocks: readonly unknown[] = message.content;
+  return blocks.flatMap((block) => (isRecord(block) && block.type === "text" && typeof block.text === "string" ? [block.text] : [])).join("\n");
+}
+
+/** The uuid of the user entry this worker event mirrors, when it is the person's turn `text`: a user event whose origin is the Remote Control bridge (`{ kind: "bridge" }`, the origin Claude Code stamps on a message a person's app wrote, as its plugin API's `PromptOrigin` documents) and whose text is exactly `text`. */
+export function rcPersonTurnOf(event: RcStreamEvent, text: string): string | undefined {
+  const payload = event.envelope.payload;
+  if (!isRecord(payload) || payload.type !== "user" || typeof payload.uuid !== "string" || !isRecord(payload.origin) || payload.origin.kind !== "bridge" || !isRecord(payload.message)) {
+    return undefined;
+  }
+  return userTextOf(payload.message) === text ? payload.uuid : undefined;
+}
+
+/** Writes `text` into the session as a person's turn on the self-hosted surface and resolves once the worker mirrors it as a user entry with the bridge's origin, with that entry's uuid; fails at once when the worker passes it on as a peer's message instead. */
+export async function runSelfHostedTurn(deps: RcSelfHostCommandDeps, sessionId: string, text: string, waitMs: number | undefined, signal: AbortSignal): Promise<Outcome<{ readonly uuid: string }>> {
+  return await writeAsPersonAndAwait(
+    deps,
+    sessionId,
+    text,
+    (event) => {
+      const uuid = rcPersonTurnOf(event, text);
+      return uuid === undefined ? undefined : { ok: true, report: { uuid } };
+    },
+    waitMs,
+    signal,
+  );
 }
 
 /** The Claude Code version each observed session's worker reported, read off its own `system/init` events. */

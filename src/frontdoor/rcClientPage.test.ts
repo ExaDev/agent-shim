@@ -255,6 +255,8 @@ describe("the page's script against the door's protocol", () => {
       goalSet: unexercisedCommand,
       goalClear: unexercisedCommand,
       compact: unexercisedCommand,
+      turn: unexercisedCommand,
+      routeOf: async () => await Promise.resolve({ route: null, refused: "unexercised" }),
       fanout: { publish: () => undefined, subscribe: () => () => undefined },
     });
     const server = http.createServer((request, response) => {

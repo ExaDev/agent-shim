@@ -42,8 +42,8 @@ import {
   RcWriteOutputSchema,
   type RcStreamEvent,
 } from "./rcSchemas";
-import { RcCompactInputSchema, RcCompactOutputSchema, RcCompactWithInstructionsInputSchema, RcGoalClearOutputSchema, RcGoalGetOutputSchema, RcGoalSessionInputSchema, RcGoalSetInputSchema, RcGoalSetOutputSchema } from "./rcSlashCommandSchemas";
-import { RC_SESSION_COMMAND_MAX_WAIT_MS, type RcCompactOptions, type RcCompactReport, type RcGoalClearReport, type RcGoalReport, type RcGoalSetReport, type RcSessionCommandOptions, type RcSessionCommandResult } from "./rcSessionCommands";
+import { RcCompactInputSchema, RcCompactOutputSchema, RcCompactWithInstructionsInputSchema, RcGoalClearOutputSchema, RcGoalGetOutputSchema, RcGoalSessionInputSchema, RcGoalSetInputSchema, RcGoalSetOutputSchema, RcTurnInputSchema, RcTurnOutputSchema } from "./rcSlashCommandSchemas";
+import { RC_SESSION_COMMAND_MAX_WAIT_MS, type RcCompactOptions, type RcCompactReport, type RcGoalClearReport, type RcGoalReport, type RcGoalSetReport, type RcSessionCommandOptions, type RcSessionCommandResult, type RcSessionRoute, type RcTurnReport } from "./rcSessionCommands";
 import type { RcEventFanout } from "./rcStream";
 import type { PrePipelineApi } from "./server";
 
@@ -118,6 +118,10 @@ export interface RcApiDeps {
   readonly goalClear: (sessionId: string, options: RcSessionCommandOptions) => Promise<RcSessionCommandResult<RcGoalClearReport>>;
   /** The compaction, routed the same way. */
   readonly compact: (sessionId: string, options: RcCompactOptions) => Promise<RcSessionCommandResult<RcCompactReport>>;
+  /** A person's typed turn, routed the same way. */
+  readonly turn: (sessionId: string, text: string, options: RcSessionCommandOptions) => Promise<RcSessionCommandResult<RcTurnReport>>;
+  /** Which route those verbs would take for a session now, or why none would; read for every session the status read reports. */
+  readonly routeOf: (sessionId: string) => Promise<RcSessionRoute>;
   /** The client attachment's fan-out, whose events the subscription yields. */
   readonly fanout: RcEventFanout;
 }
@@ -159,7 +163,7 @@ export function doorApiAuth(expectedToken: string) {
 const RC_API_TAG = "remote-control";
 
 /**
- * The OpenAPI tag of the Remote Control procedures that put a directive into another session as if its person had given it: a goal's condition (which Claude Code hands its model as a Stop-hook condition to work towards without asking) and a compaction's summary instructions. They need a grant of their own, narrower than the general Remote Control one, because the receiving session's model treats them as the user's intent where it would treat a peer's message as not.
+ * The OpenAPI tag of the Remote Control procedures that put a directive into another session as if its person had given it: a goal's condition (which Claude Code hands its model as a Stop-hook condition to work towards without asking), a compaction's summary instructions, and a person's typed turn (which the model reads as its user's own words). They need a grant of their own, narrower than the general Remote Control one, because the receiving session's model treats them as the user's intent where it would treat a peer's message as not.
  */
 export const RC_DIRECTIVE_TAG = "remote-control-directives";
 
@@ -202,13 +206,13 @@ export function createRcApiRouter(deps: RcApiDeps) {
         .meta(openapi({ method: "GET", path: "/rest/rc/status", summary: "Read session status, one session's when named", tags: [RC_API_TAG] }))
         .input(RcSessionQuerySchema)
         .output(RcStatusOutputSchema)
-        .handler(({ input }) => {
+        .handler(async ({ input }) => {
           const statuses = deps.statusOf(input.session);
           // A named session that is not tracked is refused rather than answered as empty, so a mistyped id never reads as "observed, nothing pending" (the bespoke route's own rule).
           if (input.session !== undefined && !statuses.some((entry) => entry.id === input.session)) {
             throw new ORPCError("NOT_FOUND", { message: rcSessionNotObservedMessage(input.session) });
           }
-          return { statuses };
+          return { statuses: await Promise.all(statuses.map(async (status) => ({ ...status, route: await deps.routeOf(status.id) }))) };
         }),
       pending: authed
         .meta(openapi({ method: "GET", path: "/rest/rc/pending", summary: "Read the control requests awaiting an answer", tags: [RC_API_TAG] }))
@@ -331,6 +335,11 @@ export function createRcApiRouter(deps: RcApiDeps) {
         .input(RcCompactWithInstructionsInputSchema)
         .output(RcCompactOutputSchema)
         .handler(async ({ input, signal }) => commanded(input.session, await deps.compact(input.session, { ...optionsOf(input.waitMs, signal), instructions: input.instructions }))),
+      turn: authed
+        .meta(openapi({ method: "POST", path: "/rest/rc/turn", summary: "Put a person's typed turn into a session, which its model reads as its user's words", tags: [RC_DIRECTIVE_TAG] }))
+        .input(RcTurnInputSchema)
+        .output(RcTurnOutputSchema)
+        .handler(async ({ input, signal }) => commanded(input.session, await deps.turn(input.session, input.text, optionsOf(input.waitMs, signal)))),
       subscribe: authed
         .meta(openapi({ method: "GET", path: "/rest/rc/events", summary: "Stream a session's Remote Control events (SSE)", tags: [RC_API_TAG] }))
         .input(RcSessionQuerySchema)
@@ -435,7 +444,7 @@ export type RcApiClient = RouterClient<RcApiRouter>;
 const DEFAULT_HEADERS_TIMEOUT_MS = 300_000;
 
 /** The procedures whose answer waits on a session, as the RPC link addresses them under the mount prefix. */
-const SESSION_COMMAND_PROCEDURES: readonly string[] = ["rc/goalGet", "rc/goalSet", "rc/goalClear", "rc/compact", "rc/compactWithInstructions"];
+const SESSION_COMMAND_PROCEDURES: readonly string[] = ["rc/goalGet", "rc/goalSet", "rc/goalClear", "rc/compact", "rc/compactWithInstructions", "rc/turn"];
 
 /**
  * How long one call may wait for response headers: undici's default for every procedure but the ones that wait on a session, which get the wait they asked for (their `waitMs`, or the verbs' own default) plus that same default, so a door that has hung still fails the call once the session's wait has passed. Capped at the largest delay a timer accepts.

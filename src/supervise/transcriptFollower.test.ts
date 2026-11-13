@@ -5,6 +5,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createTranscriptFollower, realTranscriptReadPort, type TranscriptReadPort } from "./transcriptFollower";
+import { SESSION_CONTROL_PLUGIN_NAME } from "./sessionControlPlugin";
+import { NO_PLUGIN_TURNS } from "./sessionPluginTurns";
 
 function goalRow(attachment: Record<string, unknown>): string {
   return `${JSON.stringify({ type: "attachment", attachment: { type: "goal_status", ...attachment } })}\n`;
@@ -38,10 +40,10 @@ describe("following a supervised session's transcript", () => {
       writeFileSync(file, first);
       const { port, ranges } = recordingPort();
       const follower = createTranscriptFollower(port);
-      expect(await follower.factsOf(file)).toEqual({ bridgeSessionId: "cse_a", goal: { condition: "tests pass", iterations: 0 } });
-      expect(await follower.factsOf(file)).toEqual({ bridgeSessionId: "cse_a", goal: { condition: "tests pass", iterations: 0 } });
-      appendFileSync(file, goalRow({ met: false, condition: "tests pass", reason: "two fail" }) + bridgeRow("cse_b"));
-      expect(await follower.factsOf(file)).toEqual({ bridgeSessionId: "cse_b", goal: { condition: "tests pass", iterations: 1, lastCheck: "two fail" } });
+      expect(await follower.factsOf(file)).toEqual({ bridgeSessionId: "cse_a", goal: { condition: "tests pass", iterations: 0 }, pluginTurns: NO_PLUGIN_TURNS });
+      expect(await follower.factsOf(file)).toEqual({ bridgeSessionId: "cse_a", goal: { condition: "tests pass", iterations: 0 }, pluginTurns: NO_PLUGIN_TURNS });
+      appendFileSync(file, goalRow({ met: false, condition: "tests pass", reason: "two fail" }) + bridgeRow("cse_b") + `${JSON.stringify({ type: "user", uuid: "turn-1", origin: { kind: "plugin", name: SESSION_CONTROL_PLUGIN_NAME, asUser: true }, message: { role: "user", content: "carry on" } })}\n`);
+      expect(await follower.factsOf(file)).toEqual({ bridgeSessionId: "cse_b", goal: { condition: "tests pass", iterations: 1, lastCheck: "two fail" }, pluginTurns: { count: 1, last: { uuid: "turn-1", text: "carry on" } } });
       const firstLength = Buffer.byteLength(first);
       expect(ranges[0]).toEqual([0, firstLength]);
       expect(ranges).toHaveLength(2);
@@ -61,9 +63,9 @@ describe("following a supervised session's transcript", () => {
       const cut = bytes.indexOf(Buffer.from("é", "utf8")) + 1;
       writeFileSync(file, bytes.subarray(0, cut));
       const follower = createTranscriptFollower(realTranscriptReadPort);
-      expect(await follower.factsOf(file)).toEqual({ bridgeSessionId: undefined, goal: null });
+      expect(await follower.factsOf(file)).toEqual({ bridgeSessionId: undefined, goal: null, pluginTurns: NO_PLUGIN_TURNS });
       appendFileSync(file, bytes.subarray(cut));
-      expect(await follower.factsOf(file)).toEqual({ bridgeSessionId: undefined, goal: { condition: "the café opens", iterations: 0 } });
+      expect(await follower.factsOf(file)).toEqual({ bridgeSessionId: undefined, goal: { condition: "the café opens", iterations: 0 }, pluginTurns: NO_PLUGIN_TURNS });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -77,7 +79,7 @@ describe("following a supervised session's transcript", () => {
       const follower = createTranscriptFollower(realTranscriptReadPort);
       expect((await follower.factsOf(file))?.goal?.condition).toBe("old");
       writeFileSync(file, bridgeRow("cse_new"));
-      expect(await follower.factsOf(file)).toEqual({ bridgeSessionId: "cse_new", goal: null });
+      expect(await follower.factsOf(file)).toEqual({ bridgeSessionId: "cse_new", goal: null, pluginTurns: NO_PLUGIN_TURNS });
       rmSync(file);
       expect(await follower.factsOf(file)).toBeUndefined();
     } finally {

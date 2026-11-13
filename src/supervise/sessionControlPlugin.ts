@@ -9,7 +9,7 @@ import { realIsProcessRunning } from "../realPorts";
  *
  * The protocol is one file per request, so several writers (the supervisor's own compaction and the door's goal and compaction verbs) never overwrite each other: a caller writes `requests/<id>.json` (atomically, by renaming a dot-prefixed file into place, since the plugin skips dot files), the plugin writes `results/<id>.json` (first `{ kind: "running" }`, then the outcome), and the caller removes both once it has read the outcome. An id begins with the zero-padded instant the request was made (`sessionControl.ts`), and the plugin handles one request at a time in name order, so the oldest runs first whichever process made it; it never handles a request that already has a result, so a plugin reload (which a compaction can cause) does not run a request twice, and it refuses one whose `expiresAt` has passed, so a request a crashed caller left behind never runs long after the caller gave up. A compaction whose result still reads `running` when the post-compaction event fires is completed then, as the reload lost the call that would have written it.
  *
- * What it can do is what the 2.1.319 plugin API gives a plugin: `$.session.compact`, the call `/compact` makes, with optional instructions; and `$.command.run`, which runs a slash command as if the person typed it, used for `/goal <condition>` and `/goal clear` only. A bare `/goal` is refused here, because in an interactive session it opens the goal panel and waits for the person to dismiss it; the goal is read from the transcript instead (`sessionGoal.ts`).
+ * What it can do is what the 2.1.319 plugin API gives a plugin: `$.session.compact`, the call `/compact` makes, with optional instructions; `$.command.run`, which runs a slash command as if the person typed it, used for `/goal <condition>` and `/goal clear` only; and `$.prompt.submit` with `asUser`, which submits text as the person's own words for a turn of its own once the session is idle (the model reads it bare, and the transcript records it with `origin: { kind: "plugin", name, asUser: true }`). A bare `/goal` is refused here, because in an interactive session it opens the goal panel and waits for the person to dismiss it; the goal is read from the transcript instead (`sessionGoal.ts`).
  */
 export interface SessionControlPlugin {
   readonly directory: string;
@@ -19,6 +19,9 @@ export interface SessionControlPlugin {
   readonly results: string;
   readonly release: () => void;
 }
+
+/** The control plugin's name in its manifest: the name Claude Code records as the origin of every prompt it submits (`origin: { kind: "plugin", name }`), which is how the door finds that prompt in the transcript. */
+export const SESSION_CONTROL_PLUGIN_NAME = "agent-shim-control";
 
 /** The prefix every staged plugin directory's name starts with, before the staging launcher's pid. */
 const STAGED_PREFIX = "agent-shim-control-";
@@ -52,7 +55,7 @@ export function stageSessionControlPlugin(options: Readonly<{ parent?: string; p
     mkdirSync(path.join(directory, "hooks"), { mode: 0o700 });
     mkdirSync(requests, { mode: 0o700 });
     mkdirSync(results, { mode: 0o700 });
-    writeFileSync(path.join(directory, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "agent-shim-control", version: "2.0.0", description: "Compacts and sets goals in supervised sessions in process" }), { mode: 0o600 });
+    writeFileSync(path.join(directory, ".claude-plugin", "plugin.json"), JSON.stringify({ name: SESSION_CONTROL_PLUGIN_NAME, version: "2.1.0", description: "Compacts, sets goals and submits a person's turns in supervised sessions in process" }), { mode: 0o600 });
     writeFileSync(path.join(directory, "hooks", "hooks.json"), JSON.stringify({ modules: ["./register.js"] }), { mode: 0o600 });
     writeFileSync(path.join(directory, "hooks", "register.js"), pluginSource(ready, requests, results), { mode: 0o600 });
     return { directory, ready, requests, results, release: () => { rmSync(directory, { recursive: true, force: true }); } };
@@ -123,6 +126,10 @@ export function register(on) {
           } else if (item.op === 'goal' && typeof item.args === 'string' && item.args.trim() !== '') {
             const ran = await $.command.run({ command: 'goal', args: item.args });
             response = { id: item.id, kind: 'ran', ...(typeof ran?.text === 'string' ? { text: ran.text } : {}) };
+          } else if (item.op === 'turn' && typeof item.text === 'string' && item.text.trim() !== '') {
+            const submitted = await $.prompt.submit({ text: item.text, asUser: true });
+            if (typeof submitted?.drop === 'string') throw new Error('a hook dropped the prompt: ' + submitted.drop);
+            response = { id: item.id, kind: 'submitted', text: submitted?.text, origin: submitted?.origin };
           } else {
             throw new Error('the request names no operation this plugin performs');
           }

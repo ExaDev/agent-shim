@@ -13,11 +13,11 @@ import { frontDoorRcApiClient, type RcApiClient } from "./rcApi";
 import { frontDoorRcControl, realRcControlTransport, type FrontDoorRcControl } from "./rcControl";
 import { registerRcEventsCommand } from "./rcEventsCommand";
 import { rcRateLimitInfoOf } from "./rcLiveUsage";
-import type { RcRateLimitInfo } from "./rcSchemas";
+import type { RcRateLimitInfo, RcSessionStatusWithRoute } from "./rcSchemas";
 import { mintRcSelfHostCredential, type RcSelfHostMintResult } from "./rcSelfHostMint";
 import { RC_GOAL_CLEAR_WORDS, RC_SESSION_COMMAND_MAX_WAIT_MS, RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "./rcSessionCommands";
 import type { RcQuestionSelection } from "./rcQuestions";
-import { RC_PENDING_PER_SESSION_MAX, rcExcerpt, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
+import { RC_PENDING_PER_SESSION_MAX, rcExcerpt, type RcPendingRequestSummary, type RcSessionSummary } from "./rcSessions";
 import { RC_CONTEXT_USAGE_DETAILS, RC_PERMISSION_MODES, RC_READ_FILE_ENCODINGS, RC_SEND_DELIVERY_NOTE, isRcContextUsageDetail, isRcPermissionMode, isRcReadFileEncoding, type RcEventWriteResult } from "./rcWrites";
 import type { RcStreamEvent } from "./rcSchemas";
 
@@ -49,7 +49,7 @@ export function formatRcSessionList(sessions: readonly RcSessionSummary[]): stri
 }
 
 /** Formats `agent-shim frontdoor rc status`: one line per observed session, its worker facts, and its pending control requests indented beneath. */
-export function formatRcSessionStatus(statuses: readonly RcSessionStatus[]): string[] {
+export function formatRcSessionStatus(statuses: readonly RcSessionStatusWithRoute[]): string[] {
   if (statuses.length === 0) {
     return ["no Remote Control sessions observed"];
   }
@@ -74,6 +74,7 @@ export function formatRcSessionStatus(statuses: readonly RcSessionStatus[]): str
             status.workerIdleSeconds === undefined ? "idle unknown" : `idle ${String(status.workerIdleSeconds.value)} s as of ${new Date(status.workerIdleSeconds.observedAt).toISOString()}`,
           ].join(", ");
     lines.push(`  worker: ${worker}`);
+    lines.push(status.route.route === null ? `  goal, compaction and turn verbs: refused: ${status.route.refused}` : `  goal, compaction and turn verbs: ${status.route.route} route`);
     if (status.pending.length === 0) {
       lines.push("  pending: none");
     } else {
@@ -266,11 +267,11 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
   withExamples(
     rc
       .command("status")
-      .description("Report each observed Remote Control session's worker state and idle from its latest observed heartbeat and registration, with its pending control requests. Read-only.")
+      .description("Report each observed Remote Control session's worker state and idle from its latest observed heartbeat and registration, its pending control requests, and the route the goal, compaction and turn verbs would take for it (or why none would). Read-only.")
       .argument("[session]", "One cse_ session id, as `frontdoor rc list` shows it; every observed session when omitted.")
       .option("--json", "Print the statuses as JSON.")
       .action(async (session: string | undefined, options: Readonly<{ json?: boolean }>) => {
-        const statuses = await frontDoorRcControlFromState(realFarmFs, paths).statusOf(session);
+        const { statuses } = await frontDoorRcApiFromState(realFarmFs, paths).rc.status(session === undefined ? {} : { session });
         if (options.json === true) {
           printJson({ statuses });
           return;
@@ -568,7 +569,7 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
     ['agent-shim frontdoor rc teleport --session cse_00000000-0000-4000-8000-000000000000 --marker "__ULTRAPAN_TELEPORT_LOCAL__"'],
   );
 
-  /** Reads `--wait-ms`, the wait bound every goal and compaction verb accepts, refusing anything but a positive whole number of milliseconds. */
+  /** Reads `--wait-ms`, the wait bound every goal, compaction and turn verb accepts, refusing anything but a positive whole number of milliseconds. */
   const waitMsOf = (waitMs: string | undefined): { readonly waitMs?: number } => {
     if (waitMs === undefined) {
       return {};
@@ -663,6 +664,25 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
         console.log(`compacted ${answer.session} (${answer.trigger}, ${answer.route}): ${sizes}`);
       }),
     ['agent-shim frontdoor rc compact --session cse_00000000-0000-4000-8000-000000000000 --instructions "keep the open decisions"'],
+  );
+
+  withExamples(
+    rc
+      .command("turn")
+      .description(`Put a person's typed turn into one Remote Control session, which its model reads as its user's words, and wait until the session records it as a user entry from the person (never as another session's message); prints the entry's uuid and the route. ${routes} Unlike \`send\`, it never delivers the text as a peer's message: a session neither route reaches is refused with the reason. Verified on Claude Code ${versions}; a session on any other version is refused.`)
+      .requiredOption("--session <id>", "The cse_ session id, as `frontdoor rc list` shows it.")
+      .requiredOption("--text <text>", "The text as the person typed it; not starting with / (the goal and compaction verbs run those commands).")
+      .option("--wait-ms <ms>", waitOption)
+      .option("--json", "Print the answer as JSON.")
+      .action(async (options: Readonly<{ session: string; text: string; waitMs?: string; json?: boolean }>) => {
+        const answer = await frontDoorRcApiFromState(realFarmFs, paths).rc.turn({ session: options.session, text: options.text, ...waitMsOf(options.waitMs) });
+        if (options.json === true) {
+          printJson(answer);
+          return;
+        }
+        console.log(`turn recorded on ${answer.session} as user entry ${answer.uuid} (${answer.route})`);
+      }),
+    ['agent-shim frontdoor rc turn --session cse_00000000-0000-4000-8000-000000000000 --text "carry on with the next file"'],
   );
 
   withExamples(

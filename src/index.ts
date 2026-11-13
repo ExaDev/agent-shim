@@ -337,7 +337,9 @@ export {
   type RcSessionCommandResult,
   type RcSessionCommandRoute,
   type RcSessionCommands,
+  type RcSessionRoute,
   type RcSupervisedTarget,
+  type RcTurnReport,
 } from "./frontdoor/rcSessionCommands";
 export {
   createRcClaudeCodeVersions,

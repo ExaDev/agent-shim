@@ -273,7 +273,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
   const rcLiveUsage = createRcLiveUsage({ now: () => Date.now(), hub: doorEvents });
   // The door's own client read stream attachment: one held stream per tracked session, fanned out to every subscriber (the typed API's subscription and `frontdoor rc watch`), with its envelopes filed with the tracker. The door plays one client because the CLI routes permission approvals only toward attached clients: with no stream held, an approval falls back to the CLI's own local prompt and never crosses the door. In the self-hosted mode the dial is resolved per call so it can name the door's own surface once that has bound. The supervisor's shutdown closes the hub as its last stop, which is what makes the final cursor save deterministic rather than left to a drop boundary the exit might never reach. The fan-out the hub is handed is the wrapped one, so every stream event reaches the fan-out's own subscribers exactly as before and the backbone beside it, source-tagged `rc`: that wrap is the whole of the RC stream becoming the backbone's first publisher.
   const rcFanout = rcFanoutOnDoorHub(createRcEventFanout(), doorEvents);
-  // The Claude Code version each session's own system/init reports, which the goal and compaction verbs refuse to act without: their route is verified per version.
+  // The Claude Code version each session's own system/init reports, which the goal, compaction and turn verbs refuse to act without: their route is verified per version.
   const rcClaudeCodeVersions = createRcClaudeCodeVersions(rcFanout);
   const rcHub = createRcStreamHub({
     now: () => Date.now(),
@@ -551,7 +551,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       const rcMcpAuthenticate = async (sessionId: string, serverName: string, redirectUri: string) => await authenticateRcSessionMcpServer(rcControlRequestDeps, sessionId, serverName, redirectUri);
       const rcMcpOAuthCallbackUrl = async (sessionId: string, serverName: string, callbackUrl: string) => await submitRcSessionMcpOAuthCallbackUrl(rcControlRequestDeps, sessionId, serverName, callbackUrl);
       const rcTeleport = async (sessionId: string, marker: string) => await teleportRcSession(rcControlRequestDeps, sessionId, marker);
-      // The goal and compaction verbs: supervised sessions through their control plugin, and in the self-hosted mode the door's own surface (doorSessionCommands.ts).
+      // The goal, compaction and turn verbs: supervised sessions through their control plugin, and in the self-hosted mode the door's own surface (doorSessionCommands.ts).
       const rcSessionCommands = createDoorRcSessionCommands({
         paths,
         isTracked: (sessionId) => rcTracker.statusOf(sessionId).length > 0,

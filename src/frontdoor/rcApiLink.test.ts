@@ -23,6 +23,7 @@ describe("how long the typed API's client waits for response headers", () => {
     const waitMs = 30_000;
     expect(headersTimeoutOf(`${URL_BASE}/rc/goalSet`, rpcBody({ session: "cse_x", condition: "x", waitMs }))).toBe(waitMs + UNDICI_DEFAULT_HEADERS_TIMEOUT_MS);
     expect(headersTimeoutOf(`${URL_BASE}/rc/compact`, rpcBody({ session: "cse_x" }))).toBe(COMPACT_TIMEOUT_MS + UNDICI_DEFAULT_HEADERS_TIMEOUT_MS);
+    expect(headersTimeoutOf(`${URL_BASE}/rc/turn`, rpcBody({ session: "cse_x", text: "carry on", waitMs }))).toBe(waitMs + UNDICI_DEFAULT_HEADERS_TIMEOUT_MS);
     expect(headersTimeoutOf(`${URL_BASE}/rc/compactWithInstructions`, rpcBody({ session: "cse_x", instructions: "x", waitMs: RC_SESSION_COMMAND_MAX_WAIT_MS }))).toBe(RC_SESSION_COMMAND_MAX_WAIT_MS);
   });
 });

@@ -94,6 +94,8 @@ describe("the MCP server over a real door handler", () => {
       goalSet: async (_session: string, condition: string) => await Promise.resolve({ ok: true as const, report: { route: "supervised" as const, condition, superseded: null } }),
       goalClear: async () => await Promise.resolve({ ok: true as const, report: { route: "supervised" as const, cleared: null } }),
       compact: async () => await Promise.resolve({ ok: true as const, report: { route: "supervised" as const, trigger: "plugin" } }),
+      turn: async () => await Promise.resolve({ ok: true as const, report: { route: "supervised" as const, uuid: "00000000-0000-4000-8000-0000000000a1" } }),
+      routeOf: async () => await Promise.resolve({ route: "supervised" as const }),
       fanout: rcFanoutOnDoorHub(createRcEventFanout(), events),
       sessionEvents,
       usageSnapshots: () => [],

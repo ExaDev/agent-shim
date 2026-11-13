@@ -4,14 +4,16 @@ import { COMPACT_TIMEOUT_MS } from "../supervise/compactTimeout";
 import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
 import type { CompactionResult } from "../supervise/realCompact";
 import { RESULT_POLL_MS } from "../supervise/sessionControl";
+import type { SubmittedTurn } from "../supervise/sessionControl";
 import type { TranscriptGoal } from "../supervise/sessionGoal";
-import { runSelfHostedSlashCommand, type RcSelfHostCommandDeps } from "./rcSelfHostCommands";
+import type { PluginTurns } from "../supervise/sessionPluginTurns";
+import { runSelfHostedSlashCommand, runSelfHostedTurn, type RcSelfHostCommandDeps } from "./rcSelfHostCommands";
 
 /**
- * Goal and compaction control over a Remote Control session: read, set and clear its `/goal`, and compact its conversation, each returning the outcome the session itself reports. One verb surface over the two routes Claude Code 2.1.319 leaves open, chosen per session:
+ * Goal, compaction and turn control over a Remote Control session: read, set and clear its `/goal`, compact its conversation, and put a person's typed turn into it, each returning the outcome the session itself reports. One verb surface over the two routes Claude Code 2.1.319 leaves open, chosen per session:
  *
- * - **A supervised session** (one an agent-shim supervisor launched, whatever its account or provider): the door finds the launch through the registry, by the `bridge-session` row Claude Code writes into the session's own transcript, and asks the session's in-process control plugin (`supervise/sessionControlPlugin.ts`), which runs `$.session.compact` or `/goal <condition>` and `/goal clear` through the plugin API. The goal is read from the transcript's `goal_status` rows, with no effect on the session.
- * - **A session on the door's self-hosted surface** that no supervisor owns: the door is the Remote Control service there, so it writes the slash command into its own conversation as a person's app would and reads the worker's answer off the stream (`rcSelfHostCommands.ts`).
+ * - **A supervised session** (one an agent-shim supervisor launched, whatever its account or provider): the door finds the launch through the registry, by the `bridge-session` row Claude Code writes into the session's own transcript, and asks the session's in-process control plugin (`supervise/sessionControlPlugin.ts`), which runs `$.session.compact`, `/goal <condition>` and `/goal clear` through the plugin API, or submits a person's turn with `$.prompt.submit` as the person's words. The goal is read from the transcript's `goal_status` rows, with no effect on the session.
+ * - **A session on the door's self-hosted surface** that no supervisor owns: the door is the Remote Control service there, so it writes the slash command or the turn into its own conversation as a person's app would and reads the worker's answer off the stream (`rcSelfHostCommands.ts`).
  *
  * Any other session is refused with the reason: the door has no in-process channel into it, and on the real service the worker runs a slash command only when a person's app wrote it (it treats every other writer, the door's own `send` among them, as a peer whose message the model reads as text), which the door will not claim to be.
  *
@@ -34,6 +36,9 @@ const MAX_JSON_BYTES_PER_CODE_UNIT = 6;
  * The longest compaction instructions the verbs accept, in UTF-16 code units: as many as fit in one request body under the door's control body cap however they encode, so the bound is one a request can actually reach. The self-hosted route also checks the event write it makes against the same cap, since its envelope adds to the instructions.
  */
 export const RC_COMPACT_INSTRUCTIONS_MAX_CHARS = Math.floor(CONTROL_BODY_CAP_BYTES / MAX_JSON_BYTES_PER_CODE_UNIT);
+
+/** The longest turn text the turn verb accepts, in UTF-16 code units: as many as fit in one request body under the door's control body cap however they encode, as for compaction instructions. The self-hosted route also checks the event write it makes against the cap, since its envelope adds to the text. */
+export const RC_TURN_TEXT_MAX_CHARS = Math.floor(CONTROL_BODY_CAP_BYTES / MAX_JSON_BYTES_PER_CODE_UNIT);
 
 /**
  * The longest any verb waits for the session's answer: the largest delay Node's timers accept (a signed 32-bit millisecond count), since a larger one fires after one millisecond instead. Every wait the verbs take is bounded by it, in the schema, the CLI's parser and the timer itself.
@@ -73,6 +78,15 @@ export interface RcCompactReport {
   readonly postTokens?: number;
 }
 
+/** What a delivered turn reports: the uuid of the user entry the session recorded for it (the transcript row on the supervised route, the worker's mirrored entry on the self-hosted one). */
+export interface RcTurnReport {
+  readonly route: RcSessionCommandRoute;
+  readonly uuid: string;
+}
+
+/** Which route the verbs would take for a session now, or why none would: the read a caller makes before offering a person a reply box. */
+export type RcSessionRoute = { readonly route: RcSessionCommandRoute } | { readonly route: null; readonly refused: string };
+
 /** One verb's outcome: the report, or a verbose failure ready to show a user. */
 export type RcSessionCommandResult<T> = { readonly ok: true; readonly report: T } | { readonly ok: false; readonly message: string };
 
@@ -103,6 +117,8 @@ export interface RcSupervisedTarget {
   readonly compact: (signal: AbortSignal, instructions: string | undefined, waitMs: number) => Promise<CompactionResult>;
   /** Runs `/goal <args>` through the plugin, runnable for `waitMs` and no longer. */
   readonly runGoal: (args: string, signal: AbortSignal, waitMs: number) => Promise<unknown>;
+  /** Submits `text` as the person's words through the plugin, runnable for `waitMs` and no longer. */
+  readonly submitTurn: (text: string, signal: AbortSignal, waitMs: number) => Promise<SubmittedTurn>;
 }
 
 /** Everything the verbs need, injected so they run against fakes in unit tests. */
@@ -111,6 +127,8 @@ export interface RcSessionCommandDeps {
   readonly supervisedOf: (sessionId: string) => Promise<RcSupervisedTarget | { readonly refused: string } | undefined>;
   /** The goal a transcript leaves active, read incrementally without blocking (`transcriptFollower.ts`); undefined when the file does not exist. */
   readonly goalOf: (path: string) => Promise<RcGoal | null | undefined>;
+  /** The turns the control plugin submitted as the person's words, as a transcript records them (`sessionPluginTurns.ts`), read the same way; undefined when the file does not exist. */
+  readonly pluginTurnsOf: (path: string) => Promise<PluginTurns | undefined>;
   /** The door's own surface, present only when the door serves Remote Control itself: the one place it writes a command as a person's app. */
   readonly selfHost: RcSelfHostCommandDeps | undefined;
   /** Whether the door observes the session at all, so a mistyped id is refused as unknown rather than as unsupported. */
@@ -121,13 +139,13 @@ export interface RcSessionCommandDeps {
 function unverifiedVersionMessage(sessionId: string, version: string | undefined, source: string): string {
   const verified = RC_SESSION_COMMAND_VERIFIED_VERSIONS.join(", ");
   return version === undefined
-    ? `session ${sessionId} has not reported its Claude Code version (${source}), and goal and compaction control is verified only on Claude Code ${verified}`
-    : `session ${sessionId} runs Claude Code ${version}, and goal and compaction control is verified only on Claude Code ${verified}: the door will not act on a version whose behaviour it has not verified`;
+    ? `session ${sessionId} has not reported its Claude Code version (${source}), and goal, compaction and turn control is verified only on Claude Code ${verified}`
+    : `session ${sessionId} runs Claude Code ${version}, and goal, compaction and turn control is verified only on Claude Code ${verified}: the door will not act on a version whose behaviour it has not verified`;
 }
 
 /** The refusal for a session neither route reaches. */
 function unsupportedMessage(sessionId: string): string {
-  return `session ${sessionId} was not launched under an agent-shim supervisor, so the door has no in-process channel into it, and it is not on the door's own self-hosted surface. Over the real Remote Control service, Claude Code ${RC_SESSION_COMMAND_VERIFIED_VERSIONS.join(", ")} runs a slash command only when a person's app wrote it and treats any other writer as a peer, whose message the model reads as text, and the door does not claim to be a person's app on a service it does not run. Launch the session under a pool with resumeOnLimit (which supervises it), or run it against the door's self-hosted surface.`;
+  return `session ${sessionId} was not launched under an agent-shim supervisor, so the door has no in-process channel into it, and it is not on the door's own self-hosted surface. Over the real Remote Control service, Claude Code ${RC_SESSION_COMMAND_VERIFIED_VERSIONS.join(", ")} takes a message as a person's (running it when it is a slash command) only when a person's app wrote it and treats any other writer as a peer, whose message the model reads as another session's, and the door does not claim to be a person's app on a service it does not run. Launch the session under a pool with resumeOnLimit (which supervises it), or run it against the door's self-hosted surface; loading the control plugin into every launch (https://github.com/ExaDev/agent-shim/issues/803) would give it a route.`;
 }
 
 /** One verb's work on a resolved route. */
@@ -155,6 +173,35 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
     }
   };
 
+  /** Resolves the session's route and gates its version: the supervised launch, the door's own surface, or the refusal naming why neither serves it. Reads only, so a caller can ask it outside the session's queue. */
+  const resolveRoute = async (sessionId: string): Promise<{ readonly kind: "supervised"; readonly target: RcSupervisedTarget } | { readonly kind: "self-hosted"; readonly selfHost: RcSelfHostCommandDeps } | { readonly kind: "refused"; readonly message: string }> => {
+    const target = await deps.supervisedOf(sessionId);
+    if (target !== undefined && "refused" in target) {
+      return { kind: "refused", message: target.refused };
+    }
+    if (target !== undefined) {
+      if (target.version === undefined || !RC_SESSION_COMMAND_VERIFIED_VERSIONS.includes(target.version)) {
+        return { kind: "refused", message: unverifiedVersionMessage(sessionId, target.version, "its supervisor's control plugin has not loaded") };
+      }
+      return { kind: "supervised", target };
+    }
+    if (!deps.isObserved(sessionId)) {
+      return { kind: "refused", message: `the front door has not observed Remote Control session ${sessionId}` };
+    }
+    if (deps.selfHost === undefined) {
+      return { kind: "refused", message: unsupportedMessage(sessionId) };
+    }
+    const unavailable = deps.selfHost.unavailable();
+    if (unavailable !== undefined) {
+      return { kind: "refused", message: `session ${sessionId} was not launched under an agent-shim supervisor, and the door's self-hosted surface cannot take a command: ${unavailable}` };
+    }
+    const version = deps.selfHost.versionOf(sessionId);
+    if (version === undefined || !RC_SESSION_COMMAND_VERIFIED_VERSIONS.includes(version)) {
+      return { kind: "refused", message: unverifiedVersionMessage(sessionId, version, "no system/init from its worker has been observed on its stream; send it a prompt so it reports one") };
+    }
+    return { kind: "self-hosted", selfHost: deps.selfHost };
+  };
+
   /** Resolves the session's route, gates its version and runs the verb there, all inside the session's queue. */
   const onRoute = async <T>(sessionId: string, options: RcSessionCommandOptions, actions: RouteActions<T>): Promise<RcSessionCommandResult<T>> =>
     await serialised(sessionId, async () => {
@@ -162,20 +209,17 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
       if (signal?.aborted === true) {
         return { ok: false, message: `the request for session ${sessionId} was aborted before it ran` };
       }
-      const target = await deps.supervisedOf(sessionId);
-      if (target !== undefined && "refused" in target) {
-        return { ok: false, message: target.refused };
+      const resolved = await resolveRoute(sessionId);
+      if (resolved.kind === "refused") {
+        return { ok: false, message: resolved.message };
       }
-      if (target !== undefined) {
-        if (target.version === undefined || !RC_SESSION_COMMAND_VERIFIED_VERSIONS.includes(target.version)) {
-          return { ok: false, message: unverifiedVersionMessage(sessionId, target.version, "its supervisor's control plugin has not loaded") };
-        }
+      if (resolved.kind === "supervised") {
         // The plugin answers only once the session is idle (a request queued behind a turn waiting on a permission prompt waits as long as the prompt does), so the wait is bounded here: the request's own signal or the wait, whichever ends first.
         const waitMs = options.waitMs ?? COMPACT_TIMEOUT_MS;
         const timeout = AbortSignal.timeout(waitMs);
         const bounded = signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
         try {
-          return await actions.supervised(target, bounded, waitMs);
+          return await actions.supervised(resolved.target, bounded, waitMs);
         } catch (error) {
           if (timeout.aborted) {
             return { ok: false, message: `session ${sessionId}'s control plugin did not answer within ${String(waitMs)} ms. A request the plugin had not started is withdrawn; one it had started runs once the session is idle (a turn waiting on a permission prompt holds it), so read the session's goal or transcript before asking again` };
@@ -183,28 +227,14 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
           return { ok: false, message: `session ${sessionId}'s control plugin did not complete the request: ${error instanceof Error ? error.message : String(error)}` };
         }
       }
-      if (!deps.isObserved(sessionId)) {
-        return { ok: false, message: `the front door has not observed Remote Control session ${sessionId}` };
+      // One deadline for the whole verb, however many commands it runs (a goal set reads the goal it replaces first): each command's own wait is the whole bound, and this signal ends the verb once the bound has passed in total.
+      const waitMs = options.waitMs ?? resolved.selfHost.defaultWaitMs;
+      const timeout = AbortSignal.timeout(waitMs);
+      const result = await actions.selfHosted(resolved.selfHost, signal === undefined ? timeout : AbortSignal.any([signal, timeout]));
+      if (!result.ok && timeout.aborted) {
+        return { ok: false, message: `session ${sessionId}'s worker did not answer within ${String(waitMs)} ms in all; it may still be queued behind a running turn, so read the session's stream before asking again` };
       }
-      if (deps.selfHost !== undefined) {
-        const unavailable = deps.selfHost.unavailable();
-        if (unavailable !== undefined) {
-          return { ok: false, message: `session ${sessionId} was not launched under an agent-shim supervisor, and the door's self-hosted surface cannot take a command: ${unavailable}` };
-        }
-        const version = deps.selfHost.versionOf(sessionId);
-        if (version === undefined || !RC_SESSION_COMMAND_VERIFIED_VERSIONS.includes(version)) {
-          return { ok: false, message: unverifiedVersionMessage(sessionId, version, "no system/init from its worker has been observed on its stream; send it a prompt so it reports one") };
-        }
-        // One deadline for the whole verb, however many commands it runs (a goal set reads the goal it replaces first): each command's own wait is the whole bound, and this signal ends the verb once the bound has passed in total.
-        const waitMs = options.waitMs ?? deps.selfHost.defaultWaitMs;
-        const timeout = AbortSignal.timeout(waitMs);
-        const result = await actions.selfHosted(deps.selfHost, signal === undefined ? timeout : AbortSignal.any([signal, timeout]));
-        if (!result.ok && timeout.aborted) {
-          return { ok: false, message: `session ${sessionId}'s worker did not answer within ${String(waitMs)} ms in all; it may still be queued behind a running turn, so read the session's stream before asking again` };
-        }
-        return result;
-      }
-      return { ok: false, message: unsupportedMessage(sessionId) };
+      return result;
     });
 
   /** The supervised session's goal as its transcript records it now. */
@@ -231,7 +261,64 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
 
   const waitOf = (options: RcSessionCommandOptions): number | undefined => options.waitMs;
 
+  /** The control plugin's turns as the supervised session's transcript records them now; a failure when the transcript is not named yet or does not exist. */
+  const transcriptPluginTurns = async (sessionId: string, target: RcSupervisedTarget): Promise<RcSessionCommandResult<PluginTurns>> => {
+    const turns = target.transcriptPath === undefined ? undefined : await deps.pluginTurnsOf(target.transcriptPath);
+    return turns === undefined ? { ok: false, message: `session ${sessionId}'s supervisor has not recorded its transcript yet, which is where a turn is confirmed from; retry once it has finished a turn` } : { ok: true, report: turns };
+  };
+
   return {
+    /** Which route the verbs would take for the session now, or the refusal naming why none would; reads only, outside the session's queue, so a verb waiting on the session never delays it. */
+    routeOf: async (sessionId: string): Promise<RcSessionRoute> => {
+      const resolved = await resolveRoute(sessionId);
+      return resolved.kind === "refused" ? { route: null, refused: resolved.message } : { route: resolved.kind };
+    },
+
+    /**
+     * Puts `text` into the session as a person's typed turn, and resolves once the session recorded it as a user entry from the person, never as a peer's message: on the supervised route a transcript row the control plugin submitted as the person's words (`origin: { kind: "plugin", asUser: true }`), on the self-hosted route the worker's mirrored entry with the bridge's origin. The text reaches the session's model as its user's words (`docs/rc-slash-commands.md`, the trust boundary). Refused unsent: text that is empty, starts with `/` (a slash command, which the goal and compaction verbs run), or is longer than one request carries. Resolves when the turn entered the session, not when the model has answered it.
+     */
+    turn: async (sessionId: string, text: string, options: RcSessionCommandOptions = {}): Promise<RcSessionCommandResult<RcTurnReport>> => {
+      if (text.trim() === "") {
+        return { ok: false, message: "a turn needs non-empty text" };
+      }
+      if (text.trimStart().startsWith("/")) {
+        return { ok: false, message: "a turn's text starts with /, which the session would read as a slash command rather than a message, and the turn could not be confirmed as one; use the goal or compaction verbs for those commands, or start the text with something else" };
+      }
+      if (text.length > RC_TURN_TEXT_MAX_CHARS) {
+        return { ok: false, message: `a turn's text is limited to ${String(RC_TURN_TEXT_MAX_CHARS)} characters, and this one has ${String(text.length)}` };
+      }
+      return await onRoute<RcTurnReport>(sessionId, options, {
+        supervised: async (target, signal, waitMs) => {
+          const before = await transcriptPluginTurns(sessionId, target);
+          if (!before.ok) {
+            return before;
+          }
+          const submitted = await target.submitTurn(text, signal, waitMs);
+          if (!submitted.asUser) {
+            return { ok: false, message: `session ${sessionId}'s control plugin submitted the turn, but Claude Code did not stamp it as the person's words, so the model may read it framed as the plugin's` };
+          }
+          // The plugin API resolves once the prompt entered the session or queued behind the running turn; the row that records it lands once the turn starts, so the transcript is re-read at the plugin's own result cadence until it does or the wait ends.
+          for (;;) {
+            const after = await transcriptPluginTurns(sessionId, target);
+            if (!after.ok) {
+              return after;
+            }
+            if (after.report.count > before.report.count && after.report.last !== undefined) {
+              return after.report.last.text === text ? { ok: true, report: { route: "supervised", uuid: after.report.last.uuid } } : { ok: false, message: `session ${sessionId}'s transcript records a turn the control plugin submitted, but its text is not the text sent` };
+            }
+            if (signal.aborted) {
+              return { ok: false, message: `session ${sessionId} accepted the turn but its transcript did not record it within ${String(waitMs)} ms; it is queued behind the running turn, so read the transcript before sending it again` };
+            }
+            await sleep(RESULT_POLL_MS);
+          }
+        },
+        selfHosted: async (selfHost, signal) => {
+          const delivered = await runSelfHostedTurn(selfHost, sessionId, text, waitOf(options), signal);
+          return delivered.ok ? { ok: true, report: { route: "self-hosted", uuid: delivered.report.uuid } } : delivered;
+        },
+      });
+    },
+
     /** Reads the session's goal: from the transcript for a supervised session, with no effect on it; by running `/goal` on the self-hosted surface otherwise. */
     goalGet: async (sessionId: string, options: RcSessionCommandOptions = {}): Promise<RcSessionCommandResult<RcGoalReport>> =>
       await onRoute<RcGoalReport>(sessionId, options, {

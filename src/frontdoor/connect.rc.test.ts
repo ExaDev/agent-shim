@@ -109,6 +109,8 @@ function controlRequestOperations(tracker: RcSessionTracker, dial: RcEventDial, 
     goalSet: async () => await Promise.resolve({ ok: false as const, message: "unexercised" }),
     goalClear: async () => await Promise.resolve({ ok: false as const, message: "unexercised" }),
     compact: async () => await Promise.resolve({ ok: false as const, message: "unexercised" }),
+    turn: async () => await Promise.resolve({ ok: false as const, message: "unexercised" }),
+    routeOf: async () => await Promise.resolve({ route: null, refused: "unexercised" }),
   };
 }
 

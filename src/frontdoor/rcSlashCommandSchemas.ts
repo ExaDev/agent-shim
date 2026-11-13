@@ -1,9 +1,9 @@
 import { z } from "zod";
 
-import { RC_COMPACT_INSTRUCTIONS_MAX_CHARS, RC_GOAL_CONDITION_MAX_CHARS, RC_SESSION_COMMAND_MAX_WAIT_MS } from "./rcSessionCommands";
+import { RC_COMPACT_INSTRUCTIONS_MAX_CHARS, RC_GOAL_CONDITION_MAX_CHARS, RC_SESSION_COMMAND_MAX_WAIT_MS, RC_TURN_TEXT_MAX_CHARS } from "./rcSessionCommands";
 
 /**
- * The Zod schemas of the goal and compaction verbs' typed API (`rcSessionCommands.ts` holds the operations): the inputs each procedure accepts and the reports it answers with. Kept apart from `rcSchemas.ts` so the verbs' contract lives beside nothing else.
+ * The Zod schemas of the goal, compaction and turn verbs' typed API (`rcSessionCommands.ts` holds the operations): the inputs each procedure accepts and the reports it answers with. Kept apart from `rcSchemas.ts` so the verbs' contract lives beside nothing else.
  */
 
 /** The wait bound every verb accepts: a positive whole number of milliseconds no larger than Node's timers accept, or absent for the default. */
@@ -35,6 +35,13 @@ export const RcCompactWithInstructionsInputSchema = z.strictObject({
   waitMs: WaitMsSchema,
 });
 
+/** The turn's input: one non-empty session id, the text as the person typed it (not trimmed, since it is their words; refused when it is only whitespace or starts with `/`, which the router explains), no longer than fits in one request body under the door's control body cap however it encodes, and an optional wait bound. */
+export const RcTurnInputSchema = z.strictObject({
+  session: z.string().min(1),
+  text: z.string().min(1).max(RC_TURN_TEXT_MAX_CHARS),
+  waitMs: WaitMsSchema,
+});
+
 /** The fields every verb's answer carries: the session and the route that served it (the session's supervisor, or the door's own self-hosted surface). */
 const commandAnswerShape = {
   session: z.string(),
@@ -58,6 +65,12 @@ export const RcGoalSetOutputSchema = z.strictObject({
 export const RcGoalClearOutputSchema = z.strictObject({
   ...commandAnswerShape,
   cleared: z.string().nullable(),
+});
+
+/** The turn's answer: the uuid of the user entry the session recorded for the turn. */
+export const RcTurnOutputSchema = z.strictObject({
+  ...commandAnswerShape,
+  uuid: z.string(),
 });
 
 /** The compaction's answer: the trigger as the session names it, and the token counts when the session recorded them. */
