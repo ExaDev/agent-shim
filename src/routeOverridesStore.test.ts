@@ -122,8 +122,8 @@ describe("which override applies", () => {
   });
 });
 
-describe("setting and unsetting one entry", () => {
-  it("sets, replaces and unsets, leaving no empty table or scope", () => {
+describe("setting and removing one entry", () => {
+  it("sets, replaces and removes, leaving no empty table or scope", () => {
     const set = withRouteOverride(NO_ROUTE_OVERRIDES, { kind: "identity", name: "me" }, "opus", "z/a");
     expect(set).toEqual({ schemaVersion: 1, identities: { me: { opus: "z/a" } } });
     const replaced = withRouteOverride(set, { kind: "identity", name: "me" }, "opus", "z/b");
@@ -137,7 +137,7 @@ describe("setting and unsetting one entry", () => {
     expect(() => withRouteOverride(NO_ROUTE_OVERRIDES, { kind: "global" }, key, "z/a")).toThrow(UsageError);
   });
 
-  it("refuses the bare target auto and unsetting an entry that is not set", () => {
+  it("refuses the bare target auto and removing an entry that is not set", () => {
     expect(() => withRouteOverride(NO_ROUTE_OVERRIDES, { kind: "global" }, "opus", "auto")).toThrow(/z|<provider>\/auto/);
     expect(() => withRouteOverride(NO_ROUTE_OVERRIDES, { kind: "global" }, "opus", undefined)).toThrow(/No override/);
   });
@@ -194,5 +194,20 @@ describe("the store's edges", () => {
 
   it("adds no global table when renaming in a file that has none", () => {
     expect(routeOverridesRenamed({ schemaVersion: 1, identities: { work: { opus: "z/a" } } }, "identity", "work", "client")?.value).toEqual({ schemaVersion: 1, identities: { client: { opus: "z/a" } } });
+  });
+});
+
+describe("a damaged overrides file is never read as no overrides", () => {
+  /** What the headroom precedent's reader does with a file it cannot stat: no setting. This reader must not. */
+  it.each<[string, Parameters<typeof createRouteOverridesReader>[0]]>([
+    ["a file whose stat fails", { fileRevision: () => { throw permissionDenied(); }, readFileUtf8: () => { throw permissionDenied(); } }],
+    ["a file that cannot be read", { fileRevision: () => "r1", readFileUtf8: () => { throw permissionDenied(); } }],
+    ["a file that is not JSON", { fileRevision: () => "r1", readFileUtf8: () => "{" }],
+    ["a file of another shape", { fileRevision: () => "r1", readFileUtf8: () => JSON.stringify({ schemaVersion: 1, sessions: [] }) }],
+    ["an empty file", { fileRevision: () => "r1", readFileUtf8: () => "" }],
+  ])("reports %s as a fault and gives no table", (_label, fs) => {
+    const read = createRouteOverridesReader(fs, FILE, () => undefined)();
+    expect(read).not.toHaveProperty("table");
+    expect(read).toHaveProperty("fault");
   });
 });

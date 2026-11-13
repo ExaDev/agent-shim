@@ -120,7 +120,7 @@ describe("buildProgram", () => {
     expect(subcommandNames(built, "profile")).toEqual(["add", "list", "remove", "set", "show", "use"]);
     expect(subcommandNames(built, "provider")).toEqual(["add", "list", "models", "remove", "rename", "set", "show", "unalias"]);
     expect(subcommandNames(built, "rule")).toEqual(["add", "list", "remove", "set", "show"]);
-    expect(subcommandNames(built, "route")).toEqual(["list", "set", "unset"]);
+    expect(subcommandNames(built, "route")).toEqual(["list", "remove", "set"]);
     expect(subcommandNames(built, "credential")).toEqual(["forget", "push", "store", "warm"]);
   });
 
@@ -543,7 +543,8 @@ describe("route commands", () => {
       { scope: "identity:work", model: "claude-sonnet-5-5", target: "auto/z/sonnet" },
       { scope: "global", model: "opus", target: "z/glm-5.3" },
     ]);
-    expect(parseJson((await cli(["route", "unset", "opus", "--json"])).stdout)).toEqual({ action: "removed", kind: "route", name: "opus" });
+    expect((await cli(["route", "remove", "opus"])).code).toBe(EXIT_USAGE);
+    expect(parseJson((await cli(["route", "remove", "opus", "--yes", "--json"])).stdout)).toEqual({ action: "removed", kind: "route", name: "opus" });
     expect((await cli(["route", "list"])).stdout).toContain("identity:work  claude-sonnet-5-5 -> auto/z/sonnet");
     expect(readRouteOverrides(paths)).toEqual({ schemaVersion: 1, identities: { work: { "claude-sonnet-5-5": "auto/z/sonnet" } }, sessions: { abc: { haiku: "z/air" } } });
   });
@@ -561,7 +562,7 @@ describe("route commands", () => {
     [["route", "set", "opus", "z/glm", "--identity", "ghost"], 'no identity "ghost"'],
     [["route", "set", "opus", "z/glm", "--provider", "ghost"], 'no provider "ghost"'],
     [["route", "set", "opus", "z/glm", "--identity", "a", "--session", "b"], "at most one"],
-    [["route", "unset", "opus"], "No override"],
+    [["route", "remove", "opus", "--yes"], "No override"],
   ])("refuses %j, naming why, and writes nothing", async (argv, fragment) => {
     expect((await cli(addZ)).code).toBe(0);
     const result = await cli(argv);
