@@ -100,8 +100,8 @@ export interface SelectorPorts {
   readonly providerTarget: (provider: string, target: SelectorTarget) => { readonly name: string } | SelectorRefusal;
   /** Whether a model family of this canonical key is offered. */
   readonly family: (key: string) => boolean;
-  /** Whether the identity named `identity` holds the login the session runs on: it is the identity stored under `sessionIdentityId` (a directory id, never a name), or another holding the same account in the same organisation. */
-  readonly sameLogin: (identity: string, sessionIdentityId: string) => boolean;
+  /** Whether the identity named `identity` holds the login the session runs on: it is the identity stored under `sessionIdentityId` (a directory id, never a name), or another holding the same account in the same organisation; or why that cannot be told. */
+  readonly sameLogin: (identity: string, sessionIdentityId: string) => boolean | SelectorRefusal;
   /** The Claude model id the session last sent for a tier, as its own Claude Code resolved the tier: what a class is sent as on the Anthropic route. Undefined until the session has sent one. */
   readonly claudeNameOf: (tier: ClaudeTier) => string | undefined;
   /** The provider the session's main loop is on now (its launch's own, else the one its route context records), or undefined on the Anthropic route: where a class alone (`auto/<class>`) goes. */
@@ -163,7 +163,11 @@ function expandIdentity(ports: Readonly<SelectorPorts>, identity: string, target
   if (found.value.provider !== undefined) {
     return ports.providerTarget(found.value.provider, target);
   }
-  if (session.identityId !== undefined && ports.sameLogin(identity, session.identityId)) {
+  const same = session.identityId === undefined ? false : ports.sameLogin(identity, session.identityId);
+  if (typeof same === "object") {
+    return same;
+  }
+  if (same) {
     return onAnthropic(ports, target, `identity "${identity}", the login this session already runs on`, asked, `${SELECTOR_PREFIX}${identity}`);
   }
   if (target.kind === "none") {
