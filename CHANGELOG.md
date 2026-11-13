@@ -1,3 +1,21 @@
+## [14.5.0](https://github.com/ExaDev/agent-shim/compare/v14.4.0...v14.5.0) (2026-11-13)
+
+### Features
+
+* **frontdoor:** put a person's typed turn into a Remote Control session ([99a7758](https://github.com/ExaDev/agent-shim/commit/99a775866000152edfbe54a1bb7afd97097181a1))
+* **frontdoor:** verify the session verbs on Claude Code 2.1.325 ([d28eac7](https://github.com/ExaDev/agent-shim/commit/d28eac78c5c4241a79c4b390be6bc0260ca3e722))
+* **launcher:** load the control plugin into every unsupervised session launch ([f4c628d](https://github.com/ExaDev/agent-shim/commit/f4c628d51ff5df8404eae445cd8e822beda853b3)), closes [#803](https://github.com/ExaDev/agent-shim/issues/803)
+
+### Bug Fixes
+
+* **frontdoor:** confirm a self-hosted turn by the origin the worker stamps ([05a1829](https://github.com/ExaDev/agent-shim/commit/05a1829dc8b3fbcca8d90e1c1940cc196e370fdb))
+
+### Documentation
+
+* **frontdoor:** say when a worker first reports its version ([1984c48](https://github.com/ExaDev/agent-shim/commit/1984c485413fe6177fbfb6adba39aeed5e9bf485))
+* record the launched route as run against live sessions ([b244899](https://github.com/ExaDev/agent-shim/commit/b244899c8c21afbe21abd3a81911940e4909c142))
+* record the launched route on 2.1.325 and the launches that load nothing ([f843805](https://github.com/ExaDev/agent-shim/commit/f843805b9655a56a5cd84558b31d1de82c25611e))
+
 ## [14.4.0](https://github.com/ExaDev/agent-shim/compare/v14.3.2...v14.4.0) (2026-11-13)
 
 ### Features
