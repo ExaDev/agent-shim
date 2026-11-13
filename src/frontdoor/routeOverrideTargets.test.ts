@@ -27,6 +27,7 @@ const TARGETS = [
   "auto/me", "auto/me/opus", "auto/me/claude-opus-5-1", "auto/work", "auto/work/sonnet", "auto/subs/sonnet", "auto/pool:subs",
   "auto/family:glm/sonnet", "auto/family:glm", "auto//x", "auto/z/",
   "z/glm-9", "z/", "anthropic/", "auto/provider:auto/x", "anthropic/claude-opus-5-1", "acct:work/opus", "acct:work/",
+  "acct:me/opus", "acct:me/claude-opus-5-1", "acct:me/haiku", "acct:me/", "acct:nobody/opus",
 ];
 
 const TIMEOUT_MS = 120_000;

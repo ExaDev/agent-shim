@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
+import type { SelectorStatePorts } from "../models/selectorPorts";
 import type { ModelsConfig } from "../config/schema";
 import { buildLayoutPaths, type LayoutPaths } from "../paths";
 import { realFsPort } from "../realPorts";
@@ -13,6 +14,15 @@ import { mainLoopRoutesOfLiveSessions } from "../test-helpers";
 import { HAIKU_NAME, Z_HAIKU_MODEL, Z_OPUS_MODEL, Z_SONNET_MODEL, launchOfSession, send, startWorld } from "./mainLoopRouteTestWorld";
 
 const TIMEOUT_MS = 30_000;
+
+/** The selector state these doors read: identity `me` (id `me`) is the only one, and holds the login of a session that runs as it. */
+const SELF: SelectorStatePorts = {
+  profile: () => ({ kind: "absent" }),
+  identity: (name) => (name === "me" ? { kind: "found", value: { provider: undefined } } : { kind: "absent" }),
+  pool: () => ({ kind: "absent" }),
+  poolPick: (name) => ({ refusal: `no pool "${name}"` }),
+  sameLogin: (identity, sessionIdentityId) => identity === "me" && sessionIdentityId === "me",
+};
 const OPUS = "claude-opus-5-5";
 /** How many requests each side of a change sends: more than one, so a read per request would show. */
 const REQUESTS = 5;
@@ -49,7 +59,7 @@ describe("runtime route overrides through the real door, read from a real file",
       return realFsPort.readFileUtf8(file);
     } };
     const record = mainLoopRoutesOfLiveSessions();
-    const started = await startWorld(record, HTTP_STATUS.ok, models, undefined, undefined, { routeOverrides: createRouteOverridesReader(counting, paths.routeOverridesFile, () => undefined), identityNameOf: (id) => identityNames[id] });
+    const started = await startWorld(record, HTTP_STATUS.ok, models, undefined, undefined, { routeOverrides: createRouteOverridesReader(counting, paths.routeOverridesFile, () => undefined), identityNameOf: (id) => identityNames[id], selectorState: SELF });
     return { ...started, contextNow: () => record.routeOf(launchOfSession("s-1")) };
   }
 
@@ -334,6 +344,20 @@ describe("runtime route overrides through the real door, read from a real file",
       await send(world, { model: OPUS, requestClass: "main" });
       await send(world, { model: OPUS, requestClass: "main", provider: "z", session: "s-2" });
       expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["chosen", "by-scope", "by-scope"]);
+    } finally {
+      await world.close();
+    }
+  }, TIMEOUT_MS);
+
+  it("serves an override to an account target on the session's own login on its own credential, and keeps it there request after request", async () => {
+    set([[{ kind: "global" }, "opus", "acct:me/claude-opus-5-1"]]);
+    const world = await door();
+    try {
+      for (let index = 0; index < REQUESTS; index += 1) {
+        expect((await send(world, { model: OPUS, requestClass: "main", identity: "me" })).status).toBe(HTTP_STATUS.badGateway);
+      }
+      expect(world.anthropicModels).toEqual(Array<string>(REQUESTS).fill("claude-opus-5-1"));
+      expect(world.upstream.seen).toEqual([]);
     } finally {
       await world.close();
     }
