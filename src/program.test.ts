@@ -14,7 +14,8 @@ import { readJobs } from "./jobStore";
 import { createProfile, readGlobalConfig, readProfile } from "./configProfilesStore";
 import { readProvider } from "./providersStore";
 import { listDirectoryRules } from "./directoryRulesStore";
-import { readRouteOverrides } from "./routeOverridesStore";
+import { createRouteOverridesReader, readRouteOverrides } from "./routeOverridesStore";
+import { realFsPort } from "./realPorts";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { buildProgram } from "./program";
 import { fakeCommandDeps } from "./test-helpers";
@@ -547,6 +548,20 @@ describe("route commands", () => {
     expect(parseJson((await cli(["route", "remove", "opus", "--yes", "--json"])).stdout)).toEqual({ action: "removed", kind: "route", name: "opus" });
     expect((await cli(["route", "list"])).stdout).toContain("identity:work  claude-sonnet-5-5 -> auto/z/sonnet");
     expect(readRouteOverrides(paths)).toEqual({ schemaVersion: 1, identities: { work: { "claude-sonnet-5-5": "auto/z/sonnet" } }, sessions: { abc: { haiku: "z/air" } } });
+  });
+
+  it.each<[readonly string[]]>([[["--session", ""]], [["--identity", ""]], [["--provider", ""]]])("refuses an empty scope name, %j, and leaves no file a reader cannot use", async (scope) => {
+    const result = await cli(["route", "set", "opus", "claude-sonnet-5-5", ...scope]);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("empty");
+    expect(fs.existsSync(paths.routeOverridesFile)).toBe(false);
+  });
+
+  it("repairs a file an entry it cannot read made unusable, by removing that entry", async () => {
+    fs.writeFileSync(paths.routeOverridesFile, JSON.stringify({ schemaVersion: 1, global: { haiku: "claude-haiku-5-1" }, sessions: { "": { opus: "claude-sonnet-5-5" } } }));
+    expect(createRouteOverridesReader(realFsPort, paths.routeOverridesFile, () => undefined)()).toHaveProperty("fault");
+    expect((await cli(["route", "remove", "opus", "--session", "", "--yes"])).code).toBe(0);
+    expect(createRouteOverridesReader(realFsPort, paths.routeOverridesFile, () => undefined)()).toEqual({ table: { schemaVersion: 1, global: { haiku: "claude-haiku-5-1" } } });
   });
 
   it("says when no override is set", async () => {
