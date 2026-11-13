@@ -249,6 +249,6 @@ const RouteScopeInputSchema = z.union([
 export const ConfigRouteSetInputSchema = z.strictObject({ scope: RouteScopeInputSchema, model: z.string().min(1), target: z.string().min(1) });
 export const ConfigRouteSetOutputSchema = storedMutationOutput("route", "updated", z.strictObject({ scope: z.string(), model: z.string(), target: z.string() }));
 
-/** Removing an override takes no confirmation, as `route unset` asks for none: it restores where the name went before the override, and `set` puts it back. */
-export const ConfigRouteUnsetInputSchema = z.strictObject({ scope: RouteScopeInputSchema, model: z.string().min(1) });
-export const ConfigRouteUnsetOutputSchema = mutationOutput("route", "removed");
+/** Removing an override states its confirmation, as every removal does (the API's form of `route remove --yes`). */
+export const ConfigRouteRemoveInputSchema = z.strictObject({ scope: RouteScopeInputSchema, model: z.string().min(1), confirm: RemovalConfirmationSchema });
+export const ConfigRouteRemoveOutputSchema = mutationOutput("route", "removed");

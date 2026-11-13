@@ -119,7 +119,7 @@ export function routeOverrideFindings(overrides: Readonly<RouteOverrides>, names
     const label = scopeLabel(scope);
     const scopeProblem = overrideScopeProblem(scope, names);
     if (scopeProblem !== undefined) {
-      findings.push({ severity: "fail", message: `Route overrides: ${label} applies to nothing: ${scopeProblem}. Remove it with \`agent-shim route unset\`.` });
+      findings.push({ severity: "fail", message: `Route overrides: ${label} applies to nothing: ${scopeProblem}. Remove its entries with \`agent-shim route remove\`.` });
     }
     const entries = entriesOf(overrides, scope);
     // The scopes a request covered by this one is also covered by, so a chain is followed as the door would have looked each name up.
