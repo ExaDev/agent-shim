@@ -186,6 +186,8 @@ export interface World {
   /** The model each generation call the antigravity provider's backend received named. */
   readonly generated: readonly string[];
   readonly records: UsageRecord[];
+  /** What the pipeline wrote on the door's log. */
+  readonly pipelineLog: readonly string[];
   /** The model name each request that reached the stand-in for the Anthropic route carried, in order. */
   readonly anthropicModels: (string | undefined)[];
   /** The class of each request that reached the stand-in for the Anthropic route. */
@@ -254,17 +256,18 @@ export async function startWorld(
     now: () => 0,
     log: () => undefined,
   });
+  const pipelineLog: string[] = [];
   const server = createFrontDoorServer(
     async (pipelineRequest) => {
       await serveRouted(pipelineRequest, { resolveRoute: standingInForAnthropic(resolve, (requestClass, model) => {
           toAnthropic.push(requestClass);
           anthropicModels.push(model);
-        }), canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [usage], admit, now: () => 0, log: () => undefined });
+        }), canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [usage], admit, now: () => 0, log: (line) => { pipelineLog.push(line); } });
     },
     () => undefined,
   );
   const handle = await listenFrontDoor(server);
-  return { url: `http://127.0.0.1:${String(handle.port)}`, upstream, upstreamPort: upstream.port, codexCalls: codexFetch.calls, generated: gemini.generated, records, toAnthropic, anthropicModels, setProvider: (name, definition) => {
+  return { url: `http://127.0.0.1:${String(handle.port)}`, upstream, upstreamPort: upstream.port, codexCalls: codexFetch.calls, generated: gemini.generated, records, pipelineLog, toAnthropic, anthropicModels, setProvider: (name, definition) => {
       providerFs.set(`${PROVIDERS_DIR}/${name}.json`, definition);
     }, failRead: (file, error) => {
       if (error === undefined) failing.delete(file);
