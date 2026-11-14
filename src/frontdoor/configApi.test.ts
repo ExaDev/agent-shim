@@ -11,7 +11,7 @@ import { readPools } from "../poolStore";
 import { readProvider } from "../providersStore";
 import { listDirectoryRules } from "../directoryRulesStore";
 import { profileExists } from "../configProfilesStore";
-import { readRouteOverrides } from "../routeOverridesStore";
+import { readRouteOverrides, writeRouteOverrides } from "../routeOverridesStore";
 import { createConfigApiRouter } from "./configApi";
 import { LIFECYCLE_AND_CODEX_TEST_DEPS } from "./lifecycleCodexTestDeps";
 
@@ -364,5 +364,8 @@ describe("config API: route overrides", () => {
     // A key typed in another case is reported as stored, by a set and by a removal.
     expect(await api.route.set({ scope: { kind: "global" }, model: "HAIKU", target: "z/air" })).toEqual({ action: "updated", kind: "route", name: "haiku", value: { scope: "global", model: "haiku", target: "z/air" } });
     expect(await api.route.remove({ scope: { kind: "global" }, model: "Haiku", confirm: true })).toEqual({ action: "removed", kind: "route", name: "haiku" });
+    // A key a hand edit stored in another case is reported by that spelling.
+    writeRouteOverrides(paths, { schemaVersion: 1, global: { Opus: "z/glm-5.3" } });
+    expect(await api.route.remove({ scope: { kind: "global" }, model: "opus", confirm: true })).toEqual({ action: "removed", kind: "route", name: "Opus" });
   });
 });

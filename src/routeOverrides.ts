@@ -5,7 +5,7 @@ import { UsageError } from "./cliError";
 import type { LayoutPaths } from "./paths";
 import { overrideNamesOf, overrideScopeProblem, overrideTargetProblem } from "./routeOverrideChecks";
 import { routeTargetPorts } from "./models/selectorPorts";
-import { describeScope, overrideKeyOf, readRouteOverrides, readRouteOverridesForRepair, requireNamedScope, ROUTE_OVERRIDE_SCOPES, scopeLabelOf, withRouteOverride, writeRouteOverrides, type RouteOverrideScope } from "./routeOverridesStore";
+import { describeScope, overrideKeyOf, readRouteOverrides, readRouteOverridesForRepair, requireNamedScope, ROUTE_OVERRIDE_SCOPES, scopeLabelOf, storedOverrideKeys, withRouteOverride, writeRouteOverrides, type RouteOverrideScope } from "./routeOverridesStore";
 import type { RouteOverrides } from "./routeOverridesSchema";
 
 /** The scope flags one `route set` or `route remove` takes, at most one of them. */
@@ -67,11 +67,12 @@ export function setRouteOverride(paths: LayoutPaths, scope: RouteOverrideScope, 
 }
 
 /** Removes one override; throws `UsageError` when none is set there. Shared by `route remove` and `config.route.remove`. Returns the overrides as written. */
-export function removeRouteOverride(paths: LayoutPaths, scope: RouteOverrideScope, model: string): RouteOverrides {
+export function removeRouteOverride(paths: LayoutPaths, scope: RouteOverrideScope, model: string): { readonly overrides: RouteOverrides; /** The keys it removed, as they were stored, for the report. */ readonly removed: string } {
   // Read as written, so an entry that made the file unreadable can be removed to repair it.
-  const overrides = withRouteOverride(readRouteOverridesForRepair(paths), scope, model, undefined);
+  const before = readRouteOverridesForRepair(paths);
+  const overrides = withRouteOverride(before, scope, model, undefined);
   writeRouteOverrides(paths, overrides);
-  return overrides;
+  return { overrides, removed: storedOverrideKeys(before, scope, model).join(", ") };
 }
 
 /** Registers `agent-shim route set|remove|list`, with the verbs and flags every noun's write verbs take (`remove` asks for confirmation unless `--yes`, as `rule remove` does): the runtime route overrides the front door applies to the next request with no restart. */
@@ -103,9 +104,10 @@ export function registerRouteCommand(program: Command, deps: CommandDeps): void 
   ).action(async (model: string, options: Readonly<ScopeOptions & { json?: boolean; yes?: boolean }>) => {
     const scope = scopeOfOptions(options);
     await confirmRemoval(deps, options.yes, `the route override of "${model}" ${describeScope(scope)}`);
-    removeRouteOverride(paths, scope, model);
-    reportMutation(options.json, { action: "removed", kind: "route", name: overrideKeyOf(model), value: undefined }, () => {
-      console.log(`Removed the override of ${model} ${describeScope(scope)}.`);
+    // The report names the key as stored, as `route set`'s does: what a hand edit stored in another case is named in that case.
+    const { removed } = removeRouteOverride(paths, scope, model);
+    reportMutation(options.json, { action: "removed", kind: "route", name: removed, value: undefined }, () => {
+      console.log(`Removed the override of ${removed} ${describeScope(scope)}.`);
     });
   });
   withExamples(
