@@ -2,6 +2,7 @@ import nodeFs from "node:fs";
 import path from "node:path";
 
 import { CliError } from "./cliError";
+import { fileFaultCodeOf } from "./fileFaults";
 import { sameDirectory } from "./sameDirectory";
 import { MAX_NAME_BYTES, isStoredName } from "./config/names";
 
@@ -158,28 +159,21 @@ function nameOfText(text: string | undefined): IdentityNameRead {
   return nameOfParsed(parsed);
 }
 
-/** The errors reading `<entry>/identity.json` gives when the entry is not a directory at all (a plain file under the identities directory), which makes it no identity. */
-const NOT_A_DIRECTORY_CODES: ReadonlySet<string> = new Set(["ENOTDIR"]);
-
-/** The errors reading `<entry>/identity.json` gives when the entry is a directory, or a link to one, whose file cannot be reached: the entry is an identity whose record cannot be read. */
-const UNREACHABLE_CODES: ReadonlySet<string> = new Set(["EACCES", "ELOOP", "EISDIR"]);
-
-function codeOf(error: unknown): string | undefined {
-  return typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code : undefined;
-}
 
 /**
- * Reads one `identity.json`'s name through `read`, giving the same answer for the same entry whichever reader the caller holds: an entry that is not a directory (a plain file under the identities directory) is absent, and one whose file cannot be reached (nobody can enter it, a symlink loop, a directory where the file belongs) is unreadable, so it claims no name and blocks no identity. Any other fault is the machine's and is thrown. `read` gives the parsed name, or absent for a file that is not there.
+ * Reads one `identity.json`'s name through `read`, giving the same answer for the same entry whichever reader the caller holds: an entry that is not a directory (a plain file under the identities directory) is absent, and one whose file has any other fault of its own (`fileFaultCodeOf`: nobody can enter it, a symlink loop, a directory where the file belongs, a name too long, a file the system denies) is unreadable, so it claims no name and blocks no identity. A failure of the moment, or of the machine, is thrown. `read` gives the parsed name, or absent for a file that is not there.
  */
 export function guardedNameRead(read: () => IdentityNameRead): IdentityNameRead {
   try {
     return read();
   } catch (error) {
-    const code = codeOf(error);
-    if (code !== undefined && NOT_A_DIRECTORY_CODES.has(code)) {
+    // A path through a file: the entry is a plain file under the identities directory, which makes it no identity.
+    const code = fileFaultCodeOf(error);
+    if (code === "ENOTDIR") {
       return "absent";
     }
-    if (code !== undefined && UNREACHABLE_CODES.has(code)) {
+    // Any other fault of the file's own (nobody can enter it, a symlink loop, a directory where the file belongs, a name too long, a file the system denies): an identity whose record cannot be read.
+    if (code !== undefined) {
       return "unreadable";
     }
     throw error;
