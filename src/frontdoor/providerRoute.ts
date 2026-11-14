@@ -17,6 +17,7 @@ import { createAntigravityRouteMount } from "./antigravityMount";
 import { CONNECT_INTERCEPT_HOST, HTTPS_PORT } from "./connect";
 import { restoreCredentials } from "./custody";
 import { createPassthroughRoute } from "./passthrough";
+import { isSystemReadError } from "../readableConfig";
 import { refusingLocalStateFaults } from "./localStateFault";
 import type { RouteResolution, ServedModelReport } from "./pipeline";
 import { evaluateWhen, referencesFact, type ConditionContext } from "../resolve/conditions";
@@ -682,7 +683,17 @@ export function createProviderRouteResolver(deps: {
         const account = scan.model === undefined ? undefined : resolveAccountTarget(scan.model, deps.models?.(current.session));
         if (account !== undefined) {
           const sessionId = current.session.sessionId ?? "";
-          const moved = sessionId !== "" && ((await deps.accountMoves?.(sessionId, account.identity, account.model)) ?? false);
+          let moved: boolean;
+          try {
+            moved = sessionId !== "" && ((await deps.accountMoves?.(sessionId, account.identity, account.model)) ?? false);
+          } catch (error) {
+            // Leaving the move request writes a file; a write that fails is the door's own failure, never a read of the person's configuration.
+            if (!isSystemReadError(error)) {
+              throw error;
+            }
+            deps.log(`front door: could not leave a session's move request (${configFaultOf(error)})`);
+            return { ok: false, status: HTTP_STATUS.internalServerError, message: `the front door could not leave the request to move this session to identity "${account.identity}" (${configFaultOf(error)}); start it there with: claude @${account.identity} --resume` };
+          }
           return {
             ok: false,
             status: HTTP_STATUS.badRequest,
