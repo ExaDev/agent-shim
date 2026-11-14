@@ -193,6 +193,8 @@ export interface World {
   /** Replaces a provider's file between two requests, as a person editing it does. */
   readonly setProvider: (name: string, definition: unknown) => void;
   /** The provider reads over this world's provider files, for a test that checks something against the providers the door serves. */
+  /** Makes every read of `file` through the door's provider file system throw `error`, or read normally again when `error` is undefined: a test of a read that fails for the moment, or for good. */
+  readonly failRead: (file: string, error: Error | undefined) => void;
   readonly providerReads: ReturnType<typeof createProviderReads>;
   readonly close: () => Promise<void>;
 }
@@ -225,9 +227,11 @@ export async function startWorld(
       // A provider file that is no valid provider: a helper whose main loop was recorded on it reaches the routing loop's own refusal.
       [`${PROVIDERS_DIR}/bad.json`]: { displayName: 5 },
   });
+  const failing = new Map<string, Error>();
+  const failingFs = { ...providerFs.fs, readFileUtf8: (file: string) => { const error = failing.get(file); if (error !== undefined) throw error; return providerFs.fs.readFileUtf8(file); }, readConfigFile: (file: string) => { const error = failing.get(file); if (error !== undefined) throw error; return providerFs.fs.readConfigFile(file); } };
   const resolve = createProviderRouteResolver({ log: () => undefined, now: () => 0,
     mainLoopRoutes: record,
-    fs: providerFs.fs,
+    fs: failingFs,
     providersDir: PROVIDERS_DIR,
     codexPorts,
     directPort: () => OWN_PORT,
@@ -262,6 +266,9 @@ export async function startWorld(
   const handle = await listenFrontDoor(server);
   return { url: `http://127.0.0.1:${String(handle.port)}`, upstream, upstreamPort: upstream.port, codexCalls: codexFetch.calls, generated: gemini.generated, records, toAnthropic, anthropicModels, setProvider: (name, definition) => {
       providerFs.set(`${PROVIDERS_DIR}/${name}.json`, definition);
+    }, failRead: (file, error) => {
+      if (error === undefined) failing.delete(file);
+      else failing.set(file, error);
     }, providerReads: createProviderReads({ fs: providerFs.fs, providersDir: PROVIDERS_DIR }), close: handle.close };
 }
 

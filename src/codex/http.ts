@@ -14,4 +14,6 @@ export const HTTP_STATUS = {
   clientClosedRequest: 499,
   internalServerError: 500,
   badGateway: 502,
+  /** A failure of the moment on the door's side, which the client may retry: Claude Code retries a 5xx and not a 4xx. */
+  serviceUnavailable: 503,
 } as const;
