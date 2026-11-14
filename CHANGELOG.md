@@ -1,3 +1,14 @@
+## [14.8.0](https://github.com/ExaDev/agent-shim/compare/v14.7.1...v14.8.0) (2026-11-14)
+
+### Features
+
+* **scripts:** let the lab run a given Claude Code binary and agent-shim bundle ([11613a7](https://github.com/ExaDev/agent-shim/commit/11613a7dca77552e0f4a43e63a2e26ad1c08960c))
+* **scripts:** verify a Claude Code release with one command ([6dd205b](https://github.com/ExaDev/agent-shim/commit/6dd205b8ad84533e7771b51e52a53cb44e8deffb))
+
+### Continuous Integration
+
+* verify each new Claude Code release on a schedule ([2504edf](https://github.com/ExaDev/agent-shim/commit/2504edf6589f0aee158816a49f4f63c5716ce288))
+
 ## [14.7.1](https://github.com/ExaDev/agent-shim/compare/v14.7.0...v14.7.1) (2026-11-14)
 
 ### Bug Fixes
