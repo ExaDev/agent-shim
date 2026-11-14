@@ -154,7 +154,7 @@ describe("a background loop in a long-lived process", () => {
     expect(Object.keys(ALLOWED).filter((key) => !found.includes(key))).toEqual([]);
   });
 
-  it("has in each loop that waits between turns at least one try whose catch goes on to the next turn, but where an allowance says why not; what the turn does outside that try is not read", () => {
+  it("has in each loop of the source modules of src that waits between turns at least one try whose catch goes on to the next turn, but where an allowance says why not; what the turn does outside that try is not read", () => {
     const loops = sourceModules().flatMap((module) => uncaughtWaitLoops(module, sourceOf(module)));
     expect(loops.filter((key) => BOUNDED_WAITS[key] === undefined)).toEqual([]);
     expect(Object.keys(BOUNDED_WAITS).filter((key) => !loops.includes(key))).toEqual([]);
@@ -168,7 +168,7 @@ describe("a background loop in a long-lived process", () => {
     expect(HANDLER_MODULES.flatMap((module) => rawHandlerLogs(module, sourceOf(module)))).toEqual([]);
   });
 
-  it("names each module that writes a timer inside a string of code, and why it needs no keepTicking", () => {
+  it("names each source module of src that writes a timer inside a string of code, and why it needs no keepTicking", () => {
     const embedded = sourceModules().filter((module) => hasEmbeddedTimer(module, sourceOf(module)));
     expect(embedded.filter((module) => EMBEDDED_TIMERS[module] === undefined)).toEqual([]);
     expect(Object.keys(EMBEDDED_TIMERS).filter((module) => !embedded.includes(module))).toEqual([]);
