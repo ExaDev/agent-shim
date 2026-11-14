@@ -104,7 +104,7 @@ export function registerRouteCommand(program: Command, deps: CommandDeps): void 
     const scope = scopeOfOptions(options);
     await confirmRemoval(deps, options.yes, `the route override of "${model}" ${describeScope(scope)}`);
     removeRouteOverride(paths, scope, model);
-    reportMutation(options.json, { action: "removed", kind: "route", name: model, value: undefined }, () => {
+    reportMutation(options.json, { action: "removed", kind: "route", name: overrideKeyOf(model), value: undefined }, () => {
       console.log(`Removed the override of ${model} ${describeScope(scope)}.`);
     });
   });

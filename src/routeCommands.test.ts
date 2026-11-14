@@ -58,6 +58,8 @@ describe("route commands", () => {
 
   it("reports the key as stored, in lower case, whatever case it was typed in", async () => {
     expectOk(await cli(addZ));
+    expectOk(await cli(["route", "set", "haiku", "z/air"]));
+    expect(parseJson((await cli(["route", "remove", "HAIKU", "--yes", "--json"])).stdout)).toEqual({ action: "removed", kind: "route", name: "haiku" });
     expect(parseJson((await cli(["route", "set", "OPUS", "z/glm-5.3", "--json"])).stdout)).toEqual({ action: "updated", kind: "route", name: "opus", value: { scope: "global", model: "opus", target: "z/glm-5.3" } });
     expect((await cli(["route", "set", "Claude-Sonnet-5-5", "z/glm-5.3"])).stdout).toContain("Routing claude-sonnet-5-5 to z/glm-5.3");
   });
