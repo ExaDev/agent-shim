@@ -149,6 +149,7 @@
               "providerAliasesFile": "/tmp/some-throwaway-root/provider-aliases.json",
               "providersDir": "/tmp/some-throwaway-root/providers",
               "root": "/tmp/some-throwaway-root",
+              "routeOverridesFile": "/tmp/some-throwaway-root/route-overrides.json",
               "statuslineDir": "/tmp/some-throwaway-root/statusline",
               "superviseDir": "/tmp/some-throwaway-root/supervise",
               "usageAnchorsFile": "/tmp/some-throwaway-root/usage/anchors.json",
