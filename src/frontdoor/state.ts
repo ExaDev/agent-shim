@@ -59,6 +59,8 @@ const ContextFactsSchema = z.strictObject({
   servedModel: ContextText.optional(),
   /** Set when a route override, not a name the session chose, moved the main loop to this route: the one fact a routing decision reads, since a bare Claude name no override covers any longer goes back to the launch's own route from such a context. A door that cannot read the facts loses it, and the session then keeps the route until a name it chooses moves it. */
   movedBy: z.literal("override").optional(),
+  /** With `movedBy`, the provider the session's own request had put its main loop on before an override moved it (absent when that was the launch's own route): where the session goes back to once the override no longer applies, and the provider scope its overrides are looked up in meanwhile. */
+  chosenProvider: ContextText.optional(),
 });
 type ContextFacts = z.infer<typeof ContextFactsSchema>;
 
@@ -432,7 +434,7 @@ export function writeLaunchRoute(fs: HeadroomFs, sessionsDir: string, launch: Re
 
 /** The route and the facts of a context, each checked against its schema: a name over the bound, an empty one or an unknown field throws. */
 function splitContext(context: RouteContext): { readonly route: z.infer<typeof LaunchRouteSchema>; readonly facts: ContextFacts } {
-  const facts = ContextFactsSchema.parse({ ...(context.credential === undefined ? {} : { credential: context.credential }), ...(context.requestedModel === undefined ? {} : { requestedModel: context.requestedModel }), ...(context.servedModel === undefined ? {} : { servedModel: context.servedModel }), ...(context.movedBy === undefined ? {} : { movedBy: context.movedBy }) });
+  const facts = ContextFactsSchema.parse({ ...(context.credential === undefined ? {} : { credential: context.credential }), ...(context.requestedModel === undefined ? {} : { requestedModel: context.requestedModel }), ...(context.servedModel === undefined ? {} : { servedModel: context.servedModel }), ...(context.movedBy === undefined ? {} : { movedBy: context.movedBy }), ...(context.chosenProvider === undefined ? {} : { chosenProvider: context.chosenProvider }) });
   const route = LaunchRouteSchema.parse(context.kind === "provider" ? { kind: "provider", provider: context.provider } : { kind: "anthropic" });
   return { route, facts };
 }

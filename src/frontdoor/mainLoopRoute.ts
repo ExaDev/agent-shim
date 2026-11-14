@@ -72,7 +72,7 @@ export interface MainLoopRoutePorts {
 
 /** Whether two contexts say the same: the same route and the same credential and model names, so a context is written again only when one of them changed. */
 function sameContext(a: RouteContext, b: RouteContext): boolean {
-  return a.kind === b.kind && (a.kind !== "provider" || (b.kind === "provider" && a.provider === b.provider)) && a.credential === b.credential && a.requestedModel === b.requestedModel && a.servedModel === b.servedModel && a.movedBy === b.movedBy;
+  return a.kind === b.kind && (a.kind !== "provider" || (b.kind === "provider" && a.provider === b.provider)) && a.credential === b.credential && a.requestedModel === b.requestedModel && a.servedModel === b.servedModel && a.movedBy === b.movedBy && a.chosenProvider === b.chosenProvider;
 }
 
 /**
@@ -237,13 +237,16 @@ export interface MainLoopRoutingDeps {
 }
 
 /**
- * The provider of the route a session itself chose: the provider it was launched on, else the provider its recorded context names when the session's own request put it there, else none (the Anthropic route). A context a route override made is the override's, not the session's: reading an override's scope from it would let an override's own move decide which override applies next, so a provider-scoped entry for the provider a global entry moved the session to would flip the session between the two on every request. Every scope and route a renaming reads comes from here.
+ * The provider of the route a session itself chose: the provider it was launched on, else the provider its recorded context names when the session's own request put it there, else, for a context a route override made, the provider the session had chosen before the override moved it (`chosenProvider`), else none (the Anthropic route). A context a route override made is the override's, not the session's: reading an override's scope from it would let an override's own move decide which override applies next, so a provider-scoped entry for the provider a global entry moved the session to would flip the session between the two on every request. Every scope and route a renaming reads comes from here.
  */
 export function sessionRouteProvider(launchProvider: string | undefined, context: Readonly<RouteContext> | undefined): string | undefined {
   if (launchProvider !== undefined) {
     return launchProvider;
   }
-  return context?.kind === "provider" && context.movedBy !== "override" ? context.provider : undefined;
+  if (context?.movedBy === "override") {
+    return context.chosenProvider;
+  }
+  return context?.kind === "provider" ? context.provider : undefined;
 }
 
 /** What a renaming knows of the request whose model it may replace. */
@@ -284,9 +287,11 @@ function boundedName(text: string | undefined): string | undefined {
  */
 export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<RouteResolution>, deps: MainLoopRoutingDeps): (request: RoutedRequest) => Promise<RouteResolution> {
   /** The context recorded for a request served on `route`, with the facts about it. */
-  const contextOf = (route: RouteOf, credentialName: string | undefined, requested: string | undefined, served: string | undefined, overridden = false): RouteContext => {
+  /** The context of a served request. `overriddenFrom` is set when an override placed it: the context the session was in, from which the route the session itself chose is kept (`chosenProvider`), so the session goes back there once the override no longer applies. */
+  const contextOf = (route: RouteOf, credentialName: string | undefined, requested: string | undefined, served: string | undefined, overriddenFrom?: { readonly context: Readonly<RouteContext> | undefined }): RouteContext => {
     const credential = boundedName(credentialName);
-    const facts = { ...(credential === undefined ? {} : { credential }), ...(boundedName(requested) === undefined ? {} : { requestedModel: boundedName(requested) }), ...(boundedName(served) === undefined ? {} : { servedModel: boundedName(served) }), ...(overridden ? { movedBy: "override" as const } : {}) };
+    const chosen = overriddenFrom === undefined ? undefined : sessionRouteProvider(undefined, overriddenFrom.context);
+    const facts = { ...(credential === undefined ? {} : { credential }), ...(boundedName(requested) === undefined ? {} : { requestedModel: boundedName(requested) }), ...(boundedName(served) === undefined ? {} : { servedModel: boundedName(served) }), ...(overriddenFrom === undefined ? {} : { movedBy: "override" as const }), ...(chosen === undefined ? {} : { chosenProvider: chosen }) };
     return { ...route, ...facts };
   };
 
@@ -427,17 +432,26 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
       if (requested?.startsWith(ANTHROPIC_PREFIX) === true && !deps.definesProvider(ANTHROPIC_ROUTE_NAME)) {
         const placed = await toAnthropic(base, requested);
         if (placed.resolution.ok) {
-          recordServing(launch, ticket, placed.resolution, (servedModel) => contextOf({ kind: "anthropic" }, deps.loginOf(request.session), recordedAs, servedModel, overridden), placed.served);
+          recordServing(launch, ticket, placed.resolution, (servedModel) => contextOf({ kind: "anthropic" }, deps.loginOf(request.session), recordedAs, servedModel, overridden ? { context: current } : undefined), placed.served);
         }
         return placed.resolution;
       }
       // A context an override put the main loop in lasts only while an override still applies: a bare Claude name no override covers now goes where it would with no override, the launch's own route, and the context is recorded there. A context the person chose (`/model <provider>/<model>`) is no override's and stays.
       const overrideLapsed = current?.movedBy === "override" && !overridden && requested !== undefined && isBareClaudeName(requested);
+      // A lapsed override's context goes back to the provider the session had chosen, when it had chosen one.
+      const chosenProvider = overrideLapsed ? current.chosenProvider : undefined;
+      if (chosenProvider !== undefined) {
+        const placed = await toProvider(base, chosenProvider, request.session);
+        if (placed.resolution.ok) {
+          recordServing(launch, ticket, placed.resolution, (servedModel) => contextOf({ kind: "provider", provider: chosenProvider }, placed.credential, recordedAs, servedModel), unlessAuto(placed.served));
+        }
+        return placed.resolution;
+      }
       if (current?.kind === "provider" && !overrideLapsed) {
         const placed = await toProvider(base, current.provider, request.session);
         // Only a Claude name asked for on the main loop is a fact about it worth recording, and the route stays what it was: a request that chose no route moves nothing.
         if (placed.resolution.ok && requested !== undefined && (isBareClaudeName(requested) || requested === AUTO_MODEL)) {
-          recordServing(launch, ticket, placed.resolution, (servedModel) => contextOf({ kind: "provider", provider: current.provider }, placed.credential, recordedAs, servedModel, current.movedBy === "override"), unlessAuto(placed.served));
+          recordServing(launch, ticket, placed.resolution, (servedModel) => contextOf({ kind: "provider", provider: current.provider }, placed.credential, recordedAs, servedModel, current.movedBy === "override" ? { context: current } : undefined), unlessAuto(placed.served));
         }
         return placed.resolution;
       }
@@ -451,7 +465,7 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
     const servedModel = resolution.servedModel ?? (served === undefined ? requested : undefined);
     // The credential is named from the provider's file as read for this request, which is read for every request anyway, so an edited credential block shows its new name at the next one.
     const credential = served === undefined ? deps.loginOf(request.session) : deps.providerMapping(served, request.session, "").credential;
-    recordServing(launch, ticket, resolution, (model) => contextOf(route, credential, recordedAs, model, overridden), served === undefined ? servedModel : unlessAuto(servedModel));
+    recordServing(launch, ticket, resolution, (model) => contextOf(route, credential, recordedAs, model, overridden ? { context: current } : undefined), served === undefined ? servedModel : unlessAuto(servedModel));
     return resolution;
   };
 
