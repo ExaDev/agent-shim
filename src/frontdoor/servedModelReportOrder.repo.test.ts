@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { Readable } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
@@ -70,6 +70,25 @@ describe("a late report of the model a route sent", () => {
     release();
     await first;
     expect(record.routeOf(launchOfSession("s-1"))).toMatchObject({ requestedModel: "spark/fast", servedModel: "fast-m" });
+  });
+
+  it("orders two requests by when they arrived, not by when their heads were read, so one whose head comes late cannot out-record one that arrived after it", async () => {
+    const staged = stagedResolver();
+    const record = mainLoopRoutesOfLiveSessions();
+    // A rename that renames nothing still reads each request's head first.
+    const follow = followingMainLoop(staged.resolve, { record, providerMapping: () => ({ model: { kind: "as-is" }, credential: undefined }), loginOf: () => "login", definesProvider: () => false, rename: { model: () => undefined, bodyLimitBytes: 1_000_000 } });
+    const lateHead = new PassThrough();
+    const early: RoutedRequest = { ...requestOf("s-1"), body: lateHead };
+    const later: RoutedRequest = { ...requestOf("s-1"), body: Readable.from([Buffer.from(JSON.stringify({ model: "spark/later" }))]) };
+    // The later request's head is read first, so the resolver meets it first.
+    staged.next("spark", "later-m", "spark/later");
+    staged.next("spark", "early-m", "spark/early");
+    const first = follow(early);
+    await follow(later);
+    expect(record.routeOf(launchOfSession("s-1"))).toMatchObject({ requestedModel: "spark/later", servedModel: "later-m" });
+    lateHead.end(Buffer.from(JSON.stringify({ model: "spark/early" })));
+    await first;
+    expect(record.routeOf(launchOfSession("s-1"))).toMatchObject({ requestedModel: "spark/later", servedModel: "later-m" });
   });
 
   it("is applied while its request is still the launch's latest, once for each report it makes", async () => {
@@ -195,5 +214,43 @@ describe("the one place a main-loop request's context is recorded", () => {
 
   it("still finds the record written beside an allowed member", () => {
     expect(depsUsesOutsideRecordServing(around("deps.record.noteClaudeName(launch, model);\n    deps.record.record(launch, context);"))).toHaveLength(1);
+  });
+});
+
+/**
+ * Where `followingMainLoop` takes a request's ticket: every call of `deps.record.begin` outside the declaration of `arrivalOf` (an empty list when `arrivalOf` alone takes it), and whether the resolver it returns calls `arrivalOf` as its first statement, before anything is awaited.
+ */
+function ticketsTakenAtArrival(sourceText: string): { readonly beginsOutsideArrival: readonly string[]; readonly arrivalFirst: boolean } {
+  const file = ts.createSourceFile("mainLoopRoute.ts", sourceText, ts.ScriptTarget.Latest, true);
+  const beginsOutsideArrival: string[] = [];
+  let arrivalFirst = false;
+  const visit = (node: ts.Node, insideArrival: boolean): void => {
+    const inside = insideArrival || (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === "arrivalOf");
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "begin" && node.expression.expression.getText(file).replace(/\?/gu, "") === "deps.record" && !inside) {
+      beginsOutsideArrival.push(node.getText(file));
+    }
+    if (ts.isFunctionDeclaration(node) && node.name?.text === "followingMainLoop" && node.body !== undefined) {
+      const returned = node.body.statements.at(-1);
+      const resolver = returned !== undefined && ts.isReturnStatement(returned) ? returned.expression : undefined;
+      const first = resolver !== undefined && ts.isArrowFunction(resolver) && ts.isBlock(resolver.body) ? resolver.body.statements[0] : undefined;
+      arrivalFirst = first?.getText(file).replace(/\s+/gu, " ") === "const arrival = arrivalOf(request);";
+    }
+    ts.forEachChild(node, (child) => {
+      visit(child, inside);
+    });
+  };
+  visit(file, false);
+  return { beginsOutsideArrival, arrivalFirst };
+}
+
+describe("a request's place in its launch's order", () => {
+  it("is taken by arrivalOf alone, as the first thing the resolver does, before anything is awaited", () => {
+    const source = fs.readFileSync(path.join(__dirname, "mainLoopRoute.ts"), "utf8");
+    expect(ticketsTakenAtArrival(source)).toEqual({ beginsOutsideArrival: [], arrivalFirst: true });
+  });
+
+  it("finds a ticket taken anywhere else, and a resolver that awaits before it takes one", () => {
+    const later = "export function followingMainLoop(deps: Deps) {\n  const arrivalOf = () => deps.record.begin(launch);\n  return async (request) => {\n    const named = await renamed(request);\n    const ticket = deps.record.begin(launch);\n  };\n}";
+    expect(ticketsTakenAtArrival(later)).toEqual({ beginsOutsideArrival: ["deps.record.begin(launch)"], arrivalFirst: false });
   });
 });
