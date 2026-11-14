@@ -1,0 +1,128 @@
+{
+  "cases": [
+    {
+      "files": {
+        "a": {
+          "directory": true
+        },
+        "b": {
+          "directory": true
+        },
+        "link": {
+          "symlink": "$TMP/a"
+        }
+      },
+      "from": "sameDirectory.test.ts: sameDirectory > is true for a directory and a symlink to it, false for two directories, and false when either does not exist",
+      "id": "same-directory.directories-and-links",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "$TMP/a",
+            "$TMP/link"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "sameDirectory"
+        },
+        {
+          "args": [
+            "$TMP/a",
+            "$TMP/b"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "sameDirectory"
+        },
+        {
+          "args": [
+            "$TMP/a",
+            "$TMP/missing"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "sameDirectory"
+        },
+        {
+          "args": [
+            "$TMP/missing",
+            "$TMP/also-missing"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "sameDirectory"
+        }
+      ]
+    },
+    {
+      "files": {
+        "a": {
+          "directory": true
+        },
+        "file": "",
+        "loop-a": {
+          "symlink": "$TMP/loop-b"
+        },
+        "loop-b": {
+          "symlink": "$TMP/loop-a"
+        }
+      },
+      "from": "sameDirectory.test.ts: sameDirectory > is false, not thrown, for a path that cannot be reached: a cycle of links, or a path through a file",
+      "id": "same-directory.unreachable-paths",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "$TMP/loop-a",
+            "$TMP/loop-b"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "sameDirectory"
+        },
+        {
+          "args": [
+            "$TMP/a",
+            "$TMP/loop-a"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "sameDirectory"
+        },
+        {
+          "args": [
+            "$TMP/file/below",
+            "$TMP/a"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "sameDirectory"
+        }
+      ]
+    },
+    {
+      "files": {},
+      "from": "sameDirectory.test.ts: ignoresCase > is false for a directory that does not exist, which has no names to fold",
+      "id": "same-directory.ignores-case-of-a-missing-directory",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "$TMP/missing"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "ignoresCase"
+        }
+      ]
+    }
+  ]
+}

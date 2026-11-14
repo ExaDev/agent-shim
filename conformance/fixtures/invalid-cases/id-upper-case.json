@@ -1,0 +1,20 @@
+{
+  "cases": [
+    {
+      "from": "example.test.ts: example > it works",
+      "id": "Example.one",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            1
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "identity"
+        }
+      ]
+    }
+  ]
+}

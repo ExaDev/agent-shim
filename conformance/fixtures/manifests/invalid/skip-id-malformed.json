@@ -1,0 +1,13 @@
+{
+  "files": {
+    "function/a.json": {
+      "cases": 1,
+      "skip": {
+        "rust": [],
+        "ts": [
+          "A"
+        ]
+      }
+    }
+  }
+}

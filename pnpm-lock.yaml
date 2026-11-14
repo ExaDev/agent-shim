@@ -246,6 +246,9 @@ importers:
       '@vitest/coverage-v8':
         specifier: ^4.1.12
         version: 4.1.12(vitest@4.1.12)
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
       combinatrix:
         specifier: 2.0.1
         version: 2.0.1

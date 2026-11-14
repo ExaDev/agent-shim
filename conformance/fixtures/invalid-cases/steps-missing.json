@@ -1,0 +1,9 @@
+{
+  "cases": [
+    {
+      "from": "example.test.ts: example > it works",
+      "id": "example.one",
+      "kind": "function"
+    }
+  ]
+}

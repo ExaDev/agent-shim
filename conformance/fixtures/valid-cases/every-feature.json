@@ -1,0 +1,90 @@
+{
+  "cases": [
+    {
+      "files": {
+        "a/b": "text",
+        "bin": {
+          "base64": "AAEC"
+        },
+        "dir": {
+          "directory": true
+        },
+        "link": {
+          "symlink": "$TMP/a"
+        }
+      },
+      "from": "example.test.ts: example > it works",
+      "id": "example.one",
+      "kind": "function",
+      "reason": "the Rust implementation has no such function",
+      "skip": "rust",
+      "steps": [
+        {
+          "args": [
+            "$TMP/a",
+            {
+              "$number": "NaN"
+            },
+            {
+              "$number": "-Infinity"
+            },
+            {
+              "$undefined": true
+            },
+            {
+              "k": [
+                null,
+                true,
+                1.5
+              ]
+            },
+            {
+              "$object": [
+                [
+                  "z",
+                  1
+                ],
+                [
+                  "a",
+                  {
+                    "$undefined": true
+                  }
+                ]
+              ]
+            }
+          ],
+          "expect": {
+            "value": {
+              "$number": "Infinity"
+            }
+          },
+          "fn": "f",
+          "select": [
+            "x",
+            "y"
+          ]
+        },
+        {
+          "args": [],
+          "expect": {
+            "throws": {
+              "message": {
+                "contains": [
+                  "a",
+                  {
+                    "codeUnits": [
+                      98
+                    ]
+                  }
+                ],
+                "startsWith": "m"
+              },
+              "name": "E"
+            }
+          },
+          "fn": "g.h"
+        }
+      ]
+    }
+  ]
+}

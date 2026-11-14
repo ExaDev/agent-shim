@@ -1,0 +1,300 @@
+{
+  "cases": [
+    {
+      "from": "paths.test.ts: resolveAgentShimHome > prefers AGENT_SHIM_HOME over any directory under the home directory",
+      "id": "paths.resolve-home.environment-wins",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "AGENT_SHIM_HOME": "/elsewhere"
+            },
+            "/home/u",
+            true
+          ],
+          "expect": {
+            "value": "/elsewhere"
+          },
+          "fn": "resolveAgentShimHome"
+        }
+      ]
+    },
+    {
+      "from": "paths.test.ts: resolveAgentShimHome > treats an empty AGENT_SHIM_HOME as unset",
+      "id": "paths.resolve-home.empty-environment-is-unset",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "AGENT_SHIM_HOME": ""
+            },
+            "/home/u",
+            false
+          ],
+          "expect": {
+            "value": "/home/u/.agent-shim"
+          },
+          "fn": "resolveAgentShimHome"
+        }
+      ]
+    },
+    {
+      "from": "paths.test.ts: resolveAgentShimHome > uses ~/.agent-shim on a fresh installation",
+      "id": "paths.resolve-home.fresh-installation",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {},
+            "/home/u",
+            false
+          ],
+          "expect": {
+            "value": "/home/u/.agent-shim"
+          },
+          "fn": "resolveAgentShimHome"
+        }
+      ]
+    },
+    {
+      "from": "paths.test.ts: resolveAgentShimHome > adopts an existing ~/.claude-use in place when ~/.agent-shim does not exist",
+      "id": "paths.resolve-home.adopts-legacy",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {},
+            "/home/u",
+            [
+              "/home/u/.claude-use"
+            ]
+          ],
+          "expect": {
+            "value": "/home/u/.claude-use"
+          },
+          "fn": "resolveAgentShimHome"
+        }
+      ]
+    },
+    {
+      "from": "paths.test.ts: resolveAgentShimHome > prefers ~/.agent-shim when both directories exist",
+      "id": "paths.resolve-home.prefers-current",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {},
+            "/home/u",
+            true
+          ],
+          "expect": {
+            "value": "/home/u/.agent-shim"
+          },
+          "fn": "resolveAgentShimHome"
+        }
+      ]
+    },
+    {
+      "from": "paths.test.ts: buildLayoutPaths > derives every sub-path under the given root",
+      "id": "paths.build-layout.every-path",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/tmp/some-throwaway-root"
+          ],
+          "expect": {
+            "value": {
+              "activeIdentityFile": "/tmp/some-throwaway-root/active-identity",
+              "catalogueDir": "/tmp/some-throwaway-root/catalogues",
+              "categoriesLocalFile": "/tmp/some-throwaway-root/categories.local.json",
+              "chatgptSignInFile": "/tmp/some-throwaway-root/codex/chatgpt-sign-in.json",
+              "claudeShimFile": "/tmp/some-throwaway-root/claude-shim.json",
+              "configProfilesDir": "/tmp/some-throwaway-root/config-profiles",
+              "directoryRulesFile": "/tmp/some-throwaway-root/directory-rules.json",
+              "frontdoorCaBundlesDir": "/tmp/some-throwaway-root/frontdoor/ca/bundles",
+              "frontdoorCaCertFile": "/tmp/some-throwaway-root/frontdoor/ca/ca.pem",
+              "frontdoorCaDir": "/tmp/some-throwaway-root/frontdoor/ca",
+              "frontdoorCaKeyFile": "/tmp/some-throwaway-root/frontdoor/ca/ca.key",
+              "frontdoorControlTokenFile": "/tmp/some-throwaway-root/frontdoor/control-token",
+              "frontdoorDir": "/tmp/some-throwaway-root/frontdoor",
+              "frontdoorDirectRecordsDir": "/tmp/some-throwaway-root/frontdoor/direct",
+              "frontdoorDrainingDir": "/tmp/some-throwaway-root/frontdoor/draining",
+              "frontdoorLockFile": "/tmp/some-throwaway-root/frontdoor/start.lock",
+              "frontdoorLogPath": "/tmp/some-throwaway-root/logs/frontdoor.log",
+              "frontdoorRcCredentialsDir": "/tmp/some-throwaway-root/frontdoor/rc-credentials",
+              "frontdoorSessionsDir": "/tmp/some-throwaway-root/frontdoor/sessions",
+              "frontdoorStateFile": "/tmp/some-throwaway-root/frontdoor/state.json",
+              "globalConfigFile": "/tmp/some-throwaway-root/config.json",
+              "headroomAllowlistFile": "/tmp/some-throwaway-root/headroom/run/allowlist.txt",
+              "headroomDir": "/tmp/some-throwaway-root/headroom",
+              "headroomLegacyStateFile": "/tmp/some-throwaway-root/headroom/state.v2.json",
+              "headroomLockFile": "/tmp/some-throwaway-root/headroom/start.lock",
+              "headroomLogPath": "/tmp/some-throwaway-root/logs/headroom.log",
+              "headroomRoutingFile": "/tmp/some-throwaway-root/headroom/routing.json",
+              "headroomSessionsDir": "/tmp/some-throwaway-root/headroom/sessions",
+              "headroomSocketDir": "/tmp/some-throwaway-root/headroom/run",
+              "headroomStateFile": "/tmp/some-throwaway-root/headroom/state.json",
+              "identitiesDir": "/tmp/some-throwaway-root/identities",
+              "identityNameRenamesDir": "/tmp/some-throwaway-root/identity-name-renames",
+              "identityRenamesDir": "/tmp/some-throwaway-root/identity-renames",
+              "jobLogsDir": "/tmp/some-throwaway-root/logs/jobs",
+              "launchControlDir": "/tmp/some-throwaway-root/launch-control",
+              "launchesDir": "/tmp/some-throwaway-root/launches",
+              "logsDir": "/tmp/some-throwaway-root/logs",
+              "mcpPermissionsFile": "/tmp/some-throwaway-root/mcp/permissions.json",
+              "modelMovesDir": "/tmp/some-throwaway-root/model-moves",
+              "providerAliasesFile": "/tmp/some-throwaway-root/provider-aliases.json",
+              "providersDir": "/tmp/some-throwaway-root/providers",
+              "root": "/tmp/some-throwaway-root",
+              "statuslineDir": "/tmp/some-throwaway-root/statusline",
+              "superviseDir": "/tmp/some-throwaway-root/supervise",
+              "usageAnchorsFile": "/tmp/some-throwaway-root/usage/anchors.json",
+              "usageDir": "/tmp/some-throwaway-root/usage",
+              "usageJobsFile": "/tmp/some-throwaway-root/usage/jobs.json",
+              "usageLogDir": "/tmp/some-throwaway-root/usage/log",
+              "usagePicksFile": "/tmp/some-throwaway-root/usage/picks.json",
+              "usageSnapshotsDir": "/tmp/some-throwaway-root/usage/snapshots"
+            }
+          },
+          "fn": "buildLayoutPaths"
+        }
+      ]
+    },
+    {
+      "from": "paths.test.ts: buildLayoutPaths > names the identities directory",
+      "id": "paths.build-layout.identitiesdir",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/tmp/some-throwaway-root"
+          ],
+          "expect": {
+            "value": "/tmp/some-throwaway-root/identities"
+          },
+          "fn": "buildLayoutPaths",
+          "select": [
+            "identitiesDir"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "paths.test.ts: buildLayoutPaths > names the config-profiles directory",
+      "id": "paths.build-layout.configprofilesdir",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/tmp/some-throwaway-root"
+          ],
+          "expect": {
+            "value": "/tmp/some-throwaway-root/config-profiles"
+          },
+          "fn": "buildLayoutPaths",
+          "select": [
+            "configProfilesDir"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "paths.test.ts: buildLayoutPaths > names the directory-rules.json file",
+      "id": "paths.build-layout.directoryrulesfile",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/tmp/some-throwaway-root"
+          ],
+          "expect": {
+            "value": "/tmp/some-throwaway-root/directory-rules.json"
+          },
+          "fn": "buildLayoutPaths",
+          "select": [
+            "directoryRulesFile"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "paths.test.ts: buildLayoutPaths > names the active-identity file",
+      "id": "paths.build-layout.activeidentityfile",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/tmp/some-throwaway-root"
+          ],
+          "expect": {
+            "value": "/tmp/some-throwaway-root/active-identity"
+          },
+          "fn": "buildLayoutPaths",
+          "select": [
+            "activeIdentityFile"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "paths.test.ts: buildLayoutPaths > names the global config.json file",
+      "id": "paths.build-layout.globalconfigfile",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/tmp/some-throwaway-root"
+          ],
+          "expect": {
+            "value": "/tmp/some-throwaway-root/config.json"
+          },
+          "fn": "buildLayoutPaths",
+          "select": [
+            "globalConfigFile"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "paths.test.ts: buildLayoutPaths > names the categories.local.json file",
+      "id": "paths.build-layout.categorieslocalfile",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/tmp/some-throwaway-root"
+          ],
+          "expect": {
+            "value": "/tmp/some-throwaway-root/categories.local.json"
+          },
+          "fn": "buildLayoutPaths",
+          "select": [
+            "categoriesLocalFile"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "paths.test.ts: buildLayoutPaths > names the claude-shim.json file",
+      "id": "paths.build-layout.claudeshimfile",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/tmp/some-throwaway-root"
+          ],
+          "expect": {
+            "value": "/tmp/some-throwaway-root/claude-shim.json"
+          },
+          "fn": "buildLayoutPaths",
+          "select": [
+            "claudeShimFile"
+          ]
+        }
+      ]
+    }
+  ]
+}

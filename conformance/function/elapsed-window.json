@@ -1,0 +1,287 @@
+{
+  "cases": [
+    {
+      "from": "elapsedWindow.test.ts: being within a window after a stamp > is decided at the stamp",
+      "id": "elapsed-window.within.1",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            5000,
+            5000,
+            1000
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "within"
+        }
+      ]
+    },
+    {
+      "from": "elapsedWindow.test.ts: being within a window after a stamp > is decided one millisecond before the window ends",
+      "id": "elapsed-window.within.2",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            5000,
+            5999,
+            1000
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "within"
+        }
+      ]
+    },
+    {
+      "from": "elapsedWindow.test.ts: being within a window after a stamp > is decided when the window has ended",
+      "id": "elapsed-window.within.3",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            5000,
+            6000,
+            1000
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "within"
+        }
+      ]
+    },
+    {
+      "from": "elapsedWindow.test.ts: being within a window after a stamp > is decided after the window",
+      "id": "elapsed-window.within.4",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            5000,
+            6001,
+            1000
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "within"
+        }
+      ]
+    },
+    {
+      "from": "elapsedWindow.test.ts: being within a window after a stamp > is decided one millisecond before the stamp, the clock having stepped back",
+      "id": "elapsed-window.within.5",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            5000,
+            4999,
+            1000
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "within"
+        }
+      ]
+    },
+    {
+      "from": "elapsedWindow.test.ts: being within a window after a stamp > is decided an hour before the stamp",
+      "id": "elapsed-window.within.6",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            5000,
+            -3595000,
+            1000
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "within"
+        }
+      ]
+    },
+    {
+      "from": "elapsedWindow.test.ts: holding something back for a window after a stamp > is decided at the stamp",
+      "id": "elapsed-window.hold-from.1",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            5000,
+            5000,
+            1000
+          ],
+          "expect": {
+            "value": {
+              "held": true,
+              "sinceMs": 5000
+            }
+          },
+          "fn": "holdFrom"
+        }
+      ]
+    },
+    {
+      "from": "elapsedWindow.test.ts: holding something back for a window after a stamp > is decided one millisecond before the window ends",
+      "id": "elapsed-window.hold-from.2",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            5000,
+            5999,
+            1000
+          ],
+          "expect": {
+            "value": {
+              "held": true,
+              "sinceMs": 5000
+            }
+          },
+          "fn": "holdFrom"
+        }
+      ]
+    },
+    {
+      "from": "elapsedWindow.test.ts: holding something back for a window after a stamp > is decided when the window has ended",
+      "id": "elapsed-window.hold-from.3",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            5000,
+            6000,
+            1000
+          ],
+          "expect": {
+            "value": {
+              "held": false,
+              "sinceMs": 5000
+            }
+          },
+          "fn": "holdFrom"
+        }
+      ]
+    },
+    {
+      "from": "elapsedWindow.test.ts: holding something back for a window after a stamp > is decided after the window",
+      "id": "elapsed-window.hold-from.4",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            5000,
+            6001,
+            1000
+          ],
+          "expect": {
+            "value": {
+              "held": false,
+              "sinceMs": 5000
+            }
+          },
+          "fn": "holdFrom"
+        }
+      ]
+    },
+    {
+      "from": "elapsedWindow.test.ts: holding something back for a window after a stamp > is decided one millisecond before the stamp, the clock having stepped back, which restarts the window from now",
+      "id": "elapsed-window.hold-from.5",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            5000,
+            4999,
+            1000
+          ],
+          "expect": {
+            "value": {
+              "held": true,
+              "sinceMs": 4999
+            }
+          },
+          "fn": "holdFrom"
+        }
+      ]
+    },
+    {
+      "from": "elapsedWindow.test.ts: holding something back for a window after a stamp > is decided an hour before the stamp, which restarts the window from now and holds for the whole of it",
+      "id": "elapsed-window.hold-from.6",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            5000,
+            -3595000,
+            1000
+          ],
+          "expect": {
+            "value": {
+              "held": true,
+              "sinceMs": -3595000
+            }
+          },
+          "fn": "holdFrom"
+        }
+      ]
+    },
+    {
+      "from": "elapsedWindow.test.ts: holding something back for a window after a stamp > lifts after one whole window from a restart, however far the clock had stepped back",
+      "id": "elapsed-window.hold-from.lifts-after-one-whole-window",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            5000,
+            -3595000,
+            1000
+          ],
+          "expect": {
+            "value": {
+              "held": true,
+              "sinceMs": -3595000
+            }
+          },
+          "fn": "holdFrom"
+        },
+        {
+          "args": [
+            -3595000,
+            -3594001,
+            1000
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "holdFrom",
+          "select": [
+            "held"
+          ]
+        },
+        {
+          "args": [
+            -3595000,
+            -3594000,
+            1000
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "holdFrom",
+          "select": [
+            "held"
+          ]
+        }
+      ]
+    }
+  ]
+}

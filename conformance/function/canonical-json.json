@@ -1,0 +1,215 @@
+{
+  "cases": [
+    {
+      "from": "canonicalJson.test.ts: canonicalJson > gives the same text for objects holding the same data in any key order, at every depth",
+      "id": "canonical-json.any-key-order",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "$object": [
+                [
+                  "b",
+                  1
+                ],
+                [
+                  "a",
+                  {
+                    "$object": [
+                      [
+                        "d",
+                        [
+                          {
+                            "$object": [
+                              [
+                                "y",
+                                1
+                              ],
+                              [
+                                "x",
+                                2
+                              ]
+                            ]
+                          }
+                        ]
+                      ],
+                      [
+                        "c",
+                        null
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          "expect": {
+            "value": "{\"a\":{\"c\":null,\"d\":[{\"x\":2,\"y\":1}]},\"b\":1}"
+          },
+          "fn": "canonicalJson"
+        },
+        {
+          "args": [
+            {
+              "$object": [
+                [
+                  "a",
+                  {
+                    "$object": [
+                      [
+                        "c",
+                        null
+                      ],
+                      [
+                        "d",
+                        [
+                          {
+                            "$object": [
+                              [
+                                "x",
+                                2
+                              ],
+                              [
+                                "y",
+                                1
+                              ]
+                            ]
+                          }
+                        ]
+                      ]
+                    ]
+                  }
+                ],
+                [
+                  "b",
+                  1
+                ]
+              ]
+            }
+          ],
+          "expect": {
+            "value": "{\"a\":{\"c\":null,\"d\":[{\"x\":2,\"y\":1}]},\"b\":1}"
+          },
+          "fn": "canonicalJson"
+        }
+      ]
+    },
+    {
+      "from": "canonicalJson.test.ts: canonicalJson > keeps the order of an array, since it is data",
+      "id": "canonical-json.array-order-is-data",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              "a",
+              "b"
+            ]
+          ],
+          "expect": {
+            "value": "[\"a\",\"b\"]"
+          },
+          "fn": "canonicalJson"
+        },
+        {
+          "args": [
+            [
+              "b",
+              "a"
+            ]
+          ],
+          "expect": {
+            "value": "[\"b\",\"a\"]"
+          },
+          "fn": "canonicalJson"
+        }
+      ]
+    },
+    {
+      "from": "canonicalJson.test.ts: canonicalJson > tells apart values that differ in a member, and leaves out an undefined one as JSON does",
+      "id": "canonical-json.members-and-undefined",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "a": 1
+            }
+          ],
+          "expect": {
+            "value": "{\"a\":1}"
+          },
+          "fn": "canonicalJson"
+        },
+        {
+          "args": [
+            {
+              "a": 2
+            }
+          ],
+          "expect": {
+            "value": "{\"a\":2}"
+          },
+          "fn": "canonicalJson"
+        },
+        {
+          "args": [
+            {
+              "$object": [
+                [
+                  "a",
+                  1
+                ],
+                [
+                  "b",
+                  {
+                    "$undefined": true
+                  }
+                ]
+              ]
+            }
+          ],
+          "expect": {
+            "value": "{\"a\":1}"
+          },
+          "fn": "canonicalJson"
+        }
+      ]
+    },
+    {
+      "from": "canonicalJson.test.ts: canonicalJson > writes scalars as JSON does",
+      "id": "canonical-json.scalars",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "x"
+          ],
+          "expect": {
+            "value": "\"x\""
+          },
+          "fn": "canonicalJson"
+        },
+        {
+          "args": [
+            1
+          ],
+          "expect": {
+            "value": "1"
+          },
+          "fn": "canonicalJson"
+        },
+        {
+          "args": [
+            null
+          ],
+          "expect": {
+            "value": "null"
+          },
+          "fn": "canonicalJson"
+        }
+      ]
+    }
+  ]
+}

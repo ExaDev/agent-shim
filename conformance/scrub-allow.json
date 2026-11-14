@@ -1,0 +1,16 @@
+{
+  "allow": [
+    {
+      "class": "home-path",
+      "file": "function/names.json",
+      "match": "/home/.agent-shim",
+      "reason": "A made-up directory in the original test, which joins names onto it and never reads it."
+    },
+    {
+      "class": "home-path",
+      "file": "function/paths.json",
+      "match": "/home/u",
+      "reason": "A made-up home directory in the original tests, passed in as an argument and never read."
+    }
+  ]
+}
