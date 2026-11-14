@@ -52,6 +52,35 @@ const STEP_BACK_MS = 2 * CATALOGUE_RETRY_MS;
 const TICKS_DURING_STEP = 5;
 
 describe("createCatalogueKeeper", () => {
+  it("still refreshes a provider whose running status write fails, and leaves it unmarked once the refresh ends", async () => {
+    let failOnce = true;
+    const { keeper, refresh, log } = setup({ providers: () => [["a", withCatalogue]], publishStatus: (_name, status) => { if (status === "running" && failOnce) { failOnce = false; throw errorWithCode("ENOSPC: no space left on device", "ENOSPC"); } } });
+    expect(() => { keeper.tick(); }).not.toThrow();
+    await settle();
+    expect(keeper.status("a")).not.toBe("running");
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("could not be written (ENOSPC)"));
+    // The refresh still ran, and nothing is left marked: a later tick is not skipped for it.
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("raises no unhandled rejection when the failed status write after a failed refresh throws", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => { unhandled.push(reason); };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const { keeper, refresh, log } = setup({ providers: () => [["a", withCatalogue]], publishStatus: (_name, status) => { if (status === "failed") throw errorWithCode("ENOSPC: no space left on device", "ENOSPC"); } });
+      refresh.mockRejectedValue(new Error("the server answered 500"));
+      keeper.tick();
+      await settle();
+      await settle();
+      expect(unhandled).toEqual([]);
+      expect(keeper.status("a")).not.toBe("running");
+      expect(log).toHaveBeenCalledWith("catalogue refresh for provider a failed: the server answered 500");
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
   it("logs a listing of the providers that fails, refreshing nothing, and never throws out of its own tick", () => {
     const { keeper, refresh, log } = setup({ providers: () => { throw errorWithCode("EMFILE: too many open files, scandir '/state/providers'", "EMFILE"); } });
     expect(() => { keeper.tick(); }).not.toThrow();

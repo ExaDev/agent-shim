@@ -1,6 +1,7 @@
 import { holdFrom } from "./elapsedWindow";
 import { CATALOGUE_RETRY_MS, catalogueMatchesSettings, catalogueSettingsFingerprint, isCatalogueStale, isRedirectedFailure, parseCatalogueCache, parseCatalogueSettings, type CatalogueCache } from "./providerCatalogue";
 import { isHttpProvider, type Provider } from "./config/schema";
+import { quotedForLog } from "./frontdoor/loggedText";
 import { UnreadableCatalogueError, catalogueReadFault } from "./storedCatalogue";
 
 /** What the keeper needs from its surroundings; every effect is injected so the schedule can be tested without a door, a clock or a network. */
@@ -33,7 +34,7 @@ function cataloguedProviders(providers: readonly (readonly [string, Provider])[]
 }
 
 /**
- * Keeps each opted-in provider's catalogue current: a tick starts a refresh for every provider with no usable cache or a stale one, one at a time per provider, and a failed refresh is not retried until `CATALOGUE_RETRY_MS` has passed. A failure is logged and never ends the tick, since every session routed through the door depends on the door's own loop.
+ * Keeps each opted-in provider's catalogue current: a tick starts a refresh for every provider with no usable cache or a stale one, one at a time per provider, and a failed refresh is not retried until `CATALOGUE_RETRY_MS` has passed. A failed listing of the providers is logged and refreshes nothing that tick; a failure reading one provider's files, or writing its status (`publish`), is logged and the other providers are still refreshed; a provider is marked running only with the refresh it guards, cleared however the refresh ends.
  */
 export function createCatalogueKeeper(deps: Readonly<CatalogueKeeperDeps>): CatalogueKeeper {
   const running = new Set<string>();
@@ -41,6 +42,14 @@ export function createCatalogueKeeper(deps: Readonly<CatalogueKeeperDeps>): Cata
   const unreadable = new Set<string>();
   // What a failed refresh recorded, so the failure can be published again exactly as it was.
   const failedAt = new Map<string, { readonly at: number; readonly fingerprint: string | undefined; readonly settings: string | undefined; readonly reason: string; readonly redirected: boolean }>();
+  /** Writes one provider's status, logging a write that fails rather than letting it end the tick or the refresh chain: the status is advisory, and the next tick writes it again. */
+  const publish = (name: string, write: () => void): void => {
+    try {
+      write();
+    } catch (error) {
+      deps.log(`catalogue status of provider ${quotedForLog(name)} could not be written (${catalogueReadFault(error)})`);
+    }
+  };
   return {
     status: (name) => running.has(name) ? "running" : failedAt.has(name) || credentialFailures.has(name) || unreadable.has(name) ? "failed" : undefined,
     tick: () => {
@@ -64,7 +73,7 @@ export function createCatalogueKeeper(deps: Readonly<CatalogueKeeperDeps>): Cata
           // One provider's stored files that cannot be read (permissions, a directory in their place) are that provider's failure alone: the fault's class or code is recorded, never the error's message, which names a path, and the other providers are still refreshed.
           const fault = catalogueReadFault(error);
           unreadable.add(name);
-          deps.publishStatus?.(name, "failed", undefined, `stored catalogue cannot be read (${fault})`);
+          publish(name, () => deps.publishStatus?.(name, "failed", undefined, `stored catalogue cannot be read (${fault})`));
           deps.log(`catalogue files of provider ${name} cannot be read (${fault})`);
           continue;
         }
@@ -83,7 +92,7 @@ export function createCatalogueKeeper(deps: Readonly<CatalogueKeeperDeps>): Cata
           current = deps.credentialFingerprint?.(provider);
         } catch (error) {
           credentialFailures.add(name);
-          deps.publishStatus?.(name, "failed");
+          publish(name, () => deps.publishStatus?.(name, "failed"));
           deps.log(`catalogue credential for provider ${name} failed: ${error instanceof UnreadableCatalogueError ? `its login cannot be read (${catalogueReadFault(error)})` : error instanceof Error ? error.message : String(error)}`);
           continue;
         }
@@ -97,28 +106,38 @@ export function createCatalogueKeeper(deps: Readonly<CatalogueKeeperDeps>): Cata
             if (usable && (wasUnreadable || recordedFailure !== undefined)) {
               // A catalogue that is current and fits the provider as it is now is not refreshed, so nothing would else replace what was recorded for the provider before: a failure recorded while its files could not be read, or a refresh that failed under settings it no longer has. Its status is ready.
               failedAt.delete(name);
-              if (current === undefined) deps.publishStatus?.(name, "ready");
-              else deps.publishStatus?.(name, "ready", current);
+              publish(name, () => {
+                if (current === undefined) deps.publishStatus?.(name, "ready");
+                else deps.publishStatus?.(name, "ready", current);
+              });
             } else if (wasUnreadable && recordedFailure !== undefined) {
               // The files are readable again but there is no catalogue to use and the refresh's failure is still being waited out: the failure it recorded is its status again, not ready.
-              deps.publishStatus?.(name, "failed", recordedFailure.fingerprint, recordedFailure.reason, { ...(recordedFailure.redirected ? { redirected: true as const } : {}), ...(recordedFailure.settings === undefined ? {} : { settings: recordedFailure.settings }) });
+              publish(name, () => deps.publishStatus?.(name, "failed", recordedFailure.fingerprint, recordedFailure.reason, { ...(recordedFailure.redirected ? { redirected: true as const } : {}), ...(recordedFailure.settings === undefined ? {} : { settings: recordedFailure.settings }) }));
             }
           }
           continue;
         }
+        // The provider is marked running only with the refresh it guards, and the mark is cleared in the same chain however it ends, so no failure (of the status write or of the refresh, thrown or rejected) leaves it marked and the next tick skipping it.
         running.add(name);
-        if (current === undefined) deps.publishStatus?.(name, "running");
-        else deps.publishStatus?.(name, "running", current);
-        deps
-          .refresh(name)
+        publish(name, () => {
+          if (current === undefined) deps.publishStatus?.(name, "running");
+          else deps.publishStatus?.(name, "running", current);
+        });
+        let refreshing: Promise<void>;
+        try {
+          refreshing = deps.refresh(name);
+        } catch (error) {
+          refreshing = Promise.reject(error instanceof Error ? error : new Error(String(error)));
+        }
+        void refreshing
           .then(() => {
             failedAt.delete(name);
-            deps.publishStatus?.(name, "ready");
+            publish(name, () => deps.publishStatus?.(name, "ready"));
           })
           .catch((error: unknown) => {
             const reason = error instanceof Error ? error.message : String(error);
             failedAt.set(name, { at: deps.nowMs(), fingerprint: current, settings, reason, redirected: isRedirectedFailure(error) });
-            deps.publishStatus?.(name, "failed", current, reason, { ...(isRedirectedFailure(error) ? { redirected: true as const } : {}), ...(settings === undefined ? {} : { settings }) });
+            publish(name, () => deps.publishStatus?.(name, "failed", current, reason, { ...(isRedirectedFailure(error) ? { redirected: true as const } : {}), ...(settings === undefined ? {} : { settings }) }));
             deps.log(`catalogue refresh for provider ${name} failed: ${reason}`);
           })
           .finally(() => {
