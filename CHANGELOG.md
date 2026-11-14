@@ -1,3 +1,9 @@
+## [14.7.0](https://github.com/ExaDev/agent-shim/compare/v14.6.1...v14.7.0) (2026-11-14)
+
+### Features
+
+* **frontdoor:** gate a fresh self-hosted session on the version its launch recorded ([3877d1b](https://github.com/ExaDev/agent-shim/commit/3877d1b598cb45ba9b31d0dab2972142c011794f)), closes [#824](https://github.com/ExaDev/agent-shim/issues/824)
+
 ## [14.6.1](https://github.com/ExaDev/agent-shim/compare/v14.6.0...v14.6.1) (2026-11-14)
 
 ### Bug Fixes
