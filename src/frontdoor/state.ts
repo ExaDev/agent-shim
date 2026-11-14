@@ -502,7 +502,7 @@ export function summaryOf(session: Readonly<FrontDoorSession>): FrontDoorSession
   return { pid: session.pid, startedAt: session.startedAt, ...(session.supervisorPid === undefined ? {} : { supervisorPid: session.supervisorPid }) };
 }
 
-/** Reads one registry file, or undefined when it is unreadable or not a record: one bad file must not stop a listing, so this never throws. `passTransient` is for a reader on the request path, which passes a read that failed for the moment on so nothing is kept of it. */
+/** Reads one registry file, or undefined when it is unreadable or not a record: one bad file must not stop a listing, so without `passTransient` this throws nothing. `passTransient` is for a reader on the request path: a read that failed for the moment is thrown, so nothing is kept of it. */
 export function readFrontDoorSessionRecord(fs: Pick<HeadroomFs, "readFileUtf8">, sessionsDir: string, name: string, passTransient = false): FrontDoorSession | undefined {
   try {
     const parsed = FrontDoorSessionSchema.safeParse(JSON.parse(fs.readFileUtf8(path.join(sessionsDir, name)) ?? ""));
