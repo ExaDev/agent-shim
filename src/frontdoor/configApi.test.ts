@@ -358,14 +358,17 @@ describe("config API: route overrides", () => {
     expect(await codeOf(api.route.set({ scope: { kind: "global" }, model: "z/opus", target: "z/glm" }))).toBe("BAD_REQUEST");
     expect(await codeOf(api.route.remove({ scope: { kind: "global" }, model: "opus", confirm: false }))).toBe("BAD_REQUEST");
     expect(readRouteOverrides(paths).global).toEqual({ opus: "z/glm-5.3" });
-    expect(await api.route.remove({ scope: { kind: "global" }, model: "opus", confirm: true })).toEqual({ action: "removed", kind: "route", name: "opus" });
+    expect(await api.route.remove({ scope: { kind: "global" }, model: "opus", confirm: true })).toEqual({ action: "removed", kind: "route", name: "opus", removed: ["opus"] });
     expect(await codeOf(api.route.remove({ scope: { kind: "global" }, model: "opus", confirm: true }))).toBe("BAD_REQUEST");
     expect(readRouteOverrides(paths)).toEqual({ schemaVersion: 1, sessions: { abc: { haiku: "z/air" } } });
     // A key typed in another case is reported as stored, by a set and by a removal.
     expect(await api.route.set({ scope: { kind: "global" }, model: "HAIKU", target: "z/air" })).toEqual({ action: "updated", kind: "route", name: "haiku", value: { scope: "global", model: "haiku", target: "z/air" } });
-    expect(await api.route.remove({ scope: { kind: "global" }, model: "Haiku", confirm: true })).toEqual({ action: "removed", kind: "route", name: "haiku" });
+    expect(await api.route.remove({ scope: { kind: "global" }, model: "Haiku", confirm: true })).toEqual({ action: "removed", kind: "route", name: "haiku", removed: ["haiku"] });
     // A key a hand edit stored in another case is reported by that spelling.
     writeRouteOverrides(paths, { schemaVersion: 1, global: { Opus: "z/glm-5.3" } });
-    expect(await api.route.remove({ scope: { kind: "global" }, model: "opus", confirm: true })).toEqual({ action: "removed", kind: "route", name: "Opus" });
+    expect(await api.route.remove({ scope: { kind: "global" }, model: "opus", confirm: true })).toEqual({ action: "removed", kind: "route", name: "opus", removed: ["Opus"] });
+    // A file a hand edit gave the name in two cases is repaired by one removal, which names each key it took.
+    writeRouteOverrides(paths, { schemaVersion: 1, global: { Opus: "z/glm-5.3", opus: "z/air" } });
+    expect(await api.route.remove({ scope: { kind: "global" }, model: "OPUS", confirm: true })).toEqual({ action: "removed", kind: "route", name: "opus", removed: ["Opus", "opus"] });
   });
 });

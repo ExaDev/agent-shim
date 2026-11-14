@@ -67,12 +67,12 @@ export function setRouteOverride(paths: LayoutPaths, scope: RouteOverrideScope, 
 }
 
 /** Removes one override; throws `UsageError` when none is set there. Shared by `route remove` and `config.route.remove`. Returns the overrides as written. */
-export function removeRouteOverride(paths: LayoutPaths, scope: RouteOverrideScope, model: string): { readonly overrides: RouteOverrides; /** The keys it removed, as they were stored, for the report. */ readonly removed: string } {
+export function removeRouteOverride(paths: LayoutPaths, scope: RouteOverrideScope, model: string): { readonly overrides: RouteOverrides; /** The keys it removed, each as it was stored: one, or more than one when a hand edit stored the name in more than one case. */ readonly removed: readonly string[] } {
   // Read as written, so an entry that made the file unreadable can be removed to repair it.
   const before = readRouteOverridesForRepair(paths);
   const overrides = withRouteOverride(before, scope, model, undefined);
   writeRouteOverrides(paths, overrides);
-  return { overrides, removed: storedOverrideKeys(before, scope, model).join(", ") };
+  return { overrides, removed: storedOverrideKeys(before, scope, model) };
 }
 
 /** Registers `agent-shim route set|remove|list`, with the verbs and flags every noun's write verbs take (`remove` asks for confirmation unless `--yes`, as `rule remove` does): the runtime route overrides the front door applies to the next request with no restart. */
@@ -106,8 +106,9 @@ export function registerRouteCommand(program: Command, deps: CommandDeps): void 
     await confirmRemoval(deps, options.yes, `the route override of "${model}" ${describeScope(scope)}`);
     // The report names the key as stored, as `route set`'s does: what a hand edit stored in another case is named in that case.
     const { removed } = removeRouteOverride(paths, scope, model);
-    reportMutation(options.json, { action: "removed", kind: "route", name: removed, value: undefined }, () => {
-      console.log(`Removed the override of ${removed} ${describeScope(scope)}.`);
+    // `name` is the key as `route set` stores it, and `removed` each key the file held, as stored, which a hand edit may have spelt in more than one case.
+    reportMutation(options.json, { action: "removed", kind: "route", name: overrideKeyOf(model), removed }, () => {
+      console.log(`Removed the override${removed.length === 1 ? "" : "s"} of ${removed.join(" and ")} ${describeScope(scope)}.`);
     });
   });
   withExamples(

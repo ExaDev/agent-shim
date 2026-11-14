@@ -24,7 +24,7 @@ describe("route commands", () => {
       { scope: "global", model: "opus", target: "z/glm-5.3" },
     ]);
     expect((await cli(["route", "remove", "opus"])).code).toBe(EXIT_USAGE);
-    expect(parseJson((await cli(["route", "remove", "opus", "--yes", "--json"])).stdout)).toEqual({ action: "removed", kind: "route", name: "opus" });
+    expect(parseJson((await cli(["route", "remove", "opus", "--yes", "--json"])).stdout)).toEqual({ action: "removed", kind: "route", name: "opus", removed: ["opus"] });
     expect((await cli(["route", "list"])).stdout).toContain("identity:work  claude-sonnet-5-5 -> auto/z/sonnet");
     expect(readRouteOverrides(paths)).toEqual({ schemaVersion: 1, identities: { work: { "claude-sonnet-5-5": "auto/z/sonnet" } }, sessions: { abc: { haiku: "z/air" } } });
   });
@@ -59,7 +59,7 @@ describe("route commands", () => {
   it("reports the key as stored, in lower case, whatever case it was typed in", async () => {
     expectOk(await cli(addZ));
     expectOk(await cli(["route", "set", "haiku", "z/air"]));
-    expect(parseJson((await cli(["route", "remove", "HAIKU", "--yes", "--json"])).stdout)).toEqual({ action: "removed", kind: "route", name: "haiku" });
+    expect(parseJson((await cli(["route", "remove", "HAIKU", "--yes", "--json"])).stdout)).toEqual({ action: "removed", kind: "route", name: "haiku", removed: ["haiku"] });
     expect(parseJson((await cli(["route", "set", "OPUS", "z/glm-5.3", "--json"])).stdout)).toEqual({ action: "updated", kind: "route", name: "opus", value: { scope: "global", model: "opus", target: "z/glm-5.3" } });
     expect((await cli(["route", "set", "Claude-Sonnet-5-5", "z/glm-5.3"])).stdout).toContain("Routing claude-sonnet-5-5 to z/glm-5.3");
   });
@@ -71,7 +71,12 @@ describe("route commands", () => {
     writeRouteOverrides(paths, { schemaVersion: 1, global: { Opus: "z/glm-5.3" } });
     expect((await cli(["route", "remove", "opus", "--yes"])).stdout).toContain("Removed the override of Opus ");
     writeRouteOverrides(paths, { schemaVersion: 1, global: { Opus: "z/glm-5.3" } });
-    expect(parseJson((await cli(["route", "remove", "OPUS", "--yes", "--json"])).stdout)).toEqual({ action: "removed", kind: "route", name: "Opus" });
+    expect(parseJson((await cli(["route", "remove", "OPUS", "--yes", "--json"])).stdout)).toEqual({ action: "removed", kind: "route", name: "opus", removed: ["Opus"] });
+    // A file a hand edit gave the name in two cases is repaired by one removal, which names each key it took.
+    writeRouteOverrides(paths, { schemaVersion: 1, global: { Opus: "z/glm-5.3", opus: "z/air" } });
+    expect((await cli(["route", "remove", "opus", "--yes"])).stdout).toContain("Removed the overrides of Opus and opus ");
+    writeRouteOverrides(paths, { schemaVersion: 1, global: { Opus: "z/glm-5.3", opus: "z/air" } });
+    expect(parseJson((await cli(["route", "remove", "opus", "--yes", "--json"])).stdout)).toEqual({ action: "removed", kind: "route", name: "opus", removed: ["Opus", "opus"] });
   });
 
   it("has doctor report an overrides file it cannot read as a failure, print the whole report, and exit 1", async () => {

@@ -251,4 +251,5 @@ export const ConfigRouteSetOutputSchema = storedMutationOutput("route", "updated
 
 /** Removing an override states its confirmation, as every removal does (the API's form of `route remove --yes`). */
 export const ConfigRouteRemoveInputSchema = z.strictObject({ scope: RouteScopeInputSchema, model: z.string().min(1), confirm: RemovalConfirmationSchema });
-export const ConfigRouteRemoveOutputSchema = mutationOutput("route", "removed");
+/** A route override's removal: `name` is the key as `route set` stores it, and `removed` each key the file held, as stored, which a hand edit may have spelt in more than one case. */
+export const ConfigRouteRemoveOutputSchema = z.strictObject({ action: z.literal("removed"), kind: z.literal("route"), name: z.string(), removed: z.array(z.string()) });
