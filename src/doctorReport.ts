@@ -57,6 +57,7 @@ import { describeSharedLoginMembers, sharedLoginMembers } from "./poolSharedLogi
 import { jobWindowReadFindings, poolWindowReadFindings, receivedWindows } from "./poolWindowReads";
 import type { RunPort } from "./launcher/ports";
 import { lineariseProfile, type ProfileLoader, type ProfileSource } from "./resolve/extends";
+import { claudeCodeVersionGate } from "./supervise/verifiedVersions";
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
 
 export const DOCTOR_SEVERITIES = ["pass", "warn", "fail"] as const;
@@ -483,6 +484,10 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     const { binary } = params.binaryDiscovery;
     const versionNote = binary.version === undefined ? "" : `, version ${binary.version}`;
     push("binary-discovery", "pass", `Found ${binary.path} (${binary.source}${versionNote}).`);
+    const gate = claudeCodeVersionGate(binary.version);
+    if (gate.kind === "unverified-patch") {
+      push("binary-discovery", "warn", `${gate.warning}.`);
+    }
   } else {
     push("binary-discovery", "fail", params.binaryDiscovery.message);
   }

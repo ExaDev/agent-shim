@@ -1,6 +1,8 @@
+import { VERIFIED_VERSION } from "./supervise/verifiedVersionsTestWorld";
 import type { DoctorIdentityInput, DoctorProviderInput, RunDoctorParams, runDoctor } from "./doctorReport";
 
-const DISCOVERED_BINARY = { ok: true, binary: { path: "/opt/claude/2.1.0", source: "versions-dir", version: "2.1.0" } } as const;
+/** The binary a clean installation discovers: a verified version, so the version gate adds no finding of its own. */
+const DISCOVERED_BINARY = { ok: true, binary: { path: `/opt/claude/${VERIFIED_VERSION}`, source: "versions-dir", version: VERIFIED_VERSION } } as const;
 
 /** A `RunDoctorParams` describing a clean, empty installation on Linux, for a test to override only what it exercises. */
 export function baseParams(overrides: Partial<RunDoctorParams> = {}): RunDoctorParams {

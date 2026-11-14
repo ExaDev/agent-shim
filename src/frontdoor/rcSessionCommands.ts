@@ -4,7 +4,7 @@ import { COMPACT_TIMEOUT_MS } from "../supervise/compactTimeout";
 import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
 import type { CompactionResult } from "../supervise/realCompact";
 import { RESULT_POLL_MS } from "../supervise/sessionControl";
-import { RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "../supervise/verifiedVersions";
+import { claudeCodeVersionGate, claudeCodeVersionsGated } from "../supervise/verifiedVersions";
 import type { SubmittedTurn } from "../supervise/sessionControl";
 import type { TranscriptGoal } from "../supervise/sessionGoal";
 import type { PluginTurns } from "../supervise/sessionPluginTurns";
@@ -18,9 +18,9 @@ import { runSelfHostedSlashCommand, runSelfHostedTurn, type RcSelfHostCommandDep
  * - **A launched session** (one the launcher started with no supervisor, which loads the same control plugin, `supervise/launchControl.ts`): the same plugin, found through the launch's control record by the same `bridge-session` row, in the transcript the plugin itself recorded. Everything the plugin does is the same; what needs the supervisor (resuming on a spent quota, moving to another member) is not there.
  * - **A session on the door's self-hosted surface** that no supervisor owns and no control plugin reaches: the door is the Remote Control service there, so it writes the slash command or the turn into its own conversation as a person's app would and reads the worker's answer off the stream (`rcSelfHostCommands.ts`).
  *
- * Any other session is refused with the reason (one started outside the launcher, with `--native` or `--bare`, or on a version the plugin was not verified on): the door has no in-process channel into it, and on the real service the worker runs a slash command only when a person's app wrote it (it treats every other writer, the door's own `send` among them, as a peer whose message the model reads as text), which the door will not claim to be.
+ * Any other session is refused with the reason (one started outside the launcher, with `--native` or `--bare`, or on a version the gate refuses): the door has no in-process channel into it, and on the real service the worker runs a slash command only when a person's app wrote it (it treats every other writer, the door's own `send` among them, as a peer whose message the model reads as text), which the door will not claim to be.
  *
- * Both routes are verified for exactly the Claude Code versions `RC_SESSION_COMMAND_VERIFIED_VERSIONS` names, read from the running binary itself (the plugin's `$.session.version()`, or the worker's own `system/init`), and every verb refuses a session on any other version, or one whose version is not known.
+ * Both routes are gated on the Claude Code version read from the running binary itself (the plugin's `$.session.version()`, or the worker's own `system/init`) by `claudeCodeVersionGate`: a version on `RC_SESSION_COMMAND_VERIFIED_VERSIONS` proceeds, a patch release of a verified minor proceeds with the gate's warning in the answer's `warnings` (and in the route read's), and every verb refuses a session on any other version, or one whose version is not known.
  */
 
 
@@ -55,44 +55,59 @@ type RcPluginRoute = Extract<RcSessionCommandRoute, "supervised" | "launched">;
 /** One goal as the session reports it. */
 export type RcGoal = TranscriptGoal;
 
-/** What a goal read found: the active goal, or `null` when the session has none. */
-export interface RcGoalReport {
+/** What every verb's answer carries: the route that served it, and `warnings` when the version gate raised any (a session on an unverified patch release of a verified minor), absent otherwise. */
+export interface RcSessionCommandAnswer {
   readonly route: RcSessionCommandRoute;
+  readonly warnings?: readonly string[];
+}
+
+/** What a goal read found: the active goal, or `null` when the session has none. */
+export interface RcGoalReport extends RcSessionCommandAnswer {
   readonly goal: RcGoal | null;
 }
 
 /** What a goal set did: the condition now set, and the one it replaced, or `null` when none was set. */
-export interface RcGoalSetReport {
-  readonly route: RcSessionCommandRoute;
+export interface RcGoalSetReport extends RcSessionCommandAnswer {
   readonly condition: string;
   readonly superseded: string | null;
 }
 
 /** What a goal clear did: the condition it cleared, or `null` when the session had no goal to clear. */
-export interface RcGoalClearReport {
-  readonly route: RcSessionCommandRoute;
+export interface RcGoalClearReport extends RcSessionCommandAnswer {
   readonly cleared: string | null;
 }
 
 /** What a completed compaction reported: what triggered it as the session names it, and the token counts before and after when the session recorded them. */
-export interface RcCompactReport {
-  readonly route: RcSessionCommandRoute;
+export interface RcCompactReport extends RcSessionCommandAnswer {
   readonly trigger: string;
   readonly preTokens?: number;
   readonly postTokens?: number;
 }
 
 /** What a delivered turn reports: the uuid of the user entry the session recorded for it (the transcript row on the supervised route, the worker's mirrored entry on the self-hosted one). */
-export interface RcTurnReport {
-  readonly route: RcSessionCommandRoute;
+export interface RcTurnReport extends RcSessionCommandAnswer {
   readonly uuid: string;
 }
 
-/** Which route the verbs would take for a session now, or why none would: the read a caller makes before offering a person a reply box. */
-export type RcSessionRoute = { readonly route: RcSessionCommandRoute } | { readonly route: null; readonly refused: string };
+/** Which route the verbs would take for a session now, with the version gate's `warnings` when it raised any, or why none would: the read a caller makes before offering a person a reply box. */
+export type RcSessionRoute = { readonly route: RcSessionCommandRoute; readonly warnings?: readonly string[] } | { readonly route: null; readonly refused: string };
 
 /** One verb's outcome: the report, or a verbose failure ready to show a user. A failure carries a `refusal` when the door refused the verb itself; without one the verb was attempted and the session, its plugin or its worker did not deliver it (no answer in time, an answer that says it failed). */
 export type RcSessionCommandResult<T> = { readonly ok: true; readonly report: T } | { readonly ok: false; readonly message: string; readonly refusal?: RcRefusalKind };
+
+/** A route resolution that found a plugin route, with the version gate's warnings. */
+interface RcPluginResolved {
+  readonly kind: RcPluginRoute;
+  readonly target: RcSupervisedTarget;
+  readonly warnings: readonly string[];
+}
+
+/** A route resolution that found the door's own surface, with the version gate's warnings. */
+interface RcSelfHostedResolved {
+  readonly kind: "self-hosted";
+  readonly selfHost: RcSelfHostCommandDeps;
+  readonly warnings: readonly string[];
+}
 
 /** A route resolution that found no route, with the refusal's kind. */
 interface RcRefusedRoute {
@@ -148,22 +163,27 @@ export interface RcSessionCommandDeps {
   readonly isObserved: (sessionId: string) => boolean;
 }
 
-/** The refusal for a session whose Claude Code version is not one the routes were verified on, or is not known. */
-function unverifiedVersionMessage(sessionId: string, version: string | undefined, source: string): string {
-  const verified = RC_SESSION_COMMAND_VERIFIED_VERSIONS.join(", ");
+/** The refusal for a session whose Claude Code version the gate refuses, or is not known. */
+function refusedVersionMessage(sessionId: string, version: string | undefined, source: string): string {
+  const gated = claudeCodeVersionsGated();
   return version === undefined
-    ? `session ${sessionId} has not reported its Claude Code version (${source}), and goal, compaction and turn control is verified only on Claude Code ${verified}`
-    : `session ${sessionId} runs Claude Code ${version}, and goal, compaction and turn control is verified only on Claude Code ${verified}: the door will not act on a version whose behaviour it has not verified`;
+    ? `session ${sessionId} has not reported its Claude Code version (${source}), and goal, compaction and turn control runs only on ${gated}`
+    : `session ${sessionId} runs Claude Code ${version}, and goal, compaction and turn control runs only on ${gated}: the door will not act on a version of a minor it has not verified. Start the session on one of those versions`;
+}
+
+/** The gate's warnings for a version it lets through: none on a verified version, the gate's one warning on an unverified patch. */
+function warningsOf(gate: ReturnType<typeof claudeCodeVersionGate>): readonly string[] {
+  return gate.kind === "unverified-patch" ? [gate.warning] : [];
 }
 
 /** Why no in-process control plugin reaches a session: the start of both refusals that name it. */
 function noPluginReason(sessionId: string): string {
-  return `no agent-shim launch's in-process control plugin records session ${sessionId}: it was started outside the launcher (with claude's own command, or agent-shim run --native), with --bare, on a Claude Code version the plugin is not verified on, or its plugin has not yet recorded its transcript, which it does from the session's first hook event`;
+  return `no agent-shim launch's in-process control plugin records session ${sessionId}: it was started outside the launcher (with claude's own command, or agent-shim run --native), with --bare, on a Claude Code version the gate refuses, or its plugin has not yet recorded its transcript, which it does from the session's first hook event`;
 }
 
 /** The refusal for a session no route reaches. */
 function unsupportedMessage(sessionId: string): string {
-  return `${noPluginReason(sessionId)}, so the door has no in-process channel into it, and it is not on the door's own self-hosted surface. Over the real Remote Control service, Claude Code ${RC_SESSION_COMMAND_VERIFIED_VERSIONS.join(", ")} takes a message as a person's (running it when it is a slash command) only when a person's app wrote it and treats any other writer as a peer, whose message the model reads as another session's, and the door does not claim to be a person's app on a service it does not run. Start the session through agent-shim run on Claude Code ${RC_SESSION_COMMAND_VERIFIED_VERSIONS.join(", ")} without --bare, or run it against the door's self-hosted surface.`;
+  return `${noPluginReason(sessionId)}, so the door has no in-process channel into it, and it is not on the door's own self-hosted surface. Over the real Remote Control service, Claude Code takes a message as a person's (running it when it is a slash command) only when a person's app wrote it and treats any other writer as a peer, whose message the model reads as another session's, and the door does not claim to be a person's app on a service it does not run. Start the session through agent-shim run on ${claudeCodeVersionsGated()} without --bare, or run it against the door's self-hosted surface.`;
 }
 
 /** One verb's work on a resolved route. */
@@ -193,7 +213,7 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
   };
 
   /** The session's launch on one plugin route, gated on the version its plugin reported; undefined when that route does not hold the session. */
-  const pluginRoute = async (sessionId: string, route: RcPluginRoute, lookup: RcSessionCommandDeps["supervisedOf"]): Promise<{ readonly kind: RcPluginRoute; readonly target: RcSupervisedTarget } | RcRefusedRoute | undefined> => {
+  const pluginRoute = async (sessionId: string, route: RcPluginRoute, lookup: RcSessionCommandDeps["supervisedOf"]): Promise<RcPluginResolved | RcRefusedRoute | undefined> => {
     const target = await lookup(sessionId);
     if (target === undefined) {
       return undefined;
@@ -201,14 +221,15 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
     if ("refused" in target) {
       return { kind: "refused", message: target.refused, refusal: "session-state" };
     }
-    if (target.version === undefined || !RC_SESSION_COMMAND_VERIFIED_VERSIONS.includes(target.version)) {
-      return { kind: "refused", message: unverifiedVersionMessage(sessionId, target.version, route === "supervised" ? "its supervisor's control plugin has not loaded" : "its launch's control plugin has not loaded"), refusal: "session-state" };
+    const gate = claudeCodeVersionGate(target.version);
+    if (gate.kind === "refused") {
+      return { kind: "refused", message: refusedVersionMessage(sessionId, target.version, route === "supervised" ? "its supervisor's control plugin has not loaded" : "its launch's control plugin has not loaded"), refusal: "session-state" };
     }
-    return { kind: route, target };
+    return { kind: route, target, warnings: warningsOf(gate) };
   };
 
   /** Resolves the session's route and gates its version: the supervised launch, the unsupervised launch, the door's own surface, or the refusal naming why none serves it. Reads only, so a caller can ask it outside the session's queue. */
-  const resolveRoute = async (sessionId: string): Promise<{ readonly kind: RcPluginRoute; readonly target: RcSupervisedTarget } | { readonly kind: "self-hosted"; readonly selfHost: RcSelfHostCommandDeps } | RcRefusedRoute> => {
+  const resolveRoute = async (sessionId: string): Promise<RcPluginResolved | RcSelfHostedResolved | RcRefusedRoute> => {
     const supervised = await pluginRoute(sessionId, "supervised", deps.supervisedOf);
     if (supervised !== undefined) {
       return supervised;
@@ -228,14 +249,15 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
       return { kind: "refused", message: `${noPluginReason(sessionId)}, and the door's self-hosted surface cannot take a command: ${unavailable}`, refusal: "session-state" };
     }
     const version = deps.selfHost.versionOf(sessionId);
-    if (version === undefined || !RC_SESSION_COMMAND_VERIFIED_VERSIONS.includes(version)) {
-      return { kind: "refused", message: unverifiedVersionMessage(sessionId, version, "its launch recorded none and no system/init from its worker has been observed on its stream; send it a prompt so it reports one"), refusal: "session-state" };
+    const gate = claudeCodeVersionGate(version);
+    if (gate.kind === "refused") {
+      return { kind: "refused", message: refusedVersionMessage(sessionId, version, "its launch recorded none and no system/init from its worker has been observed on its stream; send it a prompt so it reports one"), refusal: "session-state" };
     }
-    return { kind: "self-hosted", selfHost: deps.selfHost };
+    return { kind: "self-hosted", selfHost: deps.selfHost, warnings: warningsOf(gate) };
   };
 
-  /** Resolves the session's route, gates its version and runs the verb there, all inside the session's queue. */
-  const onRoute = async <T>(sessionId: string, options: RcSessionCommandOptions, actions: RouteActions<T>): Promise<RcSessionCommandResult<T>> =>
+  /** Resolves the session's route, gates its version and runs the verb there, all inside the session's queue; a report the verb delivered carries the gate's warnings, when it raised any. */
+  const onRoute = async <T extends RcSessionCommandAnswer>(sessionId: string, options: RcSessionCommandOptions, actions: RouteActions<T>): Promise<RcSessionCommandResult<T>> =>
     await serialised(sessionId, async () => {
       const { signal } = options;
       if (signal?.aborted === true) {
@@ -245,13 +267,14 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
       if (resolved.kind === "refused") {
         return { ok: false, message: resolved.message, refusal: resolved.refusal };
       }
+      const warned = (result: RcSessionCommandResult<T>): RcSessionCommandResult<T> => (result.ok && resolved.warnings.length > 0 ? { ok: true, report: { ...result.report, warnings: resolved.warnings } } : result);
       if (resolved.kind !== "self-hosted") {
         // The plugin answers only once the session is idle (a request queued behind a turn waiting on a permission prompt waits as long as the prompt does), so the wait is bounded here: the request's own signal or the wait, whichever ends first.
         const waitMs = options.waitMs ?? COMPACT_TIMEOUT_MS;
         const timeout = AbortSignal.timeout(waitMs);
         const bounded = signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
         try {
-          return await actions.plugin(resolved.target, resolved.kind, bounded, waitMs);
+          return warned(await actions.plugin(resolved.target, resolved.kind, bounded, waitMs));
         } catch (error) {
           if (timeout.aborted) {
             return { ok: false, message: `session ${sessionId}'s control plugin did not answer within ${String(waitMs)} ms. A request the plugin had not started is withdrawn; one it had started runs once the session is idle (a turn waiting on a permission prompt holds it), so read the session's goal or transcript before asking again` };
@@ -266,7 +289,7 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
       if (!result.ok && timeout.aborted) {
         return { ok: false, message: `session ${sessionId}'s worker did not answer within ${String(waitMs)} ms in all; it may still be queued behind a running turn, so read the session's stream before asking again` };
       }
-      return result;
+      return warned(result);
     });
 
   /** The plugin-reached session's goal as its transcript records it now. */
@@ -303,7 +326,10 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
     /** Which route the verbs would take for the session now, or the refusal naming why none would; reads only, outside the session's queue, so a verb waiting on the session never delays it. */
     routeOf: async (sessionId: string): Promise<RcSessionRoute> => {
       const resolved = await resolveRoute(sessionId);
-      return resolved.kind === "refused" ? { route: null, refused: resolved.message } : { route: resolved.kind };
+      if (resolved.kind === "refused") {
+        return { route: null, refused: resolved.message };
+      }
+      return resolved.warnings.length === 0 ? { route: resolved.kind } : { route: resolved.kind, warnings: resolved.warnings };
     },
 
     /**

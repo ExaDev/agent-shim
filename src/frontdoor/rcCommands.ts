@@ -16,7 +16,7 @@ import { rcRateLimitInfoOf } from "./rcLiveUsage";
 import type { RcRateLimitInfo, RcSessionStatusWithRoute } from "./rcSchemas";
 import { mintRcSelfHostCredential, type RcSelfHostMintResult } from "./rcSelfHostMint";
 import { RC_GOAL_CLEAR_WORDS, RC_SESSION_COMMAND_MAX_WAIT_MS } from "./rcSessionCommands";
-import { RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "../supervise/verifiedVersions";
+import { claudeCodeVersionsGated } from "../supervise/verifiedVersions";
 import type { RcQuestionSelection } from "./rcQuestions";
 import { RC_PENDING_PER_SESSION_MAX, rcExcerpt, type RcPendingRequestSummary, type RcSessionSummary } from "./rcSessions";
 import { RC_CONTEXT_USAGE_DETAILS, RC_PERMISSION_MODES, RC_READ_FILE_ENCODINGS, RC_SEND_DELIVERY_NOTE, isRcContextUsageDetail, isRcPermissionMode, isRcReadFileEncoding, type RcEventWriteResult } from "./rcWrites";
@@ -76,6 +76,9 @@ export function formatRcSessionStatus(statuses: readonly RcSessionStatusWithRout
           ].join(", ");
     lines.push(`  worker: ${worker}`);
     lines.push(status.route.route === null ? `  goal, compaction and turn verbs: refused: ${status.route.refused}` : `  goal, compaction and turn verbs: ${status.route.route} route`);
+    if (status.route.route !== null) {
+      lines.push(...(status.route.warnings ?? []).map((warning) => `  warning: ${warning}`));
+    }
     if (status.pending.length === 0) {
       lines.push("  pending: none");
     } else {
@@ -581,13 +584,19 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
     return { waitMs: Number(waitMs) };
   };
   const waitOption = `How long to wait for the session's answer, in milliseconds (default ${String(COMPACT_TIMEOUT_MS)}, at most ${String(RC_SESSION_COMMAND_MAX_WAIT_MS)}).`;
-  const versions = RC_SESSION_COMMAND_VERIFIED_VERSIONS.join(", ");
+  const versions = claudeCodeVersionsGated();
+  /** Prints the version gate's warnings on an answer to standard error, in either output mode, so a person sees them and a parsed standard output carries them only as the answer's own `warnings`. */
+  const warnOf = (answer: Readonly<{ warnings?: readonly string[] }>): void => {
+    for (const warning of answer.warnings ?? []) {
+      console.warn(`warning: ${warning}`);
+    }
+  };
   const routes = "A session agent-shim launched, under a supervisor (route supervised) or not (route launched), is reached through its in-process control plugin, and one on the door's own self-hosted surface through that surface; any other session is refused with the reason.";
 
   const goal = withExamples(
     rc
       .command("goal")
-      .description(`Read, set or clear one Remote Control session's /goal. ${routes} Verified on Claude Code ${versions}; a session on any other version is refused.`),
+      .description(`Read, set or clear one Remote Control session's /goal. ${routes} Runs on ${versions}; a session on any other version is refused.`),
     ["agent-shim frontdoor rc goal get --session cse_00000000-0000-4000-8000-000000000000"],
   );
 
@@ -600,6 +609,7 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
       .option("--json", "Print the answer as JSON.")
       .action(async (options: Readonly<{ session: string; waitMs?: string; json?: boolean }>) => {
         const answer = await frontDoorRcApiFromState(realFarmFs, paths).rc.goalGet({ session: options.session, ...waitMsOf(options.waitMs) });
+        warnOf(answer);
         if (options.json === true) {
           printJson(answer);
           return;
@@ -619,6 +629,7 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
       .option("--json", "Print the answer as JSON.")
       .action(async (options: Readonly<{ session: string; condition: string; waitMs?: string; json?: boolean }>) => {
         const answer = await frontDoorRcApiFromState(realFarmFs, paths).rc.goalSet({ session: options.session, condition: options.condition, ...waitMsOf(options.waitMs) });
+        warnOf(answer);
         if (options.json === true) {
           printJson(answer);
           return;
@@ -637,6 +648,7 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
       .option("--json", "Print the answer as JSON.")
       .action(async (options: Readonly<{ session: string; waitMs?: string; json?: boolean }>) => {
         const answer = await frontDoorRcApiFromState(realFarmFs, paths).rc.goalClear({ session: options.session, ...waitMsOf(options.waitMs) });
+        warnOf(answer);
         if (options.json === true) {
           printJson(answer);
           return;
@@ -649,7 +661,7 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
   withExamples(
     rc
       .command("compact")
-      .description(`Compact one Remote Control session's conversation and wait for the outcome: the token counts before and after, or the session's reason for not compacting. ${routes} Verified on Claude Code ${versions}; a session on any other version is refused.`)
+      .description(`Compact one Remote Control session's conversation and wait for the outcome: the token counts before and after, or the session's reason for not compacting. ${routes} Runs on ${versions}; a session on any other version is refused.`)
       .requiredOption("--session <id>", "The cse_ session id, as `frontdoor rc list` shows it.")
       .option("--instructions <text>", "Custom summarisation instructions, a directive to the session's model.")
       .option("--wait-ms <ms>", waitOption)
@@ -657,6 +669,7 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
       .action(async (options: Readonly<{ session: string; instructions?: string; waitMs?: string; json?: boolean }>) => {
         const api = frontDoorRcApiFromState(realFarmFs, paths);
         const answer = options.instructions === undefined ? await api.rc.compact({ session: options.session, ...waitMsOf(options.waitMs) }) : await api.rc.compactWithInstructions({ session: options.session, instructions: options.instructions, ...waitMsOf(options.waitMs) });
+        warnOf(answer);
         if (options.json === true) {
           printJson(answer);
           return;
@@ -670,13 +683,14 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
   withExamples(
     rc
       .command("turn")
-      .description(`Put a person's typed turn into one Remote Control session, which its model reads as its user's words, and wait until the session records it as a user entry from the person (never as another session's message); prints the entry's uuid and the route. ${routes} Unlike \`send\`, it never delivers the text as a peer's message: a session no route reaches is refused with the reason. Verified on Claude Code ${versions}; a session on any other version is refused.`)
+      .description(`Put a person's typed turn into one Remote Control session, which its model reads as its user's words, and wait until the session records it as a user entry from the person (never as another session's message); prints the entry's uuid and the route. ${routes} Unlike \`send\`, it never delivers the text as a peer's message: a session no route reaches is refused with the reason. Runs on ${versions}; a session on any other version is refused.`)
       .requiredOption("--session <id>", "The cse_ session id, as `frontdoor rc list` shows it.")
       .requiredOption("--text <text>", "The text as the person typed it; not starting with / (the goal and compaction verbs run those commands).")
       .option("--wait-ms <ms>", waitOption)
       .option("--json", "Print the answer as JSON.")
       .action(async (options: Readonly<{ session: string; text: string; waitMs?: string; json?: boolean }>) => {
         const answer = await frontDoorRcApiFromState(realFarmFs, paths).rc.turn({ session: options.session, text: options.text, ...waitMsOf(options.waitMs) });
+        warnOf(answer);
         if (options.json === true) {
           printJson(answer);
           return;

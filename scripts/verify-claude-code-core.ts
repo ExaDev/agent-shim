@@ -3,17 +3,15 @@
  */
 import { createHash } from "node:crypto";
 
+import { parseReleaseVersion } from "../src/supervise/verifiedVersions";
 import type { LabRoute } from "./rc-self-host-lab-core";
 
 /** The package Claude Code is published as; its per-platform binaries are its optional dependencies, each named after it with the platform appended. */
 export const CLAUDE_CODE_PACKAGE = "@anthropic-ai/claude-code";
 
-/** A plain dotted-numeric release version such as `2.1.325`: what the gate lists and the launcher pins. Prereleases and builds are never candidates. */
-const RELEASE_VERSION = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
-
-/** Whether `version` is a plain release version. */
+/** Whether `version` is a plain release version (`parseReleaseVersion`, the gate's own parser): prereleases and builds are never candidates. */
 export function isReleaseVersion(version: string): boolean {
-  return RELEASE_VERSION.test(version);
+  return parseReleaseVersion(version) !== undefined;
 }
 
 /** Orders two release versions numerically, part by part: negative when `a` is older. */

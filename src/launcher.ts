@@ -133,7 +133,7 @@ export interface PrepareLaunchParams {
   readonly hasStoredLogin?: (identity: string) => boolean;
   /** Whether Claude Code can authenticate with the login an identity has stored, asked only for an identity that has one (`claudeBin` is the binary the launch would run). Undefined when it cannot be determined, and then the stored login is assumed good. Absent when the caller cannot ask. */
   readonly hasUsableLogin?: (identity: string, claudeBin: string) => boolean | undefined;
-  /** Stages the in-process control plugin for an unsupervised launch that loads one (`launchLoadsControlPlugin`) and records where it listens for the front door (`supervise/launchControl.ts`). Absent when the caller cannot stage it, and then no launch loads it. */
+  /** Stages the in-process control plugin for an unsupervised launch that loads one (`launchControlPluginGate`) and records where it listens for the front door (`supervise/launchControl.ts`). Absent when the caller cannot stage it, and then no launch loads it. */
   readonly stageControlPlugin?: () => StagedLaunchControl;
 }
 

@@ -29,6 +29,8 @@ const COMPACT_POST_TOKENS = 300;
 /** The wait bound the set call names, so the procedure is seen to hand it through. */
 const COMMAND_WAIT_MS = 30_000;
 const TURN_UUID = "00000000-0000-4000-8000-0000000000a1";
+/** The version gate's warning one fake verb answers with, as a session on an unverified patch release gets it. */
+const UNVERIFIED_WARNING = "Claude Code 9.9.9 has not been verified for goal, compaction and turn control";
 
 const SEQUENCE_NUMS = [ANSWERED_SEQUENCE_NUM];
 
@@ -78,7 +80,7 @@ describe("the wider control-verb family on the door's typed API, end to end over
       // The options are recorded without their abort signal, which every request carries and no assertion can name.
       goalGet: async (session, options) => noteCommand("goalGet", [session, withoutSignal(options)], { route: "supervised" as const, goal: { condition: "the build is green", iterations: 2, lastCheck: "one test still fails" } }),
       goalSet: async (session, condition, options) => noteCommand("goalSet", [session, condition, withoutSignal(options)], { route: "self-hosted" as const, condition, superseded: "the docs are updated" }),
-      goalClear: async (session, options) => noteCommand("goalClear", [session, withoutSignal(options)], { route: "supervised" as const, cleared: null }),
+      goalClear: async (session, options) => noteCommand("goalClear", [session, withoutSignal(options)], { route: "supervised" as const, cleared: null, warnings: [UNVERIFIED_WARNING] }),
       turn: async (session, text, options) => noteCommand("turn", [session, text, withoutSignal(options)], { route: "supervised" as const, uuid: TURN_UUID }),
       routeOf: async () => await Promise.resolve({ route: null, refused: "unexercised" }),
       compact: async (session, options) => noteCommand("compact", [session, withoutSignal(options), options.signal instanceof AbortSignal], { route: "supervised" as const, trigger: "plugin", preTokens: COMPACT_PRE_TOKENS, postTokens: COMPACT_POST_TOKENS }),
@@ -139,7 +141,8 @@ describe("the wider control-verb family on the door's typed API, end to end over
     const before = calls.length;
     expect(await api.rc.goalGet({ session: SESSION_ID })).toEqual({ session: SESSION_ID, route: "supervised", goal: { condition: "the build is green", iterations: 2, lastCheck: "one test still fails" } });
     expect(await api.rc.goalSet({ session: SESSION_ID, condition: "the build is green", waitMs: COMMAND_WAIT_MS })).toEqual({ session: SESSION_ID, route: "self-hosted", condition: "the build is green", superseded: "the docs are updated" });
-    expect(await api.rc.goalClear({ session: SESSION_ID })).toEqual({ session: SESSION_ID, route: "supervised", cleared: null });
+    // The version gate's warning on a session running an unverified patch release reaches the caller as the answer's own field, through the schema.
+    expect(await api.rc.goalClear({ session: SESSION_ID })).toEqual({ session: SESSION_ID, route: "supervised", cleared: null, warnings: [UNVERIFIED_WARNING] });
     expect(await api.rc.compact({ session: SESSION_ID })).toEqual({ session: SESSION_ID, route: "supervised", trigger: "plugin", preTokens: COMPACT_PRE_TOKENS, postTokens: COMPACT_POST_TOKENS });
     await api.rc.compactWithInstructions({ session: SESSION_ID, instructions: "keep the decisions" });
     await expect(api.rc.goalSet({ session: SESSION_ID, condition: "x", waitMs: RC_SESSION_COMMAND_MAX_WAIT_MS + 1 })).rejects.toMatchObject({ code: "BAD_REQUEST" });

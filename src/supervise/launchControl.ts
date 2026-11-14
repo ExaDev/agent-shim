@@ -8,7 +8,7 @@ import type { RegistryFs } from "./registry";
 import { sessionControlConversation, type SessionControlConversation } from "./sessionControl";
 import { sessionControlPluginPaths, stageSessionControlPlugin, withSessionControlPlugin } from "./sessionControlPlugin";
 import type { TranscriptFollower } from "./transcriptFollower";
-import { RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "./verifiedVersions";
+import { claudeCodeVersionGate, type ClaudeCodeVersionGate } from "./verifiedVersions";
 
 /**
  * The control plugin in a launch no supervisor runs: the launcher stages the same private plugin a supervised launch loads (`sessionControlPlugin.ts`), passes it with `--plugin-dir`, and records where it listens in `launchControlDir`, one `<launcher-pid>.<id>.json` per launch naming the launcher's pid and the plugin's directory. The front door joins a Remote Control session to that record the way it joins a supervised one: the plugin records the session's transcript (`session.json`), and the transcript's own `bridge-session` row names the `cse_` id. The record and the plugin's directory are removed when the child exits; a launcher killed before that leaves both, which the next record or staging removes once its pid is no longer running, and which the door skips meanwhile.
@@ -70,23 +70,32 @@ export interface LaunchControlCandidate {
 }
 
 /**
- * Whether an unsupervised launch loads the control plugin: only one that starts a session on a Claude Code version the plugin was verified on, without Claude Code's own `--bare` (its minimal mode, which a launch asking for it must get as it is) among the options before any `--`. Every other launch runs exactly as it would without the plugin. A supervised launch loads its supervisor's plugin instead (`launch.ts`).
+ * Whether an unsupervised launch loads the control plugin, and the gate's verdict on its version when it does: only one that starts a session on a Claude Code version the gate lets through (`claudeCodeVersionGate`: a verified version, or a patch release of a verified minor), without Claude Code's own `--bare` (its minimal mode, which a launch asking for it must get as it is) among the options before any `--`. Undefined for every other launch, which runs exactly as it would without the plugin. A supervised launch loads its supervisor's plugin instead (`launch.ts`).
  */
-export function launchLoadsControlPlugin(candidate: Readonly<LaunchControlCandidate>): boolean {
+export function launchControlPluginGate(candidate: Readonly<LaunchControlCandidate>): Exclude<ClaudeCodeVersionGate, { readonly kind: "refused" }> | undefined {
   const end = candidate.args.indexOf("--");
   const options = end === -1 ? candidate.args : candidate.args.slice(0, end);
-  return !candidate.supervised && candidate.startsSession && !options.includes("--bare") && candidate.version !== undefined && RC_SESSION_COMMAND_VERIFIED_VERSIONS.includes(candidate.version);
+  if (candidate.supervised || !candidate.startsSession || options.includes("--bare")) {
+    return undefined;
+  }
+  const gate = claudeCodeVersionGate(candidate.version);
+  return gate.kind === "refused" ? undefined : gate;
 }
 
 /**
- * Stages the control plugin for a launch that loads one (`launchLoadsControlPlugin`), through `stage`; undefined when the launch loads none, or when staging fails, which `warn` is told of: the plugin is an addition the session can do without, so a launch whose plugin cannot be staged starts as it would have without it.
+ * Stages the control plugin for a launch that loads one (`launchControlPluginGate`), through `stage`; undefined when the launch loads none, or when staging fails, which `warn` is told of: the plugin is an addition the session can do without, so a launch whose plugin cannot be staged starts as it would have without it. A plugin staged on an unverified patch release tells `warn` the gate's warning.
  */
 export function stageControlPluginFor(candidate: Readonly<LaunchControlCandidate>, stage: (() => StagedLaunchControl) | undefined, warn: (message: string) => void): StagedLaunchControl | undefined {
-  if (stage === undefined || !launchLoadsControlPlugin(candidate)) {
+  const gate = launchControlPluginGate(candidate);
+  if (stage === undefined || gate === undefined) {
     return undefined;
   }
   try {
-    return stage();
+    const staged = stage();
+    if (gate.kind === "unverified-patch") {
+      warn(`agent-shim: ${gate.warning}`);
+    }
+    return staged;
   } catch (error) {
     warn(`agent-shim: the in-process control plugin could not be staged, so this session starts without it and the front door cannot reach it for goal, compaction and turn control: ${error instanceof Error ? error.message : String(error)}`);
     return undefined;

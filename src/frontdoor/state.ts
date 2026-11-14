@@ -26,9 +26,11 @@ import { MAX_TCP_PORT } from "../baseUrlDial";
  *
  * Protocol 11: a launch's session record names the Claude Code version of the binary the launcher started (`claudeVersion`), which the self-hosted Remote Control route gates a session's verbs on until its worker reports its own version. A protocol 10 door reads session records strictly, so it would reject this launcher's record and refuse the launch's every request.
  *
+ * Protocol 12: the door's goal, compaction and turn verbs run on a session whose Claude Code version is a patch release of a verified minor (`claudeCodeVersionGate`), and this release's launcher loads the control plugin into such a launch. A protocol 11 door refuses every verb on that session, so this launcher's launches on such a version would carry a plugin the door will not use; it is replaced rather than joined.
+ *
  * The rule that makes a bump safe: a door accepts every lower protocol's launches (protocol 1 accepts the former `x-claude-use-*` header names), and a launcher replaces a door whose protocol is lower than its own, never one that is higher. Replacing is safe because restarts are what the door is designed for: the capability registry is on disk and the listeners keep their sticky ports, so launches already running reach the replacement on the addresses they froze at launch.
  */
-export const FRONT_DOOR_PROTOCOL = 11;
+export const FRONT_DOOR_PROTOCOL = 12;
 
 /** The first protocol whose door hands its listeners over on `SIGUSR2` (see protocol 6 above): a launcher sends that request only to a door recording this protocol or a later one. */
 export const FRONT_DOOR_HANDOVER_PROTOCOL = 6;

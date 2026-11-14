@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { RcSessionCommandRouteSchema, RcVersionGateWarningsSchema } from "./rcSchemas";
 import { RC_COMPACT_INSTRUCTIONS_MAX_CHARS, RC_GOAL_CONDITION_MAX_CHARS, RC_SESSION_COMMAND_MAX_WAIT_MS, RC_TURN_TEXT_MAX_CHARS } from "./rcSessionCommands";
 
 /**
@@ -42,10 +43,11 @@ export const RcTurnInputSchema = z.strictObject({
   waitMs: WaitMsSchema,
 });
 
-/** The fields every verb's answer carries: the session and the route that served it (the control plugin of a supervised or an unsupervised launch, or the door's own self-hosted surface). */
+/** The fields every verb's answer carries: the session, the route that served it (the control plugin of a supervised or an unsupervised launch, or the door's own self-hosted surface), and the version gate's warnings when it raised any. */
 const commandAnswerShape = {
   session: z.string(),
-  route: z.enum(["supervised", "launched", "self-hosted"]),
+  route: RcSessionCommandRouteSchema,
+  warnings: RcVersionGateWarningsSchema,
 };
 
 /** The goal read's answer: the active goal (condition, evaluated turns, the check's last reason when it gave one), or null when the session has none. */

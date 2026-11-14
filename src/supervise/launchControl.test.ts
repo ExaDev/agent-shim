@@ -6,13 +6,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildLayoutPaths, type LayoutPaths } from "../paths";
 import { realFarmFs } from "../realPorts";
-import { launchedSessionOfBridge, launchLoadsControlPlugin, registerLaunchControl, stageLaunchControl } from "./launchControl";
+import { launchControlPluginGate, launchedSessionOfBridge, registerLaunchControl, stageControlPluginFor, stageLaunchControl } from "./launchControl";
 import { sessionControlPluginPaths } from "./sessionControlPlugin";
 import { createTranscriptFollower, realTranscriptReadPort } from "./transcriptFollower";
-import { RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "./verifiedVersions";
-
-/** A version the control plugin was verified on, read from the list so the tests follow it. */
-const VERIFIED_VERSION = RC_SESSION_COMMAND_VERIFIED_VERSIONS[0] ?? "";
+import { UNVERIFIED_MINOR_VERSION, UNVERIFIED_PATCH_VERSION, VERIFIED_VERSION } from "./verifiedVersionsTestWorld";
 
 /** The pids the cases treat as running and as gone. */
 const LIVE_PID = 4_001;
@@ -51,20 +48,46 @@ function launched(pid: number, conversationId: string, bridge?: string) {
 describe("whether a launch loads the control plugin", () => {
   const ordinary = { args: ["--print", "hello"], version: VERIFIED_VERSION, startsSession: true, supervised: false };
 
-  it("loads it into an unsupervised session on a verified version", () => {
-    expect(launchLoadsControlPlugin(ordinary)).toBe(true);
+  it("loads it into an unsupervised session on a verified version, with no warning", () => {
+    expect(launchControlPluginGate(ordinary)).toEqual({ kind: "verified" });
   });
 
-  it("loads nothing under --bare before the terminator, into a subcommand, a supervised launch, or an unverified or unknown version", () => {
-    expect(launchLoadsControlPlugin({ ...ordinary, args: ["--bare", "--print", "hello"] })).toBe(false);
-    expect(launchLoadsControlPlugin({ ...ordinary, startsSession: false })).toBe(false);
-    expect(launchLoadsControlPlugin({ ...ordinary, supervised: true })).toBe(false);
-    expect(launchLoadsControlPlugin({ ...ordinary, version: "2.0.1" })).toBe(false);
-    expect(launchLoadsControlPlugin({ ...ordinary, version: undefined })).toBe(false);
+  it("loads it into an unsupervised session on a patch release of a verified minor, carrying the warning that names the version as unverified", () => {
+    const gate = launchControlPluginGate({ ...ordinary, version: UNVERIFIED_PATCH_VERSION });
+    expect(gate?.kind).toBe("unverified-patch");
+    expect(gate?.kind === "unverified-patch" ? gate.warning : "").toContain(`Claude Code ${UNVERIFIED_PATCH_VERSION} has not been verified`);
+  });
+
+  it("loads nothing under --bare before the terminator, into a subcommand, a supervised launch, or a version of an unverified minor or unknown", () => {
+    expect(launchControlPluginGate({ ...ordinary, args: ["--bare", "--print", "hello"] })).toBeUndefined();
+    expect(launchControlPluginGate({ ...ordinary, startsSession: false })).toBeUndefined();
+    expect(launchControlPluginGate({ ...ordinary, supervised: true })).toBeUndefined();
+    expect(launchControlPluginGate({ ...ordinary, version: UNVERIFIED_MINOR_VERSION })).toBeUndefined();
+    expect(launchControlPluginGate({ ...ordinary, version: undefined })).toBeUndefined();
   });
 
   it("reads --bare after the terminator as claude's own argument, not the launch's option", () => {
-    expect(launchLoadsControlPlugin({ ...ordinary, args: ["--print", "--", "--bare"] })).toBe(true);
+    expect(launchControlPluginGate({ ...ordinary, args: ["--print", "--", "--bare"] })).toEqual({ kind: "verified" });
+  });
+
+  it("stages the plugin and warns once on an unverified patch, stages it silently on a verified version, and stages nothing on an unverified minor", () => {
+    const stagedFor = (version: string) => {
+      const warnings: string[] = [];
+      let stages = 0;
+      const staged = stageControlPluginFor({ ...ordinary, version }, () => {
+        stages += 1;
+        return { args: (args) => args, release: () => undefined };
+      }, (message) => {
+        warnings.push(message);
+      });
+      return { loaded: staged !== undefined, stages, warnings };
+    };
+    expect(stagedFor(VERIFIED_VERSION)).toEqual({ loaded: true, stages: 1, warnings: [] });
+    const patch = stagedFor(UNVERIFIED_PATCH_VERSION);
+    expect(patch).toMatchObject({ loaded: true, stages: 1 });
+    expect(patch.warnings).toHaveLength(1);
+    expect(patch.warnings[0]).toContain(`Claude Code ${UNVERIFIED_PATCH_VERSION} has not been verified`);
+    expect(stagedFor(UNVERIFIED_MINOR_VERSION)).toEqual({ loaded: false, stages: 0, warnings: [] });
   });
 });
 

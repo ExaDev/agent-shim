@@ -181,7 +181,7 @@ jobs:
 
               names="${failed# }"
               {
-                echo "\`pnpm verify:claude-code verify $version\` did not pass on ${names// /, }, so the goal, compaction and turn verbs stay refused on it ([run]($run_url))."
+                echo "\`pnpm verify:claude-code verify $version\` did not pass on ${names// /, }, so it stays off the verified list: the goal, compaction and turn verbs run on it with a warning that it is unverified if it is a patch release of a verified minor, and are refused on it otherwise ([run]($run_url))."
                 for platform in $failed; do
                   report="$RUNNER_TEMP/report/$version.$platform"
                   echo

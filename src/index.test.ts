@@ -286,6 +286,7 @@ describe("library surface", () => {
       "changePool",
       "checkReportHasWarnings",
       "checkReportToJson",
+      "claudeCodeVersionGate",
       "collectCheckReport",
       "collectDoctorReport",
       "collectFrontDoorStatus",

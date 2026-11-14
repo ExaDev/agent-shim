@@ -2,15 +2,17 @@ import { describe, expect, it } from "vitest";
 
 import { prepareLaunch } from "./launcher";
 import type { StagedLaunchControl } from "./supervise/launchControl";
-import { RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "./supervise/verifiedVersions";
+import { UNVERIFIED_MINOR_VERSION, UNVERIFIED_PATCH_VERSION, VERIFIED_VERSION } from "./supervise/verifiedVersionsTestWorld";
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
-import { createFakeFarmFs, discovered, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, paths } from "./test-helpers";
+import { createFakeFarmFs, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, paths } from "./test-helpers";
 
-/** A version the control plugin was verified on, read from the list so the tests follow it. */
-const VERIFIED_VERSION = RC_SESSION_COMMAND_VERIFIED_VERSIONS[0] ?? "";
+/** The binary discovery finds on `version`. */
+function binaryOf(version: string): DiscoveredClaudeBinary {
+  return { path: `/home/testuser/.local/share/claude/versions/${version}`, source: "versions-dir", version };
+}
 
 /** The binary discovery finds on a verified version. */
-const verifiedBinary: DiscoveredClaudeBinary = { path: `/home/testuser/.local/share/claude/versions/${VERIFIED_VERSION}`, source: "versions-dir", version: VERIFIED_VERSION };
+const verifiedBinary = binaryOf(VERIFIED_VERSION);
 
 /** The directory the fake stager names, which only the fake can have put in the arguments. */
 const STAGED_DIRECTORY = "/staged/agent-shim-control-test";
@@ -45,12 +47,20 @@ function prepared(argv: readonly string[], options: { readonly binary?: Discover
 }
 
 describe("the control plugin in an unsupervised launch", () => {
-  it("is staged and passed to an ordinary session launch on a verified version, and removed when the launch is released", () => {
-    const { plan, events } = prepared(["--print", "hello"]);
+  it("is staged and passed to an ordinary session launch on a verified version, and removed when the launch is released, with no warning", () => {
+    const { plan, events, log } = prepared(["--print", "hello"]);
     expect(plan.args.slice(plan.args.indexOf("--plugin-dir"))).toEqual(["--plugin-dir", STAGED_DIRECTORY]);
     expect(events).toEqual(["staged"]);
+    expect(log.warns.join("\n")).not.toContain("has not been verified");
     plan.release();
     expect(events).toEqual(["staged", "released"]);
+  });
+
+  it("is staged on a patch release of a verified minor, and the launch warns that the version has not been verified", () => {
+    const { plan, events, log } = prepared(["--print", "hello"], { binary: binaryOf(UNVERIFIED_PATCH_VERSION) });
+    expect(plan.args.slice(plan.args.indexOf("--plugin-dir"))).toEqual(["--plugin-dir", STAGED_DIRECTORY]);
+    expect(events).toEqual(["staged"]);
+    expect(log.warns.filter((line) => line.includes(`Claude Code ${UNVERIFIED_PATCH_VERSION} has not been verified`))).toHaveLength(1);
   });
 
   it("is staged for an interactive launch too", () => {
@@ -73,8 +83,8 @@ describe("the control plugin in an unsupervised launch", () => {
     expect(events).toEqual([]);
   });
 
-  it("is not loaded on a version it was not verified on, or one discovery cannot name", () => {
-    for (const binary of [discovered, { path: "/usr/local/bin/claude", source: "path-fallback" } satisfies DiscoveredClaudeBinary]) {
+  it("is not loaded on a version of a minor no verified version has, or one discovery cannot name", () => {
+    for (const binary of [binaryOf(UNVERIFIED_MINOR_VERSION), { path: "/usr/local/bin/claude", source: "path-fallback" } satisfies DiscoveredClaudeBinary]) {
       const run = prepared(["--print", "hello"], { binary });
       expect(run.plan.args).not.toContain("--plugin-dir");
       expect(run.events).toEqual([]);

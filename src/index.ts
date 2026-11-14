@@ -320,7 +320,7 @@ export {
   type RcStreamEnvelope,
   type RcStreamEvent,
 } from "./frontdoor/rcSchemas";
-export { RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "./supervise/verifiedVersions";
+export { RC_SESSION_COMMAND_VERIFIED_VERSIONS, claudeCodeVersionGate, type ClaudeCodeVersionGate } from "./supervise/verifiedVersions";
 export { createRcLiveUsage, rcRateLimitInfoOf, type RcLiveUsage, type RcLiveUsageDeps } from "./frontdoor/rcLiveUsage";
 export {
   RC_GOAL_CLEAR_WORDS,

@@ -8,7 +8,9 @@ import { activeGoalOfTranscript } from "../supervise/sessionGoal";
 import { SESSION_CONTROL_PLUGIN_NAME } from "../supervise/sessionControlPlugin";
 import { NO_PLUGIN_TURNS, pluginTurnsAfterLine, type PluginTurns } from "../supervise/sessionPluginTurns";
 import { createSelfHostedSessionVersions, rcSelfHostEventDial, type RcSelfHostCommandDeps } from "./rcSelfHostCommands";
-import { RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "../supervise/verifiedVersions";
+import { RC_SESSION_COMMAND_VERIFIED_VERSIONS, claudeCodeVersionsGated } from "../supervise/verifiedVersions";
+import { UNVERIFIED_MINOR_VERSION, UNVERIFIED_PATCH_VERSION, VERIFIED_VERSION } from "../supervise/verifiedVersionsTestWorld";
+import type { RcStreamEvent } from "./rcSchemas";
 import { RC_GOAL_CONDITION_MAX_CHARS, RC_TURN_TEXT_MAX_CHARS, createRcSessionCommands, type RcSessionCommandDeps, type RcSupervisedTarget } from "./rcSessionCommands";
 import { createRcEventFanout } from "./rcStream";
 
@@ -47,8 +49,6 @@ function pluginTurnRow(uuid: string, text: string, origin: Record<string, unknow
   return JSON.stringify({ type: "user", uuid, origin, message: { role: "user", content: text } });
 }
 
-/** A version both routes were verified on, read from the module so the tests follow the list rather than restate it. */
-const VERIFIED_VERSION = RC_SESSION_COMMAND_VERIFIED_VERSIONS[0] ?? "";
 
 /** One `goal_status` row in the shape the 2.1.319 CLI writes. */
 function goalRow(attachment: Record<string, unknown>): string {
@@ -379,7 +379,7 @@ describe("a person's turn over Remote Control, by route", () => {
     const deps: RcSessionCommandDeps = { supervisedOf: noSupervisor, goalOf: noFile, pluginTurnsOf: noTurns, selfHost: undefined, isObserved: () => true };
     const refused = await createRcSessionCommands(deps).turn(SESSION, "carry on");
     expect(refused.ok ? "" : refused.message).toContain("no agent-shim launch's in-process control plugin records session");
-    expect(refused.ok ? "" : refused.message).toContain(`Start the session through agent-shim run on Claude Code ${RC_SESSION_COMMAND_VERIFIED_VERSIONS.join(", ")} without --bare`);
+    expect(refused.ok ? "" : refused.message).toContain(`Start the session through agent-shim run on ${claudeCodeVersionsGated()} without --bare`);
   });
 
   it("reads which route a session has, or why it has none, without waiting behind a verb queued on it", async () => {
@@ -448,5 +448,121 @@ describe("a session the launcher started with no supervisor, through its control
     expect(unloaded.route === null ? unloaded.refused : "").toContain("its launch's control plugin has not loaded");
     const deps: RcSessionCommandDeps = { supervisedOf: noSupervisor, launchedOf: async () => await Promise.resolve({ refused: "two launches claim it" }), goalOf: noFile, pluginTurnsOf: noTurns, selfHost: undefined, isObserved: () => true };
     expect(await createRcSessionCommands(deps).routeOf(SESSION)).toEqual({ route: null, refused: "two launches claim it" });
+  });
+});
+
+/** The sequence number the answering surface numbers its writes after, leaving room for each write's answer to follow it. */
+const FIRST_ANSWERED_SEQUENCE = 40;
+
+/** A self-hosted session on `version` whose worker answers every `/goal` with no argument as a live session with no goal does, once the door's write is numbered. */
+function answeringSelfHostedWorld(version: string) {
+  const fanout = createRcEventFanout();
+  const written: string[] = [];
+  const event = (sequenceNum: number, payload: Record<string, unknown>, source: string): RcStreamEvent => ({ session: SESSION, envelope: { event_type: String(payload.type), sequence_num: sequenceNum, source, payload } });
+  const dial = rcSelfHostEventDial(() => ({ host: "127.0.0.1", port: 47_592 }), () => ({
+    writeEvents: async (_sessionId, _headers, body) => {
+      written.push(body);
+      const sequenceNum = FIRST_ANSWERED_SEQUENCE + written.length * 2;
+      queueMicrotask(() => {
+        fanout.publish(event(sequenceNum + 1, { type: "assistant", message: { model: "<synthetic>", role: "assistant", content: [{ type: "text", text: "No goal set. Usage: /goal <condition>" }] }, local_command_run: { command: "goal", args: "" } }, "worker"));
+      });
+      return await Promise.resolve({ status: 200, body: JSON.stringify({ results: [{ sequence_num: String(sequenceNum) }] }) });
+    },
+    writeTeleportEvents: async () => await Promise.reject(new Error("unused")),
+  }));
+  const selfHost: RcSelfHostCommandDeps = {
+    personWrite: { credentialOf: () => ({ authorization: "Bearer sk-ant-oat", anthropicVersion: undefined, anthropicClientPlatform: "claude_code_cli" }), noteSequenceNums: () => undefined, newUuid: () => "00000000-0000-4000-8000-000000000001", dial },
+    unavailable: () => undefined,
+    fanout,
+    versionOf: () => version,
+    setTimer: () => () => undefined,
+    defaultWaitMs: 1_000,
+  };
+  const deps: RcSessionCommandDeps = { supervisedOf: noSupervisor, goalOf: noFile, pluginTurnsOf: noTurns, selfHost, isObserved: () => true };
+  return { deps, written };
+}
+
+describe("the version gate, on every verb and route", () => {
+  const pluginRoutes = [
+    { route: "supervised", world: (version: string) => supervisedWorld({ version, transcript: [goalRow({ met: false, sentinel: true, condition: "tests pass" })] }) },
+    { route: "launched", world: (version: string) => supervisedWorld({ launched: true, version, transcript: [goalRow({ met: false, sentinel: true, condition: "tests pass" })] }) },
+  ] as const;
+
+  /** Every verb, run once each in order against one world. */
+  const everyVerb = async (deps: RcSessionCommandDeps) => {
+    const commands = createRcSessionCommands(deps);
+    return [await commands.goalGet(SESSION), await commands.goalSet(SESSION, "docs build"), await commands.goalClear(SESSION), await commands.compact(SESSION), await commands.turn(SESSION, "carry on")];
+  };
+
+  for (const { route, world } of pluginRoutes) {
+    it(`runs every verb on the ${route} route on a verified version with no warning on any answer or the route read`, async () => {
+      const verified = world(VERIFIED_VERSION);
+      for (const result of await everyVerb(verified.deps)) {
+        expect(result).toMatchObject({ ok: true, report: { route } });
+        expect(result.ok ? result.report : {}).not.toHaveProperty("warnings");
+      }
+      expect(await createRcSessionCommands(verified.deps).routeOf(SESSION)).toEqual({ route });
+    });
+
+    it(`runs every verb on the ${route} route on a patch release of a verified minor, each answer and the route read carrying the warning that names the version as unverified`, async () => {
+      const patch = world(UNVERIFIED_PATCH_VERSION);
+      const results = await everyVerb(patch.deps);
+      for (const result of results) {
+        expect(result).toMatchObject({ ok: true, report: { route } });
+        const warnings = result.ok ? result.report.warnings : undefined;
+        expect(warnings).toHaveLength(1);
+        expect(warnings?.[0]).toContain(`Claude Code ${UNVERIFIED_PATCH_VERSION} has not been verified`);
+      }
+      expect(patch.ran).toEqual(["docs build", "clear"]);
+      expect(patch.submitted).toEqual(["carry on"]);
+      expect(patch.instructed).toEqual([undefined]);
+      const read = await createRcSessionCommands(patch.deps).routeOf(SESSION);
+      expect(read).toMatchObject({ route });
+      expect(read.route === null ? [] : read.warnings).toEqual(results[0]?.ok === true ? results[0].report.warnings : []);
+    });
+
+    it(`refuses every verb on the ${route} route on a version of an unverified minor, running nothing and saying what to do`, async () => {
+      const refused = world(UNVERIFIED_MINOR_VERSION);
+      for (const result of await everyVerb(refused.deps)) {
+        expect(result).toMatchObject({ ok: false, refusal: "session-state" });
+        expect(result.ok ? "" : result.message).toContain(`runs Claude Code ${UNVERIFIED_MINOR_VERSION}`);
+        expect(result.ok ? "" : result.message).toContain("Start the session on one of those versions");
+      }
+      expect(refused.ran).toEqual([]);
+      expect(refused.submitted).toEqual([]);
+      expect(refused.instructed).toEqual([]);
+      const read = await createRcSessionCommands(refused.deps).routeOf(SESSION);
+      expect(read.route === null ? read.refused : "").toContain(`runs Claude Code ${UNVERIFIED_MINOR_VERSION}`);
+    });
+  }
+
+  it("answers a self-hosted verb with no warning on a verified version, and with the warning on a patch release of a verified minor", async () => {
+    const verified = answeringSelfHostedWorld(VERIFIED_VERSION);
+    expect(await createRcSessionCommands(verified.deps).goalGet(SESSION)).toEqual({ ok: true, report: { route: "self-hosted", goal: null } });
+    expect(await createRcSessionCommands(verified.deps).routeOf(SESSION)).toEqual({ route: "self-hosted" });
+    const patch = answeringSelfHostedWorld(UNVERIFIED_PATCH_VERSION);
+    const answered = await createRcSessionCommands(patch.deps).goalGet(SESSION);
+    expect(answered).toMatchObject({ ok: true, report: { route: "self-hosted", goal: null } });
+    const warnings = answered.ok ? answered.report.warnings : undefined;
+    expect(warnings).toHaveLength(1);
+    expect(warnings?.[0]).toContain(`Claude Code ${UNVERIFIED_PATCH_VERSION} has not been verified`);
+    expect(await createRcSessionCommands(patch.deps).routeOf(SESSION)).toEqual({ route: "self-hosted", warnings });
+  });
+
+  it("writes every verb on the self-hosted surface on a patch release of a verified minor, and none on a version of an unverified minor", async () => {
+    const patch = selfHostedWorld(UNVERIFIED_PATCH_VERSION, undefined, true);
+    const commands = createRcSessionCommands(patch.deps);
+    const verbs = [async () => await commands.goalGet(SESSION), async () => await commands.goalSet(SESSION, "docs build"), async () => await commands.goalClear(SESSION), async () => await commands.compact(SESSION), async () => await commands.turn(SESSION, "carry on")];
+    for (const verb of verbs) {
+      const before = patch.written.length;
+      await verb();
+      expect(patch.written.length).toBeGreaterThan(before);
+    }
+    const refused = selfHostedWorld(UNVERIFIED_MINOR_VERSION, undefined, true);
+    for (const result of await everyVerb(refused.deps)) {
+      expect(result).toMatchObject({ ok: false, refusal: "session-state" });
+      expect(result.ok ? "" : result.message).toContain(`runs Claude Code ${UNVERIFIED_MINOR_VERSION}`);
+    }
+    expect(refused.written).toEqual([]);
   });
 });

@@ -263,9 +263,14 @@ export const RcTeleportInputSchema = z.strictObject({
 /** The session list's answer shape. */
 export const RcListOutputSchema = z.strictObject({ sessions: z.readonly(z.array(RcSessionSummarySchema)) });
 
-/** The status read's answer shape. */
-/** Which route the goal, compaction and turn verbs take for one session (the control plugin of a supervised launch or of an unsupervised one, or the door's own self-hosted surface), or the refusal naming why none would: `route` is null exactly when `refused` says why. A caller reads it before offering a person a reply box. */
-const RcSessionRouteSchema = z.union([z.strictObject({ route: z.enum(["supervised", "launched", "self-hosted"]) }), z.strictObject({ route: z.null(), refused: z.string() })]);
+/** The routes the goal, compaction and turn verbs take: the control plugin of a supervised launch or of an unsupervised one, or the door's own self-hosted surface. */
+export const RcSessionCommandRouteSchema = z.enum(["supervised", "launched", "self-hosted"]);
+
+/** The version gate's warnings on a verb's answer and on the route read, present only when it raised one: a session on a patch release of a verified minor that is not itself verified, named with its version (`claudeCodeVersionGate`). Never empty when present. */
+export const RcVersionGateWarningsSchema = z.readonly(z.array(z.string()).min(1)).optional();
+
+/** Which route the goal, compaction and turn verbs take for one session, with the version gate's warnings when it raised any, or the refusal naming why none would: `route` is null exactly when `refused` says why. A caller reads it before offering a person a reply box. */
+const RcSessionRouteSchema = z.union([z.strictObject({ route: RcSessionCommandRouteSchema, warnings: RcVersionGateWarningsSchema }), z.strictObject({ route: z.null(), refused: z.string() })]);
 
 /** The status read's answer: each session's status with the route the verbs would take for it. */
 export const RcStatusOutputSchema = z.strictObject({ statuses: z.readonly(z.array(z.strictObject({ ...RcSessionStatusSchema.shape, route: RcSessionRouteSchema }))) });

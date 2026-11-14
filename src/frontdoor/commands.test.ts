@@ -176,6 +176,18 @@ describe("frontdoor rc", () => {
     ]);
   });
 
+  it("states the version gate's warning under the route it lets a session take, and nothing for a route without one", () => {
+    const createdAt = 1_000;
+    const lines = formatRcSessionStatus([{ id: "cse_1", createdAt, lastSeenAt: createdAt, workerState: undefined, workerIdleSeconds: undefined, pending: [], route: { route: "launched", warnings: ["Claude Code 9.9.9 has not been verified"] } }]);
+    expect(lines).toEqual([
+      "cse_1  created 1970-01-01T00:00:01.000Z  last seen 1970-01-01T00:00:01.000Z",
+      "  worker: not observed",
+      "  goal, compaction and turn verbs: launched route",
+      "  warning: Claude Code 9.9.9 has not been verified",
+      "  pending: none",
+    ]);
+  });
+
   it("states what identifies a session on a line of its own, only for the facts present", () => {
     const createdAt = 1_000;
     const lines = formatRcSessionStatus([

@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { formatDoctorReport } from "./doctorFormat";
 import { collectDoctorReport, DOCTOR_SECTIONS, refinePathShadow, runDoctor, type DoctorConfigProfileInput, type RunDoctorParams } from "./doctorReport";
 import { baseParams, findingsFor, identity, provider } from "./doctorTestFixtures";
+import { VERIFIED_VERSION } from "./supervise/verifiedVersionsTestWorld";
 import type { CredentialCacheEnv } from "./credential";
 import type { RunPort } from "./launcher/ports";
 import { buildLayoutPaths } from "./paths";
@@ -123,13 +124,13 @@ describe("runDoctor: ambient-credential", () => {
 });
 
 describe("runDoctor: binary-discovery", () => {
-  it("passes with path/source/version when discovery succeeded", () => {
+  it("passes with path/source/version when discovery succeeded, with nothing more on a verified version", () => {
     const report = runDoctor(baseParams());
-    const [finding] = findingsFor(report, "binary-discovery");
-    expect(finding?.severity).toBe("pass");
-    expect(finding?.message).toContain("/opt/claude/2.1.0");
-    expect(finding?.message).toContain("versions-dir");
-    expect(finding?.message).toContain("2.1.0");
+    const findings = findingsFor(report, "binary-discovery");
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.severity).toBe("pass");
+    expect(findings[0]?.message).toContain(`/opt/claude/${VERIFIED_VERSION}`);
+    expect(findings[0]?.message).toContain("versions-dir");
   });
 
   it("fails with the given message when discovery failed", () => {
