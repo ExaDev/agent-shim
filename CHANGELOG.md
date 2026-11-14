@@ -1,3 +1,14 @@
+## [14.9.0](https://github.com/ExaDev/agent-shim/compare/v14.8.0...v14.9.0) (2026-11-14)
+
+### Features
+
+* **ci:** install a homebrew/core formula through the shared brew-install step ([dd7247e](https://github.com/ExaDev/agent-shim/commit/dd7247e11d0ef0a90e356d6e89d1ea8fec86e93b))
+* **ci:** verify each Claude Code release on macOS as well as Linux ([fd923e3](https://github.com/ExaDev/agent-shim/commit/fd923e36cd4141b461c024f4950fafb8a432ba50))
+
+### Bug Fixes
+
+* **test:** count a test that runs a repository file as a child process as one that reads the repository ([3efa3e3](https://github.com/ExaDev/agent-shim/commit/3efa3e342e8c487a5be0c6f516d30021f9a1a038))
+
 ## [14.8.0](https://github.com/ExaDev/agent-shim/compare/v14.7.1...v14.8.0) (2026-11-14)
 
 ### Features
