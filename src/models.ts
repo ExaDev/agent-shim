@@ -98,7 +98,8 @@ function explainVirtualModel(paths: LayoutPaths, name: string): VirtualModelExpl
 }
 
 /** What `explain` says of a selector: how it parsed, the kind it named and the name the door routes it by, or why the door refuses it. */
-type SelectorExplanation = { readonly name: string; readonly kind: SelectorKind | "class"; readonly routedAs: string } | { readonly name: string; readonly refusal: string };
+/** `ownLogin` is set when the name is on the Anthropic route of the session's own login, which the door serves there even beside a provider file called `anthropic`. */
+type SelectorExplanation = { readonly name: string; readonly kind: SelectorKind | "class"; readonly routedAs: string; readonly ownLogin?: true } | { readonly name: string; readonly refusal: string };
 
 /** The session `explain` expands for: one running as the identity named `identity` (`--identity` takes a name; the door compares by the directory id its header carries), or one with no identity. A name no identity has is a usage error. */
 function sessionOf(paths: LayoutPaths, identity: string | undefined): { readonly identityId?: string } {
@@ -112,18 +113,21 @@ function sessionOf(paths: LayoutPaths, identity: string | undefined): { readonly
   return { identityId: id };
 }
 
+/** What `explain` adds after a name on the Anthropic route of the session's own login. */
+const OWN_LOGIN_TEXT = " on the Anthropic route of the session's own login";
+
 /** Expands a selector exactly as the door would for a session running as `identity`, against the same files. */
 function explainSelector(paths: LayoutPaths, name: string, identity: string | undefined, provider: string | undefined): SelectorExplanation {
   const expanded = expandSelectorName(name, cliSelectorPorts(paths, () => Date.now(), os.homedir(), provider), sessionOf(paths, identity));
   if (expanded === undefined) {
     throw new UsageError(`"${name}" is not a selector.`);
   }
-  return "refusal" in expanded ? { name, refusal: expanded.refusal } : { name, kind: expanded.kind, routedAs: expanded.name };
+  return "refusal" in expanded ? { name, refusal: expanded.refusal } : { name, kind: expanded.kind, routedAs: expanded.name, ...(expanded.onAnthropic === true ? { ownLogin: true } : {}) };
 }
 
 /** What `explain` says of a Claude name: the route override that applies to a main-loop request for it in the given scopes, with those it outranks and what its target is routed as, or that none applies, or why the overrides cannot be used. */
 type OverrideExplanation =
-  | { readonly name: string; readonly override: { readonly scope: string; readonly target: string; readonly match: "exact" | "class"; readonly routedAs?: string; readonly refusal?: string }; readonly outranks: readonly { readonly scope: string; readonly target: string }[] }
+  | { readonly name: string; readonly override: { readonly scope: string; readonly target: string; readonly match: "exact" | "class"; readonly routedAs?: string; readonly ownLogin?: true; readonly refusal?: string }; readonly outranks: readonly { readonly scope: string; readonly target: string }[] }
   | { readonly name: string; readonly override?: never; readonly fault?: string };
 
 /** The route override a main-loop request for `name` meets in the scopes `options` names, read as the door reads the file, and, when its target is a selector, what that expands to for the identity. */
@@ -140,7 +144,7 @@ function explainOverride(paths: LayoutPaths, name: string, options: Readonly<{ i
   const expanded = expandSelectorName(winner.target, cliSelectorPorts(paths, () => Date.now(), os.homedir(), options.provider), sessionOf(paths, options.identity));
   return {
     name,
-    override: { scope: scopeLabelOf(winner.scope), target: winner.target, match: winner.match, ...(expanded === undefined ? {} : "refusal" in expanded ? { refusal: expanded.refusal } : { routedAs: expanded.name }) },
+    override: { scope: scopeLabelOf(winner.scope), target: winner.target, match: winner.match, ...(expanded === undefined ? {} : "refusal" in expanded ? { refusal: expanded.refusal } : { routedAs: expanded.name, ...(expanded.onAnthropic === true ? { ownLogin: true } : {}) }) },
     outranks: rest.map((match) => ({ scope: scopeLabelOf(match.scope), target: match.target })),
   };
 }
@@ -151,7 +155,7 @@ function describeOverride(explained: Readonly<OverrideExplanation>): readonly st
     return [explained.fault === undefined ? `No route override applies to ${explained.name} in these scopes.` : `${explained.fault}: the front door refuses the main loop's requests for Claude names until it is fixed (agent-shim doctor).`];
   }
   const { override } = explained;
-  const routed = override.routedAs === undefined ? (override.refusal === undefined ? "" : `, which is refused: ${override.refusal}`) : `, routed as ${override.routedAs}`;
+  const routed = override.routedAs === undefined ? (override.refusal === undefined ? "" : `, which is refused: ${override.refusal}`) : `, routed as ${override.routedAs}${override.ownLogin === true ? OWN_LOGIN_TEXT : ""}`;
   return [`${explained.name} is routed to ${override.target} by the ${override.scope} override of its ${override.match === "exact" ? "name" : "class"}${routed}`, ...explained.outranks.map((other) => `  outranks ${other.scope} -> ${other.target}`)];
 }
 
@@ -214,7 +218,7 @@ export function registerModelsCommand(program: Command, deps: CommandDeps): void
             printJson(explained);
             return;
           }
-          console.log("refusal" in explained ? `${name} is refused: ${explained.refusal}` : `${name} selects the ${explained.kind} and is routed as ${explained.routedAs}`);
+          console.log("refusal" in explained ? `${name} is refused: ${explained.refusal}` : `${name} selects the ${explained.kind} and is routed as ${explained.routedAs}${"ownLogin" in explained && explained.ownLogin === true ? OWN_LOGIN_TEXT : ""}`);
           return;
         }
         const explained = explainVirtualModel(paths, name);

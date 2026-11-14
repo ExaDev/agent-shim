@@ -147,6 +147,20 @@ function expanded(name: string, session: Readonly<{ readonly identityId?: string
 }
 
 describe("expanding a selector against live state", () => {
+  it.each<[string, boolean]>([
+    ["auto/me/claude-opus-5-1", true],
+    ["auto/twin/opus", true],
+    ["auto/plain/opus", true],
+    ["auto/sonnet", true],
+    ["auto/mine/claude-opus-5-1", true],
+    ["auto/z/sonnet", false],
+    ["auto/zid/opus", false],
+    ["auto/work/opus", false],
+  ])("marks %j as on the Anthropic route of the session's own login: %s", (name, own) => {
+    const result = expandSelectorName(name, ports(), ME);
+    expect(result !== undefined && !("refusal" in result) && result.onAnthropic === true).toBe(own);
+  });
+
   it.each<[string, string]>([
     ["auto/z", "z/glm-4.7"],
     ["auto/z/sonnet", "z/glm-4.7"],

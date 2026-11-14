@@ -143,7 +143,11 @@ describe("model explain for a selector and a Claude name", () => {
     // The Keychain lookup `identity add` makes went to the fake, never `security` on this machine.
     expect(keychain.calls.length).toBeGreaterThan(0);
     expect(parseJson((await cli(["model", "explain", "auto/work/claude-opus-5-5", "--json"])).stdout)).toMatchObject({ routedAs: "acct:work/claude-opus-5-5" });
-    expect(parseJson((await cli(["model", "explain", "auto/work/claude-opus-5-5", "--identity", "work", "--json"])).stdout)).toMatchObject({ routedAs: "anthropic/claude-opus-5-5" });
+    expect(parseJson((await cli(["model", "explain", "auto/work/claude-opus-5-5", "--identity", "work", "--json"])).stdout)).toEqual({ name: "auto/work/claude-opus-5-5", kind: "identity", routedAs: "anthropic/claude-opus-5-5", ownLogin: true });
+    expect(parseJson((await cli(["model", "explain", "auto/work/claude-opus-5-5", "--json"])).stdout)).not.toHaveProperty("ownLogin");
+    // Beside a provider file called anthropic, the session's own login is still named as such: the door serves it on the Anthropic route.
+    expectOk(await cli(["provider", "add", "anthropic", "--display-name", "Anthropic-named", "--base-url", "https://anthropic.invalid", "--credential", "env:NAMED_TOKEN"]));
+    expect((await cli(["model", "explain", "auto/work/claude-opus-5-5", "--identity", "work"])).stdout).toContain("routed as anthropic/claude-opus-5-5 on the Anthropic route of the session's own login");
   });
 
   it("still explains a virtual model, as text and as JSON", async () => {
