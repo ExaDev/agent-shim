@@ -1,3 +1,13 @@
+## [14.7.1](https://github.com/ExaDev/agent-shim/compare/v14.7.0...v14.7.1) (2026-11-14)
+
+### Bug Fixes
+
+* **turbo:** key the test cache on every tracked file ([1261232](https://github.com/ExaDev/agent-shim/commit/1261232538a5960b31835510dcec5df857a09216))
+
+### Tests
+
+* run every test that reads the repository's files on each push ([a22f60e](https://github.com/ExaDev/agent-shim/commit/a22f60eb5209b13a235e8910e31952c055bd4177))
+
 ## [14.7.0](https://github.com/ExaDev/agent-shim/compare/v14.6.1...v14.7.0) (2026-11-14)
 
 ### Features
