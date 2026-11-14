@@ -9,7 +9,7 @@ import { createRouteOverridesReader, readRouteOverrides } from "./routeOverrides
 describe("route commands", () => {
   const addZ = ["provider", "add", "z", "--display-name", "z.ai", "--base-url", "https://api.z.ai/api/anthropic", "--credential", "env:Z_API_TOKEN"];
 
-  it("sets, lists and unsets an override per scope, with one report object under --json", async () => {
+  it("sets, lists and removes an override per scope, with one report object under --json", async () => {
     expectOk(await cli(addZ));
     expectOk(await cli(["identity", "add", "work"]));
     const set = await cli(["route", "set", "opus", "z/glm-5.3", "--json"]);
