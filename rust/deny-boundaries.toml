@@ -1,4 +1,4 @@
-# Which workspace crate may depend on which third-party crate. cargo-deny's `wrappers` allows a crate only when one of the listed crates depends on it directly, so each third-party crate stays inside the crates that have a reason for it and cannot spread into the pure library crates. deny.toml holds the allowlist itself, with a reason per crate, and a crate enters it in the change that first depends on it. An entry here that names a workspace crate or a third-party crate not yet in the graph is a confinement waiting for its first use, and cargo-deny reports it as an unmatched wrapper.
+# Which workspace crate may depend on which third-party crate. cargo-deny's `wrappers` allows a crate only when one of the listed crates depends on it directly, so each third-party crate stays inside the crates that have a reason for it and cannot spread into the pure library crates. deny.toml holds the allowlist itself, with a reason per crate, and a crate enters it in the change that first depends on it. An entry that names a crate absent from the graph confines nothing until a crate depends on it, and cargo-deny reports its wrapper as unmatched.
 
 [graph]
 all-features = true
