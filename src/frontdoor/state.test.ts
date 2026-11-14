@@ -256,8 +256,8 @@ describe("front-door session registry", () => {
     const fs = createFakeFarmFs({});
     const dir = paths.frontdoorSessionsDir;
     writeFrontDoorSession(fs, dir, { pid: LIVE, startedAt: 1, token: "t" });
-    writeLaunchRoute(fs, dir, { pid: LIVE, startedAt: 1 }, { kind: "provider", provider: "z", requestedModel: "claude-opus-5-5", movedBy: "override" });
-    expect(readLaunchRoute(fs, dir, { pid: LIVE, startedAt: 1 }, () => undefined)).toEqual({ kind: "provider", provider: "z", requestedModel: "claude-opus-5-5", movedBy: "override" });
+    writeLaunchRoute(fs, dir, { pid: LIVE, startedAt: 1 }, { kind: "provider", provider: "z", requestedModel: "claude-opus-5-5", movedBy: "override", chosenProvider: "m" });
+    expect(readLaunchRoute(fs, dir, { pid: LIVE, startedAt: 1 }, () => undefined)).toEqual({ kind: "provider", provider: "z", requestedModel: "claude-opus-5-5", movedBy: "override", chosenProvider: "m" });
   });
 
   it("drops the route an earlier launch left under a pid when a launcher registers under it again", () => {

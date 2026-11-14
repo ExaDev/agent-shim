@@ -304,6 +304,27 @@ describe("runtime route overrides through the real door, read from a real file",
     }
   }, TIMEOUT_MS);
 
+  it.each<[string, string]>([
+    ["onto the same provider", "z/glm-9"],
+    ["onto the Anthropic route", "anthropic/claude-opus-5-1"],
+  ])("puts a session the person moved to a provider back there once an override that moved it %s is removed", async (_label, target) => {
+    set([[{ kind: "global" }, "sonnet", "z/unrelated"]]);
+    const world = await door();
+    try {
+      await send(world, { model: "z/chosen", requestClass: "main" });
+      set([[{ kind: "global" }, "opus", target]]);
+      await send(world, { model: OPUS, requestClass: "main" });
+      expect(world.contextNow()).toMatchObject({ movedBy: "override", chosenProvider: "z" });
+      writeRouteOverrides(paths, NO_ROUTE_OVERRIDES);
+      await send(world, { model: OPUS, requestClass: "main" });
+      expect(world.upstream.seen.at(-1)?.model).toBe(Z_OPUS_MODEL);
+      expect(world.contextNow()).toMatchObject({ kind: "provider", provider: "z" });
+      expect(world.contextNow()).not.toHaveProperty("movedBy");
+    } finally {
+      await world.close();
+    }
+  }, TIMEOUT_MS);
+
   it("keeps a session an override moved where it is while the session asks for no Claude name", async () => {
     set([[{ kind: "global" }, "opus", "z/glm-9"]]);
     const world = await door();

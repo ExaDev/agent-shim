@@ -17,6 +17,8 @@ describe("where an override's scope and a selector's route come from", () => {
     ["a session launched on a provider, whatever its context", "m", { kind: "provider", provider: "z", movedBy: "override" }, "m"],
     ["a session the person moved to a provider", undefined, { kind: "provider", provider: "z" }, "z"],
     ["a session an override moved to a provider", undefined, { kind: "provider", provider: "z", movedBy: "override" }, undefined],
+    ["a session an override moved off the provider the person chose", undefined, { kind: "anthropic", movedBy: "override", chosenProvider: "z" }, "z"],
+    ["a session an override moved from one provider the person chose to another", undefined, { kind: "provider", provider: "m", movedBy: "override", chosenProvider: "z" }, "z"],
     ["a session on the Anthropic route", undefined, { kind: "anthropic" }, undefined],
     ["a session with no context", undefined, undefined, undefined],
   ])("is the session's own route for %s", (_label, launchProvider, context, expected) => {
