@@ -1,3 +1,9 @@
+## [14.5.1](https://github.com/ExaDev/agent-shim/compare/v14.5.0...v14.5.1) (2026-11-14)
+
+### Documentation
+
+* give the typed API's REST routes with the prefix the door serves them under ([70f7ab7](https://github.com/ExaDev/agent-shim/commit/70f7ab754805186aa75c65033138955dcc95671b)), references [#823](https://github.com/ExaDev/agent-shim/issues/823)
+
 ## [14.5.0](https://github.com/ExaDev/agent-shim/compare/v14.4.0...v14.5.0) (2026-11-13)
 
 ### Features
