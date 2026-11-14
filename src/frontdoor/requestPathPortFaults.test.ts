@@ -91,6 +91,7 @@ describe("what the boundary says, by where the fault is", () => {
       expect(answered.status, answered.text).toBe(HTTP_STATUS.serviceUnavailable);
       expect(answered.text).toContain("could not read its launch registry just now (EMFILE)");
       expect(world.upstream.seen).toEqual([]);
+      expect(world.pipelineLog).toEqual(["front door: a request could not be admitted because its launch registry read failed for the moment (EMFILE); it was answered as retryable"]);
     } finally {
       await world.close();
     }

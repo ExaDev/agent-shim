@@ -307,10 +307,11 @@ export async function serveRouted(incoming: PipelineRequest, deps: PipelineDeps)
   try {
     admission = deps.admit({ url: request.url, headers: request.headers, forwardable: identified.forwardableHeaders });
   } catch (error) {
-    // Admission reads the launch registry; a read that failed for the moment is answered as retryable, never as the launch not being live, and nothing is kept of it.
+    // Admission reads the launch registry; a read that failed for the moment is logged and answered as retryable, never as the launch not being live, and nothing is kept of it.
     if (!isTransientReadError(error)) {
       throw error;
     }
+    deps.log(`front door: a request could not be admitted because its launch registry read failed for the moment (${configFaultOf(error)}); it was answered as retryable`);
     const response = createRoutedResponse(request.response, { deps, session: identified.session, route: "(unadmitted)", request: observed, servedPath: observed.path });
     response.start(HTTP_STATUS.serviceUnavailable, { "Content-Type": "application/json" });
     await response.write(errorBody(HTTP_STATUS.serviceUnavailable, `the front door could not read its launch registry just now (${configFaultOf(error)}); try the request again`));
