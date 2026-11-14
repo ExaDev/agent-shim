@@ -1,3 +1,10 @@
+## [14.6.1](https://github.com/ExaDev/agent-shim/compare/v14.6.0...v14.6.1) (2026-11-14)
+
+### Bug Fixes
+
+* **frontdoor:** answer a refused Remote Control verb with the status of whose fault it is ([8fdfbf6](https://github.com/ExaDev/agent-shim/commit/8fdfbf6cc42c809421b8fe28155978cedf08f6eb)), references [#823](https://github.com/ExaDev/agent-shim/issues/823)
+* **frontdoor:** answer a refused Remote Control write with the status of whose fault it is ([eb7cd0b](https://github.com/ExaDev/agent-shim/commit/eb7cd0b7bbf427e3c13391c3fc4e5519f0f9529f)), references [#823](https://github.com/ExaDev/agent-shim/issues/823)
+
 ## [14.6.0](https://github.com/ExaDev/agent-shim/compare/v14.5.1...v14.6.0) (2026-11-14)
 
 ### Features
