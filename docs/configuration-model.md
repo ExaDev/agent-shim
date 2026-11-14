@@ -549,12 +549,12 @@ Every refusal the door answers carries Anthropic's error body, `{ "type": "error
 
 `<MAX_NAME_BYTES>` is the longest name agent-shim stores (`MAX_NAME_BYTES` in `src/config/names.ts`). `<code>` is the system's error code, and `<fault>` the code, or for a file of another shape the keys it got wrong and what was expected there; no message names the file's path or its contents. The identity header is refused before any file is read by it. Each refusal is also logged on the door's log, naming the same fault and never the path.
 
-Only a 503 is retryable: Claude Code's client (the Anthropic SDK) retries a 5xx, and the same request may succeed at once, since nothing kept the failure. Which codes are which is decided in one place, `src/fileFaults.ts` (`fileFaultCodeOf`, and `isTransientReadError` in `src/readableConfig.ts` over it):
+A 503 is the answer to try the request again: nothing kept the failure, so the same request may succeed at once. Claude Code's client (the Anthropic SDK) retries any 5xx, a 500 included, and a 500 above meets the same fault again until its path is fixed. Which codes are which is decided in one place, `src/fileFaults.ts` (`fileFaultCodeOf`, and `isTransientReadError` in `src/readableConfig.ts` over it):
 
 - **A fault of the file's own**, which stays true until the file or a directory on its path changes: `ENOENT` (nothing there), `ENOTDIR` (a path through a file), `EISDIR` (a directory in its place), `ELOOP` (a symlink loop), `ENAMETOOLONG`, `EACCES` (no permission), `EPERM` and `EROFS` (a read-only file system, which a write meets). `EPERM` is the file's own: macOS gives it for a file a flag or its privacy controls deny, which stays so until someone changes them.
 - **A failure of the moment**: every other system error code, `EMFILE` and `ENFILE` (out of file descriptors), `EAGAIN`, `EIO`, `EBUSY`, `EINTR` and `ENOSPC` among them. Such a failure is never kept under a file's revision, and the next request reads the file again.
 
-Each interval timer in `src` (the door's catalogue, window, job and headroom keepers, its pool usage refresh, the Remote Control sweeps and keep-alive, the connect surface's revalidation and the watchdogs) ticks through `keepTicking` (`src/keepTicking.ts`), which a source test holds them to: a failure in a tick, thrown or rejected, is logged once while it repeats and the next tick runs, so it does not end the door.
+A `setInterval` or `clock.every` call in the TypeScript of `src` ticks through `keepTicking` (`src/keepTicking.ts`), but where an allowance in `src/keepTicking.repo.test.ts`, the source test that holds them to it, says why not: a failure in a tick, thrown or rejected, is logged once while it repeats and the next tick runs, so it does not end the door. The front door and headroom supervisors, which wait between ticks rather than run on a timer, catch a failed tick the same way.
 
 ## Pools: picking an account at launch
 
