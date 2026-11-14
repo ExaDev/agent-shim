@@ -3,6 +3,23 @@ import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
+import { isSourceModule } from "./sourceModules";
+
+/** The source modules of `src` (`isSourceModule`), as paths relative to it. */
+function sourceModules(): readonly string[] {
+  return fs.readdirSync(__dirname, { recursive: true, encoding: "utf8" }).filter(isSourceModule).sort();
+}
+
+/** The text of `module` under `src`, or an empty text for one that is gone by the time it is read: another test writes and removes a probe module in `src` while the suite runs, and a module that is no longer there holds nothing. */
+function sourceOf(module: string): string {
+  try {
+    return fs.readFileSync(path.join(__dirname, module), "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return "";
+    throw error;
+  }
+}
+
 /** The interval timers `src` may start with a callback that is not a `keepTicking(...)` call, by module and enclosing function, each with why. */
 const ALLOWED: Readonly<Record<string, string>> = {
   "frontdoor/doorWorker.ts every": "the clock's own timer, whose one caller hands it a keepTicking callback (held by the clock.every check below)",
@@ -33,25 +50,6 @@ function unwrappedTimers(module: string, source: string): readonly string[] {
   };
   visit(file);
   return found;
-}
-
-/** The text of `module` under `src`, or an empty text for one that is gone by the time it is read: another test writes and removes a probe module in `src` while the suite runs, and a module that is no longer there holds nothing. */
-function sourceOf(module: string): string {
-  try {
-    return fs.readFileSync(path.join(__dirname, module), "utf8");
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return "";
-    throw error;
-  }
-}
-
-/** Every non-test module under `src`, relative to it. */
-function modules(directory: string): readonly string[] {
-  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-    const full = path.join(directory, entry.name);
-    if (entry.isDirectory()) return modules(full);
-    return entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts") && !entry.name.endsWith("TestWorld.ts") ? [path.relative(__dirname, full)] : [];
-  });
 }
 
 /** The loops in `src` that wait between turns (`for (;;)` or `while (true)` whose body awaits a pause, sleep, delay or wait) but need no catch of their own, by module and enclosing function, each with why: each is a bounded wait for one request or one start, whose failure is that request's or that start's to answer. */
@@ -146,9 +144,9 @@ function hasEmbeddedTimer(module: string, source: string): boolean {
 }
 
 describe("a background loop in a long-lived process", () => {
-  const found = modules(__dirname).flatMap((module) => unwrappedTimers(module, sourceOf(module)));
+  const found = sourceModules().flatMap((module) => unwrappedTimers(module, sourceOf(module)));
 
-  it("ticks through keepTicking at each setInterval and clock.every call in the non-test modules of src, but where an allowance says why not", () => {
+  it("ticks through keepTicking at each setInterval and clock.every call in the source modules of src, but where an allowance says why not", () => {
     expect(found.filter((key) => ALLOWED[key] === undefined)).toEqual([]);
   });
 
@@ -157,7 +155,7 @@ describe("a background loop in a long-lived process", () => {
   });
 
   it("has in each loop that waits between turns at least one try whose catch goes on to the next turn, but where an allowance says why not; what the turn does outside that try is not read", () => {
-    const loops = modules(__dirname).flatMap((module) => uncaughtWaitLoops(module, sourceOf(module)));
+    const loops = sourceModules().flatMap((module) => uncaughtWaitLoops(module, sourceOf(module)));
     expect(loops.filter((key) => BOUNDED_WAITS[key] === undefined)).toEqual([]);
     expect(Object.keys(BOUNDED_WAITS).filter((key) => !loops.includes(key))).toEqual([]);
   });
@@ -171,7 +169,7 @@ describe("a background loop in a long-lived process", () => {
   });
 
   it("names each module that writes a timer inside a string of code, and why it needs no keepTicking", () => {
-    const embedded = modules(__dirname).filter((module) => hasEmbeddedTimer(module, sourceOf(module)));
+    const embedded = sourceModules().filter((module) => hasEmbeddedTimer(module, sourceOf(module)));
     expect(embedded.filter((module) => EMBEDDED_TIMERS[module] === undefined)).toEqual([]);
     expect(Object.keys(EMBEDDED_TIMERS).filter((module) => !embedded.includes(module))).toEqual([]);
   });

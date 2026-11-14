@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { CodexRoutePorts } from "../codex/route";
 import { HTTP_STATUS } from "../codex/http";
 import { fakeAuth, fakeResponse, parseAnthropicSse, recordingFetch, sameUpstreamForEveryLogin, type RecordedCall } from "../codex/testing";
-import { FAKE_HOME, admitLaunchToken, fakeAsyncCredentials, fakeFs, followsLaunchFlag, launchOf, mainLoopRoutesOfLiveSessions } from "../test-helpers";
+import { FAKE_HOME, admitLaunchToken, errorWithCode, fakeAsyncCredentials, fakeFs, followsLaunchFlag, launchOf, mainLoopRoutesOfLiveSessions } from "../test-helpers";
 import type { SessionIdentity } from "./route";
 import { AUTH_HEADER, HEADROOM_FLAG_HEADER, IDENTITY_HEADER, SESSION_HEADER, type FrontDoorRoute } from "./route";
 import { serveRouted, type PipelineDeps, type RouteResolution } from "./pipeline";
@@ -697,7 +697,7 @@ describe("the TLS provider listener", () => {
 
 describe.each(["EMFILE", "ENOSPC"])("a request whose pipeline fails, when the log the server is given throws %s", (code) => {
   it("is answered with the door's 500, and the server serves the next request", async () => {
-    const throwingLog = (): never => { throw new Error(`${code}: failed, open '/state/logs/frontdoor.log'`); };
+    const throwingLog = (): never => { throw errorWithCode(`${code}: failed, open '/state/logs/frontdoor.log'`, code); };
     const server = createFrontDoorServer(async () => { await Promise.reject(new Error("the route failed")); }, throwingLog);
     const handle = await listenFrontDoor(server);
     try {
