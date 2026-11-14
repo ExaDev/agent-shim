@@ -5,12 +5,17 @@
 //! not values. A value of a known class (see [`CLASSES`]) passes only in the form a scrubber writes: a made-up filler,
 //! a reserved namespace or a documentation address.
 //!
-//! What is scanned is what the files mean, not only what they spell. A JSON file is parsed, so a value written with
-//! `\u` escapes is read as the text it stands for, and every string and every object key is scanned. The encodings the
-//! case format gives for content are decoded and scanned too: the bytes of a `base64` file body (as text, and as JSON
-//! when they parse), the code units of a `codeUnits` array, and the members of `$object` and `$number` wrappers, which
-//! are plain strings and arrays. A test lists the forms in `case.schema.json` and fails when the schema gains one this
-//! file does not handle. The format never concatenates fields, so nothing is assembled from several strings.
+//! What is scanned is what the files mean and what they spell. A JSON file is parsed, so a value written with `\u`
+//! escapes is read as the text it stands for, and every string and every object key is scanned; the raw lines are
+//! scanned too, so a value a duplicate key hides from the parse is still found at its line. Decoded and scanned as
+//! text: the bytes of a `base64` file body (one level, and as JSON when they parse), the code units of a `codeUnits`
+//! array, percent-encoded text, and the `startsWith` and `contains` fragments of a message expectation joined in order
+//! as the one running text a loader reads. The members of `$object` and `$number` wrappers are plain strings and
+//! arrays. Not decoded: a second layer of base64, base64 held as plain text or inside a `codeUnits` array, and any
+//! compression. A `base64` body that starts with a compression header is refused, and so is a case of a kind with no
+//! registered decoder ([`DECODED_KINDS`]), so a recorded HTTP body cannot enter the corpus until the scan decodes the
+//! encodings such bodies use. A test lists the forms in `case.schema.json` and fails when the schema gains one this
+//! file does not handle.
 //!
 //! A finding is located by file and JSON pointer (`line N` for a file that is not JSON). A deliberate exception is an
 //! entry in `conformance/scrub-allow.json` bound to one class, one file, one pointer and the SHA-256 of the finding's
@@ -22,7 +27,7 @@
 //! not carry what the check found. The location of a finding inside an object key is the index of the key, for the
 //! same reason.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -44,6 +49,25 @@ const API_KEY_MIN: usize = 20;
 
 /// Digits of the two lengths of a hexadecimal session id: 128 bits and 256 bits.
 const HEX_ID_LENGTHS: [usize; 2] = [32, 64];
+
+/// The first bytes of gzip, and of zlib with each compression level, which the scan does not decode.
+const COMPRESSED_MAGIC: [&[u8]; 5] = [
+    &[0x1f, 0x8b],
+    &[0x78, 0x01],
+    &[0x78, 0x5e],
+    &[0x78, 0x9c],
+    &[0x78, 0xda],
+];
+
+/// The case kinds whose content the scan decodes completely. A kind that can carry a recorded body is added here only
+/// together with the decoder for the encodings such a body uses.
+const DECODED_KINDS: [&str; 1] = ["function"];
+
+/// What a file body in a compressed form is reported as: the scan cannot read inside it, so it may not be committed.
+const UNDECODED_BODY: &str = "undecoded-body";
+
+/// What a case of a kind with no registered decoder is reported as.
+const UNREGISTERED_KIND: &str = "unregistered-kind";
 
 /// The namespace of made-up UUIDs.
 const FAKE_UUID_PREFIX: &str = "00000000-0000-4000-8000-";
@@ -119,8 +143,23 @@ pub const CLASSES: &[Class] = &[
     },
     Class {
         name: "hex-id",
-        allowable: true,
+        allowable: false,
         summary: "32 or 64 hexadecimal digits not starting with sixteen zeros",
+    },
+    Class {
+        name: "google-token",
+        allowable: false,
+        summary: "a Google OAuth access token (`ya29.`) or refresh token (`1//`) with its filler",
+    },
+    Class {
+        name: "vendor-token",
+        allowable: false,
+        summary: "a Slack (`xoxb-`, `xoxa-`, `xoxp-`, `xoxr-`, `xoxs-`), npm (`npm_`), GitLab (`glpat-`) or Stripe (`sk_live_`, `rk_live_`, `sk_test_`, `rk_test_`) token with its filler",
+    },
+    Class {
+        name: "credential-parameter",
+        allowable: false,
+        summary: "the value of an `x-api-key`, `x-auth-token` or `api-key` header, of an `Authorization: token` header, or of an `access_token`, `refresh_token`, `id_token`, `auth_token`, `api_key`, `apikey` or `client_secret` parameter",
     },
     Class {
         name: "email",
@@ -131,6 +170,16 @@ pub const CLASSES: &[Class] = &[
         name: "ipv4-address",
         allowable: true,
         summary: "an IPv4 address outside loopback and 192.0.2.0/24",
+    },
+    Class {
+        name: "ipv6-address",
+        allowable: true,
+        summary: "an IPv6 address outside loopback and 2001:db8::/32",
+    },
+    Class {
+        name: "mac-address",
+        allowable: true,
+        summary: "a MAC address that is not all zeros, all ones or in the documentation range",
     },
     Class {
         name: "home-path",
@@ -293,10 +342,35 @@ fn findings_under(root: &Path) -> Result<Vec<(String, Located)>, TaskError> {
         let text = String::from_utf8_lossy(&bytes);
         let mut located = Vec::new();
         match serde_json::from_str::<Value>(&text) {
-            Ok(document) if relative.ends_with(".json") => walk(&document, "", &mut located),
-            _ => {
+            Ok(document) if relative.ends_with(".json") => {
+                walk(&document, "", &mut located);
+                // The text as well as its parse: a duplicate key keeps one value in the parse and both in the file, so
+                // whatever the raw lines hold beyond what the parse accounts for is reported at its line.
+                let mut accounted: BTreeMap<(&'static str, String), usize> = BTreeMap::new();
+                for entry in &located {
+                    *accounted
+                        .entry((entry.finding.class, entry.finding.text.clone()))
+                        .or_insert(0) += 1;
+                }
                 for (index, line) in text.lines().enumerate() {
                     for finding in scan_line(line) {
+                        let left = accounted
+                            .entry((finding.class, finding.text.clone()))
+                            .or_insert(0);
+                        if *left > 0 {
+                            *left -= 1;
+                        } else {
+                            located.push(Located {
+                                pointer: format!("line {}", index + 1),
+                                finding,
+                            });
+                        }
+                    }
+                }
+            }
+            _ => {
+                for (index, line) in text.lines().enumerate() {
+                    for finding in scan_text(line) {
                         located.push(Located {
                             pointer: format!("line {}", index + 1),
                             finding,
@@ -310,7 +384,11 @@ fn findings_under(root: &Path) -> Result<Vec<(String, Located)>, TaskError> {
             let a_digest = relative == ALLOW_FILE
                 && entry.finding.class == "hex-id"
                 && entry.pointer.ends_with("/sha256");
-            if !a_digest {
+            // A fixture is a file a loader must refuse or accept to prove its rules, and is never run as a case, so the
+            // kind of the case it holds needs no decoder; its strings and bodies are scanned like any other.
+            let unrun_fixture =
+                entry.finding.class == UNREGISTERED_KIND && relative.starts_with("fixtures/");
+            if !a_digest && !unrun_fixture {
                 found.push((relative.clone(), entry));
             }
         }
@@ -418,11 +496,33 @@ fn walk(value: &Value, pointer: &str, out: &mut Vec<Located>) {
             if let Some(Value::String(encoded)) = map.get("base64")
                 && let Some(bytes) = decode_base64(encoded)
             {
+                if COMPRESSED_MAGIC
+                    .iter()
+                    .any(|magic| bytes.starts_with(magic))
+                {
+                    out.push(Located {
+                        pointer: format!("{pointer}/base64"),
+                        finding: finding(UNDECODED_BODY, "compressed"),
+                    });
+                }
                 let text = String::from_utf8_lossy(&bytes);
                 scan_string(&text, &format!("{pointer}/base64|decoded"), out);
                 if let Ok(inner) = serde_json::from_str::<Value>(&text) {
                     walk(&inner, &format!("{pointer}/base64|json"), out);
                 }
+            }
+            if let Some(joined) = message_fragments(map) {
+                scan_string(&joined, &format!("{pointer}#fragments"), out);
+            }
+            if let Some(Value::String(kind)) = map.get("kind")
+                && map.contains_key("id")
+                && map.contains_key("from")
+                && !DECODED_KINDS.contains(&kind.as_str())
+            {
+                out.push(Located {
+                    pointer: format!("{pointer}/kind"),
+                    finding: finding(UNREGISTERED_KIND, "kind"),
+                });
             }
             for (position, (key, item)) in map.iter().enumerate() {
                 let found = scan_text(key);
@@ -442,6 +542,32 @@ fn walk(value: &Value, pointer: &str, out: &mut Vec<Located>) {
         }
         Value::Null | Value::Bool(_) | Value::Number(_) => {}
     }
+}
+
+/// What a message expectation (`startsWith` and `contains`) reads as: the fragments in order, as one running text, since
+/// a loader finds each after the end of the one before and a value split across a boundary is still one value.
+fn message_fragments(map: &serde_json::Map<String, Value>) -> Option<String> {
+    if map.is_empty()
+        || !map
+            .keys()
+            .all(|key| key == "startsWith" || key == "contains")
+    {
+        return None;
+    }
+    let text_of = |value: &Value| match value {
+        Value::String(text) => Some(text.clone()),
+        other => code_units_text(other),
+    };
+    let mut joined = map.get("startsWith").and_then(text_of).unwrap_or_default();
+    for fragment in map
+        .get("contains")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        joined.push_str(&text_of(fragment).unwrap_or_default());
+    }
+    Some(joined)
 }
 
 /// The text a `{ "codeUnits": [...] }` object stands for, with an unpaired surrogate read as U+FFFD.
@@ -467,8 +593,42 @@ fn scan_string(text: &str, pointer: &str, out: &mut Vec<Located>) {
     }
 }
 
+/// The findings in a piece of text and in the text with its percent-encoding undone, once each.
 fn scan_text(text: &str) -> Vec<Finding> {
-    text.lines().flat_map(scan_line).collect()
+    let mut found: Vec<Finding> = text.lines().flat_map(scan_line).collect();
+    if text.contains('%') {
+        for finding in percent_decoded(text).lines().flat_map(scan_line) {
+            if !found.contains(&finding) {
+                found.push(finding);
+            }
+        }
+    }
+    found
+}
+
+/// `text` with each `%XX` read as the byte it stands for, and anything else as it is.
+fn percent_decoded(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let hex = |offset: usize| {
+            bytes
+                .get(index + offset)
+                .and_then(|byte| char::from(*byte).to_digit(16))
+        };
+        if bytes[index] == b'%'
+            && let (Some(high), Some(low)) = (hex(1), hex(2))
+            && let Ok(byte) = u8::try_from(high * 16 + low)
+        {
+            out.push(byte);
+            index += 3;
+        } else {
+            out.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Bytes of standard or URL-safe base64 with or without padding, or `None` when the text is not base64.
@@ -513,12 +673,17 @@ fn scan_line(line: &str) -> Vec<Finding> {
     bearer_tokens(line, &mut found);
     basic_auth(line, &mut found);
     cookie_values(line, &mut found);
+    credential_parameters(line, &mut found);
+    google_tokens(line, &mut found);
+    vendor_tokens(line, &mut found);
     private_keys(line, &mut found);
     uuids(line, &mut found);
     prefixed_ids(line, &mut found);
     hex_ids(line, &mut found);
     emails(line, &mut found);
     addresses(line, &mut found);
+    ipv6_addresses(line, &mut found);
+    mac_addresses(line, &mut found);
     home_paths(line, &mut found);
     host_names(line, &mut found);
     ssh_targets(line, &mut found);
@@ -712,14 +877,7 @@ fn basic_auth(line: &str, found: &mut Vec<Finding>) {
 }
 
 fn cookie_values(line: &str, found: &mut Vec<Finding>) {
-    const SESSION_NAMES: [&str; 6] = [
-        "sessionkey",
-        "sessionid",
-        "session_id",
-        "sid",
-        "auth_token",
-        "refresh_token",
-    ];
+    const SESSION_NAMES: [&str; 4] = ["sessionkey", "sessionid", "session_id", "sid"];
     let bytes = line.as_bytes();
     let lower = line.to_ascii_lowercase();
     let mut report = |value: &str| {
@@ -748,6 +906,112 @@ fn cookie_values(line: &str, found: &mut Vec<Finding>) {
                 continue;
             }
             report(run_from(bytes, index + name.len() + 1, is_credential_char));
+        }
+    }
+}
+
+fn google_tokens(line: &str, found: &mut Vec<Finding>) {
+    const ACCESS_FILLER: usize = 20;
+    const REFRESH_FILLER: usize = 30;
+    let bytes = line.as_bytes();
+    for index in occurrences(line, "ya29.") {
+        let filler = run_from(bytes, index + "ya29.".len(), is_base64url);
+        if !follows_alphanumeric(bytes, index) && filler.len() >= ACCESS_FILLER && !is_fake(filler)
+        {
+            found.push(finding(
+                "google-token",
+                &line[index..index + "ya29.".len() + filler.len()],
+            ));
+        }
+    }
+    for index in occurrences(line, "1//") {
+        let filler = run_from(bytes, index + "1//".len(), is_base64url);
+        let after_scheme = index > 0
+            && (bytes[index - 1].is_ascii_alphanumeric() || b":/".contains(&bytes[index - 1]));
+        if !after_scheme && filler.len() >= REFRESH_FILLER && !is_fake(filler) {
+            found.push(finding(
+                "google-token",
+                &line[index..index + "1//".len() + filler.len()],
+            ));
+        }
+    }
+}
+
+fn vendor_tokens(line: &str, found: &mut Vec<Finding>) {
+    // The prefix, the least filler length and which characters the filler holds.
+    const VENDORS: [(&str, usize, bool); 10] = [
+        ("xoxb-", 10, true),
+        ("xoxa-", 10, true),
+        ("xoxp-", 10, true),
+        ("xoxr-", 10, true),
+        ("xoxs-", 10, true),
+        ("npm_", 36, false),
+        ("glpat-", 20, true),
+        ("sk_live_", 16, false),
+        ("rk_live_", 16, false),
+        ("sk_test_", 16, false),
+    ];
+    const STRIPE_RESTRICTED_TEST: (&str, usize, bool) = ("rk_test_", 16, false);
+    let bytes = line.as_bytes();
+    for (prefix, least, with_hyphens) in VENDORS.into_iter().chain([STRIPE_RESTRICTED_TEST]) {
+        for index in occurrences(line, prefix) {
+            let filler = run_from(bytes, index + prefix.len(), |byte| {
+                byte.is_ascii_alphanumeric() || (with_hyphens && byte == b'-')
+            });
+            if !follows_alphanumeric(bytes, index) && filler.len() >= least && !is_fake(filler) {
+                found.push(finding(
+                    "vendor-token",
+                    &line[index..index + prefix.len() + filler.len()],
+                ));
+            }
+        }
+    }
+}
+
+fn credential_parameters(line: &str, found: &mut Vec<Finding>) {
+    const HEADERS: [&str; 3] = ["x-api-key", "x-auth-token", "api-key"];
+    const PARAMETERS: [&str; 7] = [
+        "access_token",
+        "refresh_token",
+        "id_token",
+        "auth_token",
+        "api_key",
+        "apikey",
+        "client_secret",
+    ];
+    let bytes = line.as_bytes();
+    let lower = line.to_ascii_lowercase();
+    let mut report = |value: &str| {
+        if value.len() >= VALUE_MIN && !is_fake(value) {
+            found.push(finding("credential-parameter", value));
+        }
+    };
+    for name in HEADERS {
+        for index in occurrences(&lower, name) {
+            let after = index + name.len();
+            let separators = run_from(bytes, after, |byte| b"\"': ".contains(&byte));
+            if !follows_alphanumeric(bytes, index) && separators.contains(':') {
+                report(run_from(
+                    bytes,
+                    after + separators.len(),
+                    is_credential_char,
+                ));
+            }
+        }
+    }
+    for name in PARAMETERS {
+        for index in occurrences(&lower, name) {
+            if !follows_alphanumeric(bytes, index) && bytes.get(index + name.len()) == Some(&b'=') {
+                report(run_from(bytes, index + name.len() + 1, is_credential_char));
+            }
+        }
+    }
+    for index in occurrences(&lower, "authorization:") {
+        let start = index + "authorization:".len();
+        let rest = lower[start..].trim_start();
+        if rest.starts_with("token ") {
+            let value_start = line.len() - rest.len() + "token ".len();
+            report(run_from(bytes, value_start, is_credential_char));
         }
     }
 }
@@ -925,6 +1189,69 @@ fn addresses(line: &str, found: &mut Vec<Finding>) {
     }
 }
 
+fn ipv6_addresses(line: &str, found: &mut Vec<Finding>) {
+    let bytes = line.as_bytes();
+    let is_word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let mut index = 0;
+    while index < bytes.len() {
+        let run = run_from(bytes, index, |byte| {
+            byte.is_ascii_hexdigit() || byte == b':'
+        });
+        if run.is_empty() {
+            index += 1;
+            continue;
+        }
+        let colons = run.matches(':').count();
+        let groups: Vec<&str> = run.split(':').filter(|group| !group.is_empty()).collect();
+        let bounded = !(index > 0 && is_word(bytes[index - 1]))
+            && bytes
+                .get(index + run.len())
+                .is_none_or(|next| !is_word(*next));
+        let shape = (run.contains("::") && colons >= 2 && groups.len() >= 2) || colons == 7;
+        let lower = run.to_ascii_lowercase();
+        let reserved = lower == "::1" || lower.starts_with("2001:db8");
+        let wide_enough = groups.iter().all(|group| group.len() <= 4)
+            && groups.iter().any(|group| group.len() >= 2);
+        if bounded && shape && wide_enough && !reserved {
+            found.push(finding("ipv6-address", run));
+        }
+        index += run.len();
+    }
+}
+
+fn mac_addresses(line: &str, found: &mut Vec<Finding>) {
+    const LENGTH: usize = 17;
+    let bytes = line.as_bytes();
+    let is_word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    for index in 0..bytes.len() {
+        let Some(window) = bytes.get(index..index + LENGTH) else {
+            break;
+        };
+        let separator = window[2];
+        let shaped = (separator == b':' || separator == b'-')
+            && window.iter().enumerate().all(|(position, byte)| {
+                if position % 3 == 2 {
+                    *byte == separator
+                } else {
+                    byte.is_ascii_hexdigit()
+                }
+            });
+        let bounded = !(index > 0 && (is_word(bytes[index - 1]) || bytes[index - 1] == separator))
+            && bytes
+                .get(index + LENGTH)
+                .is_none_or(|next| !(is_word(*next) || *next == separator));
+        let text = String::from_utf8_lossy(window)
+            .to_ascii_lowercase()
+            .replace('-', ":");
+        let reserved = text == "00:00:00:00:00:00"
+            || text == "ff:ff:ff:ff:ff:ff"
+            || text.starts_with("00:00:5e:00:53");
+        if shaped && bounded && !reserved {
+            found.push(finding("mac-address", &String::from_utf8_lossy(window)));
+        }
+    }
+}
+
 fn home_paths(line: &str, found: &mut Vec<Finding>) {
     let bytes = line.as_bytes();
     let lower = line.to_ascii_lowercase();
@@ -1031,7 +1358,7 @@ mod tests {
     }
 
     /// One made-up value of each class, in the shape a real one has, and the class each must be reported as.
-    fn real_shaped() -> Vec<(&'static str, String)> {
+    fn base_real_shaped() -> Vec<(&'static str, String)> {
         vec![
             (
                 "anthropic-key",
@@ -1207,7 +1534,7 @@ mod tests {
 
     /// The same classes in the made-up forms a scrubber writes, and near misses of each, none of which may be
     /// reported.
-    fn near_misses() -> Vec<(&'static str, String)> {
+    fn base_near_misses() -> Vec<(&'static str, String)> {
         vec![
             (
                 "anthropic-key",
@@ -1315,6 +1642,89 @@ mod tests {
             ),
             ("ssh-target", join(&["s", "sh ", "user@", "example.com"])),
             ("ssh-target", "ssh -V and a sshd line".to_owned()),
+        ]
+    }
+
+    fn real_shaped() -> Vec<(&'static str, String)> {
+        let mut all = base_real_shaped();
+        all.extend(more_real_shaped());
+        all
+    }
+
+    fn near_misses() -> Vec<(&'static str, String)> {
+        let mut all = base_near_misses();
+        all.extend(more_near_misses());
+        all
+    }
+
+    fn more_real_shaped() -> Vec<(&'static str, String)> {
+        vec![
+            (
+                "google-token",
+                join(&["ya", "29.", "a0AfB_byCZk3Jq8Lm2Xv9Rt5Wy7Nb4"]),
+            ),
+            (
+                "google-token",
+                join(&["1", "//", "0gZk3Jq8Lm2Xv9Rt5Wy7Nb4Hc6Pd1Qe2Rf3SgTu4Vw5"]),
+            ),
+            (
+                "vendor-token",
+                join(&["xo", "xb-", "123456789012-Zk3Jq8Lm2Xv9Rt5Wy7Nb4Hc6"]),
+            ),
+            (
+                "vendor-token",
+                join(&["np", "m_", "Zk3Jq8Lm2Xv9Rt5Wy7Nb4Hc6Pd1Qe2Rf3SgT"]),
+            ),
+            (
+                "vendor-token",
+                join(&["glp", "at-", "Zk3Jq8Lm2Xv9Rt5Wy7Nb4"]),
+            ),
+            (
+                "vendor-token",
+                join(&["sk", "_live_", "Zk3Jq8Lm2Xv9Rt5Wy7Nb4Hc6"]),
+            ),
+            (
+                "credential-parameter",
+                join(&["x-api", "-key: ", "q8Zk3Jm2Xv9Rt5Wy7Nb4"]),
+            ),
+            (
+                "credential-parameter",
+                join(&["\"X-Api", "-Key\": \"", "q8Zk3Jm2Xv9Rt5Wy7Nb4\""]),
+            ),
+            (
+                "credential-parameter",
+                join(&["Authorization: tok", "en ", "q8Zk3Jm2Xv9Rt5Wy7Nb4"]),
+            ),
+            (
+                "credential-parameter",
+                join(&[
+                    "https://api.example.com/v1?access",
+                    "_token=",
+                    "q8Zk3Jm2Xv9Rt5Wy7Nb4&x=1",
+                ]),
+            ),
+            (
+                "credential-parameter",
+                join(&["refresh", "_token=", "q8Zk3Jm2Xv9Rt5Wy7Nb4"]),
+            ),
+            ("ipv6-address", join(&["fe80:", ":1c2d:3e4f:5a6b:7c8d"])),
+            ("ipv6-address", join(&["2a02:c7f:", "1234:5600:0:0:0:1"])),
+            ("ipv6-address", join(&["2606:4700:", "4700::6810:84e5"])),
+            ("mac-address", join(&["3c:22:", "fb:a1:9d:7e"])),
+            ("mac-address", join(&["3C-22-", "FB-A1-9D-7E"])),
+        ]
+    }
+
+    fn more_near_misses() -> Vec<(&'static str, String)> {
+        vec![
+            ("google-token", join(&["ya", "29.", "FAKE000000000000000001"])),
+            ("google-token", "ya29. and a 1//2 fraction and http://1//short".to_owned()),
+            ("vendor-token", join(&["xo", "xb-", "FAKE000000000000001"])),
+            ("vendor-token", "xoxb- and npm_ and glpat- and sk_live_ prefixes, sk_tests, npm_config_cache".to_owned()),
+            ("credential-parameter", join(&["x-api", "-key: ", "FAKE000000000001"])),
+            ("credential-parameter", "the x-api-key header, access_token= and an access_token field, authorization: token".to_owned()),
+            ("ipv6-address", "::1 and 2001:db8::1 and 12:34:56 and std::vec and a::b".to_owned()),
+            ("mac-address", "00:00:00:00:00:00 and ff:ff:ff:ff:ff:ff and 00:00:5e:00:53:01 and 3c:22:fb:a1:9d".to_owned()),
         ]
     }
 
@@ -1773,6 +2183,127 @@ mod tests {
             scan_line(&text)
                 .iter()
                 .any(|found| found.class == "home-path")
+        );
+    }
+
+    #[test]
+    fn a_value_hidden_by_a_duplicate_key_is_found_in_the_raw_text() {
+        let key = join(&["sk", "-ant-", "oat01-", "Zk3Jq8Lm2Xv9Rt5Wy7Nb4Hc6"]);
+        let problems = problems_of(
+            "duplicate",
+            &[(
+                "function/x.json",
+                &format!("{{\n\"v\": \"{key}\",\n\"v\": \"x\"\n}}"),
+            )],
+        );
+        assert_eq!(problems, ["function/x.json: line 2: anthropic-key"]);
+        // A value the parse accounts for once is reported once, at its pointer.
+        let once = problems_of(
+            "once",
+            &[("function/x.json", &format!("{{\n\"v\": \"{key}\"\n}}"))],
+        );
+        assert_eq!(once, ["function/x.json: /v: anthropic-key"]);
+    }
+
+    #[test]
+    fn a_value_split_across_message_fragments_is_found_as_running_text() {
+        let first = join(&["sk", "-an"]);
+        let rest = join(&["t-", "oat01-", "Zk3Jq8Lm2Xv9Rt5Wy7Nb4Hc6"]);
+        let file = format!(
+            "{{\"expect\":{{\"throws\":{{\"name\":\"E\",\"message\":{{\"startsWith\":\"{first}\",\"contains\":[\"{rest}\"]}}}}}}}}"
+        );
+        let problems = problems_of("fragments", &[("function/x.json", &file)]);
+        assert!(problems.iter().any(|problem| problem.contains("#fragments") && problem.ends_with("anthropic-key")), "{problems:?}");
+        let units = rest
+            .bytes()
+            .map(|byte| byte.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let coded =
+            format!("{{\"startsWith\":\"{first}\",\"contains\":[{{\"codeUnits\":[{units}]}}]}}");
+        let problems = problems_of("fragments-units", &[("function/x.json", &coded)]);
+        assert!(
+            problems
+                .iter()
+                .any(|problem| problem.contains("#fragments")),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn a_percent_encoded_value_is_found() {
+        let key = join(&["sk", "%2Dant%2D", "oat01%2D", "Zk3Jq8Lm2Xv9Rt5Wy7Nb4Hc6"]);
+        let problems = problems_of(
+            "percent",
+            &[(
+                "function/x.json",
+                &format!("{{\"a\":\"?x={key}\",\"{key}\":1}}"),
+            )],
+        );
+        assert!(
+            problems.contains(&"function/x.json: /a: anthropic-key".to_owned()),
+            "{problems:?}"
+        );
+        assert!(
+            problems
+                .iter()
+                .any(|problem| problem.ends_with("#key: anthropic-key")),
+            "{problems:?}"
+        );
+        assert_eq!(percent_decoded("a%2Fb%zz%4"), "a/b%zz%4");
+    }
+
+    #[test]
+    fn a_compressed_body_or_a_kind_without_a_decoder_is_refused() {
+        let gzip = "H4sIAAAAAAAAA6tWSkksSVSyUjLUM1DSUQLzjIFi";
+        let compressed = format!("{{\"files\":{{\"x\":{{\"base64\":\"{gzip}\"}}}}}}");
+        assert_eq!(
+            problems_of("gzip", &[("function/x.json", &compressed)]),
+            ["function/x.json: /files/x/base64: undecoded-body"]
+        );
+        let case = |kind: &str| {
+            format!(
+                "{{\"cases\":[{{\"id\":\"a.b\",\"from\":\"x.test.ts: a > b\",\"kind\":\"{kind}\",\"steps\":[]}}]}}"
+            )
+        };
+        assert_eq!(
+            problems_of("kind-ok", &[("function/x.json", &case("function"))]),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            problems_of("kind-new", &[("exchange/x.json", &case("exchange"))]),
+            ["exchange/x.json: /cases/0/kind: unregistered-kind"]
+        );
+        assert_eq!(
+            problems_of(
+                "kind-fixture",
+                &[("fixtures/invalid-cases/x.json", &case("exchange"))]
+            ),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn only_the_classes_of_made_up_looking_values_can_be_an_exception() {
+        let allowable: BTreeSet<&str> = CLASSES
+            .iter()
+            .filter(|class| class.allowable)
+            .map(|class| class.name)
+            .collect();
+        // A reviewer sees only a digest, so a class that can hold a real identifier or credential is never one of these.
+        assert_eq!(
+            allowable,
+            [
+                "email",
+                "home-path",
+                "host-name",
+                "ipv4-address",
+                "ipv6-address",
+                "mac-address",
+                "ssh-target"
+            ]
+            .into_iter()
+            .collect()
         );
     }
 }
