@@ -1,21 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 
-/** The errors the filesystem gives for a path that cannot be reached because of what it points through or its permissions, not because of a fault in the machine: a cycle of links, a directory that cannot be searched, a path through a file. */
-export const UNREACHABLE_CODES: ReadonlySet<string> = new Set(["ELOOP", "EACCES", "ENOTDIR"]);
+import { fileFaultCodeOf } from "./fileFaults";
 
-/** The `code` of a system error, or undefined for anything else. */
-export function systemErrorCode(error: unknown): string | undefined {
-  return typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code : undefined;
-}
-
-/** What `target` resolves to, or undefined when it does not exist or cannot be reached (`UNREACHABLE_CODES`); any other fault is thrown. */
+/** What `target` resolves to, or undefined when it does not exist or cannot be reached because of what it points through or its permissions (a failure that is the path's own, `fileFaultCodeOf`); a failure of the moment, or of the machine, is thrown. */
 function reachableStat(target: string): fs.Stats | undefined {
   try {
     return fs.statSync(target, { throwIfNoEntry: false });
   } catch (error) {
-    const code = systemErrorCode(error);
-    if (code !== undefined && UNREACHABLE_CODES.has(code)) {
+    if (fileFaultCodeOf(error) !== undefined) {
       return undefined;
     }
     throw error;

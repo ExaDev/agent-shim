@@ -18,7 +18,8 @@ import { realIdentityNamesLockPorts, withIdentityNamesLock, type IdentityNamesLo
 import { missingIdentityRemedy, removeSettledNameRenames, requireNoInterruptedNameRename } from "./identityNameRenameRecord";
 import { requireNameFreeOfUnfinishedRename } from "./identityRenameJournal";
 import { keychainCacheEntryExists, requireNoLeftoverKeychainLogin, type KeychainProbe } from "./keychainLogin";
-import { ignoresCase, sameDirectory, systemErrorCode, UNREACHABLE_CODES } from "./sameDirectory";
+import { fileFaultCodeOf } from "./fileFaults";
+import { ignoresCase, sameDirectory } from "./sameDirectory";
 import { FARM_SUFFIX_PATTERN, IDENTITY_FILE, freeIdentityId, identityIdIn, identityNameIn, nameOfParsed, readIdentityRecords, textRecordsPort, type IdentityRecord } from "./identityRecords";
 import { liveLaunchesOn } from "./launcher/launchRecords";
 
@@ -121,8 +122,6 @@ export interface IdentityNameReader {
   readonly resolves: () => number;
 }
 
-/** The read failures of an `identity.json` that are the file's own (see `FILE_FAULT_CODES` in `readableConfig.ts`); any other is a failure of the moment. */
-const IDENTITY_FILE_FAULT_CODES: ReadonlySet<string> = new Set(["ENOTDIR", "EISDIR", "ELOOP", "ENAMETOOLONG", "EACCES", "EPERM"]);
 
 /** The name in the text of an `identity.json`, or unreadable when it is no JSON or names no name. */
 function nameOfParsedText(text: string): { readonly name: string } | "unreadable" {
@@ -188,9 +187,9 @@ export function createIdentityNameReader(paths: LayoutPaths): IdentityNameReader
       text = nodeStoreFs.readFileUtf8(file);
     } catch (error) {
       cached.delete(id);
-      const code = systemErrorCode(error);
+      const code = fileFaultCodeOf(error);
       // A failure of the moment is the machine's, and is thrown as it is; one of the file's own is the identity's.
-      if (code === undefined || !IDENTITY_FILE_FAULT_CODES.has(code)) {
+      if (code === undefined) {
         throw error;
       }
       return new UnreadableIdentityNameError(id, code);
@@ -496,13 +495,13 @@ export interface IdentityDirectoryListing {
   readonly unreachable: readonly UnreachableIdentityEntry[];
 }
 
-/** The code of the refusal when `error` is one the entry's own state gives, or undefined for a missing target; any other fault is thrown, since it is the machine's and not the entry's. */
+/** The code of the refusal when `error` is one the entry's own state gives (`fileFaultCodeOf`), or undefined for a missing target; any other fault is thrown, since it is the machine's and not the entry's. */
 function unreachableCodeOf(error: unknown): string | undefined {
-  const code = systemErrorCode(error);
+  const code = fileFaultCodeOf(error);
   if (code === "ENOENT") {
     return undefined;
   }
-  if (code !== undefined && UNREACHABLE_CODES.has(code)) {
+  if (code !== undefined) {
     return code;
   }
   throw error;

@@ -9,7 +9,7 @@ import type { CredentialCacheStore } from "./config/schema";
 import type { LayoutPaths } from "./paths";
 import type { AsyncCredentialCacheEnv, CredentialCacheEnv } from "./credential";
 import { requireKeychainCacheDeleted } from "./keychainLogin";
-import { systemErrorCode } from "./sameDirectory";
+import { systemErrorCode } from "./fileFaults";
 import { CachedCredentialSchema, KEYCHAIN_CACHE_SERVICE, type AsyncCredentialCachePort, type CachedCredential, type CredentialCachePort } from "./credentialCache";
 import { BLOCKING_STEP_TIMEOUTS_MS } from "./doorBounds";
 
