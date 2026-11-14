@@ -224,8 +224,14 @@ const takeNativeSample = () => new Promise((resolve) => {
         settle("the native sampler " + (signal === null ? "exited with status " + String(code) : "was ended by " + signal) + " and wrote no native stack" + (detail === "" ? "" : ": " + detail));
         return;
       }
-      const kept = fs.readdirSync(nativeSample.directory).filter((name) => name.endsWith(".txt")).map((name) => ({ name, at: fs.statSync(require("node:path").join(nativeSample.directory, name)).mtimeMs })).sort((a, b) => b.at - a.at);
-      for (const old of kept.slice(nativeSample.keep)) fs.rmSync(require("node:path").join(nativeSample.directory, old.name), { force: true });
+      // The pruning runs in the child's close callback, outside the try above: a listing, stat or removal that fails (EACCES, EMFILE) is logged with the stack's file and must not throw out of the callback.
+      try {
+        const kept = fs.readdirSync(nativeSample.directory).filter((name) => name.endsWith(".txt")).map((name) => ({ name, at: fs.statSync(require("node:path").join(nativeSample.directory, name)).mtimeMs })).sort((a, b) => b.at - a.at);
+        for (const old of kept.slice(nativeSample.keep)) fs.rmSync(require("node:path").join(nativeSample.directory, old.name), { force: true });
+      } catch (error) {
+        settle("native stack of the blocked main thread written to " + file + "; older stacks could not be pruned: " + (error instanceof Error ? error.message : String(error)));
+        return;
+      }
       settle("native stack of the blocked main thread written to " + file);
     });
   } catch (error) {
