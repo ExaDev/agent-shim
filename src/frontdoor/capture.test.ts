@@ -24,6 +24,11 @@ afterEach(() => {
   }
 });
 
+/** The permission bits of a file mode. */
+const PERMISSION_BITS = 0o777;
+/** Read and write for the owner, nothing for anyone else. */
+const OWNER_READ_WRITE = 0o600;
+
 describe("redactHeaders", () => {
   it("replaces every credential-named header value and keeps every other header verbatim", () => {
     expect(
@@ -86,6 +91,16 @@ describe("captureFromEnv", () => {
 });
 
 describe("createFileCapture", () => {
+  it("creates its file readable by its owner alone, since a capture holds request lines and redacted bodies", () => {
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-capture-mode-")), "logs", "frontdoor-capture.jsonl");
+    try {
+      createFileCapture(file).connect({ host: "api.example.com", port: 443 }, false);
+      expect(fs.statSync(file).mode & PERMISSION_BITS).toBe(OWNER_READ_WRITE);
+    } finally {
+      fs.rmSync(path.dirname(path.dirname(file)), { recursive: true, force: true });
+    }
+  });
+
   it("writes one JSON line per event, correlating chunks with their request by id", () => {
     const dir = tempDir();
     const file = path.join(dir, "nested", "frontdoor-capture.jsonl");
