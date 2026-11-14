@@ -1394,11 +1394,25 @@ jobs:
       - name: Search the corpus for real-shaped values
         run: sh scripts/rust.sh xtask corpus scrub-check
 
+  # Fails a pull request that deletes a test no case and no row of conformance/README.md's dropped table accounts for (scripts/deleted-tests.mts). It compares the suite's own listing at the base of the merge commit the run checks out (its first parent) with the listing at the head, so it needs the whole history and runs only where there is a base: a push to main has none and the job is skipped, which the aggregate takes as passing.
+  deleted-tests:
+    name: Deleted tests
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-and-run
+        with:
+          task: deleted-tests
+          command: node scripts/deleted-tests.mts --base HEAD^1
+
   # One aggregate check for merge-when-green to wait on: it passes only when every other job succeeded or was skipped (the publishing jobs skip on a pull request). A job missing from `needs` would be ignored by the merge, so `src/ciRequiredChecks.repo.test.ts` fails when this list drifts from the jobs above.
   required-checks:
     name: Required checks
     if: always()
-    needs: [lint, typecheck, test, test-macos, audit, knip, rust, cargo-deny, conformance-scrub, semantic-release, build-arm64, build-x64-best-effort, build-linux-x64, build-linux-arm64, build-windows-x64, build-windows-arm64, smoke-test-macos-arm64, smoke-test-macos-x64-best-effort, smoke-test-linux-x64, smoke-test-linux-arm64, smoke-test-windows-x64, smoke-test-windows-arm64, publish-npm, publish-npm-alias, publish-github-packages, release, update-tap, update-scoop, verify-tap-macos, verify-tap-macos-x64, verify-tap-linux, verify-scoop, verify-npm, verify-install-script, verify-install-script-macos-x64]
+    needs: [lint, typecheck, test, test-macos, audit, knip, rust, cargo-deny, conformance-scrub, deleted-tests, semantic-release, build-arm64, build-x64-best-effort, build-linux-x64, build-linux-arm64, build-windows-x64, build-windows-arm64, smoke-test-macos-arm64, smoke-test-macos-x64-best-effort, smoke-test-linux-x64, smoke-test-linux-arm64, smoke-test-windows-x64, smoke-test-windows-arm64, publish-npm, publish-npm-alias, publish-github-packages, release, update-tap, update-scoop, verify-tap-macos, verify-tap-macos-x64, verify-tap-linux, verify-scoop, verify-npm, verify-install-script, verify-install-script-macos-x64]
     runs-on: ubuntu-latest
     steps:
       - name: Fail unless every job succeeded or was skipped
