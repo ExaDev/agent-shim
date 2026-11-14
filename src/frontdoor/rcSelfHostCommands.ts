@@ -103,7 +103,7 @@ export interface RcSelfHostCommandDeps {
   readonly unavailable: () => string | undefined;
   /** The client attachment's fan-out, on which the worker's answer arrives. */
   readonly fanout: RcEventFanout;
-  /** The Claude Code version the session's worker last reported in a `system/init`, or undefined when none has been observed. */
+  /** The Claude Code version the session runs (`createSelfHostedSessionVersions`: the worker's own report, else the version its launch recorded), or undefined when neither is known. */
   readonly versionOf: (sessionId: string) => string | undefined;
   /** Arms one timer, returning the function that cancels it: `setTimeout` in production, a controllable clock in tests. */
   readonly setTimer: (action: () => void, ms: number) => () => void;
@@ -345,6 +345,35 @@ export async function runSelfHostedTurn(deps: RcSelfHostCommandDeps, sessionId: 
     waitMs,
     signal,
   );
+}
+
+/** Where a self-hosted session's Claude Code version is read from. */
+export interface SelfHostedVersionSources {
+  /** The version the session's worker last reported in a `system/init`, or undefined before it has (a worker reports one only once it has taken a turn). */
+  readonly reported: (sessionId: string) => string | undefined;
+  /** The version the launch that created the session recorded for the binary it started, or undefined when it recorded none. */
+  readonly recorded: (sessionId: string) => string | undefined;
+  /** Told once per session and pair of versions when the two differ. */
+  readonly warn: (line: string) => void;
+}
+
+/**
+ * The version a self-hosted session's verbs are gated on: the worker's own report once it has made one, because it is the running binary's own statement, and until then the version the launcher recorded for the binary it started, so a fresh session's first verb is not refused for want of a turn. The verified-versions gate applies to whichever is returned. A recorded version that differs from the worker's report (a binary replaced between the launcher's discovery and the child's start) is warned of once per session and pair, and the report wins.
+ */
+export function createSelfHostedSessionVersions(sources: SelfHostedVersionSources): (sessionId: string) => string | undefined {
+  const warned = new Set<string>();
+  return (sessionId) => {
+    const reported = sources.reported(sessionId);
+    const recorded = sources.recorded(sessionId);
+    if (reported !== undefined && recorded !== undefined && reported !== recorded) {
+      const key = `${sessionId} ${recorded} ${reported}`;
+      if (!warned.has(key)) {
+        warned.add(key);
+        sources.warn(`rc selfhost ${sessionId}: its launch recorded Claude Code ${recorded} and its worker reports ${reported}; the worker's report is the version its verbs are gated on`);
+      }
+    }
+    return reported ?? recorded;
+  };
 }
 
 /** The Claude Code version each observed session's worker reported, read off its own `system/init` events. */

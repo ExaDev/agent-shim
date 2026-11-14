@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { RcStreamEvent } from "./rcSchemas";
 import type { RcDialTarget } from "./connectEffects";
 import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
-import { createRcClaudeCodeVersions, selfHostSurfaceUnboundReason, parseRcGoalOutput, rcPersonTurnOf, rcSelfHostEventDial, runSelfHostedSlashCommand, runSelfHostedTurn, type RcSelfHostCommandDeps } from "./rcSelfHostCommands";
+import { createRcClaudeCodeVersions, createSelfHostedSessionVersions, selfHostSurfaceUnboundReason, parseRcGoalOutput, rcPersonTurnOf, rcSelfHostEventDial, runSelfHostedSlashCommand, runSelfHostedTurn, type RcSelfHostCommandDeps } from "./rcSelfHostCommands";
 import { createRcEventFanout } from "./rcStream";
 import type { RcEventDial, RcEventWriteResult } from "./rcWrites";
 
@@ -214,5 +214,39 @@ describe("a person's turn on the door's own self-hosted surface", () => {
     silent.timers[0]?.();
     const timedOut = await pending;
     expect(timedOut.ok ? "" : timedOut.message).toContain(`no outcome within ${String(SHORT_WAIT_MS)} ms`);
+  });
+});
+
+describe("the version a self-hosted session's verbs are gated on", () => {
+  /** A resolver over fixed reports and records, with every warning it gave. */
+  function versionsWith(reported: string | undefined, recorded: string | undefined) {
+    const warnings: string[] = [];
+    const versionOf = createSelfHostedSessionVersions({ reported: () => reported, recorded: () => recorded, warn: (line) => {
+        warnings.push(line);
+      },
+    });
+    return { versionOf, warnings };
+  }
+
+  it("is the version the launch recorded until the worker reports one, so a fresh session is not refused for want of a turn", () => {
+    const { versionOf, warnings } = versionsWith(undefined, "2.1.319");
+    expect(versionOf("cse_a")).toBe("2.1.319");
+    expect(warnings).toEqual([]);
+  });
+
+  it("is the worker's own report once it has one, and none when neither is known", () => {
+    expect(versionsWith("2.1.325", undefined).versionOf("cse_a")).toBe("2.1.325");
+    expect(versionsWith(undefined, undefined).versionOf("cse_a")).toBeUndefined();
+  });
+
+  it("takes the worker's report over a recorded version that differs, warning once per session and pair", () => {
+    const { versionOf, warnings } = versionsWith("2.1.325", "2.1.319");
+    expect(versionOf("cse_a")).toBe("2.1.325");
+    expect(versionOf("cse_a")).toBe("2.1.325");
+    expect(versionOf("cse_b")).toBe("2.1.325");
+    expect(warnings).toEqual([
+      "rc selfhost cse_a: its launch recorded Claude Code 2.1.319 and its worker reports 2.1.325; the worker's report is the version its verbs are gated on",
+      "rc selfhost cse_b: its launch recorded Claude Code 2.1.319 and its worker reports 2.1.325; the worker's report is the version its verbs are gated on",
+    ]);
   });
 });

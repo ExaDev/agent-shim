@@ -291,6 +291,21 @@ describe("live session registry", () => {
       expect(registry.holdsLaunch({ pid: LIVE, startedAt: 7 })).toBe(false);
     });
 
+    it("names the Claude Code version a launch recorded for its binary, finds one registered since the last rescan, and names none for a launch that recorded none or is gone", () => {
+      const { fs } = countedWorld();
+      writeFrontDoorSession(fs, dir, { pid: LIVE, startedAt: 7, token: "a", ...recordOf({ sessionId: "s-live", claudeVersion: "2.1.319" }) });
+      const registry = createLiveSessionRegistry({ fs, sessionsDir: dir });
+      registry.rescan();
+      expect(registry.claudeVersionOf({ pid: LIVE, startedAt: 7 })).toBe("2.1.319");
+      // The same pid under another start time is another launch, whose version is not this one's.
+      expect(registry.claudeVersionOf({ pid: LIVE, startedAt: 8 })).toBeUndefined();
+      writeFrontDoorSession(fs, dir, { pid: LATE, startedAt: 1, token: "late-token", ...recordOf({ sessionId: "s-late" }) });
+      expect(registry.claudeVersionOf({ pid: LATE, startedAt: 1 })).toBeUndefined();
+      const listed = registry.rescan();
+      registry.forget(pruneDeadFrontDoorSessions(fs, dir, listed, () => false));
+      expect(registry.claudeVersionOf({ pid: LIVE, startedAt: 7 })).toBeUndefined();
+    });
+
     it("holds a launch registered since the last rescan by reading its record", () => {
       const { fs, counts, reset } = countedWorld();
       writeFrontDoorSession(fs, dir, { pid: LIVE, startedAt: 7, token: "a", ...recordOf({ sessionId: "s-live" }) });

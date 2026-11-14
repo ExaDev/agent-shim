@@ -99,6 +99,25 @@ describe("runLauncher with a provider", () => {
     expect(sessionOf({})?.configDir).toBe(path.join(os.homedir(), ".claude"));
   });
 
+  it("tells the door the Claude Code version of the binary it starts, and none for a binary whose version it does not know", () => {
+    const sessionOf = (binary: typeof discovered): FrontDoorSessionDetails | undefined => {
+      const frontdoor = fakeFrontDoorPort(FRONTDOOR_PORT);
+      runAndCaptureExit({
+        paths,
+        fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/z.json`]: { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z" }] } } }),
+        spawn: fakeSpawn(),
+        proc: fakeProc({ Z: "tok" }, ["--provider", "z"]),
+        log: fakeLog(),
+        resolveClaudeBinary: () => binary,
+        frontdoor,
+        credentials: fakeCredentials(),
+      });
+      return frontdoor.sessions()[0];
+    };
+    expect(sessionOf(discovered)?.claudeVersion).toBe(discovered.version);
+    expect(sessionOf({ path: "/usr/local/bin/claude", source: "path-fallback" })?.claudeVersion).toBeUndefined();
+  });
+
   it("hands the door the parent's own NODE_EXTRA_CA_CERTS and logs why the trust bundle dropped it, when it did", () => {
     const spawn = fakeSpawn();
     const log = fakeLog();

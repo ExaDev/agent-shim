@@ -8,6 +8,7 @@ import { createRcSelfHostSurface } from "./rcSelfHost";
 import { createRcSelfHostLaunchCheck, type RcSelfHostLaunchCheck } from "./rcSelfHostLaunches";
 import { backfillRcSelfHostIdentity, readRcSelfHostRecord } from "./rcSelfHostMint";
 import { rcWebFetchAllowsPrivateFromEnv, realRcWebFetch } from "./rcWebFetch";
+import type { FrontDoorLaunch } from "./state";
 
 /**
  * The door's real wiring of the self-hosted mode's ownership decisions: the launch check over the door's own files and the process table, for the door process `doorPid`. The minted record is read fresh on every call, so a re-mint applies without a restart.
@@ -31,7 +32,7 @@ export function attributeRcSelfHostMint(paths: LayoutPaths, log: (line: string) 
 /**
  * The served self-hosted Remote Control surface of one door process, in memory only, with the real launch check its ownership decisions rest on. Its route rides the route resolver (so its exchanges are observed by the tracker exactly as the real host's are), and its local answers ride the connect surface's config.
  */
-export function createRealRcSelfHostSurface(paths: LayoutPaths, doorPid: number, env: Readonly<Record<string, string | undefined>>, log: (line: string) => void): ReturnType<typeof createRcSelfHostSurface> {
+export function createRealRcSelfHostSurface(paths: LayoutPaths, doorPid: number, env: Readonly<Record<string, string | undefined>>, launchVersionOf: (launch: Readonly<FrontDoorLaunch>) => string | undefined, log: (line: string) => void): ReturnType<typeof createRcSelfHostSurface> {
   const ownership = realRcSelfHostLaunchCheck(paths, doorPid);
   return createRcSelfHostSurface({
     now: () => Date.now(),
@@ -41,6 +42,7 @@ export function createRealRcSelfHostSurface(paths: LayoutPaths, doorPid: number,
     webFetch: realRcWebFetch({ allowPrivate: rcWebFetchAllowsPrivateFromEnv(env) }),
     ownsLaunch: ownership.ownsLaunch,
     ownsPeer: ownership.ownsPeer,
+    launchVersionOf,
     log,
   });
 }

@@ -184,6 +184,7 @@ describe("the self-hosted Remote Control mode end to end", () => {
       ownsLaunch: (capability) => capability === SELF_HOSTED_CAPABILITY,
       // A redirected connection's peer is a self-hosted session's unless a case says otherwise: every redirected connection in this world is the test's own, attributed by this switch.
       ownsPeer: async () => await Promise.resolve(redirectedPeerIsSelfHosted),
+      launchVersionOf: () => undefined,
     });
     sessionEvents = createRcSessionEventLog({ generation: SESSION_EVENTS_GENERATION, capacity: RC_SESSION_EVENT_LOG_CAPACITY });
     tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: 45_000, onTransition: sessionEvents.append, onClose: sessionEvents.close });

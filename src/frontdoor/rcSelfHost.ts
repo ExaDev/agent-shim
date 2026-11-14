@@ -10,6 +10,7 @@ import { createRcSelfHostLocal, type RcSelfHostLocal } from "./rcSelfHostLocal";
 import { rcSelfHostOfflineAnswer } from "./rcSelfHostOffline";
 import { RC_WEB_FETCH_MAX_BYTES, type RcWebFetcher } from "./rcWebFetch";
 import type { FrontDoorRoute, RoutedRequest, RoutedResponse } from "./route";
+import type { FrontDoorLaunch } from "./state";
 import type { RcStreamEnvelope } from "./rcSchemas";
 
 /**
@@ -258,6 +259,8 @@ export interface SelfHostSession {
   workerStatus: string | undefined;
   externalMetadata: Record<string, unknown> | undefined;
   lastTrafficAt: number;
+  /** The Claude Code version the launch that created the session recorded for its binary, or undefined when the create came through no launch's capability (a redirected connection) or the launch recorded none. */
+  readonly launchVersion: string | undefined;
 }
 
 /** One search result a backend answers with: the three fields the CLI's web-search schema reads, of which only `url` must be present (the client filters on it). */
@@ -289,6 +292,8 @@ export interface RcSelfHostDeps {
   readonly ownsLaunch: (capability: string) => boolean;
   /** The same discriminator for a redirected connection, which carries no capability: whether the process holding its client end (on local port `port`) descends from a self-hosted launch, failing closed when it cannot be read. */
   readonly ownsPeer: (port: number) => Promise<boolean>;
+  /** The Claude Code version the launch recorded for the binary it started (`FrontDoorSessionDetails.claudeVersion`, read from the door's session registry), or undefined when it recorded none: asked once per session, for the launch whose capability created it. */
+  readonly launchVersionOf: (launch: Readonly<FrontDoorLaunch>) => string | undefined;
   readonly log?: (line: string) => void;
 }
 
@@ -340,6 +345,8 @@ export interface RcSelfHostSurface {
   readonly route: FrontDoorRoute;
   /** The connect surface's local answers: which hosts it takes over as HTTP, and the requests it answers itself. */
   readonly local: RcSelfHostLocal;
+  /** The Claude Code version the launch that created a session recorded for its binary (`RcSelfHostDeps.launchVersionOf`), or undefined for a session this surface does not hold or whose launch recorded none. */
+  readonly launchVersionOf: (sessionId: string) => string | undefined;
   /** Stops the service's timers and retires every open stream. The sessions themselves are unreachable the moment the door drops them. */
   readonly close: () => void;
 }
@@ -906,6 +913,7 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
             workerStatus: undefined,
             externalMetadata: undefined,
             lastTrafficAt: deps.now(),
+            launchVersion: request.session.launch === undefined ? undefined : deps.launchVersionOf(request.session.launch),
           };
           conversation.sessionIds.add(session.id);
           sessions.set(session.id, session);
@@ -942,6 +950,7 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
   return {
     route,
     local,
+    launchVersionOf: (sessionId) => sessions.get(sessionId)?.launchVersion,
     close: () => {
       clearInterval(timer);
       clearInterval(keepalive);

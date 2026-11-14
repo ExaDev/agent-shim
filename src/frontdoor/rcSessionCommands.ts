@@ -229,7 +229,7 @@ export function createRcSessionCommands(deps: RcSessionCommandDeps) {
     }
     const version = deps.selfHost.versionOf(sessionId);
     if (version === undefined || !RC_SESSION_COMMAND_VERIFIED_VERSIONS.includes(version)) {
-      return { kind: "refused", message: unverifiedVersionMessage(sessionId, version, "no system/init from its worker has been observed on its stream; send it a prompt so it reports one"), refusal: "session-state" };
+      return { kind: "refused", message: unverifiedVersionMessage(sessionId, version, "its launch recorded none and no system/init from its worker has been observed on its stream; send it a prompt so it reports one"), refusal: "session-state" };
     }
     return { kind: "self-hosted", selfHost: deps.selfHost };
   };

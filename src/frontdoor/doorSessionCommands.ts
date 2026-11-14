@@ -6,7 +6,7 @@ import { supervisedSessionOfBridge } from "../supervise/registry";
 import { createTranscriptFollower, realTranscriptReadPort } from "../supervise/transcriptFollower";
 import { compactInSession, runGoalInSession, sessionControlVersion, submitTurnInSession } from "../supervise/sessionControl";
 import { sessionControlPluginPaths } from "../supervise/sessionControlPlugin";
-import type { RcClaudeCodeVersions, RcPersonWriteDeps } from "./rcSelfHostCommands";
+import { createSelfHostedSessionVersions, type RcClaudeCodeVersions, type RcPersonWriteDeps } from "./rcSelfHostCommands";
 import { createRcSessionCommands, type RcSessionCommands } from "./rcSessionCommands";
 import type { RcEventFanout } from "./rcStream";
 
@@ -24,6 +24,10 @@ export interface DoorRcSessionCommandsDeps {
         readonly unavailable: () => string | undefined;
         readonly fanout: RcEventFanout;
         readonly versions: RcClaudeCodeVersions;
+        /** The version the launch that created a session recorded for its binary, from the door's own surface. */
+        readonly launchVersionOf: (sessionId: string) => string | undefined;
+        /** The door's log, where a recorded version the worker's report contradicts is noted. */
+        readonly log: (line: string) => void;
       }
     | undefined;
 }
@@ -85,10 +89,14 @@ export function createDoorRcSessionCommands(deps: DoorRcSessionCommandsDeps): Rc
             personWrite: selfHost.personWrite,
             unavailable: selfHost.unavailable,
             fanout: selfHost.fanout,
-            versionOf: (sessionId) => {
-              selfHost.versions.sweep(deps.isTracked);
-              return selfHost.versions.versionOf(sessionId);
-            },
+            versionOf: createSelfHostedSessionVersions({
+              reported: (sessionId) => {
+                selfHost.versions.sweep(deps.isTracked);
+                return selfHost.versions.versionOf(sessionId);
+              },
+              recorded: selfHost.launchVersionOf,
+              warn: selfHost.log,
+            }),
             setTimer: (action, ms) => {
               const timer = setTimeout(action, ms);
               return () => {

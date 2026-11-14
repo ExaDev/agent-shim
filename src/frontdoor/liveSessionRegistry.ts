@@ -34,6 +34,8 @@ export interface LiveSessionRegistry {
   readonly launchOfToken: (token: string) => FrontDoorLaunch | undefined;
   /** Whether `launch` is still registered, looked up as `modelsOf` looks one up: what bounds per-launch state the door keeps, which must live exactly as long as the launch it describes. */
   readonly holdsLaunch: (launch: Readonly<FrontDoorLaunch>) => boolean;
+  /** The Claude Code version the live launch `launch` recorded for the binary it started, or undefined when the view holds no such launch or its record names none (an older launcher's, or a binary found only on `PATH`); looked up as `holdsLaunch` looks one up. */
+  readonly claudeVersionOf: (launch: Readonly<FrontDoorLaunch>) => string | undefined;
   /** Drops the launches `pids` from the view, for the records the caller has just removed (the tick's prune), so their capabilities are refused at once rather than at the next `rescan`. */
   readonly forget: (pids: readonly number[]) => void;
 }
@@ -66,12 +68,16 @@ export function createLiveSessionRegistry(ports: LiveSessionRegistryPorts): Live
 
   const recordNames = (): readonly string[] => fs.readdir(sessionsDir).filter(isSessionRecordName);
 
+  /** The live records by the key of the launch that wrote them. */
+  let byLaunch: ReadonlyMap<string, FrontDoorSession> = new Map();
+
   const rebuildIndexes = (): void => {
     const records = [...known.values()].flatMap(({ record }) => (record === undefined ? [] : [record]));
     tokens = new Set(records.map((record) => record.token));
     byToken = new Map(records.map((record) => [record.token, record] as const));
     bySessionId = new Map(records.flatMap((record) => (record.sessionId === undefined ? [] : [[record.sessionId, record] as const])));
     launches = new Set(records.map(launchKeyOf));
+    byLaunch = new Map(records.map((record) => [launchKeyOf(record), record] as const));
   };
 
   /** Reads one file into the view under `stat`, which the caller took first: a write landing between the stat and the read leaves the view holding newer content under an older stat, which the next look reads again, never older content under a newer stat. */
@@ -125,6 +131,7 @@ export function createLiveSessionRegistry(ports: LiveSessionRegistryPorts): Live
       return held?.sessionId === undefined ? undefined : { pid: held.pid, startedAt: held.startedAt };
     },
     holdsLaunch: (launch) => launches.has(launchKeyOf(launch)) || (reconcile() && launches.has(launchKeyOf(launch))),
+    claudeVersionOf: (launch) => (byLaunch.get(launchKeyOf(launch)) ?? (reconcile() ? byLaunch.get(launchKeyOf(launch)) : undefined))?.claudeVersion,
     rescan: () => {
       known.clear();
       for (const name of recordNames()) {

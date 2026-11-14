@@ -7,7 +7,7 @@ import type { CompactionResult } from "../supervise/realCompact";
 import { activeGoalOfTranscript } from "../supervise/sessionGoal";
 import { SESSION_CONTROL_PLUGIN_NAME } from "../supervise/sessionControlPlugin";
 import { NO_PLUGIN_TURNS, pluginTurnsAfterLine, type PluginTurns } from "../supervise/sessionPluginTurns";
-import { rcSelfHostEventDial, type RcSelfHostCommandDeps } from "./rcSelfHostCommands";
+import { createSelfHostedSessionVersions, rcSelfHostEventDial, type RcSelfHostCommandDeps } from "./rcSelfHostCommands";
 import { RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "../supervise/verifiedVersions";
 import { RC_GOAL_CONDITION_MAX_CHARS, RC_TURN_TEXT_MAX_CHARS, createRcSessionCommands, type RcSessionCommandDeps, type RcSupervisedTarget } from "./rcSessionCommands";
 import { createRcEventFanout } from "./rcStream";
@@ -225,6 +225,17 @@ describe("goal and compaction control over Remote Control, by route", () => {
     const delivered = await createRcSessionCommands(verified.deps).goalClear(SESSION);
     expect(delivered).toEqual({ ok: false, message: "the API answered HTTP 500 to the injected event: the self-hosted surface refused the write" });
     expect(verified.written.map((body) => body.includes('"content":"/goal clear"'))).toEqual([true]);
+  });
+
+  it("gates a self-hosted session on the version its launch recorded before the worker reports one, refusing an unverified one unsent", async () => {
+    // What a fresh self-hosted session presents: no system/init yet, so the version the verbs see is its launch's.
+    const recorded = selfHostedWorld(createSelfHostedSessionVersions({ reported: () => undefined, recorded: () => VERIFIED_VERSION, warn: () => undefined })(SESSION));
+    await createRcSessionCommands(recorded.deps).goalClear(SESSION);
+    expect(recorded.written.map((body) => body.includes('"content":"/goal clear"'))).toEqual([true]);
+    const unverified = selfHostedWorld(createSelfHostedSessionVersions({ reported: () => undefined, recorded: () => "0.0.1", warn: () => undefined })(SESSION));
+    const refused = await createRcSessionCommands(unverified.deps).goalClear(SESSION);
+    expect(refused.ok ? "" : refused.message).toContain("runs Claude Code 0.0.1");
+    expect(unverified.written).toEqual([]);
   });
 
   it("refuses an unsupervised session when the door self-hosts but its own surface is unbound, naming why, and writes nothing", async () => {

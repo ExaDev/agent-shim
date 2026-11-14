@@ -234,7 +234,9 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
   };
 
   // The served CCR surface itself, with the mode's one ownership discriminator: a CONNECT tunnel is a self-hosted session's when its launch runs the minted identity, and a redirected connection when the process holding its other end descends from such a launch.
-  const rcSelfHostSurface = rcSelfHost ? createRealRcSelfHostSurface(paths, process.pid, process.env, log) : undefined;
+  // The door's in-memory view of the session registry, which the listeners' admission and the route resolver's per-launch models lookup both answer from: the supervisor's tick refreshes it, and only an id the view does not hold is looked up in the registry directory.
+  const sessionRegistry = createLiveSessionRegistry({ fs: realFarmFs, sessionsDir: paths.frontdoorSessionsDir });
+  const rcSelfHostSurface = rcSelfHost ? createRealRcSelfHostSurface(paths, process.pid, process.env, sessionRegistry.claudeVersionOf, log) : undefined;
 
   // The Remote Control session record: one per door process, in memory only, fed by every resolved route's served exchanges. Wrapping the resolver (rather than any one listener) is what lets whichever pipeline serves a `/v1/code/sessions` exchange observe it, and the wrapper is inert for every path outside the Remote Control prefix. The client credential and the stream's sequence cursor are the two parts that must outlive the process (a session outlives any one door generation, only client-half calls state the OAuth bearer, and a generation that lost the cursor would re-read the stream from its head), so both are persisted per session in one owner-only file and read back by whichever generation needs them.
   const rcCredentialStore = createRcCredentialStore(realFarmFs, paths.frontdoorRcCredentialsDir);
@@ -295,8 +297,6 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
   const rcControlToken = lifecycle.predecessor === undefined ? randomUUID() : inheritedControlToken(paths);
   // Capture is a per-door diagnostic, decided by the environment of the launch that starts (or restarts) the door, because the door is one process serving every launch: a per-launch toggle would record some sessions and silently not others. The value is read once, at door start, so it never changes mid-process; the route resolver records the routed pass-through to the real API through it and the connect surface everything it pipes and tunnels.
   const capture = captureFromEnv(process.env, paths.logsDir);
-  // The door's in-memory view of the session registry, which the listeners' admission and the route resolver's per-launch models lookup both answer from: the supervisor's tick refreshes it, and only an id the view does not hold is looked up in the registry directory.
-  const sessionRegistry = createLiveSessionRegistry({ fs: realFarmFs, sessionsDir: paths.frontdoorSessionsDir });
   const resolveRoute = rcObservingResolver(
     createProviderRouteResolver({
       // Read live so a models-block edit reaches the next request without a door restart.
@@ -548,12 +548,17 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       const rcSessionCommands = createDoorRcSessionCommands({
         paths,
         isTracked: (sessionId) => rcTracker.statusOf(sessionId).length > 0,
-        selfHost: rcSelfHost
+        selfHost:
+          rcSelfHostSurface !== undefined
           ? {
               personWrite: { credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, newUuid: randomUUID, dial: rcSelfHostEventDial(rcSelfHostDialTarget) },
               unavailable: () => (rcSelfHostDialTarget() === undefined ? selfHostSurfaceUnboundReason(process.env.AGENT_SHIM_TRANSPARENT_SURFACE) : undefined),
               fanout: rcFanout,
               versions: rcClaudeCodeVersions,
+              launchVersionOf: rcSelfHostSurface.launchVersionOf,
+              log: (line) => {
+                appendDoorLog(paths, `frontdoor ${String(process.pid)}: ${line}`);
+              },
             }
           : undefined,
       });
