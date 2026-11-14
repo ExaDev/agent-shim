@@ -39,8 +39,8 @@ export interface Row {
 
 /** What the corpus and the README tables say about the suite's tests. */
 export interface Accounting {
-  /** The identities some case's `from` names as the test it came from, each with the number of cases that name it. Only a case the TypeScript runner runs counts: one marked `skip: ts` proves nothing about a test the TypeScript suite deleted. */
-  readonly sources: ReadonlyMap<string, number>;
+  /** The identities some case's `from` names as the test it came from. Only a case the TypeScript runner runs counts: one marked `skip: ts` proves nothing about a test the TypeScript suite deleted. A test extracted as several cases is one identity here and one account, since the cases do not say which of two tests with one title they came from. */
+  readonly sources: ReadonlySet<string>;
   /** The files some case's `from` names. */
   readonly sourceFiles: ReadonlySet<string>;
   /** The `## Kept tests` rows: tests that stay in a file whose tests moved. */
@@ -83,15 +83,14 @@ export interface CaseRef {
   readonly skip?: "ts" | "rust" | undefined;
 }
 
-/** The accounting of the cases: the tests they came from, how many cases name each, and the files those are in. A case the TypeScript runner skips is left out, since the suite the check reads is the TypeScript one and that case never runs in it. */
+/** The accounting of the cases: the tests they came from and the files those are in. A case the TypeScript runner skips is left out, since the suite the check reads is the TypeScript one and that case never runs in it. */
 export function caseSources(cases: readonly CaseRef[]): Pick<Accounting, "sources" | "sourceFiles"> {
-  const sources = new Map<string, number>();
+  const sources = new Set<string>();
   const sourceFiles = new Set<string>();
   for (const { from, skip } of cases) {
     const match = FROM_TEST.exec(from);
     if (match?.[1] !== undefined && match[2] !== undefined && skip !== "ts") {
-      const id = testId(match[1], match[2]);
-      sources.set(id, (sources.get(id) ?? 0) + 1);
+      sources.add(testId(match[1], match[2]));
       sourceFiles.add(match[1]);
     }
   }
@@ -210,7 +209,7 @@ export function unstableProblems(unstable: ReadonlySet<string>): string[] {
 }
 
 /**
- * The tests a change deleted that nothing accounts for: for an identity the base holds more often than the head, each deleted test needs its own account, a case that came from it and that the TypeScript runner runs, or a dropped row, so deleting two tests with one title needs two. A renamed test or file is a deletion of the old identity, so it needs the same accounting; a kept row does not account for a deletion, since a kept row for a missing test is a problem of its own.
+ * The tests a change deleted that nothing accounts for: for an identity the base holds more often than the head, each deleted test needs its own account. The cases that came from an identity and that the TypeScript runner runs are one account together, however many there are, and each dropped row is one more, so deleting two tests with one title needs a case and a row, or two rows. A renamed test or file is a deletion of the old identity, so it needs the same accounting; a kept row does not account for a deletion, since a kept row for a missing test is a problem of its own.
  */
 export function deletedProblems(base: ReadonlyMap<string, number>, head: ReadonlyMap<string, number>, accounting: Accounting, unstable: ReadonlySet<string> = new Set()): string[] {
   const droppedCounts = new Map<string, number>();
@@ -220,9 +219,9 @@ export function deletedProblems(base: ReadonlyMap<string, number>, head: Readonl
   const problems: string[] = [];
   for (const [id, count] of base) {
     const deleted = count - (head.get(id) ?? 0);
-    const accounts = (accounting.sources.get(id) ?? 0) + (droppedCounts.get(id) ?? 0);
+    const accounts = (accounting.sources.has(id) ? 1 : 0) + (droppedCounts.get(id) ?? 0);
     if (deleted > accounts && !unstable.has(id)) {
-      problems.push(accounts === 0 ? `deleted test has no case and no dropped row: ${id}` : `deleted ${String(deleted)} tests with this title and only ${String(accounts)} cases and dropped rows account for them: ${id}`);
+      problems.push(accounts === 0 ? `deleted test has no case and no dropped row: ${id}` : `deleted ${String(deleted)} tests with this title but only ${String(accounts)} ${accounts === 1 ? "account" : "accounts"} (all its cases together, and each dropped row): ${id}`);
     }
   }
   return problems.sort();

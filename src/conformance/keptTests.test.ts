@@ -5,9 +5,8 @@ import { caseSources, deletedProblems, guardProblems, listedCounts, listingBudge
 const ROOT = "/repo";
 const row = (file: string, test: string): Row => ({ file, test, reason: "not a function of its inputs" });
 const listing = (...entries: readonly [string, string][]) => listedCounts(entries.map(([file, name]) => ({ file: `${ROOT}/${file}`, name })), ROOT);
-type Changes = Partial<Omit<Accounting, "sources">> & { readonly sources?: ReadonlySet<string>; readonly sourceCounts?: ReadonlyMap<string, number> };
-/** An accounting where each source named by `sources` is one case, or with the counts given in `sourceCounts`. */
-const accounting = ({ sources = new Set<string>(), sourceCounts, ...rest }: Changes = {}): Accounting => ({ sources: sourceCounts ?? new Map([...sources].map((id) => [id, 1])), sourceFiles: new Set(), kept: [], dropped: [], ...rest });
+/** An accounting with no sources, files or rows but the ones given. */
+const accounting = (changes: Partial<Accounting> = {}): Accounting => ({ sources: new Set(), sourceFiles: new Set(), kept: [], dropped: [], ...changes });
 
 const README = `# Corpus
 
@@ -57,9 +56,9 @@ describe("the identity of a test", () => {
     expect(testId("a.test.ts", "d > t")).toBe("a.test.ts: d > t");
   });
 
-  it("is read from a from that names a test, counting the cases that name it, and a recorded from names none", () => {
+  it("is read from a from that names a test, a test several cases name once, and a recorded from names none", () => {
     const { sources, sourceFiles } = caseSources([{ from: "paths.test.ts: a > b" }, { from: "config/names.test.ts: c: with a colon > d" }, { from: "recorded: src/pathNorm.ts (what)" }, { from: "x.test.tsx: y" }, { from: "paths.test.ts: a > b", skip: "rust" }]);
-    expect([...sources].sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))).toEqual([["config/names.test.ts: c: with a colon > d", 1], ["paths.test.ts: a > b", 2], ["x.test.tsx: y", 1]]);
+    expect([...sources].sort()).toEqual(["config/names.test.ts: c: with a colon > d", "paths.test.ts: a > b", "x.test.tsx: y"]);
     expect([...sourceFiles].sort()).toEqual(["config/names.test.ts", "paths.test.ts", "x.test.tsx"]);
   });
 
@@ -124,12 +123,17 @@ describe("two tests with one title", () => {
     expect(problems).toEqual(["two tests share a title in a file whose tests moved, so one row or case cannot tell them apart: a.test.ts: x > same"]);
   });
 
-  it("need one account each when both are deleted: one case is not enough, two cases or a case and a row are", () => {
+  it("need one account each when both are deleted: the cases are one account however many there are, so a case and a row, or two rows, are needed", () => {
     const none = listing();
-    expect(deletedProblems(twin, none, accounting({ sources: new Set(["a.test.ts: x > same"]) }))).toEqual(["deleted 2 tests with this title and only 1 cases and dropped rows account for them: a.test.ts: x > same"]);
-    expect(deletedProblems(twin, none, accounting({ sourceCounts: new Map([["a.test.ts: x > same", 2]]) }))).toEqual([]);
+    expect(deletedProblems(twin, none, accounting({ sources: new Set(["a.test.ts: x > same"]) }))).toEqual(["deleted 2 tests with this title but only 1 account (all its cases together, and each dropped row): a.test.ts: x > same"]);
+    expect(deletedProblems(twin, none, accounting({ dropped: [row("a.test.ts", "x > same")] }))).toEqual(["deleted 2 tests with this title but only 1 account (all its cases together, and each dropped row): a.test.ts: x > same"]);
     expect(deletedProblems(twin, none, accounting({ sources: new Set(["a.test.ts: x > same"]), dropped: [row("a.test.ts", "x > same")] }))).toEqual([]);
     expect(deletedProblems(twin, none, accounting({ dropped: [row("a.test.ts", "x > same"), row("a.test.ts", "x > same")] }))).toEqual([]);
+  });
+
+  it("are not covered by one test extracted as several cases: the cases are one account", () => {
+    const { sources } = caseSources([{ from: "a.test.ts: x > same" }, { from: "a.test.ts: x > same" }]);
+    expect(deletedProblems(twin, listing(), accounting({ sources }))).toEqual(["deleted 2 tests with this title but only 1 account (all its cases together, and each dropped row): a.test.ts: x > same"]);
   });
 
   it("need one account for the one deleted when only one of the two goes", () => {
@@ -194,7 +198,7 @@ describe("unstable titles", () => {
 describe("the time a suite listing may take", () => {
   const SMALL = 100;
   const LARGE = 200;
-  const FILES = 539;
+  
 
   it("grows with the number of test files, by the same step for each, from a fixed start", () => {
     const start = listingBudgetMs(0);
@@ -204,9 +208,9 @@ describe("the time a suite listing may take", () => {
   });
 
   it("is reported as a slow host, with the file count and the budget, and not as a wrong table", () => {
-    const message = slowListingMessage(FILES);
-    expect(message).toContain(`${String(FILES)} test files`);
-    expect(message).toContain(`${String(listingBudgetMs(FILES))} ms`);
+    const message = slowListingMessage(LARGE);
+    expect(message).toContain(`${String(LARGE)} test files`);
+    expect(message).toContain(`${String(listingBudgetMs(LARGE))} ms`);
     expect(message).toContain("this host was too slow");
     expect(message).toContain("the table and the corpus are not in question");
   });
