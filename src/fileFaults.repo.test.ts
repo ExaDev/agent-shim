@@ -32,6 +32,16 @@ function errorCodeSets(module: string, source: string): readonly string[] {
   return found;
 }
 
+/** The text of `module` under `src`, or an empty text for one that is gone by the time it is read: another test writes and removes a probe module in `src` while the suite runs, and a module that is no longer there holds nothing. */
+function sourceOf(module: string): string {
+  try {
+    return fs.readFileSync(path.join(__dirname, module), "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return "";
+    throw error;
+  }
+}
+
 /** Every non-test module under `src`, relative to it. */
 function modules(directory: string): readonly string[] {
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -77,7 +87,7 @@ function inlineFaultCodes(module: string, source: string): readonly string[] {
 }
 
 describe("which read failures are a file's own", () => {
-  const found = modules(__dirname).flatMap((module) => errorCodeSets(module, fs.readFileSync(path.join(__dirname, module), "utf8")));
+  const found = modules(__dirname).flatMap((module) => errorCodeSets(module, sourceOf(module)));
 
   it("are said in one place, so every reader of local files classifies a failure alike", () => {
     expect(found.filter((key) => key !== "fileFaults.ts FILE_FAULT_CODES" && ALLOWED[key] === undefined)).toEqual([]);
@@ -89,7 +99,7 @@ describe("which read failures are a file's own", () => {
   });
 
   it("are never named by hand elsewhere, in a comparison, a code check or a set, but where another question is asked", () => {
-    const inline = modules(__dirname).filter((module) => module !== "fileFaults.ts").flatMap((module) => inlineFaultCodes(module, fs.readFileSync(path.join(__dirname, module), "utf8")));
+    const inline = modules(__dirname).filter((module) => module !== "fileFaults.ts").flatMap((module) => inlineFaultCodes(module, sourceOf(module)));
     expect(inline.filter((key) => INLINE_ALLOWED[key] === undefined)).toEqual([]);
     expect(Object.keys(INLINE_ALLOWED).filter((key) => !inline.includes(key))).toEqual([]);
   });
