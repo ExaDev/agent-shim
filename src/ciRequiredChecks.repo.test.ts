@@ -44,6 +44,25 @@ describe("the Rust and corpus jobs", () => {
   });
 });
 
+describe("the deleted-test check", () => {
+  const JobSchema = z.object({ jobs: z.record(z.string(), z.looseObject({ if: z.string().optional(), "continue-on-error": z.unknown().optional(), steps: z.array(z.looseObject({ uses: z.string().optional(), with: z.looseObject({}).optional() })) })) });
+  const job = JobSchema.parse(parse(fs.readFileSync(path.join(__dirname, "..", ".github", "workflows", "ci.yml"), "utf8"))).jobs["deleted-tests"];
+
+  it("is a job that runs on pull requests, can fail the merge and is needed by the aggregate", () => {
+    expect(job?.name).toBe("Deleted tests");
+    expect(job?.if).toBe("github.event_name == 'pull_request'");
+    expect(job?.["continue-on-error"]).toBeUndefined();
+    expect(workflow.jobs[AGGREGATE]?.needs).toEqual(expect.arrayContaining(["deleted-tests"]));
+  });
+
+  it("checks out the whole history, which the base of the run's merge commit needs, and runs the script against that base", () => {
+    const checkout = job?.steps.find((step) => step.uses?.startsWith("actions/checkout@") === true);
+    expect(checkout?.with?.["fetch-depth"]).toBe(0);
+    const command = job?.steps.map((step) => step.with?.command).find((value) => typeof value === "string");
+    expect(command).toBe("node scripts/deleted-tests.mts --base HEAD^1");
+  });
+});
+
 describe("the Homebrew verification", () => {
   const WORKFLOWS_DIR = path.join(__dirname, "..", ".github", "workflows");
   const ACTIONS_DIR = path.join(__dirname, "..", ".github", "actions");
