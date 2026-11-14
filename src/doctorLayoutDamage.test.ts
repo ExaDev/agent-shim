@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { collectDoctorReport } from "./doctorReport";
+import { findingsFor } from "./doctorTestFixtures";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 
 /** How a path of the layout is damaged: a directory in its place, a file that is not JSON, or such a file with no permissions. */
@@ -50,14 +51,22 @@ describe("doctor over a damaged layout", () => {
     }
   });
 
-  it.each(KEYS.flatMap((key) => DAMAGE.map((damage) => [key, damage] as const)))("reports %s as %s and goes on with the whole report", (key, damage) => {
+  it.each(KEYS.flatMap((key) => DAMAGE.filter((damage) => damage === "directory" || !FILE_IN_A_DIRECTORY_PLACE.has(key)).map((damage) => [key, damage] as const)))("goes on with the whole report when %s is damaged as %s", (key, damage) => {
     if (damage === "no-permission" && process.getuid?.() === 0) return;
     const paths = damaged(key, damage);
-    const audit = (): unknown => collectDoctorReport({ paths, env: { PATH: "" } });
-    if (damage !== "directory" && FILE_IN_A_DIRECTORY_PLACE.has(key)) {
-      expect(audit).toThrow(/ENOTDIR/u);
-      return;
-    }
-    expect(audit).not.toThrow();
+    expect(() => collectDoctorReport({ paths, env: { PATH: "" } })).not.toThrow();
+  });
+
+  it.each([...FILE_IN_A_DIRECTORY_PLACE].flatMap((key) => (["malformed", "no-permission"] as const).map((damage) => [key, damage] as const)))("still stops with ENOTDIR when %s is a file (%s) where a directory belongs", (key, damage) => {
+    if (damage === "no-permission" && process.getuid?.() === 0) return;
+    const paths = damaged(key, damage);
+    expect(() => collectDoctorReport({ paths, env: { PATH: "" } })).toThrow(/ENOTDIR/u);
+  });
+
+  it.each(DAMAGE)("reports a provider-aliases.json damaged as %s as a provider failure", (damage) => {
+    if (damage === "no-permission" && process.getuid?.() === 0) return;
+    const paths = damaged("providerAliasesFile", damage);
+    const report = collectDoctorReport({ paths, env: { PATH: "" } });
+    expect(findingsFor(report, "provider").filter((finding) => finding.severity === "fail" && finding.message.includes(paths.providerAliasesFile))).toHaveLength(1);
   });
 });

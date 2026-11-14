@@ -343,7 +343,7 @@ export function createProviderRouteResolver(deps: {
     return match === undefined ? undefined : { name: match.target, overridden: true };
   };
   /**
-   * A session launched on a provider sends every request to that provider, whatever its model name, and its requests carry the provider's placeholder credential rather than an Anthropic login, so a name the door renamed to the Anthropic route (`anthropic/<model>`) cannot be served there and would reach the provider under that name: it is refused, naming the relaunch that puts the session on its own login. A provider file called `anthropic` claims the name, which then routes as any qualified name does.
+   * A session launched on a provider sends every request to that provider, whatever its model name, and its requests carry the provider's placeholder credential rather than an Anthropic login, so a name the door placed on the Anthropic route of the session's own login (marked `onAnthropic`) cannot be served there and would reach the provider under that name: it is refused, naming the relaunch that puts the session on its own login, whatever the provider files are called. An unmarked `anthropic/<model>` (an override's target written so) is refused the same way unless a provider file called `anthropic` claims it, which then routes as any qualified name does.
    */
   const onLaunchProvider = (renamed: { readonly name: string; readonly overridden?: true; readonly onAnthropic?: true }, context: Readonly<RenameContext>): { readonly name: string; readonly overridden?: true; readonly onAnthropic?: true } | RoutedRefusal => {
     const launchProvider = context.session.provider;
