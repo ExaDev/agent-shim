@@ -1,0 +1,58 @@
+# The allowlist the cargo-deny check enforces in CI. A crate that is not listed under [bans] allow fails the check, so adding a dependency is a reviewed change to this file, with the reason it is needed. The workspace's own crates are listed too, since cargo-deny applies the allowlist to every crate in the graph.
+#
+# The list is exactly the crates in the dependency graph: cargo-deny has no option to fail on an allowed crate that nothing uses, so scripts/check-deny-allowlist.py compares the two in CI. A crate is added in the change that first depends on it, and removed in the change that drops it. Which workspace crates may depend on which third-party crate is in deny-boundaries.toml.
+
+[graph]
+all-features = true
+
+[advisories]
+# A published advisory against any crate in the graph fails the check. There is no ignore list: an advisory is fixed by updating or replacing the crate, or recorded here with its id and a reason.
+ignore = []
+
+[licenses]
+# Only permissive licences, so nothing in the graph restricts how the crates are redistributed. A licence that no crate in the graph uses fails the check, so this list is the set in use.
+unused-allowed-license = "deny"
+allow = ["MIT"]
+
+[bans]
+multiple-versions = "deny"
+# A workspace crate depends on a sibling by path, which the wildcard check would otherwise reject.
+wildcards = "deny"
+allow-wildcard-paths = true
+
+allow = [
+    { crate = "agent-shim-conformance", reason = "Runs the conformance corpus against the Rust crates." },
+    { crate = "xtask", reason = "Repository tasks: the workspace lint configuration check and the corpus scrub check." },
+    { crate = "serde_json", reason = "Reads the JSON that cargo metadata, the corpus exceptions and the corpus are written in." },
+    { crate = "serde_core", reason = "The serialisation traits serde_json is written against." },
+    { crate = "itoa", reason = "serde_json formats integers with it." },
+    { crate = "memchr", reason = "serde_json scans strings with it." },
+    { crate = "zmij", reason = "serde_json formats floating point numbers with it." },
+]
+
+# Crates the port does not use, by name, so a dependency that would bring one fails with the reason and not only as an unlisted crate.
+deny = [
+    { crate = "clap", reason = "The command table and argument parser are the port's own." },
+    { crate = "thiserror", reason = "Error types are hand-written enums." },
+    { crate = "anyhow", reason = "Error types are hand-written enums, not erased." },
+    { crate = "rmcp", reason = "Outside the port's dependency allowlist: std, serde, serde_json and the crates named in deny-boundaries.toml." },
+    { crate = "axum", reason = "Outside the port's dependency allowlist: std, serde, serde_json and the crates named in deny-boundaries.toml." },
+    { crate = "reqwest", reason = "Outside the port's dependency allowlist: std, serde, serde_json and the crates named in deny-boundaries.toml." },
+    { crate = "rcgen", reason = "Outside the port's dependency allowlist: std, serde, serde_json and the crates named in deny-boundaries.toml." },
+    { crate = "openssl", reason = "Outside the port's dependency allowlist: std, serde, serde_json and the crates named in deny-boundaries.toml." },
+    { crate = "openssl-sys", reason = "Outside the port's dependency allowlist: std, serde, serde_json and the crates named in deny-boundaries.toml." },
+    { crate = "native-tls", reason = "Outside the port's dependency allowlist: std, serde, serde_json and the crates named in deny-boundaries.toml." },
+    { crate = "aws-lc-rs", reason = "Outside the port's dependency allowlist: std, serde, serde_json and the crates named in deny-boundaries.toml." },
+    { crate = "aws-lc-sys", reason = "Outside the port's dependency allowlist: std, serde, serde_json and the crates named in deny-boundaries.toml." },
+    { crate = "schemars", reason = "Outside the port's dependency allowlist: std, serde, serde_json and the crates named in deny-boundaries.toml." },
+    { crate = "chrono", reason = "Outside the port's dependency allowlist: std, serde, serde_json and the crates named in deny-boundaries.toml." },
+    { crate = "chrono-tz", reason = "Outside the port's dependency allowlist: std, serde, serde_json and the crates named in deny-boundaries.toml." },
+    { crate = "notify", reason = "Outside the port's dependency allowlist: std, serde, serde_json and the crates named in deny-boundaries.toml." },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# The sibling project the predicate and schema crates come from, taken by git revision and not from a registry.
+allow-git = ["https://github.com/ExaDev/trilean"]

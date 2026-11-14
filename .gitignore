@@ -10,3 +10,5 @@ coverage/
 package-lock.json
 
 node_modules
+rust/target/
+__pycache__/
