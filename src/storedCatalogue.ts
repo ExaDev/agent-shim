@@ -1,15 +1,18 @@
 import path from "node:path";
 
 import type { LayoutPaths } from "./paths";
+import { isTransientReadError } from "./readableConfig";
 import { catalogueBindingPath, catalogueCachePath, catalogueSettingsPath } from "./providerCatalogue";
 
-/** A stored file the reader could not read: its message carries the fault (`catalogueReadFault`) and no path. */
+/** A stored file the reader could not read: its message carries the fault (`catalogueReadFault`) and no path. `code` is the system's code when the read failed for a reason of the moment (`isTransientReadError`), so a caller that answers for the file tells such a failure from one of the file's own. */
 export class UnreadableCatalogueError extends Error {
   readonly fault: string;
-  constructor(fault: string) {
+  readonly code: string | undefined;
+  constructor(fault: string, transient = false) {
     super(`stored catalogue cannot be read (${fault})`);
     this.name = "UnreadableCatalogueError";
     this.fault = fault;
+    this.code = transient ? fault : undefined;
   }
 }
 
@@ -23,8 +26,8 @@ export function catalogueReadFault(error: unknown): string {
 }
 
 /** The `onUnreadable` of a reader that lets the fault surface as an `UnreadableCatalogueError`, for a caller that answers for the one provider whose files they are. */
-export function raiseUnreadableCatalogue(fault: string): never {
-  throw new UnreadableCatalogueError(fault);
+export function raiseUnreadableCatalogue(fault: string, cause?: unknown): never {
+  throw new UnreadableCatalogueError(fault, isTransientReadError(cause));
 }
 
 /** The `onUnreadable` of a reader that skips the file: it reads as absent, and the fault is recorded where the files are kept up to date (the keeper's status and log for that provider). */
@@ -37,9 +40,10 @@ export const skipUnreadableCatalogue = (): void => undefined;
  */
 export class TolerantReader {
   readonly #read: (file: string) => string | undefined;
-  readonly #onUnreadable: (fault: string) => void;
+  readonly #onUnreadable: (fault: string, cause: unknown) => void;
 
-  constructor(read: (file: string) => string | undefined, onUnreadable: (fault: string) => void) {
+  /** `onUnreadable` is told the fault and the error that gave it, so one that answers for the file can tell a failure of the moment from one of the file's own. */
+  constructor(read: (file: string) => string | undefined, onUnreadable: (fault: string, cause: unknown) => void) {
     this.#read = read;
     this.#onUnreadable = onUnreadable;
   }
@@ -49,7 +53,7 @@ export class TolerantReader {
     try {
       return this.#read(file);
     } catch (error) {
-      this.#onUnreadable(catalogueReadFault(error));
+      this.#onUnreadable(catalogueReadFault(error), error);
       return undefined;
     }
   }
@@ -59,7 +63,7 @@ export class TolerantReader {
     try {
       return take();
     } catch (error) {
-      this.#onUnreadable(catalogueReadFault(error));
+      this.#onUnreadable(catalogueReadFault(error), error);
       return undefined;
     }
   }
