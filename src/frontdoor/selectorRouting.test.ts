@@ -139,6 +139,23 @@ describe("a model name auto/<selector>[/<class>] through the real door", () => {
     }
   }, TIMEOUT_MS);
 
+  it("leaves a move request for an account selector on another login from a helper of a supervised session, as for an acct: name from a helper, and forwards neither", async () => {
+    const moves: string[] = [];
+    const record = mainLoopRoutesOfLiveSessions();
+    const door = await startWorld(record, HTTP_STATUS.ok, undefined, undefined, undefined, { selectorState: STATE, accountMoves: async (_sessionId, to) => { moves.push(to); return await Promise.resolve(true); } });
+    try {
+      const selector = await send(door, { model: "auto/work/sonnet", requestClass: "subagent", identity: "id-me" });
+      const account = await send(door, { model: "acct:work/sonnet", requestClass: "subagent", identity: "id-me" });
+      expect(moves).toEqual(["work", "work"]);
+      expect(selector.status).toBe(account.status);
+      expect(door.upstream.seen).toEqual([]);
+      expect(door.toAnthropic).toEqual([]);
+      expect(record.routeOf(launchOfSession("s-1"))).toBeUndefined();
+    } finally {
+      await door.close();
+    }
+  }, TIMEOUT_MS);
+
   it.each<[string, string]>([
     ["acct:me/claude-opus-5-1", "claude-opus-5-1"],
     ["acct:twin/claude-opus-5-1", "claude-opus-5-1"],
