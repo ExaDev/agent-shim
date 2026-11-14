@@ -30,6 +30,8 @@ export interface MutationReport {
   readonly name: string;
   /** The stored object after the change; absent for a removal and for a selection. */
   readonly value?: unknown;
+  /** For a removal that names what it took by more than `name` (a route override's keys as they were stored), each of them. */
+  readonly removed?: readonly string[];
 }
 
 /** Reports a mutating command's outcome: the `MutationReport` as JSON under `--json`, otherwise whatever `printText` prints. */
