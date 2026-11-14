@@ -355,3 +355,21 @@ describe("a model name auto/<selector>[/<class>] through the real door", () => {
     }
   }, TIMEOUT_MS);
 });
+
+describe("a helper's account name once the main loop is on a provider", () => {
+  it.each(["acct:work/sonnet", "auto/work/sonnet"])("asks the supervisor to move the session for %j, never forwarding it to the provider the door placed the helper on", async (model) => {
+    const moves: string[] = [];
+    const record = mainLoopRoutesOfLiveSessions();
+    const door = await startWorld(record, HTTP_STATUS.ok, undefined, undefined, undefined, { selectorState: STATE, accountMoves: async (_sessionId, to) => { moves.push(to); return await Promise.resolve(true); } });
+    try {
+      expect((await send(door, { model: "auto/provider:z/sonnet", requestClass: "main", identity: "id-me" })).status).toBe(HTTP_STATUS.ok);
+      const seenBefore = door.upstream.seen.length;
+      const answered = await send(door, { model, requestClass: "subagent", identity: "id-me" });
+      expect(answered.status, answered.text).toBe(HTTP_STATUS.badRequest);
+      expect(moves).toEqual(["work"]);
+      expect(door.upstream.seen.length).toBe(seenBefore);
+    } finally {
+      await door.close();
+    }
+  }, TIMEOUT_MS);
+});

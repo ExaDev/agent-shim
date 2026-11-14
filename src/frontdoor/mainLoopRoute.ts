@@ -351,7 +351,7 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
     }
     const replayed = inspected.replayed ?? base;
     const body = choice.kind === "as-is" || requested === undefined ? replayed : withModelInHead(replayed, inspected.headBytes, requested, choice.model);
-    const scoped: RoutedRequest = { ...body, url: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(provider)}${base.url}` };
+    const scoped: RoutedRequest = { ...body, url: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(provider)}${base.url}`, doorScoped: true };
     const resolution = await resolve(scoped);
     if (!resolution.ok) {
       return { resolution, requested, served: undefined, credential };
