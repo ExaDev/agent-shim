@@ -15,7 +15,7 @@ export default defineConfig([
   },
   ...exadev,
   {
-    // The conformance runner is plain JavaScript on purpose: runners for a browser and a worker load it without a build, so it is outside the TypeScript project and is linted without type information (the base and stylistic rules stay on). `src/conformance.repo.test.ts` types it through `run.d.mts` and holds its size.
+    // The conformance runner is plain JavaScript on purpose, so any JavaScript host loads it without a build step and it sits outside the TypeScript project and is linted without type information (the base and stylistic rules stay on). `src/conformance.repo.test.ts` types it through `run.d.mts` and holds its size.
     files: ["conformance/runner/*.mjs"],
     extends: [tseslint.configs.disableTypeChecked],
     languageOptions: { parserOptions: { projectService: false } },

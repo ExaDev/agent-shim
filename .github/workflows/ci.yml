@@ -1378,7 +1378,7 @@ jobs:
       - name: Test that check against a platform-gated crate
         run: python3 -I scripts/test_check_deny_allowlist.py
 
-  # The corpus under conformance/ is public and will hold recordings, so every file in it is searched for what a real credential, identifier, address or home-directory path looks like. The check knows shapes and not values, and the xtask tests prove it on made-up values of each shape.
+  # The corpus under conformance/ is public and holds cases written from real tests and recorded traffic, so every file in it is searched for what a real credential, identifier, address or home-directory path looks like. The check knows shapes and not values, and the xtask tests prove it on made-up values of each shape.
   conformance-scrub:
     name: conformance-scrub
     runs-on: ubuntu-latest
