@@ -23,6 +23,7 @@ import {
   type HeadroomFs,
   type HeadroomState,
 } from "./state";
+import { faultLog } from "../keepTicking";
 
 /** Everything the supervisor needs to run the daemon, resolved from the global config and the filesystem before it starts. */
 export interface HeadroomSupervisorConfig {
@@ -422,22 +423,32 @@ export async function runSupervisor(
     installedSource,
   });
 
+  const tickFaults = faultLog("agent-shim headroom supervisor tick", ports.log);
   for (;;) {
     if (options.tickLimit !== undefined && ticks >= options.tickLimit) {
       return HEADROOM_SUPERVISOR_STILL_RUNNING;
     }
     ticks += 1;
-    // First in the tick, so a start attempt later in it takes its log offset after the last rotation it could be invalidated by.
-    if (ports.rotateDaemonLog({ maxBytes: HEADROOM_LOG_MAX_BYTES, keptGenerations: HEADROOM_LOG_KEPT_GENERATIONS })) {
-      ports.log(`agent-shim headroom supervisor: rotated the daemon log past ${String(HEADROOM_LOG_MAX_BYTES)} bytes, keeping ${String(HEADROOM_LOG_KEPT_GENERATIONS)} earlier file(s)`);
+    let inputs: ReturnType<typeof currentHeadroomAllowlistInputs>;
+    // A failure reading the supervisor's own files (a file descriptor shortage, an I/O error) fails this tick alone: it is logged, the daemon goes on serving, and the next tick reads again.
+    try {
+      // First in the tick, so a start attempt later in it takes its log offset after the last rotation it could be invalidated by.
+      if (ports.rotateDaemonLog({ maxBytes: HEADROOM_LOG_MAX_BYTES, keptGenerations: HEADROOM_LOG_KEPT_GENERATIONS })) {
+        ports.log(`agent-shim headroom supervisor: rotated the daemon log past ${String(HEADROOM_LOG_MAX_BYTES)} bytes, keeping ${String(HEADROOM_LOG_KEPT_GENERATIONS)} earlier file(s)`);
+      }
+      config = ports.readConfig();
+      // One read of the process table per tick, shared by the pruning and the allowlist so both act on the same verdict.
+      inputs = currentHeadroomAllowlistInputs(fs, paths, ports.frontDoorLiveness);
+      // A door that crashed never removed its direct record; pruning it is what withdraws its origin once nothing can route through it.
+      pruneDeadFrontDoorDirectRecords(fs, paths.frontdoorDirectRecordsDir, inputs.frontDoorRecords, inputs.frontDoorLiveness);
+      pruneMalformedFrontDoorDirectFiles(fs, paths.frontdoorDirectRecordsDir, ports.isRunning);
+      tickFaults.succeeded();
+    } catch (error) {
+      tickFaults.failed(error);
+      await ports.sleep(HEADROOM_POLL_MS);
+      continue;
     }
-    config = ports.readConfig();
     const settingsHash = hashSettings(config.settings);
-    // One read of the process table per tick, shared by the pruning and the allowlist so both act on the same verdict.
-    const inputs = currentHeadroomAllowlistInputs(fs, paths, ports.frontDoorLiveness);
-    // A door that crashed never removed its direct record; pruning it is what withdraws its origin once nothing can route through it.
-    pruneDeadFrontDoorDirectRecords(fs, paths.frontdoorDirectRecordsDir, inputs.frontDoorRecords, inputs.frontDoorLiveness);
-    pruneMalformedFrontDoorDirectFiles(fs, paths.frontdoorDirectRecordsDir, ports.isRunning);
     // Recomputed every tick: a front door can move, come or go at any moment, and the allowlist is the daemon's whole security posture.
     const allowlist = inputs.frontDoorOrigins;
     const allowlistHash = hashAllowlist(allowlist);

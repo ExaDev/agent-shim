@@ -11,6 +11,7 @@ import type { DoorHealthPublisher } from "./doorHealthEvents";
 import type { LiveSessionRegistry } from "./liveSessionRegistry";
 import type { HandoverOutcome, HandoverSockets, ListenSource, Predecessor } from "./handover";
 import { FRONT_DOOR_PROTOCOL, pruneDeadFrontDoorSessions, readFrontDoorState, removeFrontDoorCodexHome, removeFrontDoorDirectRecord, writeFrontDoorCodexHome, writeFrontDoorDirectRecord, writeFrontDoorState, type FrontDoorSessionSummary, type FrontDoorState, markFrontDoorDraining, unmarkFrontDoorDraining } from "./state";
+import { faultLog } from "../keepTicking";
 
 /** A bound front-door listener in this process, and how to stop it. */
 interface FrontDoorListenerHandle {
@@ -357,6 +358,7 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
     }
     return 0;
   };
+  const tickFaults = faultLog(`agent-shim frontdoor supervisor ${String(ports.ownPid)} tick`, ports.log);
   for (;;) {
     if (ports.retire?.aborted === true) {
       ports.log(`agent-shim frontdoor supervisor ${String(ports.ownPid)}: asked to exit`);
@@ -372,13 +374,23 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
     }
     ticks += 1;
     // The listing precedes the prune so the launch lifecycle publisher sees each pruned launch's record with its start time; the prune's removals are handed to it beside the listing, and the idle decision reads the same listing minus those removals rather than listing again.
-    const listed = ports.registry.rescan();
-    const running = await ports.runningAmong(listed.map((session) => session.pid));
-    const pruned = pruneDeadFrontDoorSessions(fs, paths.frontdoorSessionsDir, listed, (pid) => running.has(pid));
-    // Synchronous with the prune above, so a pruned launch's capability is refused from the next request on, not from the next tick.
-    ports.registry.forget(pruned);
-    ports.observeLaunchRegistry(listed, pruned);
-    ports.checkQuotaExpiry();
+    let listed: ReturnType<typeof ports.registry.rescan>;
+    let pruned: ReturnType<typeof pruneDeadFrontDoorSessions>;
+    // A failure reading the registry (a file descriptor shortage, an I/O error) fails this tick alone: it is logged, the door goes on serving, and the next tick reads again.
+    try {
+      listed = ports.registry.rescan();
+      const running = await ports.runningAmong(listed.map((session) => session.pid));
+      pruned = pruneDeadFrontDoorSessions(fs, paths.frontdoorSessionsDir, listed, (pid) => running.has(pid));
+      // Synchronous with the prune above, so a pruned launch's capability is refused from the next request on, not from the next tick.
+      ports.registry.forget(pruned);
+      ports.observeLaunchRegistry(listed, pruned);
+      ports.checkQuotaExpiry();
+      tickFaults.succeeded();
+    } catch (error) {
+      tickFaults.failed(error);
+      await pause();
+      continue;
+    }
     const prunedPids = new Set(pruned);
     const live = listed.filter((session) => !prunedPids.has(session.pid));
     if (supersededBy === undefined) {
