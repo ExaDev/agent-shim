@@ -73,7 +73,7 @@ const EMBEDDED_TIMERS: Readonly<Record<string, string>> = {
   "supervise/sessionControlPlugin.ts": "the control plugin's clock, which runs inside Claude Code and not in the door",
 };
 
-/** Each infinite loop of `source` that awaits a pause between turns and has no try whose catch goes on to the next turn (`continue`), as `<module> <enclosing function>`. */
+/** Each infinite loop of `source` that awaits a pause between turns and has no try whose catch goes on to the next turn (`continue`), as `<module> <enclosing function>`. One such try anywhere in the loop's body passes it: which statements of the turn lie inside the try is not checked. */
 function uncaughtWaitLoops(module: string, source: string): readonly string[] {
   const file = ts.createSourceFile(module, source, ts.ScriptTarget.Latest, true);
   const found: string[] = [];
@@ -156,7 +156,7 @@ describe("a background loop in a long-lived process", () => {
     expect(Object.keys(ALLOWED).filter((key) => !found.includes(key))).toEqual([]);
   });
 
-  it("has in each loop that waits between turns a try whose catch goes on to the next turn, but where an allowance says why not", () => {
+  it("has in each loop that waits between turns at least one try whose catch goes on to the next turn, but where an allowance says why not; what the turn does outside that try is not read", () => {
     const loops = modules(__dirname).flatMap((module) => uncaughtWaitLoops(module, sourceOf(module)));
     expect(loops.filter((key) => BOUNDED_WAITS[key] === undefined)).toEqual([]);
     expect(Object.keys(BOUNDED_WAITS).filter((key) => !loops.includes(key))).toEqual([]);
