@@ -8,6 +8,7 @@ import { aliasLegacyWireHeaders } from "../legacy";
 import type { LeafCert } from "./connect";
 import { processorShare, readMachineLoad, type MachineLoadReading } from "./machineLoad";
 import { CONTROL_PATH_PREFIX } from "./rcControl";
+import { quietLog } from "../keepTicking";
 import type { PipelineRequest } from "./pipeline";
 
 /** How long one health probe waits before giving up: a listener that just bound answers in milliseconds, so the bound only bites when the request path itself is broken. */
@@ -43,11 +44,13 @@ export interface PrePipelineApi {
  */
 export function createFrontDoorServer(
   pipeline: (request: PipelineRequest) => Promise<void>,
-  log: (line: string) => void,
+  givenLog: (line: string) => void,
   tls?: LeafCert,
   control?: (request: IncomingMessage, response: ServerResponse) => void,
   apis?: readonly PrePipelineApi[],
 ): FrontDoorServer {
+  // Through `quietLog`: the server logs a request that failed before answering it, and a log that throws (EMFILE, ENOSPC) must not leave that request unanswered.
+  const log = quietLog(givenLog);
   const handler = (request: IncomingMessage, response: ServerResponse): void => {
     if (request.method === "GET" && request.url === "/healthz") {
       response.writeHead(HTTP_STATUS.ok, { "Content-Type": "text/plain" });

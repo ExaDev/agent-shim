@@ -7,6 +7,7 @@ import { UsageSnapshotError } from "../usage/read";
 import type { RouteResolution } from "./pipeline";
 import { IDENTITY_HEADER, type RoutedRequest } from "./route";
 import { isIdentityId } from "../usage/account";
+import { quietLog } from "../keepTicking";
 
 /** Whether `error` says a file of the person's local state could not be used: one the system would not read (a code such as `EACCES`, `EISDIR`, `ENOTDIR`, `ELOOP`), one that is no valid file of its kind (every expected failure of this program is a `CliError`), or a usage snapshot of another shape. Anything else is a defect. */
 function isLocalStateFault(error: unknown): boolean {
@@ -16,7 +17,9 @@ function isLocalStateFault(error: unknown): boolean {
 /**
  * `resolve`, behind the one boundary every port the request path reads local state through sits behind (identity names, route overrides, the models block, provider targets, usage snapshots, selector state, provider files), so a port added later is too. It answers: a 400 naming the `x-agent-shim-identity` header for a header that names no identity id, the request's own fault, before any port reads a file by it; a retryable 503 naming the code for a read that failed for a reason of the moment (`isTransientReadError`); and a 400 naming the fault (`configFaultOf`: its class or code, or the keys a file got wrong) and `agent-shim doctor` for a local file that cannot be used. None names the file's path, as the error's own message does. A defect still rejects, as it should. Each of these refusals is also logged, naming the same fault and never the path, so the door's log says why a request was refused. A failed write of a session's move request is no read of local state, and the resolver answers it itself.
  */
-export function refusingLocalStateFaults(resolve: (request: RoutedRequest) => Promise<RouteResolution>, log: (line: string) => void): (request: RoutedRequest) => Promise<RouteResolution> {
+export function refusingLocalStateFaults(resolve: (request: RoutedRequest) => Promise<RouteResolution>, givenLog: (line: string) => void): (request: RoutedRequest) => Promise<RouteResolution> {
+  // Through `quietLog`, so a log that throws (EMFILE, ENOSPC) does not turn a refusal into a rejection.
+  const log = quietLog(givenLog);
   return async (request) => {
     // The identity header is the client's to send: an id no identity directory can have is the request's fault, refused before any port reads a file by it.
     const { identity } = request.session;
