@@ -1394,11 +1394,16 @@ jobs:
       - name: Search the corpus for real-shaped values
         run: sh scripts/rust.sh xtask corpus scrub-check
 
-  # Fails a pull request that deletes a test no case and no row of conformance/README.md's dropped table accounts for (scripts/deleted-tests.mts). It compares the suite's own listing at the base of the merge commit the run checks out (its first parent) with the listing at the head, so it needs the whole history and runs only where there is a base: a push to main has none and the job is skipped, which the aggregate takes as passing.
+  # Fails a pull request that deletes a test no case and no row of conformance/README.md's dropped table accounts for, one account per deleted test (scripts/deleted-tests.mts). It runs the head's tests, as the `test` job does, and holds no credential: the token is read-only and no secret is passed. It compares the suite's own listing at the base of the merge commit the run checks out (its first parent) with the listing at the head, so it needs the whole history and runs only where there is a base: a push to main has none and the job is skipped, which the aggregate takes as passing.
   deleted-tests:
-    name: Deleted tests
+    name: Deleted tests (${{ matrix.os }})
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    # On both platforms the suite runs on: a title built from the platform, a path or a value that differs between them is unaccounted on one of them, and only a run there sees it.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
         with:

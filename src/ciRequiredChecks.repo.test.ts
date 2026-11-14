@@ -45,14 +45,19 @@ describe("the Rust and corpus jobs", () => {
 });
 
 describe("the deleted-test check", () => {
-  const JobSchema = z.object({ jobs: z.record(z.string(), z.looseObject({ if: z.string().optional(), "continue-on-error": z.unknown().optional(), steps: z.array(z.looseObject({ uses: z.string().optional(), with: z.looseObject({}).optional() })) })) });
+  const JobSchema = z.object({ jobs: z.record(z.string(), z.looseObject({ if: z.string().optional(), "runs-on": z.string().optional(), strategy: z.looseObject({ matrix: z.looseObject({ os: z.array(z.string()).optional() }) }).optional(), "continue-on-error": z.unknown().optional(), steps: z.array(z.looseObject({ uses: z.string().optional(), with: z.looseObject({}).optional() })) })) });
   const job = JobSchema.parse(parse(fs.readFileSync(path.join(__dirname, "..", ".github", "workflows", "ci.yml"), "utf8"))).jobs["deleted-tests"];
 
   it("is a job that runs on pull requests, can fail the merge and is needed by the aggregate", () => {
-    expect(job?.name).toBe("Deleted tests");
+    expect(job?.name).toBe("Deleted tests (${{ matrix.os }})");
     expect(job?.if).toBe("github.event_name == 'pull_request'");
     expect(job?.["continue-on-error"]).toBeUndefined();
     expect(workflow.jobs[AGGREGATE]?.needs).toEqual(expect.arrayContaining(["deleted-tests"]));
+  });
+
+  it("runs on both platforms the suite runs on, since a title that depends on the platform is seen only there", () => {
+    expect(job?.["runs-on"]).toBe("${{ matrix.os }}");
+    expect(job?.strategy?.matrix.os).toEqual(["ubuntu-latest", "macos-latest"]);
   });
 
   it("checks out the whole history, which the base of the run's merge commit needs, and runs the script against that base", () => {
