@@ -5,7 +5,9 @@ import { caseSources, deletedProblems, guardProblems, listedCounts, parseTable, 
 const ROOT = "/repo";
 const row = (file: string, test: string): Row => ({ file, test, reason: "not a function of its inputs" });
 const listing = (...entries: readonly [string, string][]) => listedCounts(entries.map(([file, name]) => ({ file: `${ROOT}/${file}`, name })), ROOT);
-const accounting = (changes: Partial<Accounting> = {}): Accounting => ({ sources: new Set(), sourceFiles: new Set(), kept: [], dropped: [], ...changes });
+type Changes = Partial<Omit<Accounting, "sources">> & { readonly sources?: ReadonlySet<string>; readonly sourceCounts?: ReadonlyMap<string, number> };
+/** An accounting where each source named by `sources` is one case, or with the counts given in `sourceCounts`. */
+const accounting = ({ sources = new Set<string>(), sourceCounts, ...rest }: Changes = {}): Accounting => ({ sources: sourceCounts ?? new Map([...sources].map((id) => [id, 1])), sourceFiles: new Set(), kept: [], dropped: [], ...rest });
 
 const README = `# Corpus
 
@@ -55,10 +57,16 @@ describe("the identity of a test", () => {
     expect(testId("a.test.ts", "d > t")).toBe("a.test.ts: d > t");
   });
 
-  it("is read from a from that names a test, and a recorded from names none", () => {
-    const { sources, sourceFiles } = caseSources(["paths.test.ts: a > b", "config/names.test.ts: c: with a colon > d", "recorded: src/pathNorm.ts (what)", "x.test.tsx: y"]);
-    expect([...sources].sort()).toEqual(["config/names.test.ts: c: with a colon > d", "paths.test.ts: a > b", "x.test.tsx: y"]);
+  it("is read from a from that names a test, counting the cases that name it, and a recorded from names none", () => {
+    const { sources, sourceFiles } = caseSources([{ from: "paths.test.ts: a > b" }, { from: "config/names.test.ts: c: with a colon > d" }, { from: "recorded: src/pathNorm.ts (what)" }, { from: "x.test.tsx: y" }, { from: "paths.test.ts: a > b", skip: "rust" }]);
+    expect([...sources].sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))).toEqual([["config/names.test.ts: c: with a colon > d", 1], ["paths.test.ts: a > b", 2], ["x.test.tsx: y", 1]]);
     expect([...sourceFiles].sort()).toEqual(["config/names.test.ts", "paths.test.ts", "x.test.tsx"]);
+  });
+
+  it("leaves out a case the TypeScript runner skips, since it never runs in the suite whose tests were deleted", () => {
+    const { sources, sourceFiles } = caseSources([{ from: "a.test.ts: x > y", skip: "ts" }]);
+    expect(sources.size).toBe(0);
+    expect(sourceFiles.size).toBe(0);
   });
 });
 
@@ -105,6 +113,28 @@ describe("guardProblems", () => {
     const sourceFiles = new Set(["paths.test.ts"]);
     const sources = new Set(["paths.test.ts: a > moved"]);
     expect(guardProblems(listed, accounting({ sources, sourceFiles, kept: [row("paths.test.ts", "a > kept")], dropped: [row("paths.test.ts", "a > removed")] }))).toEqual([]);
+  });
+});
+
+describe("two tests with one title", () => {
+  const twin = listing(["src/a.test.ts", "x > same"], ["src/a.test.ts", "x > same"]);
+
+  it("fail the guard in a file in scope, which one row or case cannot tell apart", () => {
+    const problems = guardProblems(twin, accounting({ sourceFiles: new Set(["a.test.ts"]), sources: new Set(["a.test.ts: x > same"]) }));
+    expect(problems).toEqual(["two tests share a title in a file whose tests moved, so one row or case cannot tell them apart: a.test.ts: x > same"]);
+  });
+
+  it("need one account each when both are deleted: one case is not enough, two cases or a case and a row are", () => {
+    const none = listing();
+    expect(deletedProblems(twin, none, accounting({ sources: new Set(["a.test.ts: x > same"]) }))).toEqual(["deleted 2 tests with this title and only 1 cases and dropped rows account for them: a.test.ts: x > same"]);
+    expect(deletedProblems(twin, none, accounting({ sourceCounts: new Map([["a.test.ts: x > same", 2]]) }))).toEqual([]);
+    expect(deletedProblems(twin, none, accounting({ sources: new Set(["a.test.ts: x > same"]), dropped: [row("a.test.ts", "x > same")] }))).toEqual([]);
+    expect(deletedProblems(twin, none, accounting({ dropped: [row("a.test.ts", "x > same"), row("a.test.ts", "x > same")] }))).toEqual([]);
+  });
+
+  it("need one account for the one deleted when only one of the two goes", () => {
+    expect(deletedProblems(twin, listing(["src/a.test.ts", "x > same"]), accounting())).toEqual(["deleted test has no case and no dropped row: a.test.ts: x > same"]);
+    expect(deletedProblems(twin, listing(["src/a.test.ts", "x > same"]), accounting({ sources: new Set(["a.test.ts: x > same"]) }))).toEqual([]);
   });
 });
 
