@@ -338,6 +338,22 @@ describe("runtime route overrides through the real door, read from a real file",
     }
   }, TIMEOUT_MS);
 
+  it("keeps the override's mark while the session asks for `auto` on the provider it moved the session to, since `auto` chooses no route, and sends the next Claude name home once the override is removed", async () => {
+    set([[{ kind: "global" }, "opus", "z/glm-9"]]);
+    const world = await door();
+    try {
+      await send(world, { model: OPUS, requestClass: "main" });
+      expect((await send(world, { model: "auto", requestClass: "main" })).status).toBe(HTTP_STATUS.ok);
+      expect(world.contextNow()).toMatchObject({ kind: "provider", provider: "z", requestedModel: "auto", movedBy: "override" });
+      writeRouteOverrides(paths, NO_ROUTE_OVERRIDES);
+      await send(world, { model: OPUS, requestClass: "main" });
+      expect(world.contextNow()).toMatchObject({ kind: "anthropic", requestedModel: OPUS });
+      expect(world.anthropicModels.at(-1)).toBe(OPUS);
+    } finally {
+      await world.close();
+    }
+  }, TIMEOUT_MS);
+
   it("settles on one route when a provider-scoped override covers the provider a global override moves the session to", async () => {
     set([[{ kind: "global" }, "opus", "z/glm-9"], [{ kind: "provider", name: "z" }, "opus", "anthropic/claude-opus-5-1"]]);
     const world = await door();
