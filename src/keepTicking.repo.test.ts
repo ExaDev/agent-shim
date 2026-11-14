@@ -68,7 +68,7 @@ const TICK_MODULES = ["catalogueKeeper.ts", "usage/jobKeeper.ts", "usage/windowK
 
 /** The timers in `src` written inside a string of code another runtime runs, which the TypeScript checks here cannot see or wrap, by module, each with why it needs no keepTicking. */
 const EMBEDDED_TIMERS: Readonly<Record<string, string>> = {
-  "frontdoor/watchdog.ts": "the watchdog thread's own interval, whose file writes catch their own failure: the log and record writes, and the start lock's clearing and the replacement's spawn inside one try",
+  "frontdoor/watchdog.ts": "the watchdog thread's own interval, whose file system calls catch their own failure: the log and record writes, the start lock's clearing and the replacement's spawn inside one try, the native sample's start inside another and its pruning of older samples inside a third",
   "frontdoor/rcClientPage.ts": "the browser page's refresh interval, which runs in the viewer's browser and not in the door",
   "supervise/sessionControlPlugin.ts": "the control plugin's clock, which runs inside Claude Code and not in the door",
 };

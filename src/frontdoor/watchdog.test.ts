@@ -84,6 +84,8 @@ async function writtenTextOf(file: string): Promise<string> {
 
 /** A directory its owner can list and enter but not write, so no entry in it can be removed. */
 const READ_ONLY_DIRECTORY_MODE = 0o555;
+/** A directory its owner can write into and enter but not list. */
+const UNLISTABLE_DIRECTORY_MODE = 0o333;
 /** A directory its owner can write again, so the test's cleanup can remove it. */
 const WRITABLE_DIRECTORY_MODE = 0o755;
 
@@ -342,6 +344,26 @@ describe("startThreadWatchdog", () => {
         },
         { timeout: PAUSE_WAIT_GUARD_MS },
       );
+    });
+
+    it("logs the stack it wrote and that older ones could not be pruned when the samples directory cannot be listed", async () => {
+      if (process.getuid?.() === 0) return;
+      const samples = path.join(directory, "stall-samples");
+      fs.mkdirSync(samples, { recursive: true });
+      // A directory its owner can write into and enter but not list, so the sampler writes its file and the pruning's listing fails (EACCES).
+      fs.chmodSync(samples, UNLISTABLE_DIRECTORY_MODE);
+      try {
+        const nativeSample = { command: process.execPath, args: ["-e", "require('node:fs').writeFileSync(process.argv[1], 'sampled')", "{file}"], directory: samples, seconds: 1, overheadMs: PAUSE_WAIT_GUARD_MS, keep: 1 };
+        await stallWith({ nativeSample });
+        await vi.waitFor(
+          () => {
+            expect(textOf(logFile)).toMatch(/native stack of the blocked main thread written to \S+; older stacks could not be pruned: EACCES/);
+          },
+          { timeout: PAUSE_WAIT_GUARD_MS },
+        );
+      } finally {
+        fs.chmodSync(samples, WRITABLE_DIRECTORY_MODE);
+      }
     });
 
     it("says the sampler wrote nothing when it fails, passing on what it said, rather than naming a file that is not there", async () => {
