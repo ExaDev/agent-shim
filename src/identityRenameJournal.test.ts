@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { CliError } from "./cliError";
 import { describeUnfinishedRename, finishabilityOf, listRenameJournals, readRenameJournal, recordsNothingApplied, readRenameJournals, removeRenameJournal, renameJournalFile, requireNameFreeOfUnfinishedRename, unfinishedRenameFor, writeRenameJournal, type RenameJournal } from "./identityRenameJournal";
-import { createFakeFarmFs } from "./test-helpers";
+import { createFakeFarmFs, errorWithCode } from "./test-helpers";
 
 const DIR = "/home/testuser/.agent-shim/identity-renames";
 
@@ -62,6 +62,16 @@ describe("the rename journal", () => {
       expect(() => readRenameJournals(fs, DIR)).toThrow(CliError);
       expect(() => readRenameJournals(fs, DIR)).toThrow(`${DIR}/damaged.json`);
     }
+  });
+
+  it("lists a journal the system will not read as unreadable, naming the code, and a rename refuses beside it as beside a damaged one", () => {
+    const fs = createFakeFarmFs();
+    const file = `${DIR}/blocked.json`;
+    const blocked = errorWithCode("EACCES: permission denied", "EACCES");
+    const reading = { readdir: (directory: string) => fs.readdir(directory), readFileUtf8: (at: string) => { if (at === file) throw blocked; return fs.readFileUtf8(at); } };
+    fs.seed({ [file]: "{}" });
+    expect(listRenameJournals(reading, DIR).unreadable).toEqual([{ file, detail: "cannot be read: EACCES" }]);
+    expect(() => readRenameJournals(reading, DIR)).toThrow(CliError);
   });
 });
 
