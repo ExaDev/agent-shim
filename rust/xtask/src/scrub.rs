@@ -493,8 +493,35 @@ mod tests {
                 "prefixed-id",
                 join(&["toolu", "_", "01A09q90qw90lq917835lq9"]),
             ),
+            (
+                "prefixed-id",
+                join(&["cs", "e_", "01XFDUDYJgAACzvnptvVoYEL"]),
+            ),
+            (
+                "prefixed-id",
+                join(&["sess", "ion_", "01XFDUDYJgAACzvnptvVoYEL"]),
+            ),
+            (
+                "prefixed-id",
+                join(&["en", "v_", "01XFDUDYJgAACzvnptvVoYEL"]),
+            ),
+            (
+                "prefixed-id",
+                join(&["re", "q_", "011CUDYJgAACzvnptvVoYEL"]),
+            ),
+            (
+                "prefixed-id",
+                join(&["srvtoo", "lu_", "01A09q90qw90lq917835lq9"]),
+            ),
+            (
+                "cookie-value",
+                join(&["\"coo", "kie\": \"sess=", "q8Zk3Jm2Xv9Rt5Wy7Nb4\""]),
+            ),
             ("email", join(&["jane.doe", "@", "company.co.uk"])),
+            ("email", join(&["a", "@", "mail.example.com"])),
             ("ipv4-address", join(&["10", ".4.", "17.201"])),
+            ("ipv4-address", join(&["192", ".0.", "3.1"])),
+            ("ipv4-address", join(&["128", ".1.", "2.3"])),
             ("home-path", join(&["/Us", "ers/", "jane/project"])),
             ("home-path", join(&["/ho", "me/", "jane/.config"])),
             ("home-path", join(&["C:", "\\Users\\", "jane\\project"])),
@@ -517,7 +544,8 @@ mod tests {
             "00000000-0000-4000-8000-000000000001".to_owned(),
             join(&["ms", "g_", "0000000000000000000001"]),
             "user1@example.com and user2@example.org".to_owned(),
-            "127.0.0.1 and 192.0.2.7 and 127.8.9.10".to_owned(),
+            "127.0.0.1 and 192.0.2.7 and 192.0.2.255 and 127.8.9.10".to_owned(),
+            "A@Example.COM".to_owned(),
             "$HOME/project and /tmp/work and /home".to_owned(),
             "session_id, request_id, env_file, the cookie value, a bearer or cookie".to_owned(),
             "pnpm@12.4.1 taiki-e/install-action@v2 cargo-deny@0.20.2 1.2.3 version 10.20.30"
