@@ -45,8 +45,9 @@ export interface CliResult {
 export type RunClaude = (args: readonly string[]) => Promise<void>;
 
 export function program(runClaude: RunClaude = vi.fn<RunClaude>(), options: Parameters<typeof fakeCommandDeps>[1] = {}): Command {
-  // The identity commands ask the Keychain whether a login is filed for a directory; a fake one answers, so no test runs `security` against the real Keychain, whose answer depends on the machine and whose time limit a loaded machine can exceed.
-  return buildProgram({ ...fakeCommandDeps(paths, options), runClaude, identityRenamePorts: { ...realIdentityRenamePorts(paths), run: keychain.run } });
+  // The identity commands ask the Keychain whether a login is filed for a directory, and only on macOS; the harness runs them as on macOS on every host, against a fake Keychain, so a test reads nothing of the machine's own logins and takes the same path on Linux CI as on a Mac. The credential cache keeps its entries in files under the throwaway root, never in the machine's Keychain.
+  const real = realIdentityRenamePorts(paths);
+  return buildProgram({ ...fakeCommandDeps(paths, options), runClaude, identityRenamePorts: { ...real, run: keychain.run, platform: "darwin", credentialCache: { ...real.credentialCache, platform: "linux" } } });
 }
 
 /** Runs one `agent-shim` invocation against the throwaway layout the way `src/cli.ts` does, capturing both streams and the exit status `reportFatalError` or the command itself decided. */
