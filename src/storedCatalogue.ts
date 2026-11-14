@@ -81,7 +81,7 @@ export function catalogueFailureFile(paths: LayoutPaths, owner: CatalogueOwner, 
   return path.join(path.dirname(catalogueCachePath(paths, name, owner.pid, owner.generation)), "failures", `${name}.json`);
 }
 
-/** A provider's stored catalogue state as text, read through one `TolerantReader`. Nothing else outside the modules that write, move and remove these files names their paths (`storedCatalogueGuard.test.ts`), so this is where they are read. */
+/** A provider's stored catalogue state as text, read through one `TolerantReader`. Nothing else outside the modules that write, move and remove these files names their paths (`storedCatalogueGuard.repo.test.ts`), so this is where they are read. */
 export class StoredCatalogue {
   readonly #paths: LayoutPaths;
   readonly #reader: TolerantReader;

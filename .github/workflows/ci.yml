@@ -1337,7 +1337,7 @@ jobs:
             exit 1
           fi
 
-  # One aggregate check for merge-when-green to wait on: it passes only when every other job succeeded or was skipped (the publishing jobs skip on a pull request). A job missing from `needs` would be ignored by the merge, so `src/ciRequiredChecks.test.ts` fails when this list drifts from the jobs above.
+  # One aggregate check for merge-when-green to wait on: it passes only when every other job succeeded or was skipped (the publishing jobs skip on a pull request). A job missing from `needs` would be ignored by the merge, so `src/ciRequiredChecks.repo.test.ts` fails when this list drifts from the jobs above.
   required-checks:
     name: Required checks
     if: always()

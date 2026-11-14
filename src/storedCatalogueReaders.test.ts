@@ -131,7 +131,7 @@ afterEach(() => {
 const faults = FAULTS.filter((fault) => !(fault.needsUser && RUNNING_AS_ROOT));
 
 /**
- * Every reader of a stored catalogue file, one describe each, over every way the file can be unreadable: the one provider's file is skipped, recorded or answered for as that reader's contract says, with the fault's code and never a path, and the other provider is unaffected. A reader that a source adds reads through `StoredCatalogue`, the only module outside the writers that names a stored file's path (`storedCatalogueGuard.test.ts`), and gets its describe here.
+ * Every reader of a stored catalogue file, one describe each, over every way the file can be unreadable: the one provider's file is skipped, recorded or answered for as that reader's contract says, with the fault's code and never a path, and the other provider is unaffected. A reader that a source adds reads through `StoredCatalogue`, the only module outside the writers that names a stored file's path (`storedCatalogueGuard.repo.test.ts`), and gets its describe here.
  */
 describe.each(faults)("a stored catalogue file that is unreadable: $kind", (fault) => {
   describe.each(["catalogue", "digest"] as const)("its %s", (target) => {
