@@ -54,15 +54,105 @@ function modules(directory: string): readonly string[] {
   });
 }
 
+/** The loops in `src` that wait between turns (`for (;;)` or `while (true)` whose body awaits a pause, sleep, delay or wait) but need no catch of their own, by module and enclosing function, each with why: each is a bounded wait for one request or one start, whose failure is that request's or that start's to answer. */
+const BOUNDED_WAITS: Readonly<Record<string, string>> = {
+  "frontdoor/rcSessionCommands.ts settledGoal": "polls one session command's transcript for its goal, under that command's deadline",
+  "frontdoor/rcSessionCommands.ts plugin": "polls one session command's result from the session's control plugin, under that command's deadline",
+  "frontdoor/server.ts awaitStartHealth": "waits for one start's health probe within its budget, and its caller answers that start",
+  "headroom/supervisor.ts waitUntilReady": "waits for one daemon start to answer within its budget",
+  "supervise/sessionControl.ts requestInSession": "polls one control command's result, aborted with it",
+};
+
+/** The modules whose code is a timer-driven tick, in which a promise started and not returned (`void <chain>`) is the tick's own to catch. */
+const TICK_MODULES = ["catalogueKeeper.ts", "usage/jobKeeper.ts", "usage/windowKeeper.ts", "headroom/keeper.ts"] as const;
+
+/** The timers in `src` written inside a string of code another runtime runs, which the TypeScript checks here cannot see or wrap, by module, each with why it needs no keepTicking. */
+const EMBEDDED_TIMERS: Readonly<Record<string, string>> = {
+  "frontdoor/watchdog.ts": "the watchdog thread's own interval, whose body catches its own log and record writes",
+  "frontdoor/rcClientPage.ts": "the browser page's refresh interval, which runs in the viewer's browser and not in the door",
+  "supervise/sessionControlPlugin.ts": "the control plugin's clock, which runs inside Claude Code and not in the door",
+};
+
+/** Each infinite loop of `source` that awaits a pause between turns and has no try whose catch goes on to the next turn (`continue`), as `<module> <enclosing function>`. */
+function uncaughtWaitLoops(module: string, source: string): readonly string[] {
+  const file = ts.createSourceFile(module, source, ts.ScriptTarget.Latest, true);
+  const found: string[] = [];
+  const visit = (node: ts.Node): void => {
+    const infinite = (ts.isForStatement(node) && node.condition === undefined) || (ts.isWhileStatement(node) && node.expression.kind === ts.SyntaxKind.TrueKeyword);
+    if (infinite) {
+      const body = node.statement;
+      const waits = /await [a-zA-Z.]*(pause|sleep|delay|wait)[a-zA-Z]*\(/u.test(body.getText(file));
+      const caught = (function look(inner: ts.Node): boolean {
+        if (ts.isTryStatement(inner) && inner.catchClause !== undefined && /\bcontinue;/u.test(inner.catchClause.block.getText(file))) return true;
+        return ts.forEachChild(inner, (child) => (look(child) ? true : undefined)) ?? false;
+      })(body);
+      if (waits && !caught) found.push(`${module} ${enclosingName(node, file)}`);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return found;
+}
+
+/** Each `void <expression>` statement in `source` whose expression has no `.catch(`, as `<module> <line>`. */
+function uncaughtVoidChains(module: string, source: string): readonly string[] {
+  const file = ts.createSourceFile(module, source, ts.ScriptTarget.Latest, true);
+  const found: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isExpressionStatement(node) && ts.isVoidExpression(node.expression) && !node.expression.expression.getText(file).includes(".catch(")) {
+      found.push(`${module} ${String(file.getLineAndCharacterOfPosition(node.getStart()).line + 1)}`);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return found;
+}
+
+/** Whether `source` writes `setInterval(` or `.every(` inside a string or template of code. */
+function hasEmbeddedTimer(module: string, source: string): boolean {
+  const file = ts.createSourceFile(module, source, ts.ScriptTarget.Latest, true);
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateExpression(node)) && /setInterval\(|\.every\(\d/u.test(node.getText(file))) found = true;
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return found;
+}
+
 describe("a background loop in a long-lived process", () => {
   const found = modules(__dirname).flatMap((module) => unwrappedTimers(module, sourceOf(module)));
 
-  it("ticks through keepTicking at each setInterval and clock.every in src, but where an allowance says why not", () => {
+  it("ticks through keepTicking at each setInterval and clock.every call in the TypeScript of src, but where an allowance says why not", () => {
     expect(found.filter((key) => ALLOWED[key] === undefined)).toEqual([]);
   });
 
   it("names in each allowance a timer the module still has", () => {
     expect(Object.keys(ALLOWED).filter((key) => !found.includes(key))).toEqual([]);
+  });
+
+  it("has each loop that waits between turns catch a failed turn and go on, but where an allowance says why not", () => {
+    const loops = modules(__dirname).flatMap((module) => uncaughtWaitLoops(module, sourceOf(module)));
+    expect(loops.filter((key) => BOUNDED_WAITS[key] === undefined)).toEqual([]);
+    expect(Object.keys(BOUNDED_WAITS).filter((key) => !loops.includes(key))).toEqual([]);
+  });
+
+  it("has each promise a tick module starts and drops catch its own failure", () => {
+    expect(TICK_MODULES.flatMap((module) => uncaughtVoidChains(module, sourceOf(module)))).toEqual([]);
+  });
+
+  it("names each module that writes a timer inside a string of code, and why it needs no keepTicking", () => {
+    const embedded = modules(__dirname).filter((module) => hasEmbeddedTimer(module, sourceOf(module)));
+    expect(embedded.filter((module) => EMBEDDED_TIMERS[module] === undefined)).toEqual([]);
+    expect(Object.keys(EMBEDDED_TIMERS).filter((module) => !embedded.includes(module))).toEqual([]);
+  });
+
+  it("finds a waiting loop with no catch, a dropped promise with no catch, and a timer written in a string", () => {
+    expect(uncaughtWaitLoops("x.ts", "async function run() { for (;;) { work(); await pause(); } }")).toEqual(["x.ts run"]);
+    expect(uncaughtWaitLoops("x.ts", "async function run() { for (;;) { try { work(); } catch (error) { log(error); await pause(); continue; } await pause(); } }")).toEqual([]);
+    expect(uncaughtVoidChains("x.ts", "function tick() { void refresh().then(done); }")).toEqual(["x.ts 1"]);
+    expect(uncaughtVoidChains("x.ts", "function tick() { void refresh().then(done).catch(log); }")).toEqual([]);
+    expect(hasEmbeddedTimer("x.ts", "const SOURCE = `setInterval(() => beat(), 100);`;")).toBe(true);
   });
 
   it("finds a timer whose callback is bare, and leaves one ticking through keepTicking", () => {
