@@ -135,6 +135,7 @@ describe("the injected event's payload and answer parsing", () => {
     if (!result.ok) {
       expect(result.message).toContain("401");
       expect(result.message).toContain("bearer went stale");
+      expect(result).not.toHaveProperty("refusal");
       expect(result.message).toContain('{"error":"authentication_error"}');
     }
   });
@@ -145,6 +146,7 @@ describe("the injected event's payload and answer parsing", () => {
     if (!refused.ok) {
       expect(refused.message).toContain("409");
       expect(refused.message).toContain("conflicted");
+      expect(refused).not.toHaveProperty("refusal");
     }
     const malformed = rcEventWriteResultFromAnswer({ status: HTTP_STATUS.ok, body: '{"results":[]}' });
     expect(malformed.ok).toBe(false);
@@ -196,6 +198,7 @@ describe("injectRcUserMessage over an injected dial", () => {
     if (!result.ok) {
       expect(result.message).toContain("no claude.ai OAuth bearer has been observed");
       expect(result.message).toContain("worker JWT");
+      expect(result.refusal).toBe("session-state");
     }
   });
 
@@ -207,6 +210,7 @@ describe("injectRcUserMessage over an injected dial", () => {
     if (!unknown.ok) {
       expect(unknown.message).toContain(SESSION_ID);
       expect(unknown.message).toContain("has not observed");
+      expect(unknown.refusal).toBe("not-observed");
     }
     exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer sk-ant-oat" }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
     const unreachable = await injectRcUserMessage({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial, newUuid: () => "uuid-3" }, SESSION_ID, "hello");
@@ -282,12 +286,14 @@ describe("the control_response payload and answerRcControlRequest over an inject
     expect(unknownSession.ok).toBe(false);
     if (!unknownSession.ok) {
       expect(unknownSession.message).toContain("has not observed Remote Control session");
+      expect(unknownSession.refusal).toBe("not-observed");
     }
     const unknownRequest = await answerRcControlRequest(deps, SESSION_ID, "req_00000000-0000-4000-8000-0000000000ee", { approve: false, message: "no" });
     expect(unknownRequest.ok).toBe(false);
     if (!unknownRequest.ok) {
       expect(unknownRequest.message).toContain("not observed control request");
       expect(unknownRequest.message).toContain("pending");
+      expect(unknownRequest.refusal).toBe("not-observed");
     }
     const refusingDial = dialOf(async () => await Promise.reject(new Error("ECONNREFUSED")));
     const unreachable = await answerRcControlRequest({ ...deps, dial: refusingDial }, SESSION_ID, REQUEST_ID, { approve: true, message: undefined });
@@ -295,6 +301,7 @@ describe("the control_response payload and answerRcControlRequest over an inject
     if (!unreachable.ok) {
       expect(unreachable.message).toContain("could not reach the API host");
       expect(unreachable.message).toContain("ECONNREFUSED");
+      expect(unreachable).not.toHaveProperty("refusal");
     }
     // A failed write leaves the request pending: only a confirmed delivery retires it.
     expect(tracker.pendingOf().map((request) => request.requestId)).toEqual([REQUEST_ID]);
@@ -351,6 +358,7 @@ describe("the control_response payload and answerRcControlRequest over an inject
       const first = answerRcControlRequest(depsOf(tracker, slow), SESSION_ID, QUESTION_ID, { approve: true, message: undefined, choices: [["SQLite"], ["lint"]] });
       const second = await answerRcControlRequest(depsOf(tracker, slow), SESSION_ID, QUESTION_ID, { approve: true, message: undefined, choices: [["Postgres"], ["test"]] });
       expect(second.ok ? "delivered" : second.message).toContain("being written right now");
+      expect(second).toMatchObject({ ok: false, refusal: "session-state" });
       finish();
       expect((await first).ok).toBe(true);
       expect(dialled).toHaveLength(1);
@@ -435,6 +443,7 @@ describe("the control_response payload and answerRcControlRequest over an inject
         await answerRcControlRequest(deps, SESSION_ID, QUESTION_ID, { approve: false, message: undefined, choices: [["SQLite"], ["lint"]] }),
         await answerRcControlRequest(deps, SESSION_ID, REQUEST_ID, { approve: true, message: undefined, choices: [["SQLite"]] }),
       ];
+      expect(refusals.map((refusal) => (refusal.ok ? "delivered" : refusal.refusal))).toEqual(refusals.map(() => "invalid-input"));
       expect(refusals.map((refusal) => (refusal.ok ? "delivered" : refusal.message))).toEqual([
         expect.stringContaining("is a question"),
         expect.stringContaining('no option labelled "MySQL"'),
@@ -519,6 +528,7 @@ describe("the control_request payloads and the three client-originated operation
       expect(refused.ok).toBe(false);
       if (!refused.ok) {
         expect(refused.message).toContain("has not observed Remote Control session");
+        expect(refused.refusal).toBe("not-observed");
         expect(refused.message).toContain(SESSION_ID);
       }
     }
@@ -539,6 +549,7 @@ describe("the control_request payloads and the three client-originated operation
       if (!refused.ok) {
         expect(refused.message).toContain("no claude.ai OAuth bearer has been observed");
         expect(refused.message).toContain("worker JWT");
+        expect(refused.refusal).toBe("session-state");
       }
     }
   });
@@ -550,6 +561,7 @@ describe("the control_request payloads and the three client-originated operation
     expect(refused.ok).toBe(false);
     if (!refused.ok) {
       expect(refused.message).toContain("non-empty model id");
+      expect(refused.refusal).toBe("invalid-input");
     }
     expect(dialled).toEqual([]);
   });
@@ -567,6 +579,7 @@ describe("the control_request payloads and the three client-originated operation
       if (!refused.ok) {
         expect(refused.message).toContain("could not reach the API host");
         expect(refused.message).toContain("ECONNREFUSED");
+        expect(refused).not.toHaveProperty("refusal");
       }
     }
   });
@@ -697,6 +710,7 @@ describe("the wider client-half verb family: the SDK's remaining control subtype
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.message).toContain("has not observed Remote Control session");
+        expect(result.refusal).toBe("not-observed");
         expect(result.message).toContain(SESSION_ID);
       }
     }
@@ -718,6 +732,8 @@ describe("the wider client-half verb family: the SDK's remaining control subtype
       if (!result.ok) {
         expect(result.message).toContain("no claude.ai OAuth bearer has been observed");
         expect(result.message).toContain("worker JWT");
+      expect(result.refusal).toBe("session-state");
+        expect(result.refusal).toBe("session-state");
       }
     }
   });
@@ -740,6 +756,7 @@ describe("the wider client-half verb family: the SDK's remaining control subtype
       expect(refused.ok).toBe(false);
       if (!refused.ok) {
         expect(refused.message.length).toBeGreaterThan(0);
+        expect(refused.refusal).toBe("invalid-input");
       }
     }
     expect(dialled).toEqual([]);
@@ -760,6 +777,7 @@ describe("the wider client-half verb family: the SDK's remaining control subtype
       if (!result.ok) {
         expect(result.message).toContain("could not reach the API host");
         expect(result.message).toContain("ECONNREFUSED");
+        expect(result).not.toHaveProperty("refusal");
       }
     }
   });
@@ -816,6 +834,7 @@ describe("the teleport write and the read-receipt body", () => {
     expect(empty.ok).toBe(false);
     if (!empty.ok) {
       expect(empty.message).toContain("non-empty marker");
+      expect(empty.refusal).toBe("invalid-input");
     }
     const unreachable = await teleportRcSession({ ...deps, dial: { writeEvents: deps.dial.writeEvents, writeTeleportEvents: async () => await Promise.reject(new Error("ECONNREFUSED")) } }, SESSION_ID, MARKER);
     expect(unreachable.ok).toBe(false);
@@ -834,12 +853,14 @@ describe("the teleport write and the read-receipt body", () => {
     expect(unobserved.ok).toBe(false);
     if (!unobserved.ok) {
       expect(unobserved.message).toContain("has not observed Remote Control session");
+      expect(unobserved.refusal).toBe("not-observed");
     }
     exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer eyJhbGciOiJFUzI1NiJ9.worker.jwt" }).respond(HTTP_STATUS.ok);
     const workerOnly = await teleportRcSession(deps, SESSION_ID, MARKER);
     expect(workerOnly.ok).toBe(false);
     if (!workerOnly.ok) {
       expect(workerOnly.message).toContain("no claude.ai OAuth bearer has been observed");
+      expect(workerOnly.refusal).toBe("session-state");
     }
     expect(teleports).toEqual([]);
   });

@@ -57,10 +57,13 @@ export interface RcEventDial {
   readonly writeTeleportEvents: (sessionId: string, headers: Readonly<Record<string, string>>, body: string) => Promise<RcDialAnswer>;
 }
 
+/** Why the door refused an operation itself, before the session, the API host or the worker could fail it: `invalid-input` is a request that can never succeed as written, `not-observed` names a session (or, for an answer, a control request) the door does not observe, and `session-state` is a session the door observes but whose state does not let the operation run now (no route reaches it, its version is unverified, two launches claim it, only worker calls crossed the door, another answer is being written, its transcript is not recorded yet). A failure without one was attempted and not delivered: the API host, the plugin or the worker did not deliver it. */
+export type RcRefusalKind = "invalid-input" | "not-observed" | "session-state";
+
 /**
  * What one client-half write produced: the sequence numbers the real service assigned, or a verbose failure message ready to show a user. A write that carried a `control_request` also names the request id it minted, because the worker's `control_response` echoes exactly that id on the stream: a consumer that wants the answer matches it there, and the id is surfaced here since only the door ever knew it.
  */
-export type RcEventWriteResult = { readonly ok: true; readonly sequenceNums: readonly number[]; readonly requestId?: string } | { readonly ok: false; readonly message: string };
+export type RcEventWriteResult = { readonly ok: true; readonly sequenceNums: readonly number[]; readonly requestId?: string } | { readonly ok: false; readonly message: string; readonly refusal?: RcRefusalKind };
 
 /** Reads `results[].sequence_num` out of an accepted write answer: the numbers the real service assigned to the events, which every attached client's stream resumes from. */
 function sequenceNumsOf(body: string): readonly number[] | undefined {
@@ -125,7 +128,7 @@ export interface RcInjectDeps {
 
 /** The failure every client-half write returns when the tracker holds no OAuth-kind bearer for the session: only worker calls were observed, and the worker JWT they carry does not authorise the client half. */
 export function noOAuthCredentialResult(sessionId: string): RcEventWriteResult {
-  return { ok: false, message: `no claude.ai OAuth bearer has been observed for session ${sessionId}: only worker calls crossed this door, and the worker JWT they carry is answered 401 on the client half. Reconnect Remote Control through this door and the create's own bearer will be observed` };
+  return { ok: false, message: `no claude.ai OAuth bearer has been observed for session ${sessionId}: only worker calls crossed this door, and the worker JWT they carry is answered 401 on the client half. Reconnect Remote Control through this door and the create's own bearer will be observed`, refusal: "session-state" };
 }
 
 /** The verbose refusal every surface answers a session it has not observed with, in one place so the routes, the typed API and the operations all name the same reason. */
@@ -154,7 +157,7 @@ export function rcWriteHeaders(credential: RcObservedCredential): Record<string,
 export async function injectRcUserMessage(deps: RcInjectDeps, sessionId: string, text: string): Promise<RcEventWriteResult> {
   const credential = deps.credentialOf(sessionId);
   if (credential === undefined) {
-    return { ok: false, message: rcSessionNotObservedMessage(sessionId) };
+    return { ok: false, message: rcSessionNotObservedMessage(sessionId), refusal: "not-observed" };
   }
   if (credential.authorization === undefined) {
     return noOAuthCredentialResult(sessionId);
@@ -385,22 +388,22 @@ function questionAnswerInput(deps: RcAnswerDeps, sessionId: string, pending: RcP
 export async function answerRcControlRequest(deps: RcAnswerDeps, sessionId: string, requestId: string, decision: RcAnswerDecision): Promise<RcEventWriteResult> {
   const credential = deps.credentialOf(sessionId);
   if (credential === undefined) {
-    return { ok: false, message: rcSessionNotObservedMessage(sessionId) };
+    return { ok: false, message: rcSessionNotObservedMessage(sessionId), refusal: "not-observed" };
   }
   if (credential.authorization === undefined) {
     return noOAuthCredentialResult(sessionId);
   }
   const pending = deps.pendingOf(sessionId).find((candidate) => candidate.requestId === requestId);
   if (pending === undefined) {
-    return { ok: false, message: `the front door has not observed control request ${requestId} pending on session ${sessionId}: it was answered already (by this door, by an attached client or in the session's own terminal), the worker withdrew it, or it never passed through this door` };
+    return { ok: false, message: `the front door has not observed control request ${requestId} pending on session ${sessionId}: it was answered already (by this door, by an attached client or in the session's own terminal), the worker withdrew it, or it never passed through this door`, refusal: "not-observed" };
   }
   const updatedInput = questionAnswerInput(deps, sessionId, pending, decision);
   if (updatedInput !== undefined && "error" in updatedInput) {
-    return { ok: false, message: updatedInput.error };
+    return { ok: false, message: updatedInput.error, refusal: "invalid-input" };
   }
   const release = deps.claimPending(sessionId, requestId);
   if (release === undefined) {
-    return { ok: false, message: `another answer to control request ${requestId} on session ${sessionId} is being written right now; the worker takes only one, so this one was not sent` };
+    return { ok: false, message: `another answer to control request ${requestId} on session ${sessionId} is being written right now; the worker takes only one, so this one was not sent`, refusal: "session-state" };
   }
   const body = JSON.stringify(buildRcEventWriteBody(buildRcControlResponsePayload(requestId, decision, updatedInput?.input)));
   let answer: RcDialAnswer;
@@ -438,7 +441,7 @@ export interface RcControlRequestDeps {
 async function deliverRcClientPayload(deps: RcControlRequestDeps, sessionId: string, payload: Record<string, unknown>, action: string, to: "events" | "teleport-events" = "events"): Promise<RcEventWriteResult> {
   const credential = deps.credentialOf(sessionId);
   if (credential === undefined) {
-    return { ok: false, message: rcSessionNotObservedMessage(sessionId) };
+    return { ok: false, message: rcSessionNotObservedMessage(sessionId), refusal: "not-observed" };
   }
   if (credential.authorization === undefined) {
     return noOAuthCredentialResult(sessionId);
@@ -471,7 +474,7 @@ export async function interruptRcSession(deps: RcControlRequestDeps, sessionId: 
  */
 export async function setRcSessionModel(deps: RcControlRequestDeps, sessionId: string, model: string): Promise<RcEventWriteResult> {
   if (model === "") {
-    return { ok: false, message: "a set-model write needs a non-empty model id: the SDK's own field treats an omitted or null value as a reset to the session default, which this operation never sends, and an empty string is neither" };
+    return { ok: false, message: "a set-model write needs a non-empty model id: the SDK's own field treats an omitted or null value as a reset to the session default, which this operation never sends, and an empty string is neither", refusal: "invalid-input" };
   }
   const requestId = deps.newUuid();
   const result = await deliverRcClientPayload(deps, sessionId, buildRcSetModelPayload(requestId, model), `set the model on session ${sessionId}`);
@@ -492,7 +495,7 @@ export async function setRcSessionPermissionMode(deps: RcControlRequestDeps, ses
  */
 export async function endRcSession(deps: RcControlRequestDeps, sessionId: string, reason: string | undefined): Promise<RcEventWriteResult> {
   if (reason === "") {
-    return { ok: false, message: "an end-session write needs either no reason or a non-empty one: the worker reads an absent reason as its own unspecified form, and an empty string is neither" };
+    return { ok: false, message: "an end-session write needs either no reason or a non-empty one: the worker reads an absent reason as its own unspecified form, and an empty string is neither", refusal: "invalid-input" };
   }
   const requestId = deps.newUuid();
   const result = await deliverRcClientPayload(deps, sessionId, buildRcEndSessionPayload(requestId, reason), `end session ${sessionId}`);
@@ -522,10 +525,10 @@ export async function getRcSessionContextUsage(deps: RcControlRequestDeps, sessi
  */
 export async function readRcSessionFile(deps: RcControlRequestDeps, sessionId: string, path: string, options: RcReadFileOptions | undefined): Promise<RcEventWriteResult> {
   if (path === "") {
-    return { ok: false, message: "a read-file write needs a non-empty path: the SDK's own field names the file the worker resolves against the session's cwd, and an empty string names none" };
+    return { ok: false, message: "a read-file write needs a non-empty path: the SDK's own field names the file the worker resolves against the session's cwd, and an empty string names none", refusal: "invalid-input" };
   }
   if (options?.maxBytes !== undefined && (!Number.isInteger(options.maxBytes) || options.maxBytes <= 0)) {
-    return { ok: false, message: "a read-file write's max-bytes is a positive whole number of bytes: the SDK's own field caps the read, and a zero or negative cap reads nothing" };
+    return { ok: false, message: "a read-file write's max-bytes is a positive whole number of bytes: the SDK's own field caps the read, and a zero or negative cap reads nothing", refusal: "invalid-input" };
   }
   const requestId = deps.newUuid();
   const result = await deliverRcClientPayload(deps, sessionId, buildRcReadFilePayload(requestId, path, options), `read ${path} from session ${sessionId}`);
@@ -555,7 +558,7 @@ export async function getRcSessionMcpStatus(deps: RcControlRequestDeps, sessionI
  */
 export async function reconnectRcSessionMcpServer(deps: RcControlRequestDeps, sessionId: string, serverName: string): Promise<RcEventWriteResult> {
   if (serverName === "") {
-    return { ok: false, message: "an mcp-reconnect write needs a non-empty server name: the SDK's own field names the server as mcp_status reports it, and an empty string names none" };
+    return { ok: false, message: "an mcp-reconnect write needs a non-empty server name: the SDK's own field names the server as mcp_status reports it, and an empty string names none", refusal: "invalid-input" };
   }
   const requestId = deps.newUuid();
   const result = await deliverRcClientPayload(deps, sessionId, buildRcMcpReconnectPayload(requestId, serverName), `reconnect MCP server ${serverName} on session ${sessionId}`);
@@ -567,7 +570,7 @@ export async function reconnectRcSessionMcpServer(deps: RcControlRequestDeps, se
  */
 export async function authenticateRcSessionMcpServer(deps: RcControlRequestDeps, sessionId: string, serverName: string, redirectUri: string): Promise<RcEventWriteResult> {
   if (serverName === "" || redirectUri === "") {
-    return { ok: false, message: "an mcp-authenticate write needs a non-empty server name and redirect URI: the CLI's own request names the server and where its OAuth flow redirects back to, and an empty string names neither" };
+    return { ok: false, message: "an mcp-authenticate write needs a non-empty server name and redirect URI: the CLI's own request names the server and where its OAuth flow redirects back to, and an empty string names neither", refusal: "invalid-input" };
   }
   const requestId = deps.newUuid();
   const result = await deliverRcClientPayload(deps, sessionId, buildRcMcpAuthenticatePayload(requestId, serverName, redirectUri), `authenticate MCP server ${serverName} on session ${sessionId}`);
@@ -579,7 +582,7 @@ export async function authenticateRcSessionMcpServer(deps: RcControlRequestDeps,
  */
 export async function submitRcSessionMcpOAuthCallbackUrl(deps: RcControlRequestDeps, sessionId: string, serverName: string, callbackUrl: string): Promise<RcEventWriteResult> {
   if (serverName === "" || callbackUrl === "") {
-    return { ok: false, message: "an mcp-oauth-callback-url write needs a non-empty server name and callback URL: the CLI's own request names the server and the URL its OAuth flow landed on, and an empty string names neither" };
+    return { ok: false, message: "an mcp-oauth-callback-url write needs a non-empty server name and callback URL: the CLI's own request names the server and the URL its OAuth flow landed on, and an empty string names neither", refusal: "invalid-input" };
   }
   const requestId = deps.newUuid();
   const result = await deliverRcClientPayload(deps, sessionId, buildRcMcpOAuthCallbackUrlPayload(requestId, serverName, callbackUrl), `hand MCP server ${serverName}'s OAuth callback to session ${sessionId}`);
@@ -598,7 +601,7 @@ export async function sendRcKeepAlive(deps: RcControlRequestDeps, sessionId: str
  */
 export async function teleportRcSession(deps: RcControlRequestDeps, sessionId: string, marker: string): Promise<RcEventWriteResult> {
   if (marker === "") {
-    return { ok: false, message: "a teleport write needs a non-empty marker: the teleport relay anchors on a marker line's uuid and string content, and an empty string carries neither" };
+    return { ok: false, message: "a teleport write needs a non-empty marker: the teleport relay anchors on a marker line's uuid and string content, and an empty string carries neither", refusal: "invalid-input" };
   }
   return await deliverRcClientPayload(deps, sessionId, buildRcUserMessagePayload(deps.newUuid(), sessionId, marker), `teleport a marker into session ${sessionId}`, "teleport-events");
 }

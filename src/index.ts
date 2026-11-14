@@ -146,6 +146,7 @@ export {
   type RcPermissionMode,
   type RcReadFileEncoding,
   type RcReadFileOptions,
+  type RcRefusalKind,
   type RcWriteHeaders,
 } from "./frontdoor/rcWrites";
 export { createRcCredentialStore, type RcCredentialStore } from "./frontdoor/rcCredentialStore";
@@ -332,7 +333,6 @@ export {
   type RcGoalClearReport,
   type RcGoalReport,
   type RcGoalSetReport,
-  type RcRefusalKind,
   type RcSessionCommandDeps,
   type RcSessionCommandOptions,
   type RcSessionCommandResult,

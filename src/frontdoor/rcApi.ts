@@ -14,7 +14,7 @@ import { HTTP_STATUS } from "../codex/http";
 import { isLiveCapability } from "./capability";
 import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
 import type { RcPendingRequestSummary, RcSessionStatus, RcSessionSummary } from "./rcSessions";
-import { RC_SEND_DELIVERY_NOTE, rcSessionNotObservedMessage, type RcAnswerDecision, type RcContextUsageDetail, type RcEventWriteResult, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
+import { RC_SEND_DELIVERY_NOTE, rcSessionNotObservedMessage, type RcAnswerDecision, type RcContextUsageDetail, type RcEventWriteResult, type RcPermissionMode, type RcReadFileOptions, type RcRefusalKind } from "./rcWrites";
 import {
   RcAnswerInputSchema,
   RcAnswerOutputSchema,
@@ -43,7 +43,7 @@ import {
   type RcStreamEvent,
 } from "./rcSchemas";
 import { RcCompactInputSchema, RcCompactOutputSchema, RcCompactWithInstructionsInputSchema, RcGoalClearOutputSchema, RcGoalGetOutputSchema, RcGoalSessionInputSchema, RcGoalSetInputSchema, RcGoalSetOutputSchema, RcTurnInputSchema, RcTurnOutputSchema } from "./rcSlashCommandSchemas";
-import { RC_SESSION_COMMAND_MAX_WAIT_MS, type RcCompactOptions, type RcCompactReport, type RcGoalClearReport, type RcGoalReport, type RcGoalSetReport, type RcRefusalKind, type RcSessionCommandOptions, type RcSessionCommandResult, type RcSessionRoute, type RcTurnReport } from "./rcSessionCommands";
+import { RC_SESSION_COMMAND_MAX_WAIT_MS, type RcCompactOptions, type RcCompactReport, type RcGoalClearReport, type RcGoalReport, type RcGoalSetReport, type RcSessionCommandOptions, type RcSessionCommandResult, type RcSessionRoute, type RcTurnReport } from "./rcSessionCommands";
 import type { RcEventFanout } from "./rcStream";
 import type { PrePipelineApi } from "./server";
 
@@ -174,20 +174,25 @@ const RC_REFUSAL_CODES = {
   "session-state": "CONFLICT",
 } as const satisfies Record<RcRefusalKind, string>;
 
+/** The oRPC error a failed operation is carried as: the code of its refusal kind when the door refused it itself, BAD_GATEWAY when it was attempted and not delivered. */
+function refusalOf(failure: { readonly message: string; readonly refusal?: RcRefusalKind }): ORPCError<string, undefined> {
+  return new ORPCError(failure.refusal === undefined ? "BAD_GATEWAY" : RC_REFUSAL_CODES[failure.refusal], { message: failure.message });
+}
+
 /** Builds the typed API's router: one procedure per operation, every one behind the control-token middleware. */
 export function createRcApiRouter(deps: RcApiDeps) {
   const authed = doorApiAuth(deps.expectedToken);
-  // A write the operation could not deliver becomes the same verbose message the bespoke routes answer 502 with, carried as an oRPC error a typed client reads as a thrown value.
+  // A write the operation could not deliver becomes the same verbose message the bespoke routes answer 502 with, carried as an oRPC error a typed client reads as a thrown value. The code follows who is at fault, as for the verbs below: a refusal the door made itself keeps its own code, and a write that was attempted and not delivered is BAD_GATEWAY.
   const delivered = (sessionId: string, result: RcEventWriteResult): readonly number[] => {
     if (!result.ok) {
-      throw new ORPCError("BAD_GATEWAY", { message: result.message });
+      throw refusalOf(result);
     }
     return result.sequenceNums;
   };
   // The same refusal for a control-request write, whose answer also names the minted request id the worker's `control_response` echoes, so a consumer of `rc.subscribe` can match the answer to the ask.
   const deliveredControl = (sessionId: string, result: RcEventWriteResult): { readonly request: string; readonly sequenceNums: readonly number[] } => {
     if (!result.ok) {
-      throw new ORPCError("BAD_GATEWAY", { message: result.message });
+      throw refusalOf(result);
     }
     if (result.requestId === undefined) {
       throw new ORPCError("INTERNAL_SERVER_ERROR", { message: "the control request was delivered but the door cannot name the request id it minted, so the worker's answer cannot be matched" });
@@ -197,7 +202,7 @@ export function createRcApiRouter(deps: RcApiDeps) {
   // A goal, compaction or turn verb that did not reach an outcome becomes the same verbose message, carried as an oRPC error whose code follows who is at fault, the same codes the other typed routes use: a request that can never succeed as written is BAD_REQUEST, a session the door does not observe is NOT_FOUND (as `rc.status` and `rc.pending` answer it), a session whose state does not let the verb run now is CONFLICT, and a verb that was attempted and not delivered (no answer within the wait, a refusal in the session's own words) stays BAD_GATEWAY.
   const commanded = <T>(sessionId: string, result: RcSessionCommandResult<T>): { readonly session: string } & T => {
     if (!result.ok) {
-      throw new ORPCError(result.refusal === undefined ? "BAD_GATEWAY" : RC_REFUSAL_CODES[result.refusal], { message: result.message });
+      throw refusalOf(result);
     }
     return { session: sessionId, ...result.report };
   };

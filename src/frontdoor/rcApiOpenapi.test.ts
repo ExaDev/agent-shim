@@ -15,7 +15,7 @@ import { NO_PLUGIN_TURNS } from "../supervise/sessionPluginTurns";
 import { createRcSessionCommands, type RcSupervisedTarget } from "./rcSessionCommands";
 import { createRcSessionTracker, RC_IDLE_EXPIRY_MS, RC_PENDING_PER_SESSION_MAX, type RcSessionTracker } from "./rcSessions";
 import { RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "../supervise/verifiedVersions";
-import { RC_SEND_DELIVERY_NOTE, type RcAnswerDecision } from "./rcWrites";
+import { RC_SEND_DELIVERY_NOTE, answerRcControlRequest, endRcSession, injectRcUserMessage, rcSessionNotObservedMessage, setRcSessionModel, type RcAnswerDecision, type RcEventDial, type RcObservedCredential } from "./rcWrites";
 import type { RcStreamEvent } from "./rcSchemas";
 import { RC_SESSION_EVENT_LOG_CAPACITY, createRcSessionEventLog } from "./rcEventLog";
 import { createRcEventFanout } from "./rcStream";
@@ -113,6 +113,8 @@ const RefusalBodySchema = z.object({ code: z.string(), message: z.string() });
 const AMBIGUOUS_SESSION_ID = "cse_00000000-0000-4000-8000-000000000002";
 /** A session whose control plugin accepts a verb and then fails it. */
 const FAILING_PLUGIN_SESSION_ID = "cse_00000000-0000-4000-8000-000000000003";
+/** A session whose only observed traffic is its worker's, which carries no client-half credential. */
+const WORKER_ONLY_SESSION_ID = "cse_00000000-0000-4000-8000-000000000004";
 /** A session id the door has never observed. */
 const UNOBSERVED_SESSION_ID = "cse_00000000-0000-4000-8000-0000000000ff";
 /** The transcript the failing plugin's session records its turns in. */
@@ -145,6 +147,26 @@ const SESSION_VERBS = createRcSessionCommands({
   selfHost: undefined,
   isObserved: (sessionId) => sessionId !== UNOBSERVED_SESSION_ID,
 });
+
+/** The marker that makes the write dial fail as an unreachable API host does, so a case can drive the one failure the door did not cause. */
+const UNREACHABLE_MARKER = "unreachable-api-host";
+
+/** The dial the real write operations run over: it accepts every write, numbering it, except one carrying the marker, which fails as an unreachable host does. */
+const WRITE_DIAL: RcEventDial = {
+  writeEvents: async (_sessionId, _headers, body) => {
+    await Promise.resolve();
+    if (body.includes(UNREACHABLE_MARKER)) {
+      throw new Error("ECONNREFUSED");
+    }
+    return { status: HTTP_STATUS.ok, body: JSON.stringify({ results: [{ sequence_num: WRITE_SEQUENCE_NUM }] }) };
+  },
+  writeTeleportEvents: async () => await Promise.reject(new Error("no REST test drives the teleport dial")),
+};
+
+/** The credential the write operations read: the tracker's, except that the worker-only session holds none a client-half write can use (only a worker JWT crossed the door), as the tracker reports for one it observed only through its worker. */
+function writeCredentialOf(tracker: RcSessionTracker, sessionId: string): RcObservedCredential | undefined {
+  return sessionId === WORKER_ONLY_SESSION_ID ? { authorization: undefined, anthropicVersion: undefined, anthropicClientPlatform: undefined } : tracker.credentialOf(sessionId);
+}
 
 /** The stand-in status the frontdoor reads answer, the same shape `frontdoor status` reports. */
 const FRONTDOOR_STATUS: FrontDoorStatus = {
@@ -214,15 +236,19 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
       list: tracker.list,
       statusOf: (sessionId?: string) => withRegisteredSessionFacts(tracker.statusOf(sessionId), new Map([[SESSION_ID, { pid: 4_001, localSessionId: "11111111-1111-4111-8111-111111111111", cwd: "/repo", name: "fix the thing", identity: "work" }]])),
       pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
-      inject: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS }),
-      answer: async (_session, _request, decision) => {
+      inject: async (sessionId, text) => await injectRcUserMessage({ credentialOf: (id) => writeCredentialOf(tracker, id), noteSequenceNums: tracker.noteSequenceNums, dial: WRITE_DIAL, newUuid: () => "uuid-1" }, sessionId, text),
+      answer: async (session, request, decision) => {
         answerDecisions.push(decision);
-        return await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" });
+        // Only the question the choices case seeds is a stub; every other request runs the real operation, so its refusals are the door's own.
+        if (request === "req_q") {
+          return await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" });
+        }
+        return await answerRcControlRequest({ credentialOf: (id) => writeCredentialOf(tracker, id), noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, pendingToolInputOf: tracker.pendingToolInputOf, claimPending: tracker.claimPending, dial: WRITE_DIAL }, session, request, decision);
       },
       interrupt: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" }),
-      setModel: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" }),
+      setModel: async (sessionId, model) => await setRcSessionModel({ credentialOf: (id) => writeCredentialOf(tracker, id), noteSequenceNums: tracker.noteSequenceNums, dial: WRITE_DIAL, newUuid: () => "req_1" }, sessionId, model),
       setPermissionMode: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" }),
-      endSession: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" }),
+      endSession: async (sessionId, reason) => await endRcSession({ credentialOf: (id) => writeCredentialOf(tracker, id), noteSequenceNums: tracker.noteSequenceNums, dial: WRITE_DIAL, newUuid: () => "req_1" }, sessionId, reason),
       getUsage: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" }),
       getContextUsage: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" }),
       readFile: async () => await Promise.resolve({ ok: true, sequenceNums: WRITE_SEQUENCE_NUMS, requestId: "req_1" }),
@@ -367,6 +393,33 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
     expect(await answered("/rest/rc/goal/set", { session: AMBIGUOUS_SESSION_ID, condition: "tests pass" })).toEqual({ status: HTTP_STATUS.conflict, code: "CONFLICT", message: "two launches claim this session" });
     // A verb that was attempted and not delivered stays an upstream failure.
     expect(await answered("/rest/rc/turn", { session: FAILING_PLUGIN_SESSION_ID, text: "carry on" })).toEqual({ status: HTTP_STATUS.badGateway, code: "BAD_GATEWAY", message: `session ${FAILING_PLUGIN_SESSION_ID}'s control plugin did not complete the request: the plugin cannot submit` });
+  });
+
+  it("answers a write's refusal with the status of whose fault it is, and the refusal's own text", async () => {
+    const answered = async (path: string, body: unknown): Promise<{ readonly status: number; readonly code: string; readonly message: string }> => {
+      const { status, text } = await call("POST", path, body);
+      return { status, ...RefusalBodySchema.parse(JSON.parse(text)) };
+    };
+    // A session the door does not observe, on a plain write and on control requests.
+    const missing = rcSessionNotObservedMessage(UNOBSERVED_SESSION_ID);
+    expect(await answered("/rest/rc/send", { session: UNOBSERVED_SESSION_ID, text: "hello" })).toEqual({ status: HTTP_STATUS.notFound, code: "NOT_FOUND", message: missing });
+    expect(await answered("/rest/rc/set-model", { session: UNOBSERVED_SESSION_ID, model: "opus" })).toEqual({ status: HTTP_STATUS.notFound, code: "NOT_FOUND", message: missing });
+    expect(await answered("/rest/rc/end-session", { session: UNOBSERVED_SESSION_ID })).toEqual({ status: HTTP_STATUS.notFound, code: "NOT_FOUND", message: missing });
+    // Input the door itself rejects, which the input schema lets through: choices for a request that is not a question.
+    tracker.fileStreamEvent(SESSION_ID, { event_type: "control_request", sequence_num: 2, source: "worker", payload: { type: "control_request", request_id: "req_plain", request: { subtype: "can_use_tool", tool_name: "Bash", input: { command: "ls" } } } });
+    const choicesForApproval = await answered("/rest/rc/answer", { session: SESSION_ID, request: "req_plain", approve: true, choices: [["SQLite"]] });
+    expect([choicesForApproval.status, choicesForApproval.code]).toEqual([HTTP_STATUS.badRequest, "BAD_REQUEST"]);
+    expect(choicesForApproval.message).toContain("is not a question");
+    tracker.completePending(SESSION_ID, "req_plain");
+    // A pending request the door does not observe, and a session only worker calls crossed.
+    const unknownRequest = await answered("/rest/rc/answer", { session: SESSION_ID, request: "req_unknown", approve: true });
+    expect([unknownRequest.status, unknownRequest.code]).toEqual([HTTP_STATUS.notFound, "NOT_FOUND"]);
+    expect(unknownRequest.message).toContain("has not observed control request req_unknown");
+    const workerOnly = await answered("/rest/rc/send", { session: WORKER_ONLY_SESSION_ID, text: "hello" });
+    expect([workerOnly.status, workerOnly.code]).toEqual([HTTP_STATUS.conflict, "CONFLICT"]);
+    expect(workerOnly.message).toContain("no claude.ai OAuth bearer has been observed");
+    // A write that was attempted and not delivered stays an upstream failure.
+    expect(await answered("/rest/rc/set-model", { session: SESSION_ID, model: UNREACHABLE_MARKER })).toEqual({ status: HTTP_STATUS.badGateway, code: "BAD_GATEWAY", message: `the door could not reach the API host to set the model on session ${SESSION_ID}: ECONNREFUSED` });
   });
 
   it("delivers a write over REST and answers with the operation's own shape", async () => {

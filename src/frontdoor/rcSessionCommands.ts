@@ -8,6 +8,7 @@ import { RC_SESSION_COMMAND_VERIFIED_VERSIONS } from "../supervise/verifiedVersi
 import type { SubmittedTurn } from "../supervise/sessionControl";
 import type { TranscriptGoal } from "../supervise/sessionGoal";
 import type { PluginTurns } from "../supervise/sessionPluginTurns";
+import type { RcRefusalKind } from "./rcWrites";
 import { runSelfHostedSlashCommand, runSelfHostedTurn, type RcSelfHostCommandDeps } from "./rcSelfHostCommands";
 
 /**
@@ -89,9 +90,6 @@ export interface RcTurnReport {
 
 /** Which route the verbs would take for a session now, or why none would: the read a caller makes before offering a person a reply box. */
 export type RcSessionRoute = { readonly route: RcSessionCommandRoute } | { readonly route: null; readonly refused: string };
-
-/** Why the door refused a verb itself, before the session or its worker could fail it: `invalid-input` is a request that can never succeed as written, `not-observed` names a session the door does not observe, and `session-state` is a session the door observes but whose state does not let the verb run now (no route reaches it, its version is unverified, two launches claim it, or its transcript is not recorded yet). */
-export type RcRefusalKind = "invalid-input" | "not-observed" | "session-state";
 
 /** One verb's outcome: the report, or a verbose failure ready to show a user. A failure carries a `refusal` when the door refused the verb itself; without one the verb was attempted and the session, its plugin or its worker did not deliver it (no answer in time, an answer that says it failed). */
 export type RcSessionCommandResult<T> = { readonly ok: true; readonly report: T } | { readonly ok: false; readonly message: string; readonly refusal?: RcRefusalKind };
