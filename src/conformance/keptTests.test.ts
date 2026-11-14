@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { caseSources, deletedProblems, guardProblems, listedCounts, parseTable, relativeFile, testId, unstableIds, unstableProblems, type Accounting, type Row } from "./keptTests";
+import { caseSources, deletedProblems, guardProblems, listedCounts, listingBudgetMs, parseTable, relativeFile, slowListingMessage, testId, unstableIds, unstableProblems, type Accounting, type Row } from "./keptTests";
 
 const ROOT = "/repo";
 const row = (file: string, test: string): Row => ({ file, test, reason: "not a function of its inputs" });
@@ -188,5 +188,26 @@ describe("unstable titles", () => {
     expect(unstableProblems(unstable)).toEqual(["unstable title, different in two listings of one commit: a.test.ts: x > pid 1"]);
     expect(deletedProblems(base, head, accounting(), unstable)).toEqual([]);
     expect(deletedProblems(base, head, accounting())).toHaveLength(1);
+  });
+});
+
+describe("the time a suite listing may take", () => {
+  const SMALL = 100;
+  const LARGE = 200;
+  const FILES = 539;
+
+  it("grows with the number of test files, by the same step for each, from a fixed start", () => {
+    const start = listingBudgetMs(0);
+    expect(start).toBeGreaterThan(0);
+    expect(listingBudgetMs(SMALL) - start).toBe(listingBudgetMs(LARGE) - listingBudgetMs(SMALL));
+    expect(listingBudgetMs(LARGE)).toBeGreaterThan(listingBudgetMs(SMALL));
+  });
+
+  it("is reported as a slow host, with the file count and the budget, and not as a wrong table", () => {
+    const message = slowListingMessage(FILES);
+    expect(message).toContain(`${String(FILES)} test files`);
+    expect(message).toContain(`${String(listingBudgetMs(FILES))} ms`);
+    expect(message).toContain("this host was too slow");
+    expect(message).toContain("the table and the corpus are not in question");
   });
 });
