@@ -12,12 +12,12 @@
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
-import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { buildLayoutPaths } from "../src/paths";
+import { closedLoopbackPort } from "../src/test-ports";
 import { SSH_STAND_IN, gitEgressIn, labBaseEnv, labLaunchVariables, labPaneCommand, labPaneState, labRefusal, labSessionId, nonLoopbackSockets, parseLabDoorState, parseLabRoute, PINNED_CLAUDE_VERSION, readLabCapture, shellQuote, type LabRoute } from "./rc-self-host-lab-core";
 
 const USAGE = "usage: node scripts/rc-self-host-lab.mts up|check|down --dir <lab-dir> [--claude-version <v>] [--route launched|supervised|self-hosted] [--keep]";
@@ -134,23 +134,6 @@ function tmux(socket: string, args: readonly string[], env: Readonly<Record<stri
   return run("tmux", ["-S", socket, ...args], env);
 }
 
-/** A port free on loopback right now, by binding port 0 and reading what the system chose. */
-async function freePort(): Promise<number> {
-  return await new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      server.close(() => {
-        if (address === null || typeof address === "string") {
-          reject(new Error("the loopback listener reported no port"));
-          return;
-        }
-        resolve(address.port);
-      });
-    });
-  });
-}
 
 async function sleep(ms: number): Promise<void> {
   await new Promise<void>((resolve) => {
@@ -310,7 +293,7 @@ async function up(options: Options): Promise<boolean> {
   }
 
   // The mock provider checks every request carries the provider file's own credential, so the lab mints one: random, lab-only, read by the mock from a file rather than its command line.
-  const mockPort = await freePort();
+  const mockPort = await closedLoopbackPort();
   const tokenFile = path.join(options.dir, "mock.token");
   const token = randomBytes(MOCK_TOKEN_BYTES).toString("hex");
   fs.writeFileSync(tokenFile, token, { mode: PRIVATE_FILE_MODE });
@@ -323,7 +306,7 @@ async function up(options: Options): Promise<boolean> {
   // The pane's shell execs the mock, so the pane's pid is the mock's.
   const mockPid = panePid(socket, MOCK_SESSION, env);
 
-  const transparentPort = await freePort();
+  const transparentPort = await closedLoopbackPort();
   const debugLog = path.join(options.dir, DEBUG_LOG_FILE);
   const paneCommand = labPaneCommand(labLaunchVariables(transparentPort), [process.execPath, CLI_BUNDLE, "run", options.route === "supervised" ? `@pool:${LAB_POOL}` : `@${LAB_IDENTITY}`, "--claude-version", options.claudeVersion, "--provider", LAB_PROVIDER, "--remote-control", "--debug-file", debugLog]);
   tmux(socket, ["new-session", "-d", "-s", CLI_SESSION, "-x", String(PANE_COLUMNS), "-y", String(PANE_ROWS), "-c", work, paneCommand], env);
