@@ -405,6 +405,10 @@ export function createProviderRouteResolver(deps: {
   };
   /** Replaces a main-loop Claude name with its override's target, and a selector (the request's own name or the target) with the name it expands to, before anything routes the request. An override is applied once: its target is never looked up again. A renaming to the Anthropic route in a session launched on a provider is refused (see `onLaunchProvider`). */
   const rename: RenameModel = (model, context) => {
+    // A request whose path names its provider (`/providers/<name>/...`) has chosen where it goes: no override, selector or account target renames it, so a name the door would place on the session's own login never reaches the provider the path names. The overrides already apply only to the session's own paths.
+    if (!context.unscoped) {
+      return undefined;
+    }
     const renamed = renameOnce(model, context);
     return renamed === undefined || "refusal" in renamed ? renamed : onLaunchProvider(renamed, context);
   };

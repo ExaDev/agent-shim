@@ -273,8 +273,8 @@ export async function startWorld(
 }
 
 /** Sends one Messages request as a launch's child would: its capability, its session id, and, when given, the class Claude Code states and a launch provider. */
-export async function send(world: World, options: { readonly model: string; /** The body as sent, instead of one built from `model`: for a request with no model field or a body that is no JSON. */ readonly rawBody?: string; readonly session?: string; readonly token?: string; readonly requestClass?: string; readonly agentId?: string; readonly provider?: string; readonly maxTokens?: number; /** The directory id of the identity the launch resolved, as the launcher's identity header carries it. */ readonly identity?: string }): Promise<{ readonly status: number; readonly text: string }> {
-  const response = await fetch(`${world.url}/v1/messages`, {
+export async function send(world: World, options: { readonly model: string; /** The body as sent, instead of one built from `model`: for a request with no model field or a body that is no JSON. */ readonly rawBody?: string; readonly session?: string; readonly token?: string; readonly requestClass?: string; readonly agentId?: string; readonly provider?: string; readonly maxTokens?: number; /** The directory id of the identity the launch resolved, as the launcher's identity header carries it. */ readonly identity?: string; /** The path the request is sent to, when it is not `/v1/messages`: a provider-scoped one, say. */ readonly path?: string }): Promise<{ readonly status: number; readonly text: string }> {
+  const response = await fetch(`${world.url}${options.path ?? "/v1/messages"}`, {
     method: "POST",
     headers: {
       "content-type": "application/json",

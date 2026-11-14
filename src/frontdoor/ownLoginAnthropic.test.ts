@@ -80,3 +80,16 @@ describe("the session's own login beside a provider file called anthropic", () =
     }
   }, TIMEOUT_MS);
 });
+
+describe("a selector on a provider-scoped path", () => {
+  it("is not expanded, so a name marked for the session's own login never reaches the provider the path names", async () => {
+    const door = await world();
+    try {
+      await send(door, { model: "auto/me/claude-opus-5-1", requestClass: "main", identity: "id-me", path: "/providers/z/v1/messages" });
+      expect(door.upstream.seen.map((seen) => seen.model)).not.toContain(OWN_MODEL);
+      expect(door.anthropicModels).toEqual([]);
+    } finally {
+      await door.close();
+    }
+  }, TIMEOUT_MS);
+});
