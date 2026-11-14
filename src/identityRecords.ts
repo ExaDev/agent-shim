@@ -161,7 +161,7 @@ function nameOfText(text: string | undefined): IdentityNameRead {
 
 
 /**
- * Reads one `identity.json`'s name through `read`, giving the same answer for the same entry whichever reader the caller holds: an entry that is not a directory (a plain file under the identities directory) is absent, and one whose file has any other fault of its own (`fileFaultCodeOf`: nobody can enter it, a symlink loop, a directory where the file belongs, a name too long, a file the system denies) is unreadable, so it claims no name and blocks no identity. A failure of the moment, or of the machine, is thrown. `read` gives the parsed name, or absent for a file that is not there.
+ * Reads one `identity.json`'s name through `read`, giving the same answer for the same entry whichever reader the caller holds: an entry that is not a directory (a plain file under the identities directory) is absent, and one whose file has any other fault of its own (`fileFaultCodeOf`: nobody can enter it, a symlink loop, a directory where the file belongs, a name too long, a file the system denies, and `ENOENT`, which a `read` that reads an absent file as absent never raises) is unreadable, so it claims no name and blocks no identity. A failure of the moment, or of the machine, is thrown. `read` gives the parsed name, or absent for a file that is not there.
  */
 export function guardedNameRead(read: () => IdentityNameRead): IdentityNameRead {
   try {

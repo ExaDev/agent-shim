@@ -194,7 +194,7 @@ export interface ProviderListEntry {
   readonly provider: Provider;
 }
 
-/** Lists every provider under `providersDir` that has a valid `<name>.json`. A file that fails validation, is not JSON or cannot be read is skipped here and reported through `onInvalid` (standard error by default); `provider list` is the place a broken definition gets surfaced, not a launch. */
+/** Lists every provider under `providersDir` that has a valid `<name>.json`. A file that fails validation, is not JSON or has a read fault of its own (`fileFaultCodeOf`) is skipped here and reported through `onInvalid` (standard error by default); `provider list` is the place a broken definition gets surfaced, not a launch. A read of a file or of the directory that failed for the moment (`isTransientReadError`) is thrown, so a caller retries rather than taking the provider for broken or absent; a long-lived caller's loop catches it (`keepTicking`). */
 export function listProviders(paths: LayoutPaths, onInvalid: (name: string, message: string) => void = reportInvalidProvider): readonly ProviderListEntry[] {
   const names = listProviderNames(
     (dir) => fs.readdirSync(dir),
@@ -225,7 +225,7 @@ export function listProviders(paths: LayoutPaths, onInvalid: (name: string, mess
 }
 
 /**
- * The names of every provider definition under `providersDir`, sorted. `readdir` is injected so the launcher's unknown-provider error can name the known providers through its own `FsPort` in tests rather than a real directory listing.
+ * The names of every provider definition under `providersDir`, sorted. `readdir` is injected so the launcher's unknown-provider error can name the known providers through its own `FsPort` in tests rather than a real directory listing. A listing that failed for the moment is thrown; an absent directory lists no providers.
  */
 export function listProviderNames(readdir: (dir: string) => readonly string[], providersDir: string): readonly string[] {
   let entries: readonly string[];

@@ -47,7 +47,7 @@ function modules(directory: string): readonly string[] {
 describe("a background loop in a long-lived process", () => {
   const found = modules(__dirname).flatMap((module) => unwrappedTimers(module, fs.readFileSync(path.join(__dirname, module), "utf8")));
 
-  it("ticks through keepTicking, so no failure thrown or rejected in a tick ends the process or stops the loop", () => {
+  it("ticks through keepTicking at each setInterval and clock.every in src, but where an allowance says why not", () => {
     expect(found.filter((key) => ALLOWED[key] === undefined)).toEqual([]);
   });
 
