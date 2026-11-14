@@ -15,12 +15,16 @@ export default defineConfig([
   },
   ...exadev,
   {
-    // The conformance runner is plain JavaScript on purpose, so any JavaScript host loads it without a build step and it sits outside the TypeScript project and is linted without type information (the base and stylistic rules stay on). `src/conformance.repo.test.ts` types it through `run.d.mts` and holds its size.
+    // The conformance runner is plain JavaScript on purpose, so any JavaScript host loads it without a build step. Its types are JSDoc, which the TypeScript project reads through allowJs and `src/conformance.repo.test.ts` uses, so it is linted without type information (the base and stylistic rules stay on) and its size is held by that test.
     files: ["conformance/runner/*.mjs"],
     extends: [tseslint.configs.disableTypeChecked],
     languageOptions: { parserOptions: { projectService: false } },
     // The config's own rules that read types, which have nothing to read here; its others (the barrel policy, `Object.assign`) stay on.
-    rules: Object.fromEntries(
+    rules: {
+      // The runner's types are JSDoc types, which these two rules refuse in favour of the TypeScript syntax the file does not have.
+      "jsdoc/no-types": "off",
+      "tsdoc/syntax": "off",
+      ...Object.fromEntries(
       [
         "no-array-isarray-mutation",
         "no-enum-number-widening",
@@ -33,7 +37,8 @@ export default defineConfig([
         "prefer-readonly-array-param",
         "prefer-readonly-object-param",
       ].map((rule) => [`exadev/${rule}`, "off"]),
-    ),
+      ),
+    },
   },
   {
     files: ["src/**/*.ts"],

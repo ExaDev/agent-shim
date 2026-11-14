@@ -4,12 +4,22 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+/** @import { ValidateFunction } from "ajv" */
+
+/** @typedef {ValidateFunction} Validator An Ajv validator built by `validatorsFrom`. */
+/** @typedef {(...args: unknown[]) => unknown} CaseFunction A function a `function` case can name, taking the decoded arguments. */
+/** @typedef {Record<string, CaseFunction>} CaseTable The functions a runner executes cases through, by the name a step's `fn` gives. */
+/** @typedef {{ file: string, id: string, from: string, skip: "ts" | "rust" | undefined, run: (table: CaseTable) => void }} CorpusCase One case, ready to register as a test. */
+
 import Ajv2020 from "ajv/dist/2020.js";
 
 /** What a string starts with where a case means its temporary directory. */
 const TMP_MARKER = "$TMP";
 
-/** The largest integer every runner holds exactly. */
+/**
+ * The largest integer every runner holds exactly.
+ * @type {number}
+ */
 export const MAX_INTEGER = Number.MAX_SAFE_INTEGER;
 
 /** Directories that hold data cases refer to or the runners themselves, never cases, wherever they appear. */
@@ -26,6 +36,8 @@ const ascending = (list) => list.every((item, index) => index === 0 || list[inde
 
 /**
  * Which files under `root` are corpus files, by the one rule `README.md` states: `<kind>/<name>.json`, dot-names and the non-case directories skipped, anything else a problem. Paths are `/`-separated and relative, in UTF-16 code unit order directory by directory.
+ * @param {string} root
+ * @returns {{ selected: string[], problems: string[] }}
  */
 export function selectFiles(root) {
   const selected = [];
@@ -49,6 +61,8 @@ export function selectFiles(root) {
 
 /**
  * The checkers of the two formats, built from the schemas in `root` with Ajv in strict mode, so a schema that is itself ambiguous fails here and not silently.
+ * @param {string} root
+ * @returns {{ caseFile: Validator, manifest: Validator }}
  */
 export function validatorsFrom(root) {
   const ajv = new Ajv2020({ strict: true, allErrors: true });
@@ -56,7 +70,11 @@ export function validatorsFrom(root) {
   return { caseFile: compile("case.schema.json"), manifest: compile("manifest.schema.json") };
 }
 
-/** Text as a JSON string or a `{ codeUnits }` object reads: the UTF-16 code unit sequence as a JS string. */
+/**
+ * Text as a JSON string or a `{ codeUnits }` object reads: the UTF-16 code unit sequence as a JS string.
+ * @param {string | { codeUnits: number[] }} text
+ * @returns {string}
+ */
 export const decodeText = (text) => (typeof text === "string" ? text : String.fromCharCode(...text.codeUnits));
 
 /** Written out by `canonical`: one element per line, two-space indent. */
@@ -69,7 +87,11 @@ function writeCanonical(node, indent) {
   return keys.length === 0 ? "{}" : `{\n${keys.map((key) => `${inner}${JSON.stringify(key)}: ${writeCanonical(node[key], inner)}`).join(",\n")}\n${indent}}`;
 }
 
-/** Canonical JSON text: keys in UTF-16 code unit order, two-space indent, one element per line, a final newline, numbers and strings as JSON.stringify writes them. */
+/**
+ * Canonical JSON text: keys in UTF-16 code unit order, two-space indent, one element per line, a final newline, numbers and strings as JSON.stringify writes them.
+ * @param {unknown} value
+ * @returns {string}
+ */
 export function canonical(value) {
   return `${writeCanonical(value, "")}\n`;
 }
@@ -92,6 +114,9 @@ function valueProblems(node, where, problems) {
 
 /**
  * Everything wrong with one file's bytes: not UTF-8, not JSON, not valid by `validate`, not canonical, or breaking a rule the schema cannot express. Empty when the file is acceptable.
+ * @param {Uint8Array} bytes
+ * @param {Validator} validate
+ * @returns {string[]}
  */
 export function fileProblems(bytes, validate) {
   let text;
@@ -115,7 +140,12 @@ export function fileProblems(bytes, validate) {
   return problems;
 }
 
-/** What is wrong with a manifest: the schema, and the lists of skipped ids being ascending. */
+/**
+ * What is wrong with a manifest: the schema, and the lists of skipped ids being ascending.
+ * @param {Uint8Array} bytes
+ * @param {Validator} validate
+ * @returns {string[]}
+ */
 export function manifestProblems(bytes, validate) {
   const problems = fileProblems(bytes, validate);
   const document = problems.length === 0 ? JSON.parse(new TextDecoder().decode(bytes)) : { files: {} };
@@ -127,6 +157,9 @@ export function manifestProblems(bytes, validate) {
 
 /**
  * Loads the corpus under `root` and checks it: every file, the ids across files, each file's kind against its directory, and the manifest against the cases. The schemas are read from `schemas`, which is `root` for the real corpus and the real corpus for a fixture root.
+ * @param {string} root
+ * @param {string} [schemas]
+ * @returns {{ files: { file: string, cases: any[] }[], problems: string[] }}
  */
 export function loadCorpus(root, schemas = root) {
   const { caseFile, manifest } = validatorsFrom(schemas);
@@ -195,7 +228,12 @@ function materialise(files) {
   return tmp;
 }
 
-/** Runs one `function` case: each step calls the table's function with the decoded arguments and compares the result, or the error it throws. */
+/**
+ * Runs one `function` case: each step calls the table's function with the decoded arguments and compares the result, or the error it throws.
+ * @param {unknown} entry
+ * @param {CaseTable} table
+ * @returns {void}
+ */
 export function runCase(entry, table) {
   const tmp = entry.files === undefined ? undefined : materialise(entry.files);
   try {
@@ -234,6 +272,8 @@ export function runCase(entry, table) {
 
 /**
  * The cases of the corpus as registrable tests: each with its file, id, original title and `skip`. `executed` holds the id of every case whose steps ran to the end, so a caller can tell a test that started from one that did nothing. Counting what was registered to run and to skip, against the manifest, is the caller's check, made when it collects and so whatever the run later does with the tests.
+ * @param {string} root
+ * @returns {{ cases: CorpusCase[], executed: Set<string>, problems: string[] }}
  */
 export function collect(root) {
   const { files, problems } = loadCorpus(root);
