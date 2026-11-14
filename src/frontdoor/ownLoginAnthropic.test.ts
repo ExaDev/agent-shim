@@ -81,15 +81,18 @@ describe("the session's own login beside a provider file called anthropic", () =
   }, TIMEOUT_MS);
 });
 
-describe("a selector on a provider-scoped path", () => {
-  it("is not expanded, so a name marked for the session's own login never reaches the provider the path names", async () => {
-    const door = await world();
+describe("a name on a provider-scoped path", () => {
+  it.each(["auto/me/claude-opus-5-1", "acct:me/claude-opus-5-1", "acct:work/claude-opus-5-1"])("serves %j as sent on the provider the path names, never expanding it, moving the session or reaching the Anthropic route", async (model) => {
+    const moves: string[] = [];
+    const started = await startWorld(mainLoopRoutesOfLiveSessions(), HTTP_STATUS.ok, undefined, undefined, undefined, { selectorState: SELF, routeOverrides: () => ({ table: NO_ROUTE_OVERRIDES }), identityNameOf: (id) => (id === "id-me" ? "me" : undefined), accountMoves: async (_sessionId, to) => { moves.push(to); return await Promise.resolve(true); } });
     try {
-      await send(door, { model: "auto/me/claude-opus-5-1", requestClass: "main", identity: "id-me", path: "/providers/z/v1/messages" });
-      expect(door.upstream.seen.map((seen) => seen.model)).not.toContain(OWN_MODEL);
-      expect(door.anthropicModels).toEqual([]);
+      const answered = await send(started, { model, requestClass: "main", identity: "id-me", path: "/providers/z/v1/messages" });
+      expect(answered.status, answered.text).toBe(HTTP_STATUS.ok);
+      expect(started.upstream.seen.map((seen) => seen.model)).toEqual([model]);
+      expect(moves).toEqual([]);
+      expect(started.anthropicModels).toEqual([]);
     } finally {
-      await door.close();
+      await started.close();
     }
   }, TIMEOUT_MS);
 });
