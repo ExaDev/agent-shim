@@ -14,7 +14,7 @@ function isLocalStateFault(error: unknown): boolean {
 }
 
 /**
- * `resolve`, with a request whose routing reads a file of the person's local state that cannot be used refused with a 400 that names the fault (`configFaultOf`: its class or code, or the keys a file got wrong) and `agent-shim doctor`, never the error's own message, which names the file's path. Every port the request path reads local state through (identity names, route overrides, the models block, provider targets, usage snapshots, account moves, selector state, provider files) is behind this one boundary, so a port added later is too. A defect still rejects, as it should. The fault is logged with the same text.
+ * `resolve`, with a request whose routing reads a file of the person's local state that cannot be used refused with a 400 that names the fault (`configFaultOf`: its class or code, or the keys a file got wrong) and `agent-shim doctor`, never the error's own message, which names the file's path. Every port the request path reads local state through (identity names, route overrides, the models block, provider targets, usage snapshots, account moves, selector state, provider files) is behind this one boundary, so a port added later is too. A defect still rejects, as it should. Each refusal is also logged, naming the same fault and never the path, so the door's log says why a request was refused.
  */
 export function refusingLocalStateFaults(resolve: (request: RoutedRequest) => Promise<RouteResolution>, log: (line: string) => void): (request: RoutedRequest) => Promise<RouteResolution> {
   return async (request) => {
