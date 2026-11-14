@@ -156,7 +156,7 @@ describe("a background loop in a long-lived process", () => {
     expect(Object.keys(ALLOWED).filter((key) => !found.includes(key))).toEqual([]);
   });
 
-  it("has each loop that waits between turns catch a failed turn and go on, but where an allowance says why not", () => {
+  it("has in each loop that waits between turns a try whose catch goes on to the next turn, but where an allowance says why not", () => {
     const loops = modules(__dirname).flatMap((module) => uncaughtWaitLoops(module, sourceOf(module)));
     expect(loops.filter((key) => BOUNDED_WAITS[key] === undefined)).toEqual([]);
     expect(Object.keys(BOUNDED_WAITS).filter((key) => !loops.includes(key))).toEqual([]);
