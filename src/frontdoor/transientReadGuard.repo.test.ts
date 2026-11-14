@@ -3,8 +3,8 @@ import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
-/** The modules whose readers the door reads local state through on the request path, from `src`: the overrides, provider files and their listing, a provider's stored catalogue, the selector state, an identity's account and name, the usage snapshots, and the configuration store and loader they read through. */
-const READERS = ["routeOverridesStore.ts", "frontdoor/providerReads.ts", "models/selectorPorts.ts", "identityAccounts.ts", "providersStore.ts", "storedCatalogue.ts", "identityStore.ts", "identityRecords.ts", "usage/read.ts", "config/store.ts", "config/load.ts"] as const;
+/** The modules whose readers the door reads local state through on the request path, from `src`: the overrides, provider files and their listing, a provider's stored catalogue, the provider targets and the door's own state files they read, the route context's durable copy, the selector state, an identity's account and name, the usage snapshots, and the configuration store and loader they read through. */
+const READERS = ["routeOverridesStore.ts", "frontdoor/providerReads.ts", "models/selectorPorts.ts", "identityAccounts.ts", "providersStore.ts", "storedCatalogue.ts", "identityStore.ts", "identityRecords.ts", "usage/read.ts", "config/store.ts", "config/load.ts", "models/targets.ts", "frontdoor/state.ts", "frontdoor/mainLoopRoute.ts"] as const;
 
 /** What a catch calls to classify a failure through the one file-fault set, so a failure of the moment is passed on: directly, or through the identity listing's helper over it. */
 const CLASSIFIERS = ["isTransientReadError(", "fileFaultCodeOf(", "unreachableCodeOf("] as const;
@@ -22,6 +22,13 @@ const ALLOWED: Readonly<Record<string, string>> = {
   "config/store.ts unlinkSync": "a write, rethrowing every error but ENOENT",
   "config/store.ts writeTextAtomic": "a write, rethrowing the error",
   "config/load.ts cosmiconfigReader": "rethrows every error but ENOENT, which is absence",
+  "frontdoor/state.ts readFrontDoorCodexRecord": "its read passes a failure of the moment on when asked (passTransient), as the request path asks; its other catch is a JSON parse",
+  "frontdoor/state.ts readFrontDoorState": "its read passes a failure of the moment on when asked (passTransient), as the request path asks; its other catch is a JSON parse",
+  "frontdoor/state.ts identity": "a stat whose failure keeps nothing: no identity is never a reason to read, and the next lookup stats again",
+  "frontdoor/state.ts readFrontDoorSessionRecord": "a launch's registry record, which the request path reads only before writing the route context's copy: a failed read skips that one write, and the door's own context stays as it is",
+  "frontdoor/state.ts readDirectRecordEntry": "a door's direct-listener record, read by the headroom allowlist and never on the request path",
+  "frontdoor/mainLoopRoute.ts persist": "a write of the route context's copy, logged and tried again at the next request",
+  "frontdoor/mainLoopRoute.ts decodedSpan": "a JSON parse of a model field's bytes, a property of the request",
 };
 
 /** Each catch clause of `source` that neither classifies its failure through the one file-fault set (`CLASSIFIERS`) nor guards a JSON parse alone, as `<module> <enclosing function>`, allowed or not. */
@@ -50,7 +57,7 @@ function catchesKeepingTransientFaults(module: string, source: string): readonly
 }
 
 describe("the door's local-state readers on a read that fails for the moment", () => {
-  it("pass it on from every catch, so none keeps it or answers it as the file's fault", () => {
+  it("pass it on from each catch in the listed reader modules, or name in an allowance why that catch need not", () => {
     const kept = READERS.flatMap((module) => catchesKeepingTransientFaults(module, fs.readFileSync(path.join(__dirname, "..", module), "utf8")));
     expect(kept).toEqual([]);
   });

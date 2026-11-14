@@ -8,6 +8,7 @@ import { readJson, writeJsonAtomic } from "./config/store";
 import { findExecutableInDir, realContentSourcePath, realOwnExecutablePath } from "./realPorts";
 import { CliError } from "./cliError";
 import type { LayoutPaths } from "./paths";
+import { fileFaultCodeOf } from "./fileFaults";
 
 /** The claude-shim.json marker's own shape: never hand-edited, so it lives here rather than in `src/config/schema.ts`'s user-editable schemas (and is correctly excluded from `scripts/gen-schema.mts`'s published-schema generation, which only ever imports from that file). */
 // rwxr-xr-x -- the copy-fallback path below sets this explicitly since a plain copyFile doesn't preserve the source's own executable bit the way a hardlink (which shares the same inode) does.
@@ -89,7 +90,8 @@ function isLauncherScript(candidate: string): boolean {
       fs.closeSync(fd);
     }
   } catch (error) {
-    if (isEnoent(error) || (typeof error === "object" && error !== null && "code" in error && (error.code === "EACCES" || error.code === "EISDIR"))) {
+    // A candidate with a fault of its own (absent, unreadable, a directory, a symlink loop, a name too long, a file the system denies) is no shim of ours; a read that failed for the moment is thrown.
+    if (fileFaultCodeOf(error) !== undefined) {
       return false;
     }
     throw error;

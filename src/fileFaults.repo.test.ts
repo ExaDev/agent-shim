@@ -41,6 +41,41 @@ function modules(directory: string): readonly string[] {
   });
 }
 
+/** The file-fault codes, other than absence (`ENOENT`), whose use outside `fileFaults.ts` would classify a failure by hand. */
+const FILE_FAULT_LITERALS: ReadonlySet<string> = new Set(["EACCES", "EPERM", "ELOOP", "EISDIR", "ENOTDIR", "ENAMETOOLONG"]);
+
+/** The places `src` may name one of those codes by hand, by module, enclosing function and code, each with why it asks another question than whether a read failure is the file's own. */
+const INLINE_ALLOWED: Readonly<Record<string, string>> = {
+  "realPorts.ts readdir ENOTDIR": "absence: a path through a file lists as an empty directory",
+  "realPorts.ts hashFile EISDIR": "absence: a directory where a file was looked for hashes as no file",
+  "realPorts.ts realIsProcessAlive EPERM": "process liveness: a signal another user's process refuses",
+  "update/commands.ts isProcessAlive EPERM": "process liveness: a signal another user's process refuses",
+  "frontdoor/doorDial.ts classify EACCES": "a refused bind on Windows' excluded port ranges, which is no file",
+  "frontdoor/doorDial.ts attemptFrom EACCES": "the refusal a dial reports when every port refused it, which is no file",
+  "identityRecords.ts guardedNameRead ENOTDIR": "chooses among the codes fileFaultCodeOf already gave, telling a plain file under the identities directory from an identity",
+  "realIdentityRename.ts (module) EACCES": "process liveness: the codes a signal gives for another user's process",
+  "realIdentityRename.ts (module) EPERM": "process liveness: the codes a signal gives for another user's process",
+};
+
+/** Each string literal of `FILE_FAULT_LITERALS` in `source`, as `<module> <enclosing function> <code>`. */
+function inlineFaultCodes(module: string, source: string): readonly string[] {
+  const file = ts.createSourceFile(module, source, ts.ScriptTarget.Latest, true);
+  const found: string[] = [];
+  const enclosing = (node: ts.Node): string => {
+    for (let current: ts.Node = node.parent; !ts.isSourceFile(current); current = current.parent) {
+      if ((ts.isFunctionDeclaration(current) || ts.isMethodDeclaration(current)) && current.name !== undefined) return current.name.getText(file);
+      if ((ts.isArrowFunction(current) || ts.isFunctionExpression(current)) && (ts.isVariableDeclaration(current.parent) || ts.isPropertyAssignment(current.parent))) return current.parent.name.getText(file);
+    }
+    return "(module)";
+  };
+  const visit = (node: ts.Node): void => {
+    if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) && FILE_FAULT_LITERALS.has(node.text)) found.push(`${module} ${enclosing(node)} ${node.text}`);
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return [...new Set(found)];
+}
+
 describe("which read failures are a file's own", () => {
   const found = modules(__dirname).flatMap((module) => errorCodeSets(module, fs.readFileSync(path.join(__dirname, module), "utf8")));
 
@@ -53,15 +88,25 @@ describe("which read failures are a file's own", () => {
     expect(Object.keys(ALLOWED).filter((key) => !found.includes(key))).toEqual([]);
   });
 
+  it("are never named by hand elsewhere, in a comparison, a code check or a set, but where another question is asked", () => {
+    const inline = modules(__dirname).filter((module) => module !== "fileFaults.ts").flatMap((module) => inlineFaultCodes(module, fs.readFileSync(path.join(__dirname, module), "utf8")));
+    expect(inline.filter((key) => INLINE_ALLOWED[key] === undefined)).toEqual([]);
+    expect(Object.keys(INLINE_ALLOWED).filter((key) => !inline.includes(key))).toEqual([]);
+  });
+
+  it("finds a code compared by hand", () => {
+    expect(inlineFaultCodes("x.ts", 'function read() { if (error.code === "EACCES" || error.code === "EISDIR") return false; }')).toEqual(["x.ts read EACCES", "x.ts read EISDIR"]);
+  });
+
   it("finds a copy of a code set in a module", () => {
     expect(errorCodeSets("x.ts", 'const MINE: ReadonlySet<string> = new Set(["EACCES", "ELOOP"]);')).toEqual(["x.ts MINE"]);
   });
 
-  it.each(["EPERM", "ENAMETOOLONG", "EACCES", "ELOOP", "EISDIR"])("has an identity.json read that fails with %s, a fault of the file's own, read as unreadable by every identity reader", (code) => {
+  it.each(["EPERM", "ENAMETOOLONG", "EACCES", "ELOOP", "EISDIR"])("has guardedNameRead read an identity.json that fails with %s, a fault of the file's own, as unreadable", (code) => {
     expect(guardedNameRead(() => { throw errorWithCode(`${code}: failed`, code); })).toBe("unreadable");
   });
 
-  it("has an identity.json read that fails for the moment thrown by every identity reader", () => {
+  it("has guardedNameRead throw an identity.json read that fails for the moment", () => {
     expect(() => guardedNameRead(() => { throw errorWithCode("EMFILE: too many open files", "EMFILE"); })).toThrow(/EMFILE/u);
   });
 });

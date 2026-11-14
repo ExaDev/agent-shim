@@ -6,7 +6,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createIdentityNameReader } from "./identityStore";
 import { buildLayoutPaths } from "./paths";
 import { listProviderNames, listProviders } from "./providersStore";
-import { raiseUnreadableCatalogue, TolerantReader, UnreadableCatalogueError } from "./storedCatalogue";
+import { raiseUnreadableCatalogue, skipUnreadableCatalogueUnlessTransient, TolerantReader, UnreadableCatalogueError } from "./storedCatalogue";
+import { createMainLoopRouteRecord } from "./frontdoor/mainLoopRoute";
+import { readFrontDoorCodexRecord, readFrontDoorState } from "./frontdoor/state";
 import { errorWithCode } from "./test-helpers";
 
 const roots: string[] = [];
@@ -77,5 +79,43 @@ describe("each local-file reader on a read that fails for the moment", () => {
     const invalid: string[] = [];
     expect(() => listProviders(paths, (name) => { invalid.push(name); })).toThrow(/EMFILE/u);
     expect(invalid).toEqual([]);
+  });
+});
+
+describe("the request path's other local-file readers on a read that fails for the moment", () => {
+  it("has a provider's stored catalogue read for the targets passed on, never read as no catalogue, while a file with a fault of its own is still skipped", () => {
+    const skip = (code: string): unknown => {
+      try {
+        skipUnreadableCatalogueUnlessTransient(code, errorWithCode(`${code}: failed`, code));
+        return "skipped";
+      } catch (error) {
+        return error;
+      }
+    };
+    expect(skip("EACCES")).toBe("skipped");
+    expect(skip("EMFILE")).toMatchObject({ code: "EMFILE" });
+  });
+
+  it("has the door's state file passed on to a reader on the request path, and read as no door elsewhere", () => {
+    const reading = { readFileUtf8: (): string => { throw errorWithCode("EMFILE: too many open files", "EMFILE"); } };
+    expect(readFrontDoorState(reading, "/state/frontdoor/state.json")).toBeUndefined();
+    expect(() => readFrontDoorState(reading, "/state/frontdoor/state.json", true)).toThrow(/EMFILE/u);
+    expect(readFrontDoorCodexRecord(reading, "/state/frontdoor", 1)).toBeUndefined();
+    expect(() => readFrontDoorCodexRecord(reading, "/state/frontdoor", 1, true)).toThrow(/EMFILE/u);
+  });
+
+  it("has the route context's copy passed on and nothing kept, so the next lookup reads it again", () => {
+    let failing = true;
+    let reads = 0;
+    const record = createMainLoopRouteRecord({
+      holdsLaunch: () => true,
+      stored: { read: () => { reads += 1; if (failing) throw errorWithCode("EMFILE: too many open files", "EMFILE"); return { kind: "provider", provider: "z" }; }, write: () => undefined, identity: () => "rev-1" },
+      log: () => undefined,
+    });
+    const launch = { pid: 4242, startedAt: 1 };
+    expect(() => record.routeOf(launch)).toThrow(/EMFILE/u);
+    failing = false;
+    expect(record.routeOf(launch)).toMatchObject({ kind: "provider", provider: "z" });
+    expect(reads).toBe(2);
   });
 });

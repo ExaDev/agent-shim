@@ -33,6 +33,13 @@ export function raiseUnreadableCatalogue(fault: string, cause?: unknown): never 
 /** The `onUnreadable` of a reader that skips the file: it reads as absent, and the fault is recorded where the files are kept up to date (the keeper's status and log for that provider). */
 export const skipUnreadableCatalogue = (): void => undefined;
 
+/** The `onUnreadable` of a reader on the request path that skips a file with a fault of its own, as `skipUnreadableCatalogue` does, and passes a read that failed for the moment on as an `UnreadableCatalogueError` carrying the code, so the request is answered as retryable. */
+export function skipUnreadableCatalogueUnlessTransient(fault: string, cause: unknown): void {
+  if (isTransientReadError(cause)) {
+    raiseUnreadableCatalogue(fault, cause);
+  }
+}
+
 /**
  * The one way to read a file of a provider's stored catalogue state (the catalogue, its settings digest, its account binding, a refresh's status and failure record) or of the login a Codex catalogue is bound to: the text of the file through the `read` it was made over, `undefined` when there is none, and, when the file exists but cannot be read (permissions, a directory in its place, a symlink loop: anything but absence), `onUnreadable` is told the fault and the file reads as absent unless it throws. The caller decides what one provider's unreadable file means for it (skip it, record it, answer for it), so no unreadable file reaches a request, a tick or a command of another provider as a raw system error naming its path.
  *
