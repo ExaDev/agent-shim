@@ -29,6 +29,18 @@ describe("route commands", () => {
     expect(readRouteOverrides(paths)).toEqual({ schemaVersion: 1, identities: { work: { "claude-sonnet-5-5": "auto/z/sonnet" } }, sessions: { abc: { haiku: "z/air" } } });
   });
 
+  it("lists scopes by label within a kind and keys by name within a scope, whatever order the file holds them in", async () => {
+    // Written in reverse of the listed order at each level, so a list in the file's order differs from the sorted one.
+    writeRouteOverrides(paths, { schemaVersion: 1, global: { sonnet: "z/b", haiku: "z/a" }, sessions: { zeta: { opus: "z/c" }, alpha: { opus: "z/d", haiku: "z/e" } } });
+    expect(parseJson((await cli(["route", "list", "--json"])).stdout)).toEqual([
+      { scope: "session:alpha", model: "haiku", target: "z/e" },
+      { scope: "session:alpha", model: "opus", target: "z/d" },
+      { scope: "session:zeta", model: "opus", target: "z/c" },
+      { scope: "global", model: "haiku", target: "z/a" },
+      { scope: "global", model: "sonnet", target: "z/b" },
+    ]);
+  });
+
   it.each<[readonly string[]]>([[["--session", ""]], [["--identity", ""]], [["--provider", ""]]])("refuses an empty scope name, %j, and leaves no file a reader cannot use", async (scope) => {
     const result = await cli(["route", "set", "opus", "claude-sonnet-5-5", ...scope]);
     expect(result.code).not.toBe(0);
