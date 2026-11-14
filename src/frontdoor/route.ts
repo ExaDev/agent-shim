@@ -196,6 +196,8 @@ export interface RoutedRequest {
   /** Aborted the moment the client goes away; a route aborts its own upstream work with it. */
   readonly signal: AbortSignal;
   readonly session: SessionIdentity;
+  /** Set when the door itself put the request on a provider path (a helper the main loop's route context placed, `followingMainLoop`'s `toProvider`): that path is the door's choice, not the client's, so the request is treated as one the session sent on its own bare path. */
+  readonly doorScoped?: true;
 }
 
 /** The response half a route writes through, so the pipeline can run response middleware at the head and apply backpressure uniformly. */
