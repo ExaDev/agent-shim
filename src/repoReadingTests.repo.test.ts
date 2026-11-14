@@ -4,12 +4,15 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 /**
- * The suffix of a test that reads the repository's own files from disk (a source tree it walks for a rule, a document it checks a constant against, a workflow it parses). `vitest --changed` selects a test by what it imports, and a file a test reads is not an import, so a change to that file never selects the test; `.husky/pre-push` runs every test with this suffix on every push instead, and this file keeps the suffix on exactly the tests that read the repository.
+ * The suffix of a test that reads the repository's own files from disk or runs one as a child process (a source tree it walks for a rule, a document it checks a constant against, a workflow it parses, a script it starts). `vitest --changed` selects a test by what it imports, and a file a test reads or runs is not an import, so a change to that file never selects the test; `.husky/pre-push` runs every test with this suffix on every push instead, and this file keeps the suffix on exactly the tests that read the repository.
  */
 const SUFFIX = ".repo.test.ts";
 
 /** The `node:fs` functions that read or look at a path, by the name a call uses (`fs.readFileSync(...)` or an imported `readFileSync(...)`). */
 const FS_READS: ReadonlySet<string> = new Set(["readFileSync", "readFile", "readdirSync", "readdir", "opendirSync", "opendir", "existsSync", "statSync", "stat", "lstatSync", "lstat", "accessSync", "access", "globSync", "glob", "createReadStream"]);
+
+/** The `node:child_process` functions that start a program, by the name `node:child_process` exports them under. */
+const CHILD_PROCESS_STARTS: ReadonlySet<string> = new Set(["spawn", "spawnSync", "exec", "execSync", "execFile", "execFileSync", "fork"]);
 
 /** Whether `node` is one of the expressions that name the test file's own place in the repository. */
 function isOwnLocation(node: ts.Node): boolean {
@@ -37,6 +40,8 @@ function some(node: ts.Node, test: (child: ts.Node) => boolean): boolean {
 
 /**
  * Whether a test's source reads a path in the repository: a `node:fs` read or listing whose path is built from the file's own location (`__dirname`, `import.meta.dirname`, `import.meta.url`), directly, through a variable initialised from one (by name, across the file), or through a function the file declares that reads the filesystem and is handed such a path. A path under a temporary directory is not built from the file's location, so the many tests that read what they wrote there are not counted.
+ *
+ * A program the test starts counts the same way: a `node:child_process` start (`spawn`, `spawnSync`, `exec`, `execSync`, `execFile`, `execFileSync`, `fork`, called by the name it was imported under or as a method of the module's namespace) whose command, or an element of its argument array, is a path built from the file's location, because a change to that file is as invisible to the module graph as a change to a file read. The options object is not looked at, since a `cwd` says where the program runs and not what it runs, and a path through `node_modules` is not counted, since an installed binary is a dependency and not part of the repository.
  */
 function readsRepository(sourceText: string): boolean {
   const source = ts.createSourceFile("source.ts", sourceText, ts.ScriptTarget.Latest, true);
@@ -55,6 +60,33 @@ function readsRepository(sourceText: string): boolean {
     ts.forEachChild(node, collect);
   };
   collect(source);
+
+  /** The local names `node:child_process` is imported under: each named import's local name mapped to the export's name, and the names of a namespace or default import. */
+  const startNames = new Map<string, string>();
+  const namespaceNames = new Set<string>();
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier) || !["node:child_process", "child_process"].includes(statement.moduleSpecifier.text)) {
+      continue;
+    }
+    const bindings = statement.importClause?.namedBindings;
+    if (statement.importClause?.name !== undefined) {
+      namespaceNames.add(statement.importClause.name.text);
+    }
+    if (bindings !== undefined && ts.isNamespaceImport(bindings)) {
+      namespaceNames.add(bindings.name.text);
+    } else if (bindings !== undefined) {
+      for (const element of bindings.elements) {
+        startNames.set(element.name.text, (element.propertyName ?? element.name).text);
+      }
+    }
+  }
+  const startsProgram = (call: ts.CallExpression): boolean => {
+    if (ts.isIdentifier(call.expression)) {
+      const exported = startNames.get(call.expression.text);
+      return exported !== undefined && CHILD_PROCESS_STARTS.has(exported);
+    }
+    return ts.isPropertyAccessExpression(call.expression) && ts.isIdentifier(call.expression.expression) && namespaceNames.has(call.expression.expression.text) && CHILD_PROCESS_STARTS.has(call.expression.name.text);
+  };
 
   const rootedNames = new Map<string, boolean>();
   const rooted = (node: ts.Node): boolean =>
@@ -75,6 +107,29 @@ function readsRepository(sourceText: string): boolean {
       rootedNames.set(child.text, answer);
       return answer;
     });
+
+  const throughNodeModulesNames = new Map<string, boolean>();
+  /** Whether a path expression names `node_modules` as a segment, directly or through a variable the file initialises. */
+  const throughNodeModules = (node: ts.Node): boolean =>
+    some(node, (child) => {
+      if (ts.isStringLiteralLike(child)) {
+        return child.text.split(/[\\/]/u).includes("node_modules");
+      }
+      if (!ts.isIdentifier(child)) {
+        return false;
+      }
+      const known = throughNodeModulesNames.get(child.text);
+      if (known !== undefined) {
+        return known;
+      }
+      throughNodeModulesNames.set(child.text, false);
+      const answer = (initialisers.get(child.text) ?? []).some(throughNodeModules);
+      throughNodeModulesNames.set(child.text, answer);
+      return answer;
+    });
+  /** Whether a program started by `call` is named by a repository path: its command, or an element of its argument array, built from the file's location and not through `node_modules`. */
+  const startsRepositoryProgram = (call: ts.CallExpression): boolean =>
+    startsProgram(call) && call.arguments.filter((argument) => !ts.isObjectLiteralExpression(argument)).some((argument) => rooted(argument) && !throughNodeModules(argument));
 
   const isFsRead = (node: ts.Node): node is ts.CallExpression => {
     if (!ts.isCallExpression(node)) {
@@ -108,7 +163,13 @@ function readsRepository(sourceText: string): boolean {
   };
 
   return some(source, (node) => {
-    if (!ts.isCallExpression(node) || !node.arguments.some(rooted)) {
+    if (!ts.isCallExpression(node)) {
+      return false;
+    }
+    if (startsRepositoryProgram(node)) {
+      return true;
+    }
+    if (!node.arguments.some(rooted)) {
       return false;
     }
     if (isFsRead(node)) {
@@ -152,6 +213,7 @@ describe(`a test that reads the repository's own files`, () => {
   it("is found among the tests of both trees", () => {
     expect(reading).toContain(path.join("src", "testPortRelease.repo.test.ts"));
     expect(reading).toContain(path.join("src", "frontdoor", "loggedTextSites.repo.test.ts"));
+    expect(reading).toContain(path.join("src", "ciBrewInstall.repo.test.ts"));
     expect(tests).toContain(path.join("scripts", "rc-self-host-lab-core.test.ts"));
   });
 });
@@ -165,6 +227,10 @@ describe("readsRepository", () => {
     ["an existence check on the file's location", 'expect(fs.existsSync(path.join(__dirname, "a"))).toBe(true);'],
     ["a walk through a function the file declares", 'function walk(dir: string): string[] { return fs.readdirSync(dir).flatMap((name) => walk(path.join(dir, name))); } walk(__dirname);'],
     ["a walk through an arrow function that calls a reader", 'const read = (file: string) => fs.readFileSync(file, "utf8"); const count = (file: string) => read(file).length; count(path.join(__dirname, "a.ts"));'],
+    ["a script run by spawnSync through a constant built from __dirname", 'import { spawnSync } from "node:child_process"; const SCRIPT = path.join(__dirname, "..", ".github", "run.sh"); spawnSync(SCRIPT, ["a"]);'],
+    ["a script handed to an interpreter among the arguments", 'import { execFileSync } from "node:child_process"; execFileSync("bash", [path.join(__dirname, "run.sh")]);'],
+    ["a start under an alias of the import", 'import { fork as start } from "child_process"; start(path.join(import.meta.dirname, "worker.mjs"));'],
+    ["a start through the namespace import", 'import * as cp from "node:child_process"; cp.execSync(path.join(__dirname, "run.sh"));'],
   ])("finds %s", (_label, text) => {
     expect(readsRepository(text)).toBe(true);
   });
@@ -174,6 +240,11 @@ describe("readsRepository", () => {
     ["a module resolved from the file's location without reading it", "const require = createRequire(import.meta.url); require.resolve('x');"],
     ["a bundle built from the file's location by a function the file does not declare", 'await build({ entryPoints: [path.resolve(__dirname, "cli.ts")] });'],
     ["the file's location in a string", "const banner = 'require(\"node:url\").pathToFileURL(__dirname)'; fs.readFileSync(other);"],
+    ["a script in a temporary directory", 'import { spawnSync } from "node:child_process"; const script = path.join(os.tmpdir(), "run.sh"); spawnSync(script, []);'],
+    ["a binary installed under node_modules, reached from the file's location", 'import { execFileSync } from "node:child_process"; const bin = path.join(__dirname, "..", "node_modules", ".bin", "tsx"); execFileSync(bin, ["x.ts"]);'],
+    ["a directory given only as the working directory", 'import { spawnSync } from "node:child_process"; spawnSync("git", ["status"], { cwd: path.join(__dirname, "..") });'],
+    ["an exec that is not the child process one", "const match = /a/u.exec(path.join(__dirname, 'a'));"],
+    ["a function of the file's own called spawn", 'function spawn(file: string): void {} spawn(path.join(__dirname, "a.sh"));'],
   ])("leaves %s alone", (_label, text) => {
     expect(readsRepository(text)).toBe(false);
   });
