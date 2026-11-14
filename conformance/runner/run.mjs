@@ -1,4 +1,4 @@
-// The TypeScript runner of the conformance corpus: loads and checks every file against the format in ../README.md, then executes cases through a table of functions the caller supplies. Plain Node and Ajv only, so a later runner for a browser or a worker can share the checks that need no filesystem.
+// The TypeScript runner of the conformance corpus: loads and checks every file against the format in ../README.md, then executes cases through a table of functions the caller supplies. Plain Node and Ajv only.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -59,19 +59,35 @@ export function validatorsFrom(root) {
 /** Text as a JSON string or a `{ codeUnits }` object reads: the UTF-16 code unit sequence as a JS string. */
 export const decodeText = (text) => (typeof text === "string" ? text : String.fromCharCode(...text.codeUnits));
 
-/** Canonical JSON text: keys sorted, two-space indent, one element per line, a final newline. */
-export function canonical(value) {
-  const sorted = (node) => (Array.isArray(node) ? node.map(sorted) : node !== null && typeof node === "object" ? Object.fromEntries(Object.keys(node).sort().map((key) => [key, sorted(node[key])])) : node);
-  return `${JSON.stringify(sorted(value), null, 2)}\n`;
+/** Written out by `canonical`: one element per line, two-space indent. */
+function writeCanonical(node, indent) {
+  const inner = `${indent}  `;
+  if (Array.isArray(node)) return node.length === 0 ? "[]" : `[\n${node.map((item) => `${inner}${writeCanonical(item, inner)}`).join(",\n")}\n${indent}]`;
+  if (node === null || typeof node !== "object") return JSON.stringify(node);
+  // Sorted here and written in that order, never rebuilt as an object, which would put integer-like keys first in numeric order.
+  const keys = Object.keys(node).sort();
+  return keys.length === 0 ? "{}" : `{\n${keys.map((key) => `${inner}${JSON.stringify(key)}: ${writeCanonical(node[key], inner)}`).join(",\n")}\n${indent}}`;
 }
 
-/** What breaks the rules beside the schema in one parsed document: an integer above the cap, a negative zero, a string no loader can read. */
+/** Canonical JSON text: keys in UTF-16 code unit order, two-space indent, one element per line, a final newline, numbers and strings as JSON.stringify writes them. */
+export function canonical(value) {
+  return `${writeCanonical(value, "")}\n`;
+}
+
+/** What breaks the rules beside the schema in one parsed document: an integer above the cap, a negative zero, a string or an object key no loader can read, a repeated name in an $object. */
 function valueProblems(node, where, problems) {
   if (typeof node === "number" && Number.isInteger(node) && Math.abs(node) > MAX_INTEGER) problems.push(`${where}: an integer above 2^53-1`);
   else if (Object.is(node, -0)) problems.push(`${where}: negative zero, which is written as { "$number": "-0" }`);
   else if (typeof node === "string" && !node.isWellFormed()) problems.push(`${where}: a string holding an unpaired surrogate, which is written as { "codeUnits": [...] }`);
   else if (Array.isArray(node)) node.forEach((item, index) => valueProblems(item, `${where}[${String(index)}]`, problems));
-  else if (node !== null && typeof node === "object") for (const [key, item] of Object.entries(node)) valueProblems(item, `${where}.${key}`, problems);
+  else if (node !== null && typeof node === "object") {
+    for (const [key, item] of Object.entries(node)) {
+      if (!key.isWellFormed()) problems.push(`${where}: an object key holding an unpaired surrogate`);
+      valueProblems(item, `${where}.${key}`, problems);
+    }
+    const names = Array.isArray(node.$object) ? node.$object.map((pair) => (Array.isArray(pair) ? pair[0] : undefined)) : [];
+    if (new Set(names).size !== names.length) problems.push(`${where}: an $object names a member twice`);
+  }
 }
 
 /**
@@ -217,10 +233,22 @@ export function runCase(entry, table) {
 }
 
 /**
- * The cases of the corpus as registrable tests: each with its file, id, original title and `skip`. Counting what was registered, executed or skipped, against the manifest is the caller's check, made when it collects and so whatever the run later does with the tests.
+ * The cases of the corpus as registrable tests: each with its file, id, original title and `skip`. `executed` holds the id of every case whose steps ran to the end, so a caller can tell a test that started from one that did nothing. Counting what was registered to run and to skip, against the manifest, is the caller's check, made when it collects and so whatever the run later does with the tests.
  */
 export function collect(root) {
   const { files, problems } = loadCorpus(root);
-  const cases = files.flatMap(({ file, cases: list }) => list.map((entry) => ({ file, id: entry.id, from: entry.from, skip: entry.skip, run: (table) => runCase(entry, table) })));
-  return { cases, problems };
+  const executed = new Set();
+  const cases = files.flatMap(({ file, cases: list }) =>
+    list.map((entry) => ({
+      file,
+      id: entry.id,
+      from: entry.from,
+      skip: entry.skip,
+      run: (table) => {
+        runCase(entry, table);
+        executed.add(entry.id);
+      },
+    })),
+  );
+  return { cases, executed, problems };
 }

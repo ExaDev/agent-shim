@@ -16,7 +16,12 @@ conformance/
   <kind>/<name>.json         the cases
 ```
 
-The files are UTF-8 (a loader refuses a file that is not, rather than reading replacement characters) and canonical JSON: keys sorted in UTF-16 code unit order, two-space indent, one element per line, a final newline. A loader refuses a file that is valid JSON in any other form, so a case changes in a diff and in no other way.
+The files are UTF-8 (a loader refuses a file that is not, rather than reading replacement characters) and canonical JSON, which a loader refuses any other form of, so a case changes in a diff and in no other way:
+
+- Object keys are in UTF-16 code unit order, so `"10"` comes before `"9"`. A loader that builds objects must not let its language reorder integer-like keys (JavaScript puts them first, in numeric order); it writes and compares keys in the sorted order. A key holds no unpaired surrogate.
+- Two-space indent, one element per line, an empty array or object as `[]` or `{}`, a final newline, and a space after the colon.
+- A number is written as JavaScript writes it: an integer as digits, a fraction in its shortest form that reads back as the same number (`1.5`, never `1.50`), and no exponent form for a number that is within the integer cap. A number the cap or this form cannot hold is not in a corpus file.
+- A string is written with only the escapes JSON requires: `\"`, `\\`, `\b`, `\f`, `\n`, `\r`, `\t`, and `\u00xx` in lower case for any other control character. Everything else is written as itself, a non-ASCII character, a solidus, U+2028 and U+007F included.
 
 ### Which files are corpus files
 
@@ -52,11 +57,11 @@ A behaviour that is not a function of a case's inputs (what the host's filesyste
 A value in `args` or `expect` is any JSON value, and an implementation may need a value JSON cannot carry. These objects stand for them, and any other object with a key that starts with `$` is refused:
 
 - `{ "$number": "-0" }`, or `"NaN"`, `"Infinity"`, `"-Infinity"`: the number. A plain `-0` is refused, since canonical JSON cannot tell it from `0`.
-- `{ "$undefined": true }`: the JavaScript value `undefined`, which an implementation with no such value reads as absent: an object member with it is left out, and an expected result with it is no result.
-- `{ "$object": [["b", 1], ["a", 2]] }`: an object whose members are in the order given. A canonical file sorts every object's keys, so this is how a case gives an input whose behaviour depends on member order. A key that is an integer index (`"1"`) is ordered first by JavaScript whatever the pair order, so a case does not depend on one.
+- `{ "$undefined": true }`: the JavaScript value `undefined`. Where the language has it, an object member with it is kept as a member whose value is undefined; where it does not, the member is left out and an expected result with it is no result. A case that depends on the member being kept (`canonical-json.members-and-undefined`) tests nothing in an implementation with no undefined, and that implementation marks it `skip` with the reason.
+- `{ "$object": [["b", 1], ["a", 2]] }`: an object whose members are in the order given. A canonical file sorts every object's keys, so this is how a case gives an input whose behaviour depends on member order. A name is not an integer index (`"1"`), which JavaScript orders first whatever the pair order, and no name is repeated: the schema refuses the first and every loader the second, each with a fixture. Trilean's corpus format also writes canonical JSON and has no such encoding, so a case there cannot pin member order; the two formats can adopt this one when it needs to.
 - `{ "codeUnits": [97, 98] }`: text, below. An object whose only key is `codeUnits` is always text.
 
-Integers are at most 2^53-1, the largest the JavaScript runners hold exactly, and an integer written `97.0` is the integer 97, as in JSON Schema. A file with a larger integer is refused.
+Integers are at most 2^53-1, the largest the JavaScript runners hold exactly. A file with a larger integer is refused, and so is one that writes an integer as `97.0`, which is not canonical.
 
 ### Text
 
@@ -86,14 +91,15 @@ A call of exported functions with plain inputs, for the pure helpers and the rul
 - `args`: the arguments. An argument an implementation cannot take as plain data is adapted by that implementation's table, and the case says what the data means: for `resolveAgentShimHome` the third argument is `true` (every directory exists), `false` (none does) or the list of paths that do.
 - `select`, optional: a list of keys to follow into the result before comparing.
 - `expect`: `{ "value": <value> }`, the result equals the value (strict equality, `-0` told from `0`), or `{ "throws": { "name": <error name>, "message": { "startsWith"?: <text>, "contains"?: [<text>, ...] } } }`, the call throws an error with that `name`, whose message starts with `startsWith` and holds each fragment of `contains` in order, each after the end of the one before. The `message` is optional, and holds at least one of its two keys.
-- `files`, optional: a file tree made before the steps, in a fresh directory of its own. A path is relative and has no `..`; an entry is text, `{ "base64": ... }` for exact bytes, `{ "symlink": <target> }` or `{ "directory": true }`. A string argument, expected result or link target that starts with `$TMP` has the directory in its place, so a case holds wherever it runs.
+- `files`, optional: a file tree made before the steps, in a fresh directory of its own. A path is relative and has no `..`; an entry is text, `{ "base64": ... }` for exact bytes, `{ "symlink": <target> }` or `{ "directory": true }`. A string argument, expected result or link target that starts with `$TMP` has the directory's real path (with every link in it resolved) in its place, so a case holds wherever it runs.
 - Paths in `function` cases are POSIX paths.
 
 ## Rules the schema cannot express
 
 Each loader enforces these beside the schema:
 
-- A file is canonical JSON, and holds no integer above 2^53-1, no `-0` and no unpaired surrogate in a string.
+- A file is canonical JSON, and holds no integer above 2^53-1, no `-0` and no unpaired surrogate in a string or an object key.
+- No `$object` names a member twice.
 - A case id is not used twice, within a file or across files.
 - A case's `kind` is the name of its file's directory.
 - A manifest's `skip` lists are in ascending order.
@@ -103,7 +109,33 @@ Every rule above has a negative fixture, and every negative fixture has a repair
 
 ## Nothing real in the corpus
 
-The corpus is public. No case holds a credential, a token, an account or organisation identifier, a session identifier, a host name or a personal detail, and anything copied from a real run is replaced first by a made-up value of the same shape. `sh scripts/rust.sh xtask corpus scrub-check`, the `conformance-scrub` job of CI, searches every file under this directory for what such a value looks like: an Anthropic key, a JWT, a bearer or cookie value, a UUID outside the made-up namespace, an id with a known prefix, an email address outside `example.com` and `example.org`, an IPv4 address outside loopback and the documentation range, and a path under a home directory. A value passes only in the form a scrubber writes. A deliberate exception is an entry of `scrub-allow.json` giving the class, the file, the exact text and the reason, and an entry that matches nothing fails the check.
+The corpus is public. No case holds a credential, a token, an account or organisation identifier, a session identifier, a host name or a personal detail, and anything copied from a real run is replaced first by a made-up value of the same shape. `sh scripts/rust.sh xtask corpus scrub-check`, the `conformance-scrub` job of CI, searches every file under this directory for what such a value looks like. It knows shapes and not values, so a name it has no shape for (a particular machine's name, a person's name) is for the author and the reviewer to keep out.
+
+It reads what the files mean, not only what they spell: a JSON file is parsed, so a value written with `\u` escapes is found as the text it stands for, and every string and every object key is scanned; the bytes of a `base64` file body are decoded and scanned as text and, when they parse, as JSON; the units of a `codeUnits` array are decoded and scanned. The format never joins one field to another, so nothing is assembled from several strings. A test lists the forms `case.schema.json` defines and fails when it gains one the scan does not handle. A problem names the class, the file and where in it (a JSON pointer, or the line for a file that is not JSON) and never the text found.
+
+A value of these classes passes only in the form a scrubber writes: a filler of `FAKE` followed by digits and the letter `A`, the signature `ZmFrZQ` followed by `A` padding, the UUID namespace `00000000-0000-4000-8000-`, a hexadecimal id of sixteen zeros first, an id whose filler is digits only, `example.com`, `example.org`, loopback and `192.0.2.0/24`. The list below is generated from the check's table of classes (`sh scripts/rust.sh xtask corpus scrub-classes`) and a test fails when they differ.
+
+<!-- scrub-classes:start -->
+- `anthropic-key`: an Anthropic key (the `sk-ant-` prefix) whose filler is not the made-up form (never an exception)
+- `api-key`: an `sk-` or `sk-proj-` key of 20 or more characters whose filler is not the made-up form (never an exception)
+- `github-token`: a GitHub token (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_` or `github_pat_` with its filler) (never an exception)
+- `aws-key-id`: an AWS access key id (`AKIA` or `ASIA` and 16 upper-case letters or digits) (never an exception)
+- `jwt`: a JWT whose signature is not the made-up form (never an exception)
+- `bearer-token`: a bearer value in any case that is not the made-up form (never an exception)
+- `basic-auth`: a `Basic` authorisation value that decodes to a user and password (never an exception)
+- `cookie-value`: the value of any pair of a `Cookie` header, and of a session cookie named anywhere (never an exception)
+- `private-key`: a PEM or OpenSSH private key, by its header line or its base64 body (never an exception)
+- `uuid`: a UUID outside the made-up namespace (never an exception)
+- `prefixed-id`: an id with a known prefix (`cse_`, `session_`, `env_`, `msg_`, `req_`, `toolu_`, `srvtoolu_`, `org_`, `user_`, `acct_`, `account_`, `worker_`) whose filler is not made-up (never an exception)
+- `hex-id`: 32 or 64 hexadecimal digits not starting with sixteen zeros (an exception may be recorded)
+- `email`: an email address, or a URL with userinfo, outside `example.com` and `example.org` (an exception may be recorded)
+- `ipv4-address`: an IPv4 address outside loopback and 192.0.2.0/24 (an exception may be recorded)
+- `home-path`: a path under a home directory (`/Users/`, `/home/`, `/root/` or `C:\Users\`) (an exception may be recorded)
+- `host-name`: a host name ending `.local`, `.lan`, `.internal`, `.localdomain`, `.home.arpa` or `.ts.net` (an exception may be recorded)
+- `ssh-target`: the `user@host` an `ssh` command names, outside `example.com` and `example.org` (an exception may be recorded)
+<!-- scrub-classes:end -->
+
+A deliberate exception is an entry of `scrub-allow.json`, `{ "class", "file", "pointer", "sha256", "reason" }`, bound to one class, one file, one location in it and the SHA-256 of the exact text found, so a value that changes, moves or appears a second time is a new finding, and the file holds a digest and never a value. A class marked "never an exception" cannot be named at all. `sh scripts/rust.sh xtask corpus scrub-suggest` prints the entries the current findings of an allowable class would need, to be given a reason. An entry nothing matches fails the check, and the allow file is scanned like every other file.
 
 ## Adding a case
 

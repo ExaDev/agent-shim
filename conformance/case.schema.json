@@ -204,7 +204,7 @@
     },
     "object": {
       "additionalProperties": false,
-      "description": "An object with its members in the order given, which a canonical file cannot otherwise hold, since it sorts every object's keys.",
+      "description": "An object with its members in the order given, which a canonical file cannot otherwise hold, since it sorts every object's keys. A member name is not an array index, which JavaScript orders first whatever the order given, and no name is repeated.",
       "properties": {
         "$object": {
           "items": {
@@ -212,6 +212,9 @@
             "minItems": 2,
             "prefixItems": [
               {
+                "not": {
+                  "pattern": "^(?:0|[1-9][0-9]*)$"
+                },
                 "type": "string"
               },
               {

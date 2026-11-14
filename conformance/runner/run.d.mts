@@ -20,5 +20,6 @@ export function loadCorpus(root: string, schemas?: string): { readonly files: re
 export function runCase(entry: unknown, table: CaseTable): void;
 export function collect(root: string): {
   readonly cases: readonly { readonly file: string; readonly id: string; readonly from: string; readonly skip: "ts" | "rust" | undefined; readonly run: (table: CaseTable) => void }[];
+  readonly executed: ReadonlySet<string>;
   readonly problems: readonly string[];
 };
