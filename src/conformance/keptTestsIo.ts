@@ -4,7 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 
 import { loadCorpus } from "../../conformance/runner/run.mjs";
-import { accountingFrom, ListingSchema, type Accounting, type Listing } from "./keptTests.ts";
+import { accountingFrom, ListingSchema, type Accounting, type CaseRef, type Listing } from "./keptTests.ts";
 
 /** Mebibytes of output read from `vitest list --json`. */
 const LISTING_MEBIBYTES = 256;
@@ -28,7 +28,7 @@ export async function runCommand(file: string, args: readonly string[], options:
   });
 }
 
-const CaseFromSchema = z.object({ from: z.string() });
+const CaseRefSchema = z.object({ from: z.string(), skip: z.enum(["ts", "rust"]).optional() });
 
 /** The suite's own listing of `root`: `vitest list --json`, run with the checkout's own vitest and the environment of a person's shell with the variables of an enclosing vitest removed, so a run inside a test lists and does not inherit its worker. */
 export async function listSuite(root: string): Promise<Listing> {
@@ -38,16 +38,16 @@ export async function listSuite(root: string): Promise<Listing> {
   return ListingSchema.parse(JSON.parse(stdout));
 }
 
-/** The `from` of every case of `root`'s corpus. Throws for a corpus that does not load. */
-export function corpusFroms(root: string): string[] {
+/** Every case of `root`'s corpus, as its `from` and the implementation that skips it. Throws for a corpus that does not load. */
+export function corpusCases(root: string): CaseRef[] {
   const corpus = loadCorpus(path.join(root, "conformance"));
   if (corpus.problems.length > 0) {
     throw new Error(`the corpus does not load: ${corpus.problems.join("; ")}`);
   }
-  return corpus.files.flatMap(({ cases }) => cases.map((entry) => CaseFromSchema.parse(entry).from));
+  return corpus.files.flatMap(({ cases }) => cases.map((entry) => CaseRefSchema.parse(entry)));
 }
 
 /** The accounting of `root`'s corpus and README tables. Throws for a corpus that does not load or a table that does not parse. */
 export function readAccounting(root: string): Accounting {
-  return accountingFrom(fs.readFileSync(path.join(root, "conformance", "README.md"), "utf8"), corpusFroms(root));
+  return accountingFrom(fs.readFileSync(path.join(root, "conformance", "README.md"), "utf8"), corpusCases(root));
 }

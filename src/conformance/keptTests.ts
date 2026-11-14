@@ -20,8 +20,8 @@ export interface Row {
 
 /** What the corpus and the README tables say about the suite's tests. */
 export interface Accounting {
-  /** The identities some case's `from` names as the test it came from. */
-  readonly sources: ReadonlySet<string>;
+  /** The identities some case's `from` names as the test it came from, each with the number of cases that name it. Only a case the TypeScript runner runs counts: one marked `skip: ts` proves nothing about a test the TypeScript suite deleted. */
+  readonly sources: ReadonlyMap<string, number>;
   /** The files some case's `from` names. */
   readonly sourceFiles: ReadonlySet<string>;
   /** The `## Kept tests` rows: tests that stay in a file whose tests moved. */
@@ -58,14 +58,21 @@ export function listedCounts(listing: Listing, root: string): ReadonlyMap<string
 /** The pattern of a `from` that names a test: `<file>.test.ts: <title path>` (or `.tsx`). A `recorded:` one names no test. */
 const FROM_TEST = /^([A-Za-z0-9_./-]+\.test\.tsx?): (.+)$/u;
 
-/** The accounting of the cases' `from` values: the tests they came from and the files those are in. */
-export function caseSources(froms: readonly string[]): Pick<Accounting, "sources" | "sourceFiles"> {
-  const sources = new Set<string>();
+/** What the accounting reads of a case: its `from`, and the implementation that skips it, if one does. */
+export interface CaseRef {
+  readonly from: string;
+  readonly skip?: "ts" | "rust" | undefined;
+}
+
+/** The accounting of the cases: the tests they came from, how many cases name each, and the files those are in. A case the TypeScript runner skips is left out, since the suite the check reads is the TypeScript one and that case never runs in it. */
+export function caseSources(cases: readonly CaseRef[]): Pick<Accounting, "sources" | "sourceFiles"> {
+  const sources = new Map<string, number>();
   const sourceFiles = new Set<string>();
-  for (const from of froms) {
+  for (const { from, skip } of cases) {
     const match = FROM_TEST.exec(from);
-    if (match?.[1] !== undefined && match[2] !== undefined) {
-      sources.add(testId(match[1], match[2]));
+    if (match?.[1] !== undefined && match[2] !== undefined && skip !== "ts") {
+      const id = testId(match[1], match[2]);
+      sources.set(id, (sources.get(id) ?? 0) + 1);
       sourceFiles.add(match[1]);
     }
   }
@@ -113,9 +120,9 @@ export function parseTable(markdown: string, heading: string): Row[] {
   });
 }
 
-/** The accounting of a README and the `from` of every case. */
-export function accountingFrom(readme: string, froms: readonly string[]): Accounting {
-  return { ...caseSources(froms), kept: parseTable(readme, "Kept tests"), dropped: parseTable(readme, "Dropped tests") };
+/** The accounting of a README and every case. */
+export function accountingFrom(readme: string, cases: readonly CaseRef[]): Accounting {
+  return { ...caseSources(cases), kept: parseTable(readme, "Kept tests"), dropped: parseTable(readme, "Dropped tests") };
 }
 
 function ids(rows: readonly Row[]): string[] {
@@ -160,6 +167,9 @@ export function guardProblems(listed: ReadonlyMap<string, number>, accounting: A
     if (scope.has(file) && !accounting.sources.has(id) && !keptSet.has(id)) {
       problems.push(`test in a file whose tests moved has no case and no row: ${id}`);
     }
+    if (scope.has(file) && (listed.get(id) ?? 0) > 1) {
+      problems.push(`two tests share a title in a file whose tests moved, so one row or case cannot tell them apart: ${id}`);
+    }
   }
   return [...new Set(problems)].sort();
 }
@@ -181,15 +191,19 @@ export function unstableProblems(unstable: ReadonlySet<string>): string[] {
 }
 
 /**
- * The tests a change deleted that nothing accounts for: an identity the base holds more often than the head, that is neither the source of a case nor a dropped row. A renamed test or file is a deletion of the old identity, so it needs the same accounting; a kept row does not account for a deletion, since a kept row for a missing test is a problem of its own.
+ * The tests a change deleted that nothing accounts for: for an identity the base holds more often than the head, each deleted test needs its own account, a case that came from it and that the TypeScript runner runs, or a dropped row, so deleting two tests with one title needs two. A renamed test or file is a deletion of the old identity, so it needs the same accounting; a kept row does not account for a deletion, since a kept row for a missing test is a problem of its own.
  */
 export function deletedProblems(base: ReadonlyMap<string, number>, head: ReadonlyMap<string, number>, accounting: Accounting, unstable: ReadonlySet<string> = new Set()): string[] {
-  const dropped = new Set(ids(accounting.dropped));
+  const droppedCounts = new Map<string, number>();
+  for (const id of ids(accounting.dropped)) {
+    droppedCounts.set(id, (droppedCounts.get(id) ?? 0) + 1);
+  }
   const problems: string[] = [];
   for (const [id, count] of base) {
-    const accounted = accounting.sources.has(id) || dropped.has(id);
-    if (count > (head.get(id) ?? 0) && !accounted && !unstable.has(id)) {
-      problems.push(`deleted test has no case and no dropped row: ${id}`);
+    const deleted = count - (head.get(id) ?? 0);
+    const accounts = (accounting.sources.get(id) ?? 0) + (droppedCounts.get(id) ?? 0);
+    if (deleted > accounts && !unstable.has(id)) {
+      problems.push(accounts === 0 ? `deleted test has no case and no dropped row: ${id}` : `deleted ${String(deleted)} tests with this title and only ${String(accounts)} cases and dropped rows account for them: ${id}`);
     }
   }
   return problems.sort();
