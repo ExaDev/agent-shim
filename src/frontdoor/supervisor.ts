@@ -376,7 +376,7 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
     // The listing precedes the prune so the launch lifecycle publisher sees each pruned launch's record with its start time; the prune's removals are handed to it beside the listing, and the idle decision reads the same listing minus those removals rather than listing again.
     let listed: ReturnType<typeof ports.registry.rescan>;
     let pruned: ReturnType<typeof pruneDeadFrontDoorSessions>;
-    // A failure reading the registry (a file descriptor shortage, an I/O error) fails this tick alone: it is logged, the door goes on serving, and the next tick reads again.
+    // An error thrown in this block (a registry read that failed for the moment, or any other) is logged through `faultLog`, the turn skips the rest of the loop body, and the next turn runs the block again.
     try {
       listed = ports.registry.rescan();
       const running = await ports.runningAmong(listed.map((session) => session.pid));
