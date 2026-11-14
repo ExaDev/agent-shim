@@ -10,6 +10,7 @@ import type { FrontDoorLaunch } from "./state";
 import { CLIENT_SESSION_HEADER, SERVED_MODEL_HEADER, identifyRequest, withCanonicalProviderTarget, type FrontDoorRoute, type ModelChoice, type RoutedRequest, type RoutedResponse, type SessionIdentity } from "./route";
 import { isTransientReadError } from "../readableConfig";
 import { configFaultOf } from "../config/load";
+import { quietLog } from "../keepTicking";
 
 /** What one routed response looked like as it started back to the client: the typed event response middleware observes. */
 export interface RoutedResponseEvent {
@@ -298,7 +299,9 @@ export function createRoutedResponse(
 /**
  * The ordered pipeline every routed session's request runs through: identify the session (splitting the launcher-injected headers out of what may leave the machine), then route, with the response middleware running at each response head. A route that cannot be resolved is answered as an Anthropic-shaped error, and the observers see that error like any other response, since quota and rate-limit state lives in exactly those.
  */
-export async function serveRouted(incoming: PipelineRequest, deps: PipelineDeps): Promise<void> {
+export async function serveRouted(incoming: PipelineRequest, givenDeps: PipelineDeps): Promise<void> {
+  // Every line the pipeline logs is about a request it is answering, so the log goes through `quietLog`: a log that throws (EMFILE, ENOSPC) must not take the answer with it.
+  const deps: PipelineDeps = { ...givenDeps, log: quietLog(givenDeps.log) };
   const request: PipelineRequest = { ...incoming, url: withCanonicalProviderTarget(incoming.url, deps.canonicalProvider) };
   const observed: ObservedRequest = { method: request.method, path: pathOf(request.url), receivedAt: deps.now(), viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined }, requestedModel: { value: undefined }, clientSessionId: clientSessionIdOf(incoming.headers), requestClass: requestClassOf(incoming.headers) };
   const identity = identifyRequest(request.headers);

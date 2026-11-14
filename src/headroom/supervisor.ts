@@ -23,7 +23,7 @@ import {
   type HeadroomFs,
   type HeadroomState,
 } from "./state";
-import { faultLog } from "../keepTicking";
+import { faultLog, quietLog } from "../keepTicking";
 
 /** Everything the supervisor needs to run the daemon, resolved from the global config and the filesystem before it starts. */
 export interface HeadroomSupervisorConfig {
@@ -258,9 +258,11 @@ export const HEADROOM_SUPERVISOR_STILL_RUNNING = -1;
  */
 export async function runSupervisor(
   initialConfig: HeadroomSupervisorConfig,
-  ports: SupervisorPorts,
+  givenPorts: SupervisorPorts,
   options: RunSupervisorOptions = {},
 ): Promise<number> {
+  // Its log through `quietLog`: the supervisor logs while it handles a failure, and a log that throws (EMFILE, ENOSPC) must not skip what follows the line.
+  const ports: SupervisorPorts = { ...givenPorts, log: quietLog(givenPorts.log) };
   const { fs, paths } = ports;
   // Replaced from disk at the top of every tick, so an edited `source` or setting is seen while the daemon runs.
   let config = initialConfig;

@@ -695,3 +695,20 @@ describe("the TLS provider listener", () => {
   );
 });
 
+describe.each(["EMFILE", "ENOSPC"])("a request whose pipeline fails, when the log the server is given throws %s", (code) => {
+  it("is answered with the door's 500, and the server serves the next request", async () => {
+    const throwingLog = (): never => { throw new Error(`${code}: failed, open '/state/logs/frontdoor.log'`); };
+    const server = createFrontDoorServer(async () => { await Promise.reject(new Error("the route failed")); }, throwingLog);
+    const handle = await listenFrontDoor(server);
+    try {
+      for (let request = 0; request < 2; request += 1) {
+        const answered = await fetch(`http://127.0.0.1:${String(handle.port)}/v1/messages`, { method: "POST", body: "{}" });
+        expect(answered.status).toBe(HTTP_STATUS.internalServerError);
+        await answered.text();
+      }
+    } finally {
+      await handle.close();
+    }
+  });
+});
+

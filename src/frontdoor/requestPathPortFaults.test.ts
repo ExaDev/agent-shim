@@ -97,6 +97,30 @@ describe("what the boundary says, by where the fault is", () => {
     }
   }, TIMEOUT_MS);
 
+  it.each(["EMFILE", "ENOSPC"])("answers an admission whose launch registry read failed for the moment as retryable when the log it is given throws %s", async (code) => {
+    const throwingLog = (): never => { throw errorWithCode(`${code}: failed, open '/state/logs/frontdoor.log'`, code); };
+    const world = await startWorld(undefined, HTTP_STATUS.ok, MODELS, undefined, () => { throw errorWithCode("EMFILE: too many open files", "EMFILE"); }, { log: throwingLog });
+    try {
+      const answered = await send(world, { model: "claude-opus-5-5", requestClass: "main" });
+      expect(answered.status, answered.text).toBe(HTTP_STATUS.serviceUnavailable);
+      expect(answered.text).toContain("could not read its launch registry just now (EMFILE)");
+    } finally {
+      await world.close();
+    }
+  }, TIMEOUT_MS);
+
+  it.each(["EMFILE", "ENOSPC"])("answers a request refused at the boundary when the log it is given throws %s", async (code) => {
+    const throwingLog = (): never => { throw errorWithCode(`${code}: failed, open '/state/logs/frontdoor.log'`, code); };
+    const world = await startWorld(undefined, HTTP_STATUS.ok, MODELS, undefined, undefined, { models: () => MODELS, log: throwingLog });
+    try {
+      const answered = await send(world, { model: "ranked", requestClass: "main", identity: ".x" });
+      expect(answered.status, answered.text).toBe(HTTP_STATUS.badRequest);
+      expect(answered.text).toContain("x-agent-shim-identity");
+    } finally {
+      await world.close();
+    }
+  }, TIMEOUT_MS);
+
   it("refuses an identity header that names no identity id with a 400 naming the header, never a local file or doctor", async () => {
     const world = await startWorld(undefined, HTTP_STATUS.ok, MODELS, undefined, undefined, { models: () => MODELS });
     try {

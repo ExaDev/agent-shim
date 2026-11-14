@@ -44,5 +44,14 @@ describe("the front door supervisor's loop", () => {
     const outcome = await runFrontDoorSupervisor(IDLE_MINUTES, { ...world.ports, registry, log }, { tickLimit: TICKS });
     expect(outcome).toBe(FRONTDOOR_SUPERVISOR_STILL_RUNNING);
   });
+
+  it.each(["EMFILE", "ENOSPC"])("ends a start whose listener failed with its exit code, starting the next generation, when the log it is given throws %s", async (code) => {
+    const world = makeWorld({ respawnGeneration: 1 });
+    const log = (): never => { throw errorWithCode(`${code}: failed, open '/state/logs/frontdoor.log'`, code); };
+    const startProviderListener = async (): Promise<never> => { await Promise.resolve(); throw errorWithCode("EADDRINUSE: address already in use", "EADDRINUSE"); };
+    const outcome = await runFrontDoorSupervisor(IDLE_MINUTES, { ...world.ports, log, startProviderListener }, { tickLimit: TICKS });
+    expect(outcome).toBe(1);
+    expect(world.nextGenerationStarts).toHaveLength(1);
+  });
 });
 

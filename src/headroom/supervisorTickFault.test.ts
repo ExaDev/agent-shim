@@ -45,5 +45,13 @@ describe("the headroom supervisor's loop", () => {
     const outcome = await runSupervisor(config, { ...world.ports, readConfig, log }, { tickLimit: TICKS });
     expect(outcome).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
   });
+
+  it.each(["EMFILE", "ENOSPC"])("runs its turns when every line of the log it is given throws %s", async (code) => {
+    const world = makeWorld();
+    world.setConfig(config);
+    const log = (): never => { throw errorWithCode(`${code}: failed, open '/state/headroom/log'`, code); };
+    const outcome = await runSupervisor(config, { ...world.ports, log }, { tickLimit: TICKS });
+    expect(outcome).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
+  });
 });
 

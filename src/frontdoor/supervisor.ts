@@ -11,7 +11,7 @@ import type { DoorHealthPublisher } from "./doorHealthEvents";
 import type { LiveSessionRegistry } from "./liveSessionRegistry";
 import type { HandoverOutcome, HandoverSockets, ListenSource, Predecessor } from "./handover";
 import { FRONT_DOOR_PROTOCOL, pruneDeadFrontDoorSessions, readFrontDoorState, removeFrontDoorCodexHome, removeFrontDoorDirectRecord, writeFrontDoorCodexHome, writeFrontDoorDirectRecord, writeFrontDoorState, type FrontDoorSessionSummary, type FrontDoorState, markFrontDoorDraining, unmarkFrontDoorDraining } from "./state";
-import { faultLog } from "../keepTicking";
+import { faultLog, quietLog } from "../keepTicking";
 
 /** A bound front-door listener in this process, and how to stop it. */
 interface FrontDoorListenerHandle {
@@ -162,7 +162,8 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
   // From here this process's event loop answers every session, so nothing in it may block the thread (see `refuseToBlockInRole`). Left again on return, which only an in-process host or a test ever reaches.
   const leaveRole = enterProcessRole("frontdoor-supervisor");
   try {
-    return await serveFrontDoor(idleShutdownMinutes, ports, options);
+    // Its log through `quietLog`: the supervisor logs while it fails a start or handles a tick's failure, and a log that throws (EMFILE, ENOSPC) must not skip what follows the line.
+    return await serveFrontDoor(idleShutdownMinutes, { ...ports, log: quietLog(ports.log) }, options);
   } finally {
     leaveRole();
   }
