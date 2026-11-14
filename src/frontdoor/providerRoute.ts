@@ -335,9 +335,9 @@ export function createProviderRouteResolver(deps: {
       return { refusal: `${read.fault}, so the door cannot tell where to route ${JSON.stringify(model)}; fix or remove the file (agent-shim doctor names what is wrong)` };
     }
     const { sessionId } = context.session;
-    // The header carries the identity's directory id, and the identity scopes are keyed by its name as it is now.
-    const identity = context.session.identity === undefined ? undefined : deps.identityNameOf?.(context.session.identity);
-    // The provider scope is read off the route context only when the table has one, since that costs a stat of the context file.
+    // Each scope's key is looked up only when the table has that scope, so a request no such scope could cover never depends on the file it is read from. The header carries the identity's directory id, and the identity scopes are keyed by its name as it is now, read from its identity.json.
+    const identity = read.table.identities === undefined || context.session.identity === undefined ? undefined : deps.identityNameOf?.(context.session.identity);
+    // The provider scope is read off the route context, which costs a stat of the context file.
     const provider = read.table.providers === undefined ? undefined : context.routeProvider();
     const match = overrideFor(read.table, { ...(sessionId === undefined ? {} : { sessionId }), ...(identity === undefined ? {} : { identity }), ...(provider === undefined ? {} : { provider }) }, model);
     return match === undefined ? undefined : { name: match.target, overridden: true };
