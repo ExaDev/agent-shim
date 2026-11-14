@@ -689,13 +689,13 @@ export function createProviderRouteResolver(deps: {
           try {
             moved = sessionId !== "" && ((await deps.accountMoves?.(sessionId, account.identity, account.model)) ?? false);
           } catch (error) {
-            // Leaving the move request reads the supervisors' registries and the identity records, then writes the request; a failure in any of these is the door's own, never the person's configuration being wrong, so it is answered as the door's 500.
-            // A failure of the moment is passed on, so the request is answered as retryable.
-            if (!isSystemReadError(error) || isTransientReadError(error)) {
+            // Leaving the move request reads the supervisors' registries and the identity records, then writes the request. A failure there is the door's own, never the person's configuration being wrong: one of the moment (EMFILE, ENOSPC) is answered as retryable, a fault of the path (EACCES, EROFS) as the door's 500, and either names the relaunch the person can make instead.
+            if (!isSystemReadError(error)) {
               throw error;
             }
+            const transient = isTransientReadError(error);
             deps.log(`front door: could not leave a session's move request (${configFaultOf(error)})`);
-            return { ok: false, status: HTTP_STATUS.internalServerError, message: `the front door could not leave the request to move this session to identity "${account.identity}" (${configFaultOf(error)}); start it there with: claude @${account.identity} --resume` };
+            return { ok: false, status: transient ? HTTP_STATUS.serviceUnavailable : HTTP_STATUS.internalServerError, message: `the front door could not leave the request to move this session to identity "${account.identity}" (${configFaultOf(error)})${transient ? "; try the request again, or" : ";"} start it there with: claude @${account.identity} --resume` };
           }
           return {
             ok: false,

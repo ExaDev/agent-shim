@@ -113,12 +113,15 @@ describe("what the boundary says, by where the fault is", () => {
     }
   }, TIMEOUT_MS);
 
-  it.each(["EMFILE", "ENOSPC"])("answers a session's move request that failed with %s, a failure of the moment, as retryable", async (code) => {
+  it.each(["EMFILE", "ENOSPC"])("answers a session's move request that failed with %s, a failure of the moment, as retryable, naming the move and the relaunch", async (code) => {
     const world = await startWorld(undefined, HTTP_STATUS.ok, MODELS, undefined, undefined, { accountMoves: async () => await Promise.reject(errorWithCode(`${code}: failed`, code)) });
     try {
       const answered = await send(world, { model: "acct:work/opus", requestClass: "main", identity: "id-me" });
       expect(answered.status, answered.text).toBe(HTTP_STATUS.serviceUnavailable);
       expect(answered.text).toContain(code);
+      expect(answered.text).toContain("could not leave the request to move this session");
+      expect(answered.text).toContain("claude @work --resume");
+      expect(answered.text).not.toContain("local configuration");
     } finally {
       await world.close();
     }
