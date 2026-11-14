@@ -3,9 +3,26 @@ import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
+import { isSourceModule } from "./sourceModules";
+
 import { FILE_FAULT_CODE_LIST } from "./fileFaults";
 import { guardedNameRead } from "./identityRecords";
 import { errorWithCode } from "./test-helpers";
+
+/** The source modules of `src` (`isSourceModule`), as paths relative to it. */
+function sourceModules(): readonly string[] {
+  return fs.readdirSync(__dirname, { recursive: true, encoding: "utf8" }).filter(isSourceModule).sort();
+}
+
+/** The text of `module` under `src`, or an empty text for one that is gone by the time it is read: another test writes and removes a probe module in `src` while the suite runs, and a module that is no longer there holds nothing. */
+function sourceOf(module: string): string {
+  try {
+    return fs.readFileSync(path.join(__dirname, module), "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return "";
+    throw error;
+  }
+}
 
 /** The sets of system error codes `src` may hold besides the one in `fileFaults.ts`, by module and constant, each with why it is no copy of the file-fault set. */
 const ALLOWED: Readonly<Record<string, string>> = {
@@ -30,25 +47,6 @@ function errorCodeSets(module: string, source: string): readonly string[] {
   };
   visit(file);
   return found;
-}
-
-/** The text of `module` under `src`, or an empty text for one that is gone by the time it is read: another test writes and removes a probe module in `src` while the suite runs, and a module that is no longer there holds nothing. */
-function sourceOf(module: string): string {
-  try {
-    return fs.readFileSync(path.join(__dirname, module), "utf8");
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return "";
-    throw error;
-  }
-}
-
-/** Every non-test module under `src`, relative to it. */
-function modules(directory: string): readonly string[] {
-  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-    const full = path.join(directory, entry.name);
-    if (entry.isDirectory()) return modules(full);
-    return entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts") ? [path.relative(__dirname, full)] : [];
-  });
 }
 
 /** The file-fault codes, from `fileFaults.ts` itself, whose naming outside it would classify a failure by hand: all but absence (`ENOENT`), which a reader that asks only whether a file is there compares itself. */
@@ -87,7 +85,7 @@ function inlineFaultCodes(module: string, source: string): readonly string[] {
 }
 
 describe("which read failures are a file's own", () => {
-  const found = modules(__dirname).flatMap((module) => errorCodeSets(module, sourceOf(module)));
+  const found = sourceModules().flatMap((module) => errorCodeSets(module, sourceOf(module)));
 
   it("are listed as a set in fileFaults.ts alone, but where an allowance names another question a set of codes answers", () => {
     expect(found.filter((key) => key !== "fileFaults.ts FILE_FAULT_CODE_LIST" && ALLOWED[key] === undefined)).toEqual([]);
@@ -99,7 +97,7 @@ describe("which read failures are a file's own", () => {
   });
 
   it("are named by hand outside fileFaults.ts, all but ENOENT, only where an allowance names another question", () => {
-    const inline = modules(__dirname).filter((module) => module !== "fileFaults.ts").flatMap((module) => inlineFaultCodes(module, sourceOf(module)));
+    const inline = sourceModules().filter((module) => module !== "fileFaults.ts").flatMap((module) => inlineFaultCodes(module, sourceOf(module)));
     expect(inline.filter((key) => INLINE_ALLOWED[key] === undefined)).toEqual([]);
     expect(Object.keys(INLINE_ALLOWED).filter((key) => !inline.includes(key))).toEqual([]);
   });
