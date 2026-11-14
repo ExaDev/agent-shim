@@ -130,7 +130,7 @@ export function captureFromEnv(env: NodeJS.ProcessEnv, logsDir: string): Connect
 }
 
 /**
- * Builds the file-backed capture: one JSON object per line, appended to `file` (conventionally `logs/frontdoor-capture.jsonl`), never read back by the door itself. The directory is created up front rather than per record, so a capture started against a fresh state root cannot race its own first append.
+ * Builds the file-backed capture: one JSON object per line, appended to `file` (conventionally `logs/frontdoor-capture.jsonl`), never read back by the door itself.
  */
 export function createFileCapture(file: string, now: () => Date = () => new Date()): ConnectCapture {
   fs.mkdirSync(path.dirname(file), { recursive: true });
