@@ -55,7 +55,7 @@
     "@modelcontextprotocol/sdk": "1.32.0",
     "@orpc/client": "2.0.0-beta.46",
     "@orpc/openapi": "2.0.0-beta.43",
-    "@orpc/server": "2.0.0-beta.43",
+    "@orpc/server": "2.0.0-beta.48",
     "commander": "^15.0.0",
     "cosmiconfig": "^10.0.1",
     "picomatch": "^4.0.7",
