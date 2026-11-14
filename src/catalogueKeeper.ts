@@ -45,7 +45,15 @@ export function createCatalogueKeeper(deps: Readonly<CatalogueKeeperDeps>): Cata
     status: (name) => running.has(name) ? "running" : failedAt.has(name) || credentialFailures.has(name) || unreadable.has(name) ? "failed" : undefined,
     tick: () => {
       const now = deps.nowMs();
-      for (const [name, provider] of cataloguedProviders(deps.providers())) {
+      let providers: readonly (readonly [string, Provider])[];
+      try {
+        providers = deps.providers();
+      } catch (error) {
+        // The providers could not be listed (a read that failed for the moment, a directory that cannot be read): nothing is refreshed this tick, and the next tick lists them again.
+        deps.log(`catalogue keeper could not list the providers (${catalogueReadFault(error)})`);
+        return;
+      }
+      for (const [name, provider] of cataloguedProviders(providers)) {
         if (provider.kind === "codex" && deps.credentialFingerprint === undefined) throw new Error("Codex catalogue needs an account fingerprint reader");
         let cache: CatalogueCache | undefined;
         let digestMatches: boolean;

@@ -12,6 +12,7 @@ import { CONNECT_PROXY_REALM, capabilityFromProxyAuthorization } from "./capabil
 import type { ListenSource } from "./handover";
 import { AUTH_HEADER, SELF_HOSTED_HEADER } from "./route";
 import { FRONTDOOR_POLL_MS } from "./supervisor";
+import { keepTicking } from "../keepTicking";
 
 /**
  * The front door's CONNECT surface, so an OAuth session can have agent-shim's routing AND Claude Code's Remote Control at once: Remote Control refuses any `ANTHROPIC_BASE_URL` other than the real API, but happily honours `HTTPS_PROXY`, so OAuth launches route at the proxy layer instead.
@@ -446,7 +447,7 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
   const redirectedSessions = new Set<net.Socket>();
   const ledger = createConnectionLedger(config.limits, config.isLiveCapability, () => {
     checkGeneration();
-  });
+  }, config.log);
   function checkGeneration(): void {
     const surface = config.localSurface;
     if (surface === undefined) {
@@ -687,7 +688,7 @@ interface ConnectionLedger {
 /** What an authenticated connection carries: `blind` is a byte pump to a host the door never looks into, `terminated` is a TLS session this surface ends and routes, which holds the door's own state. */
 type ConnectionKind = "blind" | "terminated";
 
-function createConnectionLedger(limits: ConnectLimits, isLiveCapability: (token: string) => boolean, onRevalidate: () => void = () => undefined): ConnectionLedger {
+function createConnectionLedger(limits: ConnectLimits, isLiveCapability: (token: string) => boolean, onRevalidate: () => void = () => undefined, log?: (line: string) => void): ConnectionLedger {
   /** Connections still waiting for their head, oldest first (a Map iterates in insertion order), each with its deadline timer. */
   const pending = new Map<net.Socket, NodeJS.Timeout>();
   /** Authenticated connections grouped by the capability they presented, so a revalidation checks each launch once however many connections it holds. */
@@ -709,7 +710,7 @@ function createConnectionLedger(limits: ConnectLimits, isLiveCapability: (token:
     }
   };
 
-  const revalidation = setInterval(() => {
+  const revalidation = setInterval(keepTicking("connect revalidation", () => {
     onRevalidate();
     for (const [capability, sockets] of authenticated) {
       if (!isLiveCapability(capability)) {
@@ -719,7 +720,7 @@ function createConnectionLedger(limits: ConnectLimits, isLiveCapability: (token:
         }
       }
     }
-  }, limits.revalidateMs);
+  }, log), limits.revalidateMs);
   // The timer only matters while the listener serves, and the listener alone decides that: it must never be what keeps the door's process alive.
   revalidation.unref();
 

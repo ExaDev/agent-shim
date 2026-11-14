@@ -13,6 +13,7 @@ import type { FrontDoorRoute, RoutedRequest, RoutedResponse } from "./route";
 import type { FrontDoorLaunch } from "./state";
 import type { RcStreamEnvelope } from "./rcSchemas";
 import { ownEntry } from "../ownEntry";
+import { keepTicking } from "../keepTicking";
 
 /**
  * The self-hosted Remote Control service: the door serving, locally, the CCR surface it normally only observes (ExaDev/agent-shim#207). When the mode is on, a Claude Code session activates Remote Control against this surface and is controlled through it with no Anthropic credential anywhere: the door answers the session family itself instead of piping it to the real API host, so the `cse_` sessions, their sequence numbers, their worker and client streams and their event writes all live on this machine.
@@ -401,15 +402,15 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
     }
   };
   // The sweep only bounds memory between writes: every write sweeps first, so what the streams serve is always exact however long the timer waits.
-  const timer = setInterval(sweep, RC_SELF_HOST_RETENTION_MS);
+  const timer = setInterval(keepTicking("rc selfhost sweep", sweep, deps.log), RC_SELF_HOST_RETENTION_MS);
   timer.unref();
-  const keepalive = setInterval(() => {
+  const keepalive = setInterval(keepTicking("rc selfhost keep-alive", () => {
     for (const conversation of conversations.values()) {
       for (const sink of [...conversation.workerStreams, ...conversation.clientStreams]) {
         sink.write(": keep-alive\n\n");
       }
     }
-  }, RC_SELF_HOST_KEEPALIVE_MS);
+  }, deps.log), RC_SELF_HOST_KEEPALIVE_MS);
   keepalive.unref();
 
   /** Whether a request's Authorization presents the minted credential, checked in constant time like every capability the door accepts. */

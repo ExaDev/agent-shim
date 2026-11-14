@@ -105,6 +105,7 @@ import { withQuotaRefresh } from "../usage/quotaRefresh";
 import { createRealQuotaRefresher } from "../usage/realQuotaRefresher";
 import { createUsageStore } from "../usage/store";
 import type { UsageRecord } from "../usage/schema";
+import { keepTicking } from "../keepTicking";
 
 /** macOS ships `sample` here: it samples a process's native stacks, the one tool that can say where a thread blocked inside a native call is held. */
 const MACOS_SAMPLER = "/usr/bin/sample";
@@ -243,7 +244,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
   const rcCredentialStore = createRcCredentialStore(realFarmFs, paths.frontdoorRcCredentialsDir);
   // The door's session event log: every transition the tracker files (a session appearing or ending, a worker state change, a pending request born or retired), in one cursor-ordered window the typed API's `rcSessions.events` stream and `rcSessions.eventsPage` read, so one subscription follows every session. Its generation id makes a cursor from a previous door process fail loudly instead of reading as a position in this one.
   const rcSessionEvents = createRcSessionEventLog({ generation: randomUUID(), capacity: RC_SESSION_EVENT_LOG_CAPACITY });
-  const rcTracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS, credentialStore: rcCredentialStore, onTransition: rcSessionEvents.append, onClose: rcSessionEvents.close });
+  const rcTracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS, credentialStore: rcCredentialStore, onTransition: rcSessionEvents.append, onClose: rcSessionEvents.close, log });
   // The door's event backbone: one publisher/subscriber spine for every door-wide source, serving the typed API's `events.subscribe`. The Remote Control client read stream is its first publisher (through the wrap below, which moves nothing about how RC events flow) and the launch lifecycle is its first door-native one, fed by the supervisor's tick from the session registry; the usage source publishes every snapshot the store writes, the door health source the supervisor's own transitions, and the expiring-quota source the windows the supervisor's tick sees entering their final span (kept fresh by the usage source's own events, seeded from the snapshot directory).
   const doorEvents = createDoorEventHub();
   // The usage source's publisher, registered here so the store (created below) can hand it every snapshot it writes, and the expiring-quota checker that reads those same snapshots off the backbone rather than the disk.
@@ -350,8 +351,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
   /** The timers of the work the door runs on its own account, so a drain can stop them. */
   const keeperTimers: NodeJS.Timeout[] = [];
   const doorWorkers = createRealDoorWorkerHost({ ownExecutablePath: realOwnExecutablePath(), contentSourcePath: realContentSourcePath() }, log); // reads the code its workers evaluate once, now
-  const everyFreshnessInterval = (tick: () => void): void => {
-    const timer = setInterval(tick, ANTHROPIC_USAGE_FRESHNESS_MS);
+  const everyFreshnessInterval = (name: string, tick: () => unknown): void => {
+    const timer = setInterval(keepTicking(name, tick, log), ANTHROPIC_USAGE_FRESHNESS_MS);
     timer.unref();
     keeperTimers.push(timer);
   };
@@ -364,7 +365,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
   });
   // A tick awaits a process-table read, which on a loaded machine can outlast the interval: a tick starts only once the previous one has finished, so reads never pile up.
   let headroomKeeperTicking = false;
-  const headroomKeeperTimer = setInterval(() => {
+  const headroomKeeperTimer = setInterval(keepTicking("headroom keeper", () => {
     if (headroomKeeperTicking) {
       return;
     }
@@ -377,10 +378,10 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       .finally(() => {
         headroomKeeperTicking = false;
       });
-  }, HEADROOM_POLL_MS);
+  }, log), HEADROOM_POLL_MS);
   headroomKeeperTimer.unref();
   keeperTimers.push(headroomKeeperTimer);
-  everyFreshnessInterval(() => {
+  everyFreshnessInterval("pool usage refresh", () => {
     // A configuration this door cannot read (a key from a newer agent-shim sharing the file) is logged each tick and never ends the process: every session routed through this door depends on it.
     try {
       const pools = readPools(paths);
@@ -397,7 +398,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     await runChild({ paths, args: ["__open-window", identity], timeoutMs: WINDOW_OPEN_TIMEOUT_MS });
   };
   let keeperRunning = false;
-  everyFreshnessInterval(() => {
+  everyFreshnessInterval("window keeper", () => {
     if (keeperRunning) {
       return;
     }
@@ -424,7 +425,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     await runChild({ paths, args: ["__run-job", name, identity], timeoutMs: parseDuration(job.timeout) });
   };
   const runningJobs = new Set<string>();
-  everyFreshnessInterval(() => {
+  everyFreshnessInterval("job keeper", () => {
     try {
       runJobs({
         fs: realFarmFs,
@@ -777,9 +778,10 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     observeLaunchRegistry: createLaunchEventPublisher(doorEvents, () => Date.now()).observe,
     doorHealth,
     onServing: () => {
-      catalogueKeeper.tick();
-      everyFreshnessInterval(catalogueKeeper.tick);
-      everyFreshnessInterval(() => {
+      const catalogueTick = keepTicking("catalogue keeper", catalogueKeeper.tick, log);
+      catalogueTick();
+      everyFreshnessInterval("catalogue keeper", catalogueKeeper.tick);
+      everyFreshnessInterval("catalogue cleanup", () => {
         void pruneAbandonedCatalogueGenerations(realFarmFs, paths, process.pid, catalogueGeneration, realRunningAmong).catch((error: unknown) => {
           log(`catalogue cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
         });

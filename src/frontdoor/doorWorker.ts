@@ -9,6 +9,7 @@ import { CliError } from "../cliError";
 import { LONGEST_BLOCKING_STEP_MS } from "../doorBounds";
 import { CATALOGUE_REFRESH_DEADLINE_MS } from "../providerCatalogue";
 import { doorWorkerInputSchemas, identifiedFailure, isDoorWorkerMessage, type DoorProcessFacts, type DoorWorkerData, type DoorWorkerTaskName, type DoorWorkerTasks } from "./doorWorkerProtocol";
+import { keepTicking } from "../keepTicking";
 
 /**
  * The front door runs the work that blocks its thread (a report's synchronous probes, a catalogue refresh's credential commands) in a worker thread of its own process, never in its event loop and never in a child process.
@@ -291,7 +292,7 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
     };
     // The thread exists from here: a throw while it is being watched ends it through the flight's own cancellation, which terminates it and returns the place when it has ended.
     try {
-      stopWatchdog = clock.every(() => {
+      stopWatchdog = clock.every(keepTicking("door worker watchdog", () => {
         const now = clock.now();
         const beat = Atomics.load(beats, 0);
         if (beat !== lastBeat) {
@@ -303,7 +304,7 @@ export function createDoorWorkerHost(options: Readonly<DoorWorkerHostOptions>): 
         } else if (now - lastBeatAt > stallLimitMs) {
           flight.cancel("it stalled: nothing in it moved", "stalled");
         }
-      }, DOOR_WORKER_WATCHDOG_INTERVAL_MS);
+      }, log), DOOR_WORKER_WATCHDOG_INTERVAL_MS);
       worker.on("message", (value) => {
         if (!isDoorWorkerMessage(value)) {
           flight.cancel("it answered with something other than a result", "worker");

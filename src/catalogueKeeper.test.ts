@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createCatalogueKeeper, type CatalogueKeeperDeps } from "./catalogueKeeper";
+import { keepTicking } from "./keepTicking";
 import type { HttpProvider, Provider } from "./config/schema";
 import { errorWithCode } from "./test-helpers";
 import { CATALOGUE_MAX_AGE_MS, CATALOGUE_RETRY_MS, CatalogueFetchError, catalogueSettingsFingerprint, catalogueSettingsText, parseCatalogueCache } from "./providerCatalogue";
@@ -51,6 +52,33 @@ const STEP_BACK_MS = 2 * CATALOGUE_RETRY_MS;
 const TICKS_DURING_STEP = 5;
 
 describe("createCatalogueKeeper", () => {
+  it("logs a listing of the providers that fails, refreshing nothing, and never throws out of its own tick", () => {
+    const { keeper, refresh, log } = setup({ providers: () => { throw errorWithCode("EMFILE: too many open files, scandir '/state/providers'", "EMFILE"); } });
+    expect(() => { keeper.tick(); }).not.toThrow();
+    expect(refresh).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith("catalogue keeper could not list the providers (EMFILE)");
+  });
+
+  it("survives a listing of the providers that fails for the moment, through the door's own timer, and refreshes on the next tick", () => {
+    const intervalMs = 1000;
+    vi.useFakeTimers();
+    try {
+      let failing = true;
+      const { keeper, refresh, log } = setup({ providers: () => { if (failing) throw errorWithCode("EMFILE: too many open files, scandir '/state/providers'", "EMFILE"); return [["a", withCatalogue]]; } });
+      // The door schedules the tick on a bare interval: a throw from it would end the process.
+      const timer = setInterval(keepTicking("catalogue keeper", keeper.tick, log), intervalMs);
+      expect(() => vi.advanceTimersByTime(intervalMs)).not.toThrow();
+      expect(refresh).not.toHaveBeenCalled();
+      expect(log.mock.calls.flat().filter((line) => line.includes("EMFILE"))).toHaveLength(1);
+      failing = false;
+      vi.advanceTimersByTime(intervalMs);
+      expect(refresh).toHaveBeenCalledWith("a");
+      clearInterval(timer);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   describe("a provider whose stored files cannot be read", () => {
     const SECRET_PATH = "/home/someone/.agent-shim/catalogues/bad.json";
     const readFailure = (): never => {
