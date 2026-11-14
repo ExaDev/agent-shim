@@ -40,6 +40,7 @@ const SECTION_ORDER: readonly DoctorSection[] = [
   "directory-rules",
   "global-config",
   "models",
+  "route-overrides",
   "headroom",
   "frontdoor",
   "categories-local",

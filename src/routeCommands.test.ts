@@ -64,6 +64,18 @@ describe("route commands", () => {
     expect((await cli(["route", "set", "Claude-Sonnet-5-5", "z/glm-5.3"])).stdout).toContain("Routing claude-sonnet-5-5 to z/glm-5.3");
   });
 
+  it("has doctor report an overrides file it cannot read as a failure, print the whole report, and exit 1", async () => {
+    fs.mkdirSync(paths.routeOverridesFile, { recursive: true });
+    const result = await cli(["doctor"]);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toMatch(/\[FAIL\][^\n]*route-overrides\.json cannot be read \(EISDIR\)/u);
+    // The rest of the audit is there too, not one line and an exit.
+    expect(result.stdout).toContain("Route overrides");
+    expect(result.stdout).toContain("Virtual models");
+    const json = parseJson((await cli(["doctor", "--json"])).stdout);
+    expect(JSON.stringify(json)).toContain('"section":"route-overrides","severity":"fail"');
+  });
+
   it("says when no override is set", async () => {
     expect((await cli(["route", "list"])).stdout).toBe("No route overrides are set.\n");
   });
