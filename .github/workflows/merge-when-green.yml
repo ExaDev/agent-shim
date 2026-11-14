@@ -18,8 +18,14 @@ permissions:
 
 jobs:
   merge:
+    # A CI run counts when a pull request's own event started it, or when it was dispatched on a `claude-code-verified/` branch of this repository: the daily Claude Code versions job pushes that branch and opens its pull request with the workflow's token, which starts no workflow, so it dispatches CI instead, and that run's event is `workflow_dispatch`.
+    # The dispatched case widens nothing. Only someone with write access to this repository (or a workflow run in it with `contents: write`) can create a branch here or dispatch a workflow, and write access includes the triage access that labelling a pull request needs; a fork's branch of the same name is refused by the repository check. Whatever started the run, the action still merges only the open pull request whose head is that run's commit, and only while it carries the label, has the required check passing on that commit, is not a draft and has no unresolved thread.
     if: >-
-      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success')
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
+        && (github.event.workflow_run.event == 'pull_request'
+          || (github.event.workflow_run.event == 'workflow_dispatch'
+            && startsWith(github.event.workflow_run.head_branch, 'claude-code-verified/')
+            && github.event.workflow_run.head_repository.full_name == github.repository)))
       || (github.event_name == 'pull_request_target' && contains(github.event.pull_request.labels.*.name, 'automerge'))
     runs-on: ubuntu-latest
     timeout-minutes: 5

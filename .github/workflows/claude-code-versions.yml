@@ -215,9 +215,10 @@ jobs:
             {
               echo "\`pnpm verify:claude-code verify\` passed every check on Claude Code$passed on the launched, supervised and self-hosted routes, on every platform the workflow verifies ([run]($run_url)), so this adds them to \`RC_SESSION_COMMAND_VERIFIED_VERSIONS\`."
               echo
-              echo "A push made with the workflow's token starts no workflow, so CI was dispatched on the branch; its checks appear here when it finishes."
+              echo "A push made with the workflow's token starts no workflow, so CI was dispatched on the branch; its checks appear here when it finishes, and the pull request merges itself once they pass."
             } > "$RUNNER_TEMP/pr.md"
-            gh pr create --base main --head "$branch" --title "feat(rc): verify the goal, compaction and turn verbs on Claude Code$passed" --body-file "$RUNNER_TEMP/pr.md"
+            # The label is set when the pull request is opened, before CI is dispatched, so it is there when the dispatched run completes and `merge-when-green.yml` reads it; a label the workflow's token adds starts no workflow itself.
+            gh pr create --base main --head "$branch" --title "feat(rc): verify the goal, compaction and turn verbs on Claude Code$passed" --body-file "$RUNNER_TEMP/pr.md" --label automerge
             gh workflow run ci.yml --ref "$branch"
         env:
           VERSIONS: ${{ needs.candidates.outputs.versions }}
