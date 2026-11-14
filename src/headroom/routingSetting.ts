@@ -5,6 +5,7 @@ import { z } from "zod";
 import { readJson, writeJsonAtomic } from "../config/store";
 import type { LayoutPaths } from "../paths";
 import { ownEntry } from "../ownEntry";
+import { isTransientReadError } from "../readableConfig";
 
 /** What one setting says: whether the sessions it covers go through headroom, and, when set, the moment the person asked for it to apply at once rather than at each session's next cache boundary. */
 const RoutingChoiceSchema = z.strictObject({
@@ -66,13 +67,25 @@ export function createRoutingSettingReader(paths: LayoutPaths): () => RoutingSet
     try {
       const stat = fs.statSync(paths.headroomRoutingFile);
       key = `${String(stat.mtimeMs)}:${String(stat.size)}`;
-    } catch {
+    } catch (error) {
+      // A stat that failed for the moment says nothing of the file: the setting last read stands, and nothing new is kept, so the next request stats again.
+      if (isTransientReadError(error)) {
+        return cached;
+      }
       cachedKey = undefined;
       cached = NO_ROUTING_SETTING;
       return cached;
     }
     if (key !== cachedKey) {
-      cached = readRoutingSetting(paths);
+      try {
+        cached = readRoutingSetting(paths);
+      } catch (error) {
+        // A read that failed for the moment keeps the setting last read and its key unchanged, so the next request reads the file again.
+        if (isTransientReadError(error)) {
+          return cached;
+        }
+        throw error;
+      }
       cachedKey = key;
     }
     return cached;

@@ -3,8 +3,8 @@ import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
-/** The modules whose readers the door reads local state through on the request path, from `src`: the overrides, provider files and their listing, a provider's stored catalogue, the provider targets and the door's own state files they read, the route context's durable copy, the selector state, an identity's account and name, the usage snapshots, and the configuration store and loader they read through. */
-const READERS = ["routeOverridesStore.ts", "frontdoor/providerReads.ts", "models/selectorPorts.ts", "identityAccounts.ts", "providersStore.ts", "storedCatalogue.ts", "identityStore.ts", "identityRecords.ts", "usage/read.ts", "config/store.ts", "config/load.ts", "models/targets.ts", "frontdoor/state.ts", "frontdoor/mainLoopRoute.ts"] as const;
+/** The modules whose readers the door reads local state through on the request path, from `src`: the overrides, provider files and their listing, a provider's stored catalogue, the provider targets and the door's own state files they read, the route context's durable copy, the headroom routing setting the pipeline reads for each request, the selector state, an identity's account and name, the usage snapshots, and the configuration store and loader they read through. */
+const READERS = ["routeOverridesStore.ts", "frontdoor/providerReads.ts", "models/selectorPorts.ts", "identityAccounts.ts", "providersStore.ts", "storedCatalogue.ts", "identityStore.ts", "identityRecords.ts", "usage/read.ts", "config/store.ts", "config/load.ts", "models/targets.ts", "frontdoor/state.ts", "frontdoor/mainLoopRoute.ts", "headroom/routingSetting.ts"] as const;
 
 /** What a catch calls to classify a failure through the one file-fault set, so a failure of the moment is passed on: directly, or through the identity listing's helper over it. */
 const CLASSIFIERS = ["isTransientReadError(", "fileFaultCodeOf(", "unreachableCodeOf("] as const;
