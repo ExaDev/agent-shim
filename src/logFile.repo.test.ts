@@ -2,16 +2,16 @@ import fs from "node:fs";
 import path from "node:path";
 
 import ts from "typescript";
-import { describe, expect, it } from "vitest";
+import { expect, it } from "vitest";
 
 /** The modules under `src`, as paths relative to it, but tests and test worlds. */
 function modules(): readonly string[] {
   return fs.readdirSync(__dirname, { recursive: true, encoding: "utf8" }).filter((file) => file.endsWith(".ts") && !file.endsWith(".test.ts") && !file.endsWith("TestWorld.ts") && !file.endsWith(".d.ts"));
 }
 
-/** The modules whose appends are written inside a string of code another runtime runs, which the check here cannot see, each with how that code keeps a failed append from throwing. */
+/** The modules whose appends are written inside a string of code another runtime runs, which the check here cannot see, each with a reason. */
 const EMBEDDED_APPENDS: Readonly<Record<string, string>> = {
-  "frontdoor/watchdog.ts": "the respawn source's own log, which wraps its append in a try and drops a line it cannot write",
+  "frontdoor/watchdog.ts": "the watchdog and respawn threads' own log, written in the source those threads run",
 };
 
 /** Each call of `appendFileSync` or `appendFile` in the TypeScript of `source`, as `<module> <line>`. */
@@ -57,26 +57,24 @@ function callsAppendLogText(module: string, source: string): boolean {
   return found;
 }
 
-describe("each appendFile or appendFileSync call in src", () => {
-  it("calls appendFile or appendFileSync in logFile.ts alone, whose appendLogText the door's log, headroom's log and the capture append through; an append through an opened descriptor is not read", () => {
-    expect(modules().flatMap((module) => appendCalls(module, sourceOf(module))).map((site) => site.split(" ")[0])).toEqual(["logFile.ts"]);
-  });
+it("finds the appendFile and appendFileSync calls in the TypeScript of src in logFile.ts only; an append through an opened descriptor is not read", () => {
+  expect(modules().flatMap((module) => appendCalls(module, sourceOf(module))).map((site) => site.split(" ")[0])).toEqual(["logFile.ts"]);
+});
 
-  it("is not how the door's log, headroom's log or the CONNECT capture write: each calls appendLogText", () => {
-    expect(LOG_WRITERS.filter((module) => !callsAppendLogText(module, sourceOf(module)))).toEqual([]);
-  });
+it("finds a call of appendLogText in each of doorLog.ts, headroomLog.ts and capture.ts", () => {
+  expect(LOG_WRITERS.filter((module) => !callsAppendLogText(module, sourceOf(module)))).toEqual([]);
+});
 
-  it("names each module that appends inside a string of code, and how that code drops a failed append", () => {
-    const embedded = modules().filter((module) => hasEmbeddedAppend(module, sourceOf(module)));
-    expect(embedded.filter((module) => EMBEDDED_APPENDS[module] === undefined)).toEqual([]);
-    expect(Object.keys(EMBEDDED_APPENDS).filter((module) => !embedded.includes(module))).toEqual([]);
-  });
+it("names each module that writes appendFileSync( inside a string of code, with a reason", () => {
+  const embedded = modules().filter((module) => hasEmbeddedAppend(module, sourceOf(module)));
+  expect(embedded.filter((module) => EMBEDDED_APPENDS[module] === undefined)).toEqual([]);
+  expect(Object.keys(EMBEDDED_APPENDS).filter((module) => !embedded.includes(module))).toEqual([]);
+});
 
-  it("finds an append called directly and one written in a string", () => {
-    expect(appendCalls("x.ts", "fs.appendFileSync(file, text); appendFile(file, text, done);")).toEqual(["x.ts 1", "x.ts 1"]);
-    expect(appendCalls("x.ts", "appendLogText(dir, file, text);")).toEqual([]);
-    expect(callsAppendLogText("x.ts", "appendLogText(dir, file, text);")).toBe(true);
-    expect(callsAppendLogText("x.ts", "fs.writeFileSync(file, text, { flag: \"a\" });")).toBe(false);
-    expect(hasEmbeddedAppend("x.ts", "const source = `fs.appendFileSync(logFile, line)`;")).toBe(true);
-  });
+it("finds an append called directly and one written in a string, and tells a call of appendLogText from another write", () => {
+  expect(appendCalls("x.ts", "fs.appendFileSync(file, text); appendFile(file, text, done);")).toEqual(["x.ts 1", "x.ts 1"]);
+  expect(appendCalls("x.ts", "appendLogText(dir, file, text);")).toEqual([]);
+  expect(callsAppendLogText("x.ts", "appendLogText(dir, file, text);")).toBe(true);
+  expect(callsAppendLogText("x.ts", "fs.writeFileSync(file, text, { flag: \"a\" });")).toBe(false);
+  expect(hasEmbeddedAppend("x.ts", "const source = `fs.appendFileSync(logFile, line)`;")).toBe(true);
 });

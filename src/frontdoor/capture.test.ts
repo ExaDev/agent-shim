@@ -96,7 +96,7 @@ describe("createFileCapture", () => {
     const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-capture-fault-")), "frontdoor-capture.jsonl");
     try {
       const capture = createFileCapture(file);
-      // Each call a file write can be made through fails for the capture's file, so the record is lost however the capture writes it.
+      // appendFileSync, writeFileSync and openSync fail, for every path, while the first record is written.
       const fault = (): never => { throw errorWithCode(`${code}: failed, open '${file}'`, code); };
       const failing = [
         vi.spyOn(fs, "appendFileSync").mockImplementation(fault),
