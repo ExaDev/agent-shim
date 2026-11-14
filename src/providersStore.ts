@@ -225,14 +225,14 @@ export function listProviders(paths: LayoutPaths, onInvalid: (name: string, mess
 }
 
 /**
- * The names of every provider definition under `providersDir`, sorted. `readdir` is injected so the launcher's unknown-provider error can name the known providers through its own `FsPort` in tests rather than a real directory listing. A listing that failed for the moment is thrown; an absent directory lists no providers.
+ * The names of every provider definition under `providersDir`, sorted. `readdir` is injected so the launcher's unknown-provider error can name the known providers through its own `FsPort` in tests rather than a real directory listing. A listing that failed for the moment (`isTransientReadError`) is thrown; any other failed listing (an absent directory, or one that cannot be listed, such as EACCES or ENOTDIR) lists no providers.
  */
 export function listProviderNames(readdir: (dir: string) => readonly string[], providersDir: string): readonly string[] {
   let entries: readonly string[];
   try {
     entries = readdir(providersDir);
   } catch (error) {
-    // A listing that failed for a reason of the moment is thrown, so no caller keeps it as "no providers"; an absent providers directory means no providers, which is not an error anywhere this is used.
+    // A listing that failed for a reason of the moment is thrown, so no caller keeps it as "no providers". Any other failure lists none: an absent providers directory is the normal state before the first provider is added, and a directory that cannot be listed lists none the same way.
     if (isTransientReadError(error)) {
       throw error;
     }
