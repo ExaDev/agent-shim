@@ -1,13 +1,15 @@
 /**
  * An isolated self-hosted Remote Control lab on this machine: a real Claude Code CLI (pinned to `PINNED_CLAUDE_VERSION` unless `--claude-version` names another) with Remote Control on, launched through this checkout's agent-shim against a throwaway `AGENT_SHIM_HOME`, served by that home's own door in self-hosted mode, with `scripts/rc-mock-provider.mts` as its only inference provider, all in a tmux server on the lab's own socket. Nothing is shared with the operator's identities, sessions or `~/.claude`, and two independent checks say whether anything left the machine: the door's capture (every request it forwarded and every tunnel it dialled, over the whole run) and `lsof` over every lab process (every socket open at the moment of the check).
  *
- * Usage, through `node scripts/rc-self-host-lab.mts`, which bundles this file. `up --dir <lab-dir> [--claude-version <v>] [--route launched|supervised|self-hosted]` builds and starts the lab in <lab-dir> (which must not exist yet) with its session on the named Remote Control route (`launched` when none is named; see `LAB_ROUTES`), waits for Remote Control, prints the lab's facts and runs both checks. `check --dir <lab-dir>` runs both checks again. `down --dir <lab-dir> [--keep]` runs both checks, stops every lab process by its pid, and deletes <lab-dir> unless `--keep`. Each command exits 1 when a check finds anything leaving the machine, naming it.
+ * Usage, through `node scripts/rc-self-host-lab.mts`, which bundles this file. `up --dir <lab-dir> [--claude-version <v>] [--route launched|supervised|self-hosted] [--claude-binary <file>] [--cli-bundle <file>]` builds and starts the lab in <lab-dir> (which must not exist yet) with its session on the named Remote Control route (`launched` when none is named; see `LAB_ROUTES`), waits for Remote Control, prints the lab's facts and runs both checks. `check --dir <lab-dir>` runs both checks again. `down --dir <lab-dir> [--keep]` runs both checks, stops every lab process by its pid, and deletes <lab-dir> unless `--keep`. Each command exits 1 when a check finds anything leaving the machine, naming it.
  *
  * `up` prints, one per line: the lab directory; the tmux socket and the command that attaches to the CLI pane; the door URL (the provider listener the typed API and web client are served on, over TLS) and its CA certificate; the control-token path; the Remote Control session id; the capture path and the CLI's debug log; the pids of the door, the CLI and the mock provider; and the environment prefix that points `agent-shim frontdoor rc ...` at the lab's door.
  *
  * The lab refuses to start while `CLAUDE_CONFIG_DIR` or a foreign `AGENT_SHIM_HOME` is set, or for a lab directory inside a real state root or under /tmp (see `labRefusal`). The CLI runs in `<lab-dir>/work` and, like any session, reads the project files of that directory's ancestors (`CLAUDE.md` imports, `.mcp.json` servers): the lab declines each first-run offer with the CLI's own default, and a lab directory outside every project tree starts from nothing at all.
  *
- * Requirements: this checkout built (`node scripts/build.mts --bundle-only`, which `pnpm install` runs), tmux, lsof, and the pinned Claude Code version installed where the launcher finds versions.
+ * `--claude-binary` names the Claude Code executable of that version to run, which becomes the one version the lab's home holds; without it the lab's home links the operator's installed versions, and the pinned version must be among them. `--cli-bundle` names the agent-shim bundle the lab launches through and its door runs, `dist/cli.cjs` when omitted.
+ *
+ * Requirements: this checkout built (`node scripts/build.mts --bundle-only`, which `pnpm install` runs), unless `--cli-bundle` names another bundle, tmux and lsof.
  */
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -18,9 +20,9 @@ import { fileURLToPath } from "node:url";
 
 import { buildLayoutPaths } from "../src/paths";
 import { closedLoopbackPort } from "../src/test-ports";
-import { SSH_STAND_IN, gitEgressIn, labBaseEnv, labLaunchVariables, labPaneCommand, labPaneState, labRefusal, labSessionId, nonLoopbackSockets, parseLabDoorState, parseLabRoute, PINNED_CLAUDE_VERSION, readLabCapture, shellQuote, type LabRoute } from "./rc-self-host-lab-core";
+import { LAB_STATE_FILE, SSH_STAND_IN, gitEgressIn, labBaseEnv, labLaunchVariables, labLayout, labPaneCommand, labPaneState, labRefusal, labSessionId, nonLoopbackSockets, parseLabDoorState, parseLabRoute, parseLabState, PINNED_CLAUDE_VERSION, readLabCapture, shellQuote, type LabRoute, type LabState } from "./rc-self-host-lab-core";
 
-const USAGE = "usage: node scripts/rc-self-host-lab.mts up|check|down --dir <lab-dir> [--claude-version <v>] [--route launched|supervised|self-hosted] [--keep]";
+const USAGE = "usage: node scripts/rc-self-host-lab.mts up|check|down --dir <lab-dir> [--claude-version <v>] [--route launched|supervised|self-hosted] [--claude-binary <file>] [--cli-bundle <file>] [--keep]";
 
 /** The identity the lab creates and launches: one per lab home, so the name needs no uniqueness of its own. */
 const LAB_IDENTITY = "lab";
@@ -28,8 +30,6 @@ const LAB_IDENTITY = "lab";
 const LAB_POOL = "lab-pool";
 /** The provider file the lab writes, naming the mock provider. */
 const LAB_PROVIDER = "mock";
-/** The lab's state file inside the lab directory: what `check` and `down` read back. */
-const LAB_STATE_FILE = "lab.json";
 /** The lab's tmux socket, inside the lab directory: a socket in tmux's shared directory under /tmp outlives the server once its panes have exited, and this one goes with the lab. */
 const TMUX_SOCKET_FILE = "tmux.sock";
 /** The tmux sessions on the lab's socket. */
@@ -40,10 +40,6 @@ const PANE_COLUMNS = 200;
 const PANE_ROWS = 50;
 /** The mock credential's length in random bytes: 128 bits, the size of every other random credential the door mints. */
 const MOCK_TOKEN_BYTES = 16;
-/** The lab's own temporary directory, inside the lab directory. */
-const TMP_DIR = "tmp";
-/** The directory of the lab's `ssh` stand-in, inside the lab directory. */
-const STUB_BIN_DIR = "bin";
 /** Owner-only mode for an executable the lab writes. */
 const EXECUTABLE_FILE_MODE = 0o700;
 /** Owner-only file mode for the lab's token and provider file. */
@@ -64,23 +60,16 @@ const STOP_DEADLINE_MS = 30_000;
 const SCRIPTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 /** The bundled entry lives in `dist/`, so the checkout root is one level up from either location. */
 const REPO_ROOT = path.resolve(SCRIPTS_DIR, "..");
-const CLI_BUNDLE = path.join(REPO_ROOT, "dist", "cli.cjs");
+const DEFAULT_CLI_BUNDLE = path.join(REPO_ROOT, "dist", "cli.cjs");
 const MOCK_PROVIDER = path.join(REPO_ROOT, "scripts", "rc-mock-provider.mts");
-
-/** What `up` records for `check` and `down`: where the lab lives and the pid of every process it started. */
-interface LabState {
-  readonly socket: string;
-  readonly home: string;
-  readonly doorPid: number;
-  readonly cliPid: number;
-  readonly mockPid: number;
-}
 
 interface Options {
   readonly command: string;
   readonly dir: string;
   readonly claudeVersion: string;
   readonly route: LabRoute;
+  readonly claudeBinary: string | undefined;
+  readonly cliBundle: string;
   readonly keep: boolean;
 }
 
@@ -89,6 +78,8 @@ function parseOptions(argv: readonly string[]): Options | undefined {
   let dir: string | undefined;
   let claudeVersion = PINNED_CLAUDE_VERSION;
   let route: LabRoute = "launched";
+  let claudeBinary: string | undefined;
+  let cliBundle = DEFAULT_CLI_BUNDLE;
   let keep = false;
   for (let index = 0; index < rest.length; index += 1) {
     const flag = rest[index];
@@ -100,6 +91,12 @@ function parseOptions(argv: readonly string[]): Options | undefined {
       index += 1;
     } else if (flag === "--claude-version" && value !== undefined) {
       claudeVersion = value;
+      index += 1;
+    } else if (flag === "--claude-binary" && value !== undefined) {
+      claudeBinary = path.resolve(value);
+      index += 1;
+    } else if (flag === "--cli-bundle" && value !== undefined) {
+      cliBundle = path.resolve(value);
       index += 1;
     } else if (flag === "--route" && value !== undefined) {
       const named = parseLabRoute(value);
@@ -115,7 +112,7 @@ function parseOptions(argv: readonly string[]): Options | undefined {
   if (command === undefined || !["up", "check", "down"].includes(command) || dir === undefined) {
     return undefined;
   }
-  return { command, dir, claudeVersion, route, keep };
+  return { command, dir, claudeVersion, route, claudeBinary, cliBundle, keep };
 }
 
 /** Runs one command to completion with the lab's environment, failing loudly with its own output when it fails. Output is captured, never echoed: the lab prints only what it chooses to. */
@@ -159,24 +156,12 @@ function readIfExists(file: string): string {
 }
 
 function readState(dir: string): LabState {
-  const parsed: unknown = JSON.parse(fs.readFileSync(path.join(dir, LAB_STATE_FILE), "utf8"));
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    !("socket" in parsed) ||
-    !("home" in parsed) ||
-    !("doorPid" in parsed) ||
-    !("cliPid" in parsed) ||
-    !("mockPid" in parsed) ||
-    typeof parsed.socket !== "string" ||
-    typeof parsed.home !== "string" ||
-    typeof parsed.doorPid !== "number" ||
-    typeof parsed.cliPid !== "number" ||
-    typeof parsed.mockPid !== "number"
-  ) {
-    throw new Error(`${path.join(dir, LAB_STATE_FILE)} is not a lab state file`);
+  const file = path.join(dir, LAB_STATE_FILE);
+  const state = parseLabState(fs.readFileSync(file, "utf8"));
+  if (state === undefined) {
+    throw new Error(`${file} is not a lab state file`);
   }
-  return { socket: parsed.socket, home: parsed.home, doorPid: parsed.doorPid, cliPid: parsed.cliPid, mockPid: parsed.mockPid };
+  return state;
 }
 
 function isAlive(pid: number): boolean {
@@ -264,27 +249,31 @@ async function up(options: Options): Promise<boolean> {
   if (fs.existsSync(options.dir)) {
     throw new Error(`${options.dir} already exists; a lab starts from an empty directory so nothing of an earlier one is reused`);
   }
-  if (!fs.existsSync(CLI_BUNDLE)) {
-    throw new Error(`${CLI_BUNDLE} is missing; build it with node scripts/build.mts --bundle-only`);
+  if (!fs.existsSync(options.cliBundle)) {
+    throw new Error(`${options.cliBundle} is missing; build it with node scripts/build.mts --bundle-only`);
   }
-  const home = path.join(options.dir, "home");
-  const claudeHome = path.join(options.dir, "claude-home");
-  const userHome = path.join(options.dir, "user-home");
-  const work = path.join(options.dir, "work");
-  const tmpDir = path.join(options.dir, TMP_DIR);
-  const stubBin = path.join(options.dir, STUB_BIN_DIR);
-  for (const directory of [home, claudeHome, work, tmpDir, stubBin]) {
+  const layout = labLayout(options.dir);
+  const { home, userHome, work, stubBin } = layout;
+  for (const directory of [home, layout.claudeHome, work, layout.tmpDir, stubBin]) {
     fs.mkdirSync(directory, { recursive: true });
   }
   fs.writeFileSync(path.join(stubBin, "ssh"), SSH_STAND_IN, { mode: EXECUTABLE_FILE_MODE });
-  // The launcher finds Claude Code versions under HOME, and the lab's HOME is its own, so the operator's installed versions are linked in read-only terms: the one thing of the operator's the lab's home holds.
-  const versionsLink = path.join(userHome, LAUNCHER_VERSIONS_PATH);
-  fs.mkdirSync(path.dirname(versionsLink), { recursive: true });
-  fs.symlinkSync(path.join(os.homedir(), LAUNCHER_VERSIONS_PATH), versionsLink);
+  // The launcher finds Claude Code versions under HOME, and the lab's HOME is its own. A binary the caller names is the one version it holds, under the version's own name as Claude Code's installer lays them out; otherwise the operator's installed versions are linked in read-only terms, the one thing of the operator's the lab's home then holds.
+  const versionsDir = path.join(userHome, LAUNCHER_VERSIONS_PATH);
+  fs.mkdirSync(path.dirname(versionsDir), { recursive: true });
+  if (options.claudeBinary === undefined) {
+    fs.symlinkSync(path.join(os.homedir(), LAUNCHER_VERSIONS_PATH), versionsDir);
+  } else {
+    fs.mkdirSync(versionsDir);
+    // A copy, cloned where the filesystem can: the launcher takes only regular files from a versions directory, as the installer leaves them, so a link is not found.
+    const installed = path.join(versionsDir, options.claudeVersion);
+    fs.copyFileSync(options.claudeBinary, installed, fs.constants.COPYFILE_FICLONE);
+    fs.chmodSync(installed, EXECUTABLE_FILE_MODE);
+  }
   const paths = buildLayoutPaths(home);
-  const env = labBaseEnv(process.env, { home, claudeHome, userHome, tmpDir, stubBin });
+  const env = labBaseEnv(process.env, layout);
   const socket = path.join(options.dir, TMUX_SOCKET_FILE);
-  const agentShim = (args: readonly string[]): string => run(process.execPath, [CLI_BUNDLE, ...args], env);
+  const agentShim = (args: readonly string[]): string => run(process.execPath, [options.cliBundle, ...args], env);
 
   agentShim(["identity", "add", LAB_IDENTITY]);
   agentShim(["frontdoor", "rc", "selfhost", "mint", LAB_IDENTITY]);
@@ -292,70 +281,90 @@ async function up(options: Options): Promise<boolean> {
     agentShim(["pool", "add", LAB_POOL, "--identity", LAB_IDENTITY, "--resume-on-limit"]);
   }
 
-  // The mock provider checks every request carries the provider file's own credential, so the lab mints one: random, lab-only, read by the mock from a file rather than its command line.
-  const mockPort = await closedLoopbackPort();
-  const tokenFile = path.join(options.dir, "mock.token");
-  const token = randomBytes(MOCK_TOKEN_BYTES).toString("hex");
-  fs.writeFileSync(tokenFile, token, { mode: PRIVATE_FILE_MODE });
-  fs.mkdirSync(paths.providersDir, { recursive: true });
-  fs.writeFileSync(path.join(paths.providersDir, `${LAB_PROVIDER}.json`), JSON.stringify({ displayName: "rc-self-host-lab mock", baseUrl: `http://127.0.0.1:${String(mockPort)}`, credential: { sources: [{ literal: token }] } }), { mode: PRIVATE_FILE_MODE });
+  // Everything started from here on is stopped again if the lab fails to come up, so a failed start leaves nothing running.
+  const started: number[] = [];
+  try {
+    // The mock provider checks every request carries the provider file's own credential, so the lab mints one: random, lab-only, read by the mock from a file rather than its command line.
+    const mockPort = await closedLoopbackPort();
+    const tokenFile = path.join(options.dir, "mock.token");
+    const token = randomBytes(MOCK_TOKEN_BYTES).toString("hex");
+    fs.writeFileSync(tokenFile, token, { mode: PRIVATE_FILE_MODE });
+    fs.mkdirSync(paths.providersDir, { recursive: true });
+    fs.writeFileSync(path.join(paths.providersDir, `${LAB_PROVIDER}.json`), JSON.stringify({ displayName: "rc-self-host-lab mock", baseUrl: `http://127.0.0.1:${String(mockPort)}`, credential: { sources: [{ literal: token }] } }), { mode: PRIVATE_FILE_MODE });
 
-  const mockLog = path.join(options.dir, "mock.log");
-  tmux(socket, ["new-session", "-d", "-s", MOCK_SESSION, "-c", options.dir, `RC_MOCK_TOKEN=$(cat ${shellQuote(tokenFile)}) exec ${shellQuote(process.execPath)} ${shellQuote(MOCK_PROVIDER)} --port ${String(mockPort)} >> ${shellQuote(mockLog)} 2>&1`], env);
-  await waitFor("the mock provider to listen", () => (readIfExists(mockLog).includes("listening") ? true : undefined));
-  // The pane's shell execs the mock, so the pane's pid is the mock's.
-  const mockPid = panePid(socket, MOCK_SESSION, env);
+    const mockLog = path.join(options.dir, "mock.log");
+    tmux(socket, ["new-session", "-d", "-s", MOCK_SESSION, "-c", options.dir, `RC_MOCK_TOKEN=$(cat ${shellQuote(tokenFile)}) exec ${shellQuote(process.execPath)} ${shellQuote(MOCK_PROVIDER)} --port ${String(mockPort)} >> ${shellQuote(mockLog)} 2>&1`], env);
+    await waitFor("the mock provider to listen", () => (readIfExists(mockLog).includes("listening") ? true : undefined));
+    // The pane's shell execs the mock, so the pane's pid is the mock's.
+    const mockPid = panePid(socket, MOCK_SESSION, env);
+    started.push(mockPid);
+    // A pane whose process exits stays on the server, so a CLI that exits during start-up leaves its last screen for the failure to show.
+    tmux(socket, ["set-option", "-g", "remain-on-exit", "on"], env);
 
-  const transparentPort = await closedLoopbackPort();
-  const debugLog = path.join(options.dir, DEBUG_LOG_FILE);
-  const paneCommand = labPaneCommand(labLaunchVariables(transparentPort), [process.execPath, CLI_BUNDLE, "run", options.route === "supervised" ? `@pool:${LAB_POOL}` : `@${LAB_IDENTITY}`, "--claude-version", options.claudeVersion, "--provider", LAB_PROVIDER, "--remote-control", "--debug-file", debugLog]);
-  tmux(socket, ["new-session", "-d", "-s", CLI_SESSION, "-x", String(PANE_COLUMNS), "-y", String(PANE_ROWS), "-c", work, paneCommand], env);
-  const cliPid = panePid(socket, CLI_SESSION, env);
-  await waitFor("Remote Control to come up in the CLI pane", () => {
-    const pane = tmux(socket, ["capture-pane", "-p", "-t", CLI_SESSION], env);
-    const state = labPaneState(pane);
-    if (state === "trust") {
-      // The trust prompt's default is "No, exit": the lab moves to "Yes" before confirming.
-      tmux(socket, ["send-keys", "-t", CLI_SESSION, "Down"], env);
-      tmux(socket, ["send-keys", "-t", CLI_SESSION, "Enter"], env);
-    } else if (state === "confirm") {
-      tmux(socket, ["send-keys", "-t", CLI_SESSION, "Enter"], env);
-    }
-    if (!isAlive(cliPid)) {
-      throw new Error(`the CLI pane exited before Remote Control came up; its last screen:\n${pane}`);
-    }
-    return state === "active" ? true : undefined;
-  });
+    const transparentPort = await closedLoopbackPort();
+    const debugLog = path.join(options.dir, DEBUG_LOG_FILE);
+    const paneCommand = labPaneCommand(labLaunchVariables(transparentPort), [process.execPath, options.cliBundle, "run", options.route === "supervised" ? `@pool:${LAB_POOL}` : `@${LAB_IDENTITY}`, "--claude-version", options.claudeVersion, "--provider", LAB_PROVIDER, "--remote-control", "--debug-file", debugLog]);
+    tmux(socket, ["new-session", "-d", "-s", CLI_SESSION, "-x", String(PANE_COLUMNS), "-y", String(PANE_ROWS), "-c", work, paneCommand], env);
+    const cliPid = panePid(socket, CLI_SESSION, env);
+    started.push(cliPid);
+    await waitFor("Remote Control to come up in the CLI pane", () => {
+      const pane = tmux(socket, ["capture-pane", "-p", "-t", CLI_SESSION], env);
+      const state = labPaneState(pane);
+      if (state === "trust") {
+        // The trust prompt's default is "No, exit": the lab moves to "Yes" before confirming.
+        tmux(socket, ["send-keys", "-t", CLI_SESSION, "Down"], env);
+        tmux(socket, ["send-keys", "-t", CLI_SESSION, "Enter"], env);
+      } else if (state === "confirm") {
+        tmux(socket, ["send-keys", "-t", CLI_SESSION, "Enter"], env);
+      }
+      if (!isAlive(cliPid)) {
+        throw new Error(`the CLI pane exited before Remote Control came up; its last screen:\n${pane}`);
+      }
+      return state === "active" ? true : undefined;
+    });
 
-  if (options.route === "self-hosted") {
-    // The launch recorded where its control plugin listens before the CLI started; with that record gone the door has no in-process channel into the session, and its own surface is the route it takes. The lab home holds no other launch, so every record in it is this one's.
-    const records = fs.existsSync(paths.launchControlDir) ? fs.readdirSync(paths.launchControlDir) : [];
-    if (records.length === 0) {
-      throw new Error(`the launch recorded no control plugin in ${paths.launchControlDir}, so the self-hosted route cannot be told apart from a launch that loads none`);
+    if (options.route === "self-hosted") {
+      // The launch recorded where its control plugin listens before the CLI started; with that record gone the door has no in-process channel into the session, and its own surface is the route it takes. The lab home holds no other launch, so every record in it is this one's.
+      const records = fs.existsSync(paths.launchControlDir) ? fs.readdirSync(paths.launchControlDir) : [];
+      if (records.length === 0) {
+        throw new Error(`the launch recorded no control plugin in ${paths.launchControlDir}, so the self-hosted route cannot be told apart from a launch that loads none`);
+      }
+      for (const record of records) {
+        fs.rmSync(path.join(paths.launchControlDir, record), { recursive: true, force: true });
+      }
     }
-    for (const record of records) {
-      fs.rmSync(path.join(paths.launchControlDir, record), { recursive: true, force: true });
+
+    const door = await waitFor("the lab door's state file", () => parseLabDoorState(readIfExists(paths.frontdoorStateFile)));
+    const sessionId = await waitFor("the door to log the Remote Control session", () => labSessionId(readIfExists(paths.frontdoorLogPath)));
+    const state: LabState = { socket, home, sessionId, cliBundle: options.cliBundle, doorPid: door.supervisorPid, cliPid, mockPid };
+    fs.writeFileSync(path.join(options.dir, LAB_STATE_FILE), JSON.stringify(state, null, 2));
+
+    console.log(`lab dir:        ${options.dir}`);
+    console.log(`tmux socket:    ${socket} (attach: tmux -S ${shellQuote(socket)} attach -t ${CLI_SESSION})`);
+    console.log(`door url:       https://127.0.0.1:${String(door.port)}`);
+    console.log(`door ca:        ${path.join(paths.frontdoorCaDir, "ca.pem")}`);
+    console.log(`control token:  ${paths.frontdoorControlTokenFile}`);
+    console.log(`session id:     ${sessionId}`);
+    console.log(`claude version: ${options.claudeVersion}`);
+    console.log(`route:          ${options.route}`);
+    console.log(`capture:        ${path.join(paths.logsDir, "frontdoor-capture.jsonl")}`);
+    console.log(`cli debug log:  ${debugLog}`);
+    console.log(`pids:           door ${String(state.doorPid)}, cli pane ${String(cliPid)}, mock ${String(mockPid)}`);
+    console.log(`agent-shim:     env -u CLAUDE_CONFIG_DIR AGENT_SHIM_HOME=${shellQuote(home)} node ${shellQuote(options.cliBundle)} frontdoor rc ...`);
+    return check(state);
+  } catch (error) {
+    for (const pid of started) {
+      await stopTree(pid, "a process the failed start left");
     }
+    const door = parseLabDoorState(readIfExists(paths.frontdoorStateFile));
+    if (door !== undefined) {
+      await stopTree(door.supervisorPid, "the lab door");
+    }
+    if (spawnSync("tmux", ["-S", socket, "has-session"], { env }).status === 0) {
+      tmux(socket, ["kill-server"], env);
+    }
+    throw error;
   }
-
-  const door = await waitFor("the lab door's state file", () => parseLabDoorState(readIfExists(paths.frontdoorStateFile)));
-  const sessionId = await waitFor("the door to log the Remote Control session", () => labSessionId(readIfExists(paths.frontdoorLogPath)));
-  const state: LabState = { socket, home, doorPid: door.supervisorPid, cliPid, mockPid };
-  fs.writeFileSync(path.join(options.dir, LAB_STATE_FILE), JSON.stringify(state, null, 2));
-
-  console.log(`lab dir:        ${options.dir}`);
-  console.log(`tmux socket:    ${socket} (attach: tmux -S ${shellQuote(socket)} attach -t ${CLI_SESSION})`);
-  console.log(`door url:       https://127.0.0.1:${String(door.port)}`);
-  console.log(`door ca:        ${path.join(paths.frontdoorCaDir, "ca.pem")}`);
-  console.log(`control token:  ${paths.frontdoorControlTokenFile}`);
-  console.log(`session id:     ${sessionId}`);
-  console.log(`claude version: ${options.claudeVersion}`);
-  console.log(`route:          ${options.route}`);
-  console.log(`capture:        ${path.join(paths.logsDir, "frontdoor-capture.jsonl")}`);
-  console.log(`cli debug log:  ${debugLog}`);
-  console.log(`pids:           door ${String(state.doorPid)}, cli pane ${String(cliPid)}, mock ${String(mockPid)}`);
-  console.log(`agent-shim:     env -u CLAUDE_CONFIG_DIR AGENT_SHIM_HOME=${shellQuote(home)} node ${shellQuote(CLI_BUNDLE)} frontdoor rc ...`);
-  return check(state);
 }
 
 /** Stops one process tree by pid: SIGTERM to every member, then SIGKILL to any still alive at the deadline. */
@@ -384,7 +393,7 @@ async function stopTree(root: number, what: string): Promise<void> {
 
 async function down(options: Options): Promise<boolean> {
   const state = readState(options.dir);
-  const env = labBaseEnv(process.env, { home: state.home, claudeHome: path.join(options.dir, "claude-home"), userHome: path.join(options.dir, "user-home"), tmpDir: path.join(options.dir, TMP_DIR), stubBin: path.join(options.dir, STUB_BIN_DIR) });
+  const env = labBaseEnv(process.env, labLayout(options.dir));
   const clean = check(state);
   await stopTree(state.cliPid, "the CLI");
   await stopTree(state.mockPid, "the mock provider");

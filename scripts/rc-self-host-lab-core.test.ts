@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
-import { SSH_STAND_IN, gitEgressIn, labBaseEnv, labLaunchVariables, labPaneCommand, labPaneState, labRefusal, labSessionId, nonLoopbackSockets, parseLabDoorState, parseLabRoute, readLabCapture, shellQuote } from "./rc-self-host-lab-core";
+import { SSH_STAND_IN, gitEgressIn, labBaseEnv, labLayout, parseLabState, labLaunchVariables, labPaneCommand, labPaneState, labRefusal, labSessionId, nonLoopbackSockets, parseLabDoorState, parseLabRoute, readLabCapture, shellQuote } from "./rc-self-host-lab-core";
 
 /** Ports and a pid with no meaning beyond being told apart in the assertions. */
 const TRANSPARENT_PORT = 4321;
@@ -114,5 +114,20 @@ describe("the lab's readings of the pane, the log and the state", () => {
     expect(parseLabDoorState(JSON.stringify({ supervisorPid: SUPERVISOR_PID, port: DOOR_PORT }))).toEqual({ port: DOOR_PORT, supervisorPid: SUPERVISOR_PID });
     expect(parseLabDoorState("{")).toBeUndefined();
     expect(parseLabDoorState(JSON.stringify({ port: DOOR_PORT }))).toBeUndefined();
+  });
+});
+
+describe("the lab's layout and state", () => {
+  it("puts every root of the lab inside its directory, the home where the refusal expects it", () => {
+    expect(labLayout("/lab")).toEqual({ home: "/lab/home", claudeHome: "/lab/claude-home", userHome: "/lab/user-home", work: "/lab/work", tmpDir: "/lab/tmp", stubBin: "/lab/bin" });
+    expect(labRefusal({ AGENT_SHIM_HOME: labLayout("/lab").home }, "/lab", "/h")).toBeUndefined();
+  });
+
+  it("reads back the state up records, and nothing missing a field or of another type", () => {
+    const state = { socket: "/lab/tmux.sock", home: "/lab/home", sessionId: "cse_1", cliBundle: "/b/cli.cjs", doorPid: 1, cliPid: 2, mockPid: 3 };
+    expect(parseLabState(JSON.stringify(state))).toEqual(state);
+    expect(parseLabState(JSON.stringify({ ...state, sessionId: undefined }))).toBeUndefined();
+    expect(parseLabState(JSON.stringify({ ...state, doorPid: "1" }))).toBeUndefined();
+    expect(parseLabState("not json")).toBeUndefined();
   });
 });

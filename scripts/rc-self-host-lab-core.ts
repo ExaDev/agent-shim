@@ -26,6 +26,17 @@ export interface LabEnvInputs {
   readonly stubBin: string;
 }
 
+/** Where each of the lab's own roots lives inside its directory: what `up` creates, what `check` and `down` read back, and what a caller driving the lab's door points its environment at. */
+export interface LabLayout extends LabEnvInputs {
+  /** The directory the CLI runs in. */
+  readonly work: string;
+}
+
+/** The lab's roots inside `dir`, the same for every command. */
+export function labLayout(dir: string): LabLayout {
+  return { home: `${dir}/home`, claudeHome: `${dir}/claude-home`, userHome: `${dir}/user-home`, work: `${dir}/work`, tmpDir: `${dir}/tmp`, stubBin: `${dir}/bin` };
+}
+
 /**
  * The script the lab's `ssh` stand-in runs: it fails the way a refused connection does (exit 255) without opening one. The CLI probes `ssh -T git@github.com` itself before it clones a plugin marketplace, outside git and so outside `GIT_SSH_COMMAND`, and OpenSSH reads `~/.ssh` from the passwd entry rather than `HOME`, so only a stand-in found first on `PATH` keeps that probe from reaching GitHub with the operator's keys.
  */
@@ -38,7 +49,7 @@ export function labRefusal(operator: Readonly<Record<string, string | undefined>
   if (operator.CLAUDE_CONFIG_DIR !== undefined) {
     return "CLAUDE_CONFIG_DIR is set; run the lab under env -u CLAUDE_CONFIG_DIR so nothing it starts can run as a real login";
   }
-  const labHome = `${labDir}/home`;
+  const labHome = labLayout(labDir).home;
   if (operator.AGENT_SHIM_HOME !== undefined && operator.AGENT_SHIM_HOME !== labHome) {
     return `AGENT_SHIM_HOME is set to ${operator.AGENT_SHIM_HOME}; unset it, since the lab makes its own throwaway home at ${labHome}`;
   }
@@ -242,4 +253,38 @@ export function nonLoopbackSockets(lsofFields: string): readonly string[] {
  */
 export function gitEgressIn(debugLog: string): readonly string[] {
   return [...debugLog.matchAll(/git (?:clone|fetch|pull) succeeded: (\S+)/g)].flatMap((match) => (match[1] === undefined ? [] : [match[1]]));
+}
+
+/** The lab's state file inside the lab directory: what `up` records and `check`, `down` and a caller driving the lab's session read back. */
+export const LAB_STATE_FILE = "lab.json";
+
+/** What `up` records: where the lab lives, its Remote Control session, the bundle its door runs, and the pid of every process it started. */
+export interface LabState {
+  readonly socket: string;
+  readonly home: string;
+  /** The `cse_` id of the session the lab brought up. */
+  readonly sessionId: string;
+  /** The agent-shim bundle the lab launched through, which is also the one that speaks to its door. */
+  readonly cliBundle: string;
+  readonly doorPid: number;
+  readonly cliPid: number;
+  readonly mockPid: number;
+}
+
+/** Parses the lab's state file, or undefined for anything that is not one. */
+export function parseLabState(stateJson: string): LabState | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stateJson);
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(parsed)) {
+    return undefined;
+  }
+  const { socket, home, sessionId, cliBundle, doorPid, cliPid, mockPid } = parsed;
+  if (typeof socket !== "string" || typeof home !== "string" || typeof sessionId !== "string" || typeof cliBundle !== "string" || typeof doorPid !== "number" || typeof cliPid !== "number" || typeof mockPid !== "number") {
+    return undefined;
+  }
+  return { socket, home, sessionId, cliBundle, doorPid, cliPid, mockPid };
 }
