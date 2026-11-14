@@ -361,7 +361,8 @@ describe("config API: route overrides", () => {
     expect(await api.route.remove({ scope: { kind: "global" }, model: "opus", confirm: true })).toEqual({ action: "removed", kind: "route", name: "opus" });
     expect(await codeOf(api.route.remove({ scope: { kind: "global" }, model: "opus", confirm: true }))).toBe("BAD_REQUEST");
     expect(readRouteOverrides(paths)).toEqual({ schemaVersion: 1, sessions: { abc: { haiku: "z/air" } } });
-    // A key typed in another case is reported as stored.
+    // A key typed in another case is reported as stored, by a set and by a removal.
     expect(await api.route.set({ scope: { kind: "global" }, model: "HAIKU", target: "z/air" })).toEqual({ action: "updated", kind: "route", name: "haiku", value: { scope: "global", model: "haiku", target: "z/air" } });
+    expect(await api.route.remove({ scope: { kind: "global" }, model: "Haiku", confirm: true })).toEqual({ action: "removed", kind: "route", name: "haiku" });
   });
 });
