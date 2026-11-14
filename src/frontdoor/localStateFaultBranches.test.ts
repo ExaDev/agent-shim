@@ -46,6 +46,21 @@ describe("each kind of local file fault the door's boundary refuses", () => {
     }
   }, TIMEOUT_MS);
 
+  it("logs each refusal beside it, naming the same fault and never the path", async () => {
+    const paths = layout();
+    fs.mkdirSync(path.dirname(paths.globalConfigFile), { recursive: true });
+    fs.writeFileSync(paths.globalConfigFile, JSON.stringify({ models: { virtual: { ranked: { mode: "nowhere", members: 5 } } } }));
+    const logged: string[] = [];
+    const world = await startWorld(undefined, HTTP_STATUS.ok, undefined, undefined, undefined, { models: () => readModels(paths), log: (line) => { logged.push(line); } });
+    try {
+      expect((await send(world, { model: "ranked", requestClass: "main" })).status).toBe(HTTP_STATUS.badRequest);
+      expect(logged.filter((line) => line.includes("could not be used") && line.includes("virtual.ranked"))).toHaveLength(1);
+      expect(logged.join("\n")).not.toContain(paths.root);
+    } finally {
+      await world.close();
+    }
+  }, TIMEOUT_MS);
+
   it("refuses a usage snapshot of another schema version, read as the door reads it, naming doctor", async () => {
     const paths = layout();
     fs.mkdirSync(paths.usageSnapshotsDir, { recursive: true });
