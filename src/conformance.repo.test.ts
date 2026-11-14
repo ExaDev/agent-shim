@@ -5,13 +5,7 @@ import { getCurrentSuite } from "vitest/suite";
 import { z } from "zod";
 
 import { collect, decodeText, fileProblems, loadCorpus, manifestProblems, runCase, selectFiles, validatorsFrom, type CaseTable } from "../conformance/runner/run.mjs";
-import { canonicalJson } from "./canonicalJson";
-import { FileNameSchema, isFileName, isStoredName, profileFilePath, providerFilePath, requireNewProviderName, StoredNameSchema } from "./config/names";
-import { holdFrom, within } from "./elapsedWindow";
-import { buildLayoutPaths, resolveAgentShimHome } from "./paths";
-import { expandTilde, isAncestorOrSelf, normaliseRulePath } from "./pathNorm";
-import { ignoresCase, sameDirectory } from "./sameDirectory";
-import { shellQuoted } from "./shellQuote";
+import { TABLE } from "./conformance/table";
 
 /** The corpus root: the cases, their schemas and manifest, the runner and the fixtures the runner tests itself with. */
 const ROOT = path.join(__dirname, "..", "conformance");
@@ -24,70 +18,6 @@ const RUNNER_MAX_BYTES = 16_384;
 const LETTER_B = 98;
 const HIGH_SURROGATE = 55_357;
 const LOW_SURROGATE = 56_832;
-
-/** An argument a case gives as plain data and a function takes as another type, narrowed or refused. */
-function text(value: unknown): string {
-  if (typeof value !== "string") {
-    throw new TypeError(`expected text, got ${JSON.stringify(value)}`);
-  }
-  return value;
-}
-
-function numeric(value: unknown): number {
-  if (typeof value !== "number") {
-    throw new TypeError(`expected a number, got ${JSON.stringify(value)}`);
-  }
-  return value;
-}
-
-/** The environment a case gives: an object of text values. */
-function environment(value: unknown): NodeJS.ProcessEnv {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TypeError(`expected an environment, got ${JSON.stringify(value)}`);
-  }
-  return Object.fromEntries(Object.entries(value).map(([name, entry]) => [name, text(entry)]));
-}
-
-/** What a case's `resolveAgentShimHome` third argument means: `true` (every directory exists), `false` (none does) or the list of those that do. */
-function directoryTest(value: unknown): (candidate: string) => boolean {
-  if (typeof value === "boolean") {
-    return () => value;
-  }
-  if (Array.isArray(value)) {
-    const existing = new Set(value.map(text));
-    return (candidate) => existing.has(candidate);
-  }
-  throw new TypeError(`expected true, false or a list of paths, got ${JSON.stringify(value)}`);
-}
-
-/** The optional argument that says where a name came from. */
-function optionalText(value: unknown): string | undefined {
-  return value === undefined ? undefined : text(value);
-}
-
-/** The functions the `function` cases call, by the name the case gives. */
-const TABLE: CaseTable = {
-  resolveAgentShimHome: (env, home, exists) => resolveAgentShimHome(environment(env), text(home), directoryTest(exists)),
-  buildLayoutPaths: (root) => buildLayoutPaths(text(root)),
-  canonicalJson: (value) => canonicalJson(value),
-  expandTilde: (value, home) => expandTilde(text(value), text(home)),
-  normaliseRulePath: (rule, home) => normaliseRulePath(text(rule), text(home)),
-  isAncestorOrSelf: (ancestor, descendant) => isAncestorOrSelf(text(ancestor), text(descendant)),
-  shellQuoted: (value) => shellQuoted(text(value)),
-  within: (since, now, window) => within(numeric(since), numeric(now), numeric(window)),
-  holdFrom: (since, now, window) => holdFrom(numeric(since), numeric(now), numeric(window)),
-  sameDirectory: (first, second) => sameDirectory(text(first), text(second)),
-  ignoresCase: (directory) => ignoresCase(text(directory)),
-  isFileName: (name) => isFileName(text(name)),
-  isStoredName: (name) => isStoredName(text(name)),
-  "FileNameSchema.accepts": (name) => FileNameSchema.safeParse(name).success,
-  "StoredNameSchema.accepts": (name) => StoredNameSchema.safeParse(name).success,
-  profileFilePath: (directory, name, from) => profileFilePath(text(directory), text(name), optionalText(from)),
-  providerFilePath: (directory, name, from) => providerFilePath(text(directory), text(name), optionalText(from)),
-  requireNewProviderName: (name) => {
-    requireNewProviderName(text(name));
-  },
-};
 
 const ManifestSchema = z.object({ files: z.record(z.string(), z.object({ cases: z.number(), skip: z.object({ ts: z.array(z.string()), rust: z.array(z.string()) }) })) });
 
