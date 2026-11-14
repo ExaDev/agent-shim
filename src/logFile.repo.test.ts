@@ -42,9 +42,28 @@ function hasEmbeddedAppend(module: string, source: string): boolean {
 
 const sourceOf = (module: string): string => fs.readFileSync(path.join(__dirname, module), "utf8");
 
-describe("an append to a log file in src", () => {
+/** The modules that write the door's log, headroom's log and the CONNECT capture. */
+const LOG_WRITERS = ["frontdoor/doorLog.ts", "headroom/headroomLog.ts", "frontdoor/capture.ts"] as const;
+
+/** Whether the TypeScript of `source` calls `appendLogText`. */
+function callsAppendLogText(module: string, source: string): boolean {
+  const file = ts.createSourceFile(module, source, ts.ScriptTarget.Latest, true);
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && node.expression.getText(file) === "appendLogText") found = true;
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return found;
+}
+
+describe("each appendFile or appendFileSync call in src", () => {
   it("calls appendFile or appendFileSync in logFile.ts alone, whose appendLogText the door's log, headroom's log and the capture append through; an append through an opened descriptor is not read", () => {
     expect(modules().flatMap((module) => appendCalls(module, sourceOf(module))).map((site) => site.split(" ")[0])).toEqual(["logFile.ts"]);
+  });
+
+  it("is not how the door's log, headroom's log or the CONNECT capture write: each calls appendLogText", () => {
+    expect(LOG_WRITERS.filter((module) => !callsAppendLogText(module, sourceOf(module)))).toEqual([]);
   });
 
   it("names each module that appends inside a string of code, and how that code drops a failed append", () => {
@@ -56,6 +75,8 @@ describe("an append to a log file in src", () => {
   it("finds an append called directly and one written in a string", () => {
     expect(appendCalls("x.ts", "fs.appendFileSync(file, text); appendFile(file, text, done);")).toEqual(["x.ts 1", "x.ts 1"]);
     expect(appendCalls("x.ts", "appendLogText(dir, file, text);")).toEqual([]);
+    expect(callsAppendLogText("x.ts", "appendLogText(dir, file, text);")).toBe(true);
+    expect(callsAppendLogText("x.ts", "fs.writeFileSync(file, text, { flag: \"a\" });")).toBe(false);
     expect(hasEmbeddedAppend("x.ts", "const source = `fs.appendFileSync(logFile, line)`;")).toBe(true);
   });
 });
