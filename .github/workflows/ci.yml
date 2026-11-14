@@ -153,6 +153,8 @@ jobs:
         # semantic-release pushes to its repositoryUrl, which defaults to package.json's https repository field rather than to origin, so the SSH URL is passed explicitly for the push to use the deploy key.
         run: npx semantic-release --repository-url "git@github.com:$GITHUB_REPOSITORY.git"
         env:
+          # Turns the repository's git hooks off for the release commit and its push. The pre-push hook is a developer's check before CI: it reruns the whole suite when package.json changes, as the release commit does, and the push's SSH connection is dropped while it waits, which kills the push. This job already needs every check to have passed on the commit being released, and the release commit changes only the version and the changelog.
+          HUSKY: "0"
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Must match the GIT_SSH_COMMAND of the provisioning step.
           GIT_SSH_COMMAND: /usr/bin/ssh -i ${{ runner.temp }}/release-ssh/id -o IdentitiesOnly=yes -o UserKnownHostsFile=${{ runner.temp }}/release-ssh/known_hosts -o StrictHostKeyChecking=yes

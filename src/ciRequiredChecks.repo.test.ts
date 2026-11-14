@@ -114,3 +114,17 @@ describe("the Windows smoke jobs", () => {
     expect(users.sort()).toEqual([...SMOKE_JOBS].sort());
   });
 });
+
+describe("the release step", () => {
+  const EnvStepsSchema = z.looseObject({ steps: z.array(z.looseObject({ run: z.string().optional(), env: z.record(z.string(), z.unknown()).optional() })) });
+  const jobs = z.object({ jobs: z.record(z.string(), EnvStepsSchema) }).parse(parse(fs.readFileSync(path.join(__dirname, "..", ".github", "workflows", "ci.yml"), "utf8"))).jobs;
+  const releaseSteps = Object.values(jobs).flatMap((job) => job.steps).filter((step) => step.run?.includes("npx semantic-release") === true);
+
+  it("is found, so the check below cannot pass on nothing", () => {
+    expect(releaseSteps).toHaveLength(1);
+  });
+
+  it("turns the git hooks off, since the pre-push hook reruns the suite for the release commit and outlasts the push's connection", () => {
+    expect(releaseSteps.map((step) => step.env?.HUSKY)).toEqual(["0"]);
+  });
+});
