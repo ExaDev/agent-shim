@@ -1,3 +1,50 @@
+## [14.6.0](https://github.com/ExaDev/agent-shim/compare/v14.5.1...v14.6.0) (2026-11-14)
+
+### Features
+
+* **scripts:** add an isolated self-hosted Remote Control lab ([f4910f3](https://github.com/ExaDev/agent-shim/commit/f4910f322e085f4f04898337a4cfb8d332f83562))
+* **scripts:** bring the lab up on each Remote Control route, with nothing of it in shared state ([4233d45](https://github.com/ExaDev/agent-shim/commit/4233d45bfb2e86da1495b337ecf4e85e61270616))
+* **scripts:** give the lab its own HOME and catch git's own egress ([8beb7fe](https://github.com/ExaDev/agent-shim/commit/8beb7fe94bd0a2f9ce7fb92528c19afb0e39882b))
+* **scripts:** pin the lab's CLI, check its sockets and stop it by pid ([fe641f2](https://github.com/ExaDev/agent-shim/commit/fe641f25ec0f7976ef5b5bd141de53d1d181ed5c))
+
+### Bug Fixes
+
+* **frontdoor:** attribute a launch by the configuration directory its child runs with ([be909ed](https://github.com/ExaDev/agent-shim/commit/be909ed5e3f65224257db1f384b70fde9a1eac34))
+* **frontdoor:** attribute redirected connections by their peer, and tap native sessions ([99a0d17](https://github.com/ExaDev/agent-shim/commit/99a0d17b586393ddc777894f6fc8c6efd2159cda))
+* **frontdoor:** decide the self-hosted mode by the launch, not the request ([09cbcc3](https://github.com/ExaDev/agent-shim/commit/09cbcc3c8ee8380b67f383a95a82d753f16c854a))
+* **frontdoor:** end sessions decided under a mint that no longer holds ([a4e7903](https://github.com/ExaDev/agent-shim/commit/a4e7903ab51de99775cb331b9699dfe2c3619e1c))
+* **frontdoor:** forward nothing a self-hosted Remote Control session sends ([ad7d084](https://github.com/ExaDev/agent-shim/commit/ad7d084630f18bf97eac0ce4597a01afacb4a6c9)), closes [#731](https://github.com/ExaDev/agent-shim/issues/731)
+* **frontdoor:** give the self-hosted profile answer the email the client requires ([54d14d2](https://github.com/ExaDev/agent-shim/commit/54d14d2df0b4420fa52dde2baf43d6751d37c197))
+* **frontdoor:** never route or forward a self-hosted session's request to the real API ([2410a98](https://github.com/ExaDev/agent-shim/commit/2410a982714164b24c5560cb3c18e09b249eb3f9))
+* **frontdoor:** read a peer's lsof endpoint with the dial authority parser ([0fc2e14](https://github.com/ExaDev/agent-shim/commit/0fc2e14c7952be8060840b808a52514d878d89a2))
+* **frontdoor:** read a terminated session's request target one way ([bbee000](https://github.com/ExaDev/agent-shim/commit/bbee0008b497c6bb713cfe666c0e7f1d5c3a353f))
+* **frontdoor:** recognise the minted identity's launch by its id ([12dd446](https://github.com/ExaDev/agent-shim/commit/12dd446aba09649fe1116a525ae9c6ec46350999))
+* **frontdoor:** record the identity of a mint made before ids were recorded ([1d9d22a](https://github.com/ExaDev/agent-shim/commit/1d9d22a2d0e2829c7748a4ef46d0f9f8f0c9c472))
+* **frontdoor:** record the routed pass-through at dispatch, headroom hop included ([6781740](https://github.com/ExaDev/agent-shim/commit/67817400d7c92d8dadea72d2ec5a878af8bdc73e))
+* **frontdoor:** record the routed pass-through to the real API in the capture ([65a2a73](https://github.com/ExaDev/agent-shim/commit/65a2a73aa53e8e5a15ec69420b77bf74762d44f9))
+* **frontdoor:** refuse a request path a base-resolving reader would read as another ([09a0bb8](https://github.com/ExaDev/agent-shim/commit/09a0bb8b6951d8412dc402c6d25082567ca61d71))
+* **frontdoor:** refuse a request target the URL parser cannot read ([739286e](https://github.com/ExaDev/agent-shim/commit/739286e61d62e7da604f9c47be5181abf32c5d8d))
+* **frontdoor:** refuse a self-hosted session's blind tunnels ([e75eebd](https://github.com/ExaDev/agent-shim/commit/e75eebdf59873a3839497208ee46f3b4c5db0cf0))
+* **frontdoor:** treat a capability with no registry entry as the self-hosted mode's ([911aac4](https://github.com/ExaDev/agent-shim/commit/911aac4c4711824d67e0eccbf10c7e5b97d066c6))
+* **scripts:** count the routed pass-through as a lab leak and fail an empty capture ([33f824a](https://github.com/ExaDev/agent-shim/commit/33f824aa092673ffb55d19f759e0ef14a646dfa8))
+* **scripts:** keep the CLI's own ssh probe of GitHub from leaving the lab ([3dfdf55](https://github.com/ExaDev/agent-shim/commit/3dfdf55e3396f9e8414ffecbfa6b2058dc8328a7))
+* **scripts:** take the lab's ports from closedLoopbackPort ([1ae2ba6](https://github.com/ExaDev/agent-shim/commit/1ae2ba63c4fd7b383c26961af061d90484aea740))
+
+### Code Refactoring
+
+* **frontdoor:** move the self-hosted mode's real wiring out of the door's command file ([9189214](https://github.com/ExaDev/agent-shim/commit/9189214b397c51ba17667d8726368e2240adc890))
+
+### Documentation
+
+* describe how the self-hosted mode attributes launches and what it forwards ([d5c9c7f](https://github.com/ExaDev/agent-shim/commit/d5c9c7f4fb2bfa3d2ee7b7d0f34dd079e6971839))
+* state the self-hosted answers' contract rather than one run's counts ([0a51e26](https://github.com/ExaDev/agent-shim/commit/0a51e260c8d658461444e520c306b3ed986cd677))
+
+### Tests
+
+* **frontdoor:** count the self-hosted refusal's echo of the request path ([0cc07e5](https://github.com/ExaDev/agent-shim/commit/0cc07e5c91ca1b6be72a2e98f209cafa550b2864))
+* **frontdoor:** drive the self-hosted isolation cases through both ways traffic arrives ([283849f](https://github.com/ExaDev/agent-shim/commit/283849f390c7e6c9caa8180c2fcd7550cd493e0b))
+* **frontdoor:** give each self-hosted resolution a request of its own ([30a2d6f](https://github.com/ExaDev/agent-shim/commit/30a2d6fed835867d715a6c9505ac8fb5a73d58df))
+
 ## [14.5.1](https://github.com/ExaDev/agent-shim/compare/v14.5.0...v14.5.1) (2026-11-14)
 
 ### Documentation
