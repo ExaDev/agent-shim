@@ -8,6 +8,7 @@ import { reportFatalError } from "./cliReport";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { buildProgram } from "./program";
 import { createFakeKeychain, type FakeKeychain } from "./keychainTestWorld";
+import { createRealCredentialCache } from "./realCredentialCache";
 import { realIdentityRenamePorts } from "./realIdentityRename";
 import { fakeCommandDeps } from "./test-helpers";
 
@@ -45,9 +46,9 @@ export interface CliResult {
 export type RunClaude = (args: readonly string[]) => Promise<void>;
 
 export function program(runClaude: RunClaude = vi.fn<RunClaude>(), options: Parameters<typeof fakeCommandDeps>[1] = {}): Command {
-  // The identity commands ask the Keychain whether a login is filed for a directory, and only on macOS; the harness runs them as on macOS on every host, against a fake Keychain, so a test reads nothing of the machine's own logins and takes the same path on Linux CI as on a Mac. The credential cache keeps its entries in files under the throwaway root, never in the machine's Keychain.
+  // The identity commands ask the Keychain whether a login is filed for a directory, and only on macOS, and keep cached credentials in the Keychain or in files: the harness runs them as on macOS on every host, with every Keychain question (a login's, and the credential cache's Keychain store) going to the fake `security`, and the cache's file store under the throwaway root, so no test reads or writes the machine's Keychain and every host takes the same path.
   const real = realIdentityRenamePorts(paths);
-  return buildProgram({ ...fakeCommandDeps(paths, options), runClaude, identityRenamePorts: { ...real, run: keychain.run, platform: "darwin", credentialCache: { ...real.credentialCache, platform: "linux" } } });
+  return buildProgram({ ...fakeCommandDeps(paths, options), runClaude, identityRenamePorts: { ...real, run: keychain.run, platform: "darwin", credentialCache: { ...real.credentialCache, platform: "darwin", port: createRealCredentialCache(paths.root, { run: (args, stdin) => keychain.run.run("security", args, stdin), platform: "darwin" }) } } });
 }
 
 /** Runs one `agent-shim` invocation against the throwaway layout the way `src/cli.ts` does, capturing both streams and the exit status `reportFatalError` or the command itself decided. */
