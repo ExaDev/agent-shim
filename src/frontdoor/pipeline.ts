@@ -8,6 +8,8 @@ import { requestClassOf } from "./mainLoopRoute";
 import type { Lineage } from "./lineage";
 import type { FrontDoorLaunch } from "./state";
 import { CLIENT_SESSION_HEADER, SERVED_MODEL_HEADER, identifyRequest, withCanonicalProviderTarget, type FrontDoorRoute, type ModelChoice, type RoutedRequest, type RoutedResponse, type SessionIdentity } from "./route";
+import { isTransientReadError } from "../readableConfig";
+import { configFaultOf } from "../config/load";
 
 /** What one routed response looked like as it started back to the client: the typed event response middleware observes. */
 export interface RoutedResponseEvent {
@@ -301,7 +303,20 @@ export async function serveRouted(incoming: PipelineRequest, deps: PipelineDeps)
   const observed: ObservedRequest = { method: request.method, path: pathOf(request.url), receivedAt: deps.now(), viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined }, requestedModel: { value: undefined }, clientSessionId: clientSessionIdOf(incoming.headers), requestClass: requestClassOf(incoming.headers) };
   const identity = identifyRequest(request.headers);
   const identified = { ...identity, session: { ...identity.session, provider: identity.session.provider === undefined ? undefined : deps.canonicalProvider(identity.session.provider) } };
-  const admission = deps.admit({ url: request.url, headers: request.headers, forwardable: identified.forwardableHeaders });
+  let admission: ReturnType<PipelineDeps["admit"]>;
+  try {
+    admission = deps.admit({ url: request.url, headers: request.headers, forwardable: identified.forwardableHeaders });
+  } catch (error) {
+    // Admission reads the launch registry; a read that failed for the moment is answered as retryable, never as the launch not being live, and nothing is kept of it.
+    if (!isTransientReadError(error)) {
+      throw error;
+    }
+    const response = createRoutedResponse(request.response, { deps, session: identified.session, route: "(unadmitted)", request: observed, servedPath: observed.path });
+    response.start(HTTP_STATUS.serviceUnavailable, { "Content-Type": "application/json" });
+    await response.write(errorBody(HTTP_STATUS.serviceUnavailable, `the front door could not read its launch registry just now (${configFaultOf(error)}); try the request again`));
+    response.end();
+    return;
+  }
   if (!admission.ok) {
     const response = createRoutedResponse(request.response, { deps, session: identified.session, route: "(unauthorized)", request: observed, servedPath: observed.path });
     response.start(HTTP_STATUS.unauthorized, { "Content-Type": "application/json" });

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ModelsConfig } from "../config/schema";
 import type { HeadroomFs } from "../headroom/state";
 import { buildLayoutPaths } from "../paths";
-import { createFakeFarmFs } from "../test-helpers";
+import { createFakeFarmFs, errorWithCode } from "../test-helpers";
 import { createLiveSessionRegistry } from "./liveSessionRegistry";
 import { listFrontDoorSessions, pruneDeadFrontDoorSessions, recordOf, removeFrontDoorSession, writeFrontDoorSession } from "./state";
 
@@ -54,6 +54,20 @@ function countedWorld(): { readonly fs: HeadroomFs; readonly counts: Counts; rea
 }
 
 describe("live session registry", () => {
+  it("keeps nothing of a launch record whose read fails for the moment, passing the failure on, and admits the launch once the read succeeds", () => {
+    const inner = createFakeFarmFs({});
+    let failing = true;
+    const fs: HeadroomFs = { ...inner, readFileUtf8: (file) => { if (failing && file.startsWith(dir)) throw errorWithCode("EMFILE: too many open files", "EMFILE"); return inner.readFileUtf8(file); } };
+    const registry = createLiveSessionRegistry({ fs, sessionsDir: dir });
+    registry.rescan();
+    writeFrontDoorSession(inner, dir, { pid: LATE, startedAt: 0, token: "late-token", sessionId: "late-session", models: { virtual: { m: { mode: "ordered", members: ["z/a"] } } } });
+    expect(() => registry.admits("late-token")).toThrow(/EMFILE/u);
+    expect(() => registry.modelsOf("late-session")).toThrow(/EMFILE/u);
+    failing = false;
+    expect(registry.admits("late-token")).toBe(true);
+    expect(registry.modelsOf("late-session")).toEqual({ virtual: { m: { mode: "ordered", members: ["z/a"] } } });
+  });
+
   it("admits a token it has already read without touching the filesystem", () => {
     const { fs, counts, reset } = countedWorld();
     writeFrontDoorSession(fs, dir, { pid: LIVE, startedAt: 0, token: "live-token" });

@@ -84,6 +84,18 @@ describe("a local file the door cannot read on the request path", () => {
 });
 
 describe("what the boundary says, by where the fault is", () => {
+  it("answers an admission whose launch registry read failed for the moment as retryable, never as the launch not being live", async () => {
+    const world = await startWorld(undefined, HTTP_STATUS.ok, MODELS, undefined, () => { throw errorWithCode("EMFILE: too many open files", "EMFILE"); });
+    try {
+      const answered = await send(world, { model: "claude-opus-5-5", requestClass: "main" });
+      expect(answered.status, answered.text).toBe(HTTP_STATUS.serviceUnavailable);
+      expect(answered.text).toContain("could not read its launch registry just now (EMFILE)");
+      expect(world.upstream.seen).toEqual([]);
+    } finally {
+      await world.close();
+    }
+  }, TIMEOUT_MS);
+
   it("refuses an identity header that names no identity id with a 400 naming the header, never a local file or doctor", async () => {
     const world = await startWorld(undefined, HTTP_STATUS.ok, MODELS, undefined, undefined, { models: () => MODELS });
     try {

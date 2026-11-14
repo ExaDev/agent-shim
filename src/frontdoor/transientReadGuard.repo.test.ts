@@ -4,34 +4,25 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 /** The modules whose readers the door reads local state through on the request path, from `src`: the overrides, provider files and their listing, a provider's stored catalogue, the provider targets and the door's own state files they read, the route context's durable copy, the headroom routing setting the pipeline reads for each request, the selector state, an identity's account and name, the usage snapshots, and the configuration store and loader they read through. */
-const READERS = ["routeOverridesStore.ts", "frontdoor/providerReads.ts", "models/selectorPorts.ts", "identityAccounts.ts", "providersStore.ts", "storedCatalogue.ts", "identityStore.ts", "identityRecords.ts", "usage/read.ts", "config/store.ts", "config/load.ts", "models/targets.ts", "frontdoor/state.ts", "frontdoor/mainLoopRoute.ts", "headroom/routingSetting.ts"] as const;
+const READERS = ["routeOverridesStore.ts", "frontdoor/providerReads.ts", "models/selectorPorts.ts", "identityAccounts.ts", "providersStore.ts", "storedCatalogue.ts", "identityStore.ts", "identityRecords.ts", "usage/read.ts", "config/store.ts", "config/load.ts", "models/targets.ts", "frontdoor/state.ts", "frontdoor/mainLoopRoute.ts", "headroom/routingSetting.ts", "frontdoor/liveSessionRegistry.ts", "supervise/registry.ts", "realPorts.ts"] as const;
 
 /** What a catch calls to classify a failure through the one file-fault set, so a failure of the moment is passed on: directly, or through the identity listing's helper over it. */
 const CLASSIFIERS = ["isTransientReadError(", "fileFaultCodeOf(", "unreachableCodeOf("] as const;
 
 /** The catches that need not classify a failure, by module and enclosing function, each with why. A catch around a JSON parse alone (`JSON`) is about the text read. */
 const ALLOWED: Readonly<Record<string, string>> = {
+  "realPorts.ts realIsProcessAlive": "a process signal's answer, which is no file",
   "routeOverridesStore.ts revisionOf": "a stat that fails names no revision, so the file is read and nothing is kept",
   "frontdoor/providerReads.ts revisionOf": "a stat that fails names no revision, so the file is read and nothing is kept",
-  "providersStore.ts readProvider": "rethrows every error but a JSON parse failure",
   "storedCatalogue.ts read": "hands the error itself to onUnreadable, and raiseUnreadableCatalogue, the one that answers for the file, keeps a failure of the moment's code",
   "storedCatalogue.ts attempt": "hands the error itself to onUnreadable, as read does",
-  "identityStore.ts readIdentityForListing": "rethrows every error but the file being no JSON or of another shape",
-  "identityStore.ts acquireRemovalLock": "a lock held by another process, never a read",
-  "config/store.ts readFileUtf8": "rethrows every error but ENOENT, which is absence",
-  "config/store.ts unlinkSync": "a write, rethrowing every error but ENOENT",
-  "config/store.ts writeTextAtomic": "a write, rethrowing the error",
-  "config/load.ts cosmiconfigReader": "rethrows every error but ENOENT, which is absence",
-  "frontdoor/state.ts readFrontDoorCodexRecord": "its read passes a failure of the moment on when asked (passTransient), as the request path asks; its other catch is a JSON parse",
-  "frontdoor/state.ts readFrontDoorState": "its read passes a failure of the moment on when asked (passTransient), as the request path asks; its other catch is a JSON parse",
-  "frontdoor/state.ts identity": "a stat whose failure keeps nothing: no identity is never a reason to read, and the next lookup stats again",
-  "frontdoor/state.ts readFrontDoorSessionRecord": "a launch's registry record, which the request path reads only before writing the route context's copy: a failed read skips that one write, and the door's own context stays as it is",
-  "frontdoor/state.ts readDirectRecordEntry": "a door's direct-listener record, read by the headroom allowlist and never on the request path",
+  "config/load.ts cosmiconfigReader": "rethrows every error but ENOENT, which is absence, and a parse failure, which it names",
+  "frontdoor/state.ts identity": "a stat whose failure keeps nothing: an identity that cannot be told is no reason to read, and the next lookup stats again",
+  "frontdoor/state.ts readDirectRecordEntry": "a door's direct-listener record, read by the headroom supervisor's allowlist, not on a request's path",
   "frontdoor/mainLoopRoute.ts persist": "a write of the route context's copy, logged and tried again at the next request",
-  "frontdoor/mainLoopRoute.ts decodedSpan": "a JSON parse of a model field's bytes, a property of the request",
 };
 
-/** Each catch clause of `source` that neither classifies its failure through the one file-fault set (`CLASSIFIERS`) nor guards a JSON parse alone, as `<module> <enclosing function>`, allowed or not. */
+/** Each catch clause of `source` that neither classifies its failure through the one file-fault set (`CLASSIFIERS`), nor throws the error it caught again, nor guards a parse of text already read, as `<module> <enclosing function>`, allowed or not. */
 function catchesNotPassingOn(module: string, source: string): readonly string[] {
   const file = ts.createSourceFile(module, source, ts.ScriptTarget.Latest, true);
   const found: string[] = [];
@@ -40,8 +31,13 @@ function catchesNotPassingOn(module: string, source: string): readonly string[] 
     if ((ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) && node.name !== undefined) name = node.name.getText(file);
     if ((ts.isVariableDeclaration(node) || ts.isPropertyAssignment(node)) && node.initializer !== undefined && (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))) name = node.name.getText(file);
     if (ts.isCatchClause(node) && !CLASSIFIERS.some((classifier) => node.block.getText(file).includes(classifier))) {
-      const parsesJsonAlone = ts.isTryStatement(node.parent) && /^\{\s*(?:[a-z]+ = )?(?:return )?JSON\.parse\([A-Za-z_.]+\);\s*\}$/u.test(node.parent.tryBlock.getText(file));
-      if (!parsesJsonAlone) found.push(`${module} ${name}`);
+      const tryText = ts.isTryStatement(node.parent) ? node.parent.tryBlock.getText(file) : "";
+      // A try that parses text already read, and reads nothing itself, meets no read failure.
+      const parsesOnly = tryText.includes("JSON.parse(") && !/\b(readFileUtf8|readFileSync|readdir|readdirSync|statSync|lstat|lstatSync|stat|readConfigFile|fileRevision)\(/u.test(tryText);
+      // A catch that throws the error it caught again passes on every failure it does not handle itself, a failure of the moment included; what it handles is held by fileFaults.repo.test.ts, which finds a file-fault code named by hand.
+      const caught = node.variableDeclaration?.name.getText(file);
+      const rethrows = caught !== undefined && new RegExp(`\\bthrow ${caught}\\b`, "u").test(node.block.getText(file));
+      if (!parsesOnly && !rethrows) found.push(`${module} ${name}`);
     }
     ts.forEachChild(node, (child) => {
       visit(child, name);
