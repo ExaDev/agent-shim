@@ -81,6 +81,31 @@ describe("createCatalogueKeeper", () => {
     }
   });
 
+  it.each(["EMFILE", "ENOSPC"])("refreshes on every tick through the door's timer when both its status writes and its log fail with %s", async (code) => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => { unhandled.push(reason); };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const failing = (): never => { throw errorWithCode(`${code}: failed, open '/state/frontdoor/log'`, code); };
+      const { keeper, refresh } = setup({ providers: () => [["a", withCatalogue]], publishStatus: failing, log: failing });
+      const timerCallback = keepTicking("catalogue keeper", keeper.tick, failing);
+      expect(timerCallback).not.toThrow();
+      await settle();
+      expect(keeper.status("a")).not.toBe("running");
+      expect(timerCallback).not.toThrow();
+      await settle();
+      expect(refresh).toHaveBeenCalledTimes(2);
+      refresh.mockRejectedValue(new Error("the server answered 500"));
+      expect(timerCallback).not.toThrow();
+      await settle();
+      await settle();
+      expect(keeper.status("a")).not.toBe("running");
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
   it("logs a listing of the providers that fails, refreshing nothing, and never throws out of its own tick", () => {
     const { keeper, refresh, log } = setup({ providers: () => { throw errorWithCode("EMFILE: too many open files, scandir '/state/providers'", "EMFILE"); } });
     expect(() => { keeper.tick(); }).not.toThrow();

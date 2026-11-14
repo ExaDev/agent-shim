@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Job } from "../config/schema";
-import { createFakeFarmFs } from "../test-helpers";
+import { createFakeFarmFs, errorWithCode } from "../test-helpers";
 import { runJobs, type JobKeeperPorts, type NamedJob } from "./jobKeeper";
 import { USAGE_SCHEMA_VERSION, type UsageSnapshot } from "./schema";
 
@@ -40,7 +40,7 @@ interface Harness {
   readonly fs: ReturnType<typeof createFakeFarmFs>;
 }
 
-function harness(options: { readonly jobs?: readonly NamedJob[]; readonly snapshot?: UsageSnapshot; readonly resolveIdentity?: JobKeeperPorts["resolveIdentity"]; readonly runJob?: JobKeeperPorts["run"]; readonly running?: Set<string> } = {}): Harness {
+function harness(options: { readonly jobs?: readonly NamedJob[]; readonly snapshot?: UsageSnapshot; readonly resolveIdentity?: JobKeeperPorts["resolveIdentity"]; readonly runJob?: JobKeeperPorts["run"]; readonly running?: Set<string>; readonly log?: JobKeeperPorts["log"] } = {}): Harness {
   const fs = createFakeFarmFs({});
   const ran: string[] = [];
   const logs: string[] = [];
@@ -61,9 +61,9 @@ function harness(options: { readonly jobs?: readonly NamedJob[]; readonly snapsh
         await Promise.resolve();
       }),
     running,
-    log: (line) => {
+    log: options.log ?? ((line) => {
       logs.push(line);
-    },
+    }),
   };
   return {
     run: (nowMs) => {
@@ -86,6 +86,17 @@ describe("runJobs, schedule jobs", () => {
     await fired.settled;
     expect(h.running.size).toBe(0);
     expect(h.logs.some((line) => line.includes("EMFILE"))).toBe(true);
+  });
+
+  it.each(["EMFILE", "ENOSPC"])("settles a failed run and leaves the job unmarked when the log of its failure fails with %s", async (code) => {
+    const h = harness({
+      runJob: async () => { await Promise.reject(new Error("the run failed")); },
+      log: (line) => { if (line.includes("failed as")) throw errorWithCode(`${code}: failed, open '/state/frontdoor/log'`, code); },
+    });
+    h.run(BEFORE_ANCHOR);
+    const fired = h.run(AFTER_ANCHOR);
+    await expect(fired.settled).resolves.toBeUndefined();
+    expect(h.running.size).toBe(0);
   });
 
   it("arms on first sight, then runs once when an anchor falls", async () => {

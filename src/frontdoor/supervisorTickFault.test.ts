@@ -26,4 +26,23 @@ describe("the front door supervisor's loop", () => {
     expect(world.logs.filter((line) => line.includes("tick failed: EMFILE"))).toHaveLength(1);
     expect(world.logs.filter((line) => line.includes("tick ticked again"))).toHaveLength(1);
   });
+
+  it.each(["EMFILE", "ENOSPC"])("survives a failed tick whose log line fails with %s too", async (code) => {
+    const world = makeWorld();
+    let failing = true;
+    const registry = { ...world.ports.registry, rescan: () => {
+      if (failing) {
+        failing = false;
+        throw errorWithCode(`${code}: failed, scandir '/state/frontdoor/sessions'`, code);
+      }
+      return world.ports.registry.rescan();
+    } };
+    const log = (line: string): void => {
+      if (line.includes("tick failed") || line.includes("ticked again")) throw errorWithCode(`${code}: failed, open '/state/frontdoor/log'`, code);
+      world.ports.log(line);
+    };
+    const outcome = await runFrontDoorSupervisor(IDLE_MINUTES, { ...world.ports, registry, log }, { tickLimit: TICKS });
+    expect(outcome).toBe(FRONTDOOR_SUPERVISOR_STILL_RUNNING);
+  });
 });
+

@@ -26,4 +26,24 @@ describe("the headroom supervisor's loop", () => {
     expect(reads).toBe(TICKS);
     expect(world.logLines.filter((line) => line.includes("tick failed: EMFILE"))).toHaveLength(1);
   });
+
+  it.each(["EMFILE", "ENOSPC"])("survives a failed tick whose log line fails with %s too", async (code) => {
+    const world = makeWorld();
+    world.setConfig(config);
+    let failing = true;
+    const readConfig = (): ReturnType<typeof world.ports.readConfig> => {
+      if (failing) {
+        failing = false;
+        throw errorWithCode(`${code}: failed, open '/state/config.json'`, code);
+      }
+      return world.ports.readConfig();
+    };
+    const log = (line: string): void => {
+      if (line.includes("tick failed") || line.includes("ticked again")) throw errorWithCode(`${code}: failed, open '/state/headroom/log'`, code);
+      world.ports.log(line);
+    };
+    const outcome = await runSupervisor(config, { ...world.ports, readConfig, log }, { tickLimit: TICKS });
+    expect(outcome).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
+  });
 });
+

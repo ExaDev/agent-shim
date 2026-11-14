@@ -8,6 +8,7 @@ import { effectiveWindow, formatAge } from "./preflight";
 import type { UsageSnapshot } from "./schema";
 import { refusalReason } from "./windowKeeper";
 import { ownEntry } from "../ownEntry";
+import { quietLog } from "../keepTicking";
 
 /**
  * The job keeper: runs each job when its trigger fires. A schedule trigger fires at the latest anchor that has fallen since the job was last handled; a before-reset trigger fires once per instance of the named quota window, when the window has the job's lead or less left. Pure orchestration over injected ports, so the front door's timer, `job run` and the tests share one decision.
@@ -94,7 +95,8 @@ export function runJobs(ports: Readonly<JobKeeperPorts>): JobKeeperResult {
     runs.push(
       running
         .catch((error: unknown) => {
-          ports.log(`job ${name}: failed as ${identity}: ${error instanceof Error ? error.message : String(error)}`);
+          // Logged through `quietLog`: the front door drops `settled`, so a log write failing here (EMFILE, ENOSPC) would be a rejection nothing handles.
+          quietLog(ports.log)(`job ${name}: failed as ${identity}: ${error instanceof Error ? error.message : String(error)}`);
         })
         .finally(() => {
           ports.running.delete(name);

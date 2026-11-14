@@ -108,6 +108,31 @@ function uncaughtVoidChains(module: string, source: string): readonly string[] {
   return found;
 }
 
+/** The modules whose failure handlers a log write must not throw out of: the tick modules, the two supervisors' loops, and `keepTicking.ts` itself. */
+const HANDLER_MODULES = [...TICK_MODULES, "frontdoor/supervisor.ts", "headroom/supervisor.ts", "keepTicking.ts"] as const;
+
+/** Each call of a logger (`log`, `<x>.log`, optionally called) inside a catch clause or a `.catch(` callback of `source` that is not a name the module binds to `quietLog(...)`, as `<module> <line>`. */
+function rawHandlerLogs(module: string, source: string): readonly string[] {
+  const file = ts.createSourceFile(module, source, ts.ScriptTarget.Latest, true);
+  const quiet = new Set<string>();
+  const findQuiet = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer !== undefined && ts.isCallExpression(node.initializer) && node.initializer.expression.getText(file) === "quietLog") quiet.add(node.name.text);
+    ts.forEachChild(node, findQuiet);
+  };
+  findQuiet(file);
+  const found: string[] = [];
+  const visit = (node: ts.Node, inHandler: boolean): void => {
+    if (inHandler && ts.isCallExpression(node)) {
+      const callee = node.expression.getText(file).replace(/\?\.$/u, "");
+      if (/^(?:[\w.]+\.)?log$/u.test(callee) && !quiet.has(callee)) found.push(`${module} ${String(file.getLineAndCharacterOfPosition(node.getStart()).line + 1)}`);
+    }
+    const handler = ts.isCatchClause(node) || (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "catch");
+    ts.forEachChild(node, (child) => { visit(child, inHandler || handler); });
+  };
+  visit(file, false);
+  return found;
+}
+
 /** Whether `source` writes `setInterval(` or `.every(` inside a string or template of code. */
 function hasEmbeddedTimer(module: string, source: string): boolean {
   const file = ts.createSourceFile(module, source, ts.ScriptTarget.Latest, true);
@@ -141,6 +166,10 @@ describe("a background loop in a long-lived process", () => {
     expect(TICK_MODULES.flatMap((module) => uncaughtVoidChains(module, sourceOf(module)))).toEqual([]);
   });
 
+  it("logs inside each failure handler of a tick module or supervisor through quietLog, so a log write failing as the failure did throws nothing out of the handler", () => {
+    expect(HANDLER_MODULES.flatMap((module) => rawHandlerLogs(module, sourceOf(module)))).toEqual([]);
+  });
+
   it("names each module that writes a timer inside a string of code, and why it needs no keepTicking", () => {
     const embedded = modules(__dirname).filter((module) => hasEmbeddedTimer(module, sourceOf(module)));
     expect(embedded.filter((module) => EMBEDDED_TIMERS[module] === undefined)).toEqual([]);
@@ -151,6 +180,9 @@ describe("a background loop in a long-lived process", () => {
     expect(uncaughtWaitLoops("x.ts", "async function run() { for (;;) { work(); await pause(); } }")).toEqual(["x.ts run"]);
     expect(uncaughtWaitLoops("x.ts", "async function run() { for (;;) { try { work(); } catch (error) { log(error); await pause(); continue; } await pause(); } }")).toEqual([]);
     expect(uncaughtVoidChains("x.ts", "function tick() { void refresh().then(done); }")).toEqual(["x.ts 1"]);
+    expect(rawHandlerLogs("x.ts", "function tick() { try { work(); } catch (error) { deps.log(String(error)); } }")).toEqual(["x.ts 1"]);
+    expect(rawHandlerLogs("x.ts", "function tick() { void run().catch((error) => { log?.(String(error)); }); }")).toEqual(["x.ts 1"]);
+    expect(rawHandlerLogs("x.ts", "const log = quietLog(deps.log); function tick() { try { work(); } catch (error) { log(String(error)); } deps.log(\"done\"); }")).toEqual([]);
     expect(uncaughtVoidChains("x.ts", "function tick() { void refresh().then(done).catch(log); }")).toEqual([]);
     expect(hasEmbeddedTimer("x.ts", "const SOURCE = `setInterval(() => beat(), 100);`;")).toBe(true);
   });
