@@ -138,7 +138,7 @@ A test deleted without a case is a row here, in the same table form, with the re
 
 ## The deleted-test check
 
-`scripts/deleted-tests.mts` is the `Deleted tests` job of `Required checks`, run on every pull request. It lists the suite at the base of the pull request and at its head with vitest's own listing, and fails for each test the base has and the head lacks (counted, so deleting one of two tests with one title counts) that is neither the source of a case nor a dropped row. Run locally: `node scripts/deleted-tests.mts --base <revision>`.
+`scripts/deleted-tests.mts` is the `Deleted tests` job of `Required checks`, run on every pull request. It lists the suite at the base of the pull request and at its head with vitest's own listing, and fails for each test the base has and the head lacks (counted, so deleting one of two tests with one title counts) that is neither the source of a case nor a dropped row. Each side is listed twice, and a test whose title differs between the two listings of one commit fails as an `unstable title` naming it, and is not also reported as deleted: the unstable title is the defect, and the check does not normalise the title (normalising a number out of it would let two different tests collapse into one). Run locally: `node scripts/deleted-tests.mts --base <revision>`.
 
 ## Nothing real in the corpus
 

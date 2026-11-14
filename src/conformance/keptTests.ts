@@ -164,15 +164,31 @@ export function guardProblems(listed: ReadonlyMap<string, number>, accounting: A
   return [...new Set(problems)].sort();
 }
 
+/** The identities whose count differs between two listings of one commit: a title that changes between runs, such as one holding a process id or a time. */
+export function unstableIds(first: ReadonlyMap<string, number>, second: ReadonlyMap<string, number>): ReadonlySet<string> {
+  const unstable = new Set<string>();
+  for (const id of new Set([...first.keys(), ...second.keys()])) {
+    if ((first.get(id) ?? 0) !== (second.get(id) ?? 0)) {
+      unstable.add(id);
+    }
+  }
+  return unstable;
+}
+
+/** What `unstableIds` finds, as problems: the title is the defect, whatever a comparison of two revisions would make of it. */
+export function unstableProblems(unstable: ReadonlySet<string>): string[] {
+  return [...unstable].map((id) => `unstable title, different in two listings of one commit: ${id}`).sort();
+}
+
 /**
  * The tests a change deleted that nothing accounts for: an identity the base holds more often than the head, that is neither the source of a case nor a dropped row. A renamed test or file is a deletion of the old identity, so it needs the same accounting; a kept row does not account for a deletion, since a kept row for a missing test is a problem of its own.
  */
-export function deletedProblems(base: ReadonlyMap<string, number>, head: ReadonlyMap<string, number>, accounting: Accounting): string[] {
+export function deletedProblems(base: ReadonlyMap<string, number>, head: ReadonlyMap<string, number>, accounting: Accounting, unstable: ReadonlySet<string> = new Set()): string[] {
   const dropped = new Set(ids(accounting.dropped));
   const problems: string[] = [];
   for (const [id, count] of base) {
     const accounted = accounting.sources.has(id) || dropped.has(id);
-    if (count > (head.get(id) ?? 0) && !accounted) {
+    if (count > (head.get(id) ?? 0) && !accounted && !unstable.has(id)) {
       problems.push(`deleted test has no case and no dropped row: ${id}`);
     }
   }
