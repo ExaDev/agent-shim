@@ -1,0 +1,680 @@
+{
+  "cases": [
+    {
+      "from": "recorded: src/pathNorm.ts (expandTilde of a tilde alone, or followed by a separator)",
+      "id": "path-norm.expand-tilde.leading-tilde",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "~",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/home/u"
+          },
+          "fn": "expandTilde"
+        },
+        {
+          "args": [
+            "~/",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/home/u"
+          },
+          "fn": "expandTilde"
+        },
+        {
+          "args": [
+            "~/a",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/home/u/a"
+          },
+          "fn": "expandTilde"
+        },
+        {
+          "args": [
+            "~/a/b",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/home/u/a/b"
+          },
+          "fn": "expandTilde"
+        },
+        {
+          "args": [
+            "~/a/b/",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/home/u/a/b/"
+          },
+          "fn": "expandTilde"
+        },
+        {
+          "args": [
+            "~/../x",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/home/x"
+          },
+          "fn": "expandTilde"
+        },
+        {
+          "args": [
+            "~/.",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/home/u"
+          },
+          "fn": "expandTilde"
+        },
+        {
+          "args": [
+            "~//a",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/home/u/a"
+          },
+          "fn": "expandTilde"
+        }
+      ]
+    },
+    {
+      "from": "recorded: src/pathNorm.ts (expandTilde against a home with a trailing separator, the root and a deep path)",
+      "id": "path-norm.expand-tilde.home-spellings",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "~/a",
+            "/home/u/"
+          ],
+          "expect": {
+            "value": "/home/u/a"
+          },
+          "fn": "expandTilde"
+        },
+        {
+          "args": [
+            "~",
+            "/home/u/"
+          ],
+          "expect": {
+            "value": "/home/u/"
+          },
+          "fn": "expandTilde"
+        },
+        {
+          "args": [
+            "~/a",
+            "/"
+          ],
+          "expect": {
+            "value": "/a"
+          },
+          "fn": "expandTilde"
+        },
+        {
+          "args": [
+            "~",
+            "/"
+          ],
+          "expect": {
+            "value": "/"
+          },
+          "fn": "expandTilde"
+        },
+        {
+          "args": [
+            "~/a",
+            "/h/u/deep/er"
+          ],
+          "expect": {
+            "value": "/h/u/deep/er/a"
+          },
+          "fn": "expandTilde"
+        }
+      ]
+    },
+    {
+      "from": "recorded: src/pathNorm.ts (expandTilde leaves a name that only starts with a tilde, a tilde elsewhere and a non-tilde path alone)",
+      "id": "path-norm.expand-tilde.literal-names",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "~other",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "~other"
+          },
+          "fn": "expandTilde"
+        },
+        {
+          "args": [
+            "~other/x",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "~other/x"
+          },
+          "fn": "expandTilde"
+        },
+        {
+          "args": [
+            "~~",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "~~"
+          },
+          "fn": "expandTilde"
+        },
+        {
+          "args": [
+            "a/~",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "a/~"
+          },
+          "fn": "expandTilde"
+        },
+        {
+          "args": [
+            "a/~/b",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "a/~/b"
+          },
+          "fn": "expandTilde"
+        },
+        {
+          "args": [
+            "./~/x",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "./~/x"
+          },
+          "fn": "expandTilde"
+        },
+        {
+          "args": [
+            "",
+            "/home/u"
+          ],
+          "expect": {
+            "value": ""
+          },
+          "fn": "expandTilde"
+        },
+        {
+          "args": [
+            "/abs/path",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/abs/path"
+          },
+          "fn": "expandTilde"
+        },
+        {
+          "args": [
+            "relative/path",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "relative/path"
+          },
+          "fn": "expandTilde"
+        },
+        {
+          "args": [
+            " ~/a",
+            "/home/u"
+          ],
+          "expect": {
+            "value": " ~/a"
+          },
+          "fn": "expandTilde"
+        },
+        {
+          "args": [
+            "~\\a",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "~\\a"
+          },
+          "fn": "expandTilde"
+        }
+      ]
+    },
+    {
+      "from": "recorded: src/pathNorm.ts (normaliseRulePath of tilde-rooted rules, with trailing separators and dot segments)",
+      "id": "path-norm.normalise-rule-path.tilde-rooted",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "~",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/home/u"
+          },
+          "fn": "normaliseRulePath"
+        },
+        {
+          "args": [
+            "~/",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/home/u"
+          },
+          "fn": "normaliseRulePath"
+        },
+        {
+          "args": [
+            "~/p",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/home/u/p"
+          },
+          "fn": "normaliseRulePath"
+        },
+        {
+          "args": [
+            "~/p/",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/home/u/p"
+          },
+          "fn": "normaliseRulePath"
+        },
+        {
+          "args": [
+            "~/p/../q",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/home/u/q"
+          },
+          "fn": "normaliseRulePath"
+        },
+        {
+          "args": [
+            "~/p/./q",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/home/u/p/q"
+          },
+          "fn": "normaliseRulePath"
+        },
+        {
+          "args": [
+            "~/p//q",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/home/u/p/q"
+          },
+          "fn": "normaliseRulePath"
+        },
+        {
+          "args": [
+            "~/.",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/home/u"
+          },
+          "fn": "normaliseRulePath"
+        },
+        {
+          "args": [
+            "~/..",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/home"
+          },
+          "fn": "normaliseRulePath"
+        },
+        {
+          "args": [
+            "~/../../..",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/"
+          },
+          "fn": "normaliseRulePath"
+        }
+      ]
+    },
+    {
+      "from": "recorded: src/pathNorm.ts (normaliseRulePath of absolute rules, with dot segments, repeated and trailing separators and the root)",
+      "id": "path-norm.normalise-rule-path.absolute",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/"
+          },
+          "fn": "normaliseRulePath"
+        },
+        {
+          "args": [
+            "//",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/"
+          },
+          "fn": "normaliseRulePath"
+        },
+        {
+          "args": [
+            "/..",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/"
+          },
+          "fn": "normaliseRulePath"
+        },
+        {
+          "args": [
+            "/a/./b//c",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/a/b/c"
+          },
+          "fn": "normaliseRulePath"
+        },
+        {
+          "args": [
+            "/a/b/..",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/a"
+          },
+          "fn": "normaliseRulePath"
+        },
+        {
+          "args": [
+            "/a/b/../../..",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/"
+          },
+          "fn": "normaliseRulePath"
+        },
+        {
+          "args": [
+            "/a/b/",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/a/b"
+          },
+          "fn": "normaliseRulePath"
+        },
+        {
+          "args": [
+            "//a",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/a"
+          },
+          "fn": "normaliseRulePath"
+        },
+        {
+          "args": [
+            "/a/../b/./c/",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/b/c"
+          },
+          "fn": "normaliseRulePath"
+        },
+        {
+          "args": [
+            "/a b/c",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/a b/c"
+          },
+          "fn": "normaliseRulePath"
+        },
+        {
+          "args": [
+            "/a/~/b",
+            "/home/u"
+          ],
+          "expect": {
+            "value": "/a/~/b"
+          },
+          "fn": "normaliseRulePath"
+        }
+      ]
+    },
+    {
+      "from": "recorded: src/pathNorm.ts (isAncestorOrSelf of a path and itself, with and without a trailing separator)",
+      "id": "path-norm.is-ancestor-or-self.same-path",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/a",
+            "/a"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isAncestorOrSelf"
+        },
+        {
+          "args": [
+            "/a/",
+            "/a/"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isAncestorOrSelf"
+        },
+        {
+          "args": [
+            "/",
+            "/"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isAncestorOrSelf"
+        },
+        {
+          "args": [
+            "",
+            ""
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isAncestorOrSelf"
+        },
+        {
+          "args": [
+            "/a/b",
+            "/a/b"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isAncestorOrSelf"
+        }
+      ]
+    },
+    {
+      "from": "recorded: src/pathNorm.ts (isAncestorOrSelf of a directory and its descendants)",
+      "id": "path-norm.is-ancestor-or-self.ancestors",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/a",
+            "/a/b"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isAncestorOrSelf"
+        },
+        {
+          "args": [
+            "/a/",
+            "/a/b"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isAncestorOrSelf"
+        },
+        {
+          "args": [
+            "/",
+            "/a"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isAncestorOrSelf"
+        },
+        {
+          "args": [
+            "/a",
+            "/a/"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isAncestorOrSelf"
+        },
+        {
+          "args": [
+            "/a",
+            "/a/b/c/d"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isAncestorOrSelf"
+        },
+        {
+          "args": [
+            "",
+            "/a"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isAncestorOrSelf"
+        }
+      ]
+    },
+    {
+      "from": "recorded: src/pathNorm.ts (isAncestorOrSelf of a sibling that shares a name prefix, a parent and unrelated paths)",
+      "id": "path-norm.is-ancestor-or-self.not-ancestors",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/a",
+            "/ab"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isAncestorOrSelf"
+        },
+        {
+          "args": [
+            "/a/b",
+            "/a"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isAncestorOrSelf"
+        },
+        {
+          "args": [
+            "/a/b",
+            "/a/bc"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isAncestorOrSelf"
+        },
+        {
+          "args": [
+            "/a",
+            "/b/a"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isAncestorOrSelf"
+        },
+        {
+          "args": [
+            "/a",
+            ""
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isAncestorOrSelf"
+        },
+        {
+          "args": [
+            "/a/b/",
+            "/a/b"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isAncestorOrSelf"
+        }
+      ]
+    }
+  ]
+}

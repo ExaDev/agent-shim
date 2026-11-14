@@ -1,0 +1,471 @@
+{
+  "cases": [
+    {
+      "from": "recorded: src/shellQuote.ts (shellQuoted of the empty string and of text needing no quoting, which is still quoted)",
+      "id": "shell-quote.plain-and-empty",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            ""
+          ],
+          "expect": {
+            "value": "''"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "abc"
+          ],
+          "expect": {
+            "value": "'abc'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "a-b_c.d"
+          ],
+          "expect": {
+            "value": "'a-b_c.d'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "/usr/bin/x"
+          ],
+          "expect": {
+            "value": "'/usr/bin/x'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "123"
+          ],
+          "expect": {
+            "value": "'123'"
+          },
+          "fn": "shellQuoted"
+        }
+      ]
+    },
+    {
+      "from": "recorded: src/shellQuote.ts (shellQuoted closes, escapes and reopens each single quote)",
+      "id": "shell-quote.single-quote",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "'"
+          ],
+          "expect": {
+            "value": "''\\'''"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "''"
+          ],
+          "expect": {
+            "value": "''\\'''\\'''"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "it's"
+          ],
+          "expect": {
+            "value": "'it'\\''s'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "'a'"
+          ],
+          "expect": {
+            "value": "''\\''a'\\'''"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "a'b'c"
+          ],
+          "expect": {
+            "value": "'a'\\''b'\\''c'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "\\'"
+          ],
+          "expect": {
+            "value": "'\\'\\'''"
+          },
+          "fn": "shellQuoted"
+        }
+      ]
+    },
+    {
+      "from": "recorded: src/shellQuote.ts (shellQuoted of spaces, a tab, a newline and a carriage return)",
+      "id": "shell-quote.whitespace",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a b"
+          ],
+          "expect": {
+            "value": "'a b'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            " "
+          ],
+          "expect": {
+            "value": "' '"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "  a  "
+          ],
+          "expect": {
+            "value": "'  a  '"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "a\tb"
+          ],
+          "expect": {
+            "value": "'a\tb'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "a\nb"
+          ],
+          "expect": {
+            "value": "'a\nb'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "\n"
+          ],
+          "expect": {
+            "value": "'\n'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "a\r\nb"
+          ],
+          "expect": {
+            "value": "'a\r\nb'"
+          },
+          "fn": "shellQuoted"
+        }
+      ]
+    },
+    {
+      "from": "recorded: src/shellQuote.ts (shellQuoted of every character a POSIX shell reads specially)",
+      "id": "shell-quote.shell-metacharacters",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "$HOME"
+          ],
+          "expect": {
+            "value": "'$HOME'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "${x}"
+          ],
+          "expect": {
+            "value": "'${x}'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "$(cmd)"
+          ],
+          "expect": {
+            "value": "'$(cmd)'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "`cmd`"
+          ],
+          "expect": {
+            "value": "'`cmd`'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "a;b"
+          ],
+          "expect": {
+            "value": "'a;b'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "a|b"
+          ],
+          "expect": {
+            "value": "'a|b'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "a&b"
+          ],
+          "expect": {
+            "value": "'a&b'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "a&&b"
+          ],
+          "expect": {
+            "value": "'a&&b'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "a>b"
+          ],
+          "expect": {
+            "value": "'a>b'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "a<b"
+          ],
+          "expect": {
+            "value": "'a<b'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "a(b)"
+          ],
+          "expect": {
+            "value": "'a(b)'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "a{b}"
+          ],
+          "expect": {
+            "value": "'a{b}'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "a*b"
+          ],
+          "expect": {
+            "value": "'a*b'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "a?b"
+          ],
+          "expect": {
+            "value": "'a?b'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "a[b]"
+          ],
+          "expect": {
+            "value": "'a[b]'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "~"
+          ],
+          "expect": {
+            "value": "'~'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "~/x"
+          ],
+          "expect": {
+            "value": "'~/x'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "!"
+          ],
+          "expect": {
+            "value": "'!'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "#c"
+          ],
+          "expect": {
+            "value": "'#c'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "%"
+          ],
+          "expect": {
+            "value": "'%'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "="
+          ],
+          "expect": {
+            "value": "'='"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "^"
+          ],
+          "expect": {
+            "value": "'^'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "a\"b"
+          ],
+          "expect": {
+            "value": "'a\"b'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "a\\b"
+          ],
+          "expect": {
+            "value": "'a\\b'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "\\\\"
+          ],
+          "expect": {
+            "value": "'\\\\'"
+          },
+          "fn": "shellQuoted"
+        }
+      ]
+    },
+    {
+      "from": "recorded: src/shellQuote.ts (shellQuoted of non-ASCII text, which is passed through)",
+      "id": "shell-quote.non-ascii",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "é"
+          ],
+          "expect": {
+            "value": "'é'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "日本"
+          ],
+          "expect": {
+            "value": "'日本'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "😀"
+          ],
+          "expect": {
+            "value": "'😀'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "-n"
+          ],
+          "expect": {
+            "value": "'-n'"
+          },
+          "fn": "shellQuoted"
+        },
+        {
+          "args": [
+            "--flag=value"
+          ],
+          "expect": {
+            "value": "'--flag=value'"
+          },
+          "fn": "shellQuoted"
+        }
+      ]
+    }
+  ]
+}

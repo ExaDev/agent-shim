@@ -8,7 +8,9 @@ import { canonicalJson } from "./canonicalJson";
 import { FileNameSchema, isFileName, isStoredName, profileFilePath, providerFilePath, requireNewProviderName, StoredNameSchema } from "./config/names";
 import { holdFrom, within } from "./elapsedWindow";
 import { buildLayoutPaths, resolveAgentShimHome } from "./paths";
+import { expandTilde, isAncestorOrSelf, normaliseRulePath } from "./pathNorm";
 import { ignoresCase, sameDirectory } from "./sameDirectory";
+import { shellQuoted } from "./shellQuote";
 
 /** The corpus root: the cases, their schemas and manifest, the runner and the fixtures the runner tests itself with. */
 const ROOT = path.join(__dirname, "..", "conformance");
@@ -67,6 +69,10 @@ const TABLE: CaseTable = {
   resolveAgentShimHome: (env, home, exists) => resolveAgentShimHome(environment(env), text(home), directoryTest(exists)),
   buildLayoutPaths: (root) => buildLayoutPaths(text(root)),
   canonicalJson: (value) => canonicalJson(value),
+  expandTilde: (value, home) => expandTilde(text(value), text(home)),
+  normaliseRulePath: (rule, home) => normaliseRulePath(text(rule), text(home)),
+  isAncestorOrSelf: (ancestor, descendant) => isAncestorOrSelf(text(ancestor), text(descendant)),
+  shellQuoted: (value) => shellQuoted(text(value)),
   within: (since, now, window) => within(numeric(since), numeric(now), numeric(window)),
   holdFrom: (since, now, window) => holdFrom(numeric(since), numeric(now), numeric(window)),
   sameDirectory: (first, second) => sameDirectory(text(first), text(second)),
