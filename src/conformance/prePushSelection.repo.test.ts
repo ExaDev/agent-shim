@@ -4,30 +4,41 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const ROOT = path.join(__dirname, "..", "..");
-const SELECTION = path.join(ROOT, "scripts", "guard-selection.sh");
+const SELECTION = path.join(ROOT, "scripts", "guard-selection.mts");
 const HOOK = fs.readFileSync(path.join(ROOT, ".husky", "pre-push"), "utf8");
 
-/** Whether the hook runs the guard for a push that changes `paths`: the exit status of the selection script, 0 meaning yes. */
-function runsTheGuard(paths: readonly string[]): boolean {
-  const result = spawnSync("sh", [SELECTION], { input: paths.map((entry) => `${entry}\n`).join(""), encoding: "utf8" });
-  expect(result.status === 0 || result.status === 1, `the selection script ended with ${String(result.status)}: ${result.stderr}`).toBe(true);
-  return result.status === 0;
+/** What the selection script says for a push that changes `paths`, with the real vitest configuration and tracked files. */
+function selection(paths: readonly string[]): string {
+  const result = spawnSync(process.execPath, [SELECTION], { cwd: ROOT, input: paths.map((entry) => `${entry}\n`).join(""), encoding: "utf8" });
+  expect(result.status, `the selection script ended with ${String(result.status)}: ${result.stderr}`).toBe(0);
+  return result.stdout.trim();
 }
 
-describe("which pushes run the kept-tests guard", () => {
-  it("does not run it for a push that changes only code the guard cannot be wrong about", () => {
-    expect(runsTheGuard(["src/usage/read.ts", "src/launcher/farm.ts", "package.json", "docs/architecture.md", "scripts/build.mts"])).toBe(false);
-    expect(runsTheGuard([])).toBe(false);
+describe("which pushes run the kept-tests guard, by the repository's own vitest configuration", () => {
+  it("does not run it for a push that changes nothing the guard reads, nor for an empty one", () => {
+    expect(selection(["docs/architecture.md", "scripts/build.mts", "docs/conformance/notes.md"])).toBe("skip");
+    expect(selection([])).toBe("skip");
   });
 
-  it("runs it for a push that changes a test file, whatever its directory, or a path under conformance/ or src/conformance/", () => {
-    for (const changed of ["src/usage/read.test.ts", "src/frontdoor/x.repo.test.ts", "scripts/x.test.ts", "conformance/README.md", "conformance/function/paths.json", "src/conformance/keptTests.ts", "src/conformance/root.ts"]) {
-      expect(runsTheGuard(["docs/architecture.md", changed]), changed).toBe(true);
+  it("runs it for a test file in any form vitest takes, deleted or not, or a path under conformance/ or src/conformance/", () => {
+    for (const changed of ["src/usage/read.test.ts", "src/frontdoor/x.repo.test.ts", "scripts/x.test.ts", "src/new.spec.ts", "src/new.test.mts", "src/was.test.ts", "conformance/README.md", "conformance/function/paths.json", "src/conformance/keptTests.ts"]) {
+      expect(selection(["docs/architecture.md", changed]), changed).toBe("run");
     }
   });
 
-  it("does not take a name that only resembles those paths", () => {
-    expect(runsTheGuard(["src/conformanceNotes.ts", "docs/conformance/notes.md", "src/usage/atest.ts", "src/usage/test.ts.bak"])).toBe(false);
+  it("runs it for the configuration, the files it runs before the tests and the files that fix versions, which it reads from the configuration", () => {
+    const config = fs.readFileSync(path.join(ROOT, "vitest.config.ts"), "utf8");
+    const setup = [...config.matchAll(/(?:setupFiles|globalSetup): \["\.\/([^"]+)"\]/gu)].map((match) => match[1] ?? "");
+    expect(setup.length).toBeGreaterThan(0);
+    for (const changed of ["vitest.config.ts", "package.json", "pnpm-lock.yaml", ...setup]) {
+      expect(selection([changed]), changed).toBe("run");
+    }
+  });
+
+  it("fails and does not read as a skip when it cannot read its input", () => {
+    const result = spawnSync(process.execPath, [SELECTION], { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", env: { ...process.env, PATH: "" } });
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe("");
   });
 });
 
@@ -48,8 +59,8 @@ describe("the pre-push hook", () => {
     }
   });
 
-  it("runs the guard once, and only when the selection script says the push changes what it can be wrong about", () => {
+  it("runs the guard once, only when the selection says run, from the changes listed without rename detection, and stops when the selection fails", () => {
     expect(HOOK.split("\n").filter((line) => line.includes('pnpm test -- "$guard"'))).toHaveLength(1);
-    expect(HOOK).toContain('if git diff --name-only "$base" HEAD | sh scripts/guard-selection.sh; then pnpm test -- "$guard"');
+    expect(HOOK).toContain('changed=$(git diff --no-renames --name-only "$base" HEAD) && selected=$(printf \'%s\\n\' "$changed" | node scripts/guard-selection.mts) && if [ "$selected" = run ]; then pnpm test -- "$guard"');
   });
 });
