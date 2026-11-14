@@ -6,6 +6,9 @@ import path from "node:path";
 
 import Ajv2020 from "ajv/dist/2020.js";
 
+/** What a string starts with where a case means its temporary directory. */
+const TMP_MARKER = "$TMP";
+
 /** The largest integer every runner holds exactly. */
 export const MAX_INTEGER = Number.MAX_SAFE_INTEGER;
 
@@ -23,7 +26,6 @@ const ascending = (list) => list.every((item, index) => index === 0 || list[inde
 
 /**
  * Which files under `root` are corpus files, by the one rule `README.md` states: `<kind>/<name>.json`, dot-names and the non-case directories skipped, anything else a problem. Paths are `/`-separated and relative, in UTF-16 code unit order directory by directory.
- * @param {string} root
  */
 export function selectFiles(root) {
   const selected = [];
@@ -47,7 +49,6 @@ export function selectFiles(root) {
 
 /**
  * The checkers of the two formats, built from the schemas in `root` with Ajv in strict mode, so a schema that is itself ambiguous fails here and not silently.
- * @param {string} root
  */
 export function validatorsFrom(root) {
   const ajv = new Ajv2020({ strict: true, allErrors: true });
@@ -75,8 +76,6 @@ function valueProblems(node, where, problems) {
 
 /**
  * Everything wrong with one file's bytes: not UTF-8, not JSON, not valid by `validate`, not canonical, or breaking a rule the schema cannot express. Empty when the file is acceptable.
- * @param {Uint8Array} bytes
- * @param {(document: unknown) => boolean} validate an Ajv validator with its `errors`
  */
 export function fileProblems(bytes, validate) {
   let text;
@@ -112,8 +111,6 @@ export function manifestProblems(bytes, validate) {
 
 /**
  * Loads the corpus under `root` and checks it: every file, the ids across files, each file's kind against its directory, and the manifest against the cases. The schemas are read from `schemas`, which is `root` for the real corpus and the real corpus for a fixture root.
- * @param {string} root
- * @param {string} [schemas]
  */
 export function loadCorpus(root, schemas = root) {
   const { caseFile, manifest } = validatorsFrom(schemas);
@@ -157,7 +154,7 @@ export function loadCorpus(root, schemas = root) {
 
 /** A decoded value: the JSON value with the encodings of `README.md` read back, `$TMP` expanded when the case has a tree. */
 function decode(value, tmp) {
-  if (typeof value === "string") return tmp !== undefined && value.startsWith("$TMP") ? tmp + value.slice(4) : value;
+  if (typeof value === "string") return tmp !== undefined && value.startsWith(TMP_MARKER) ? tmp + value.slice(TMP_MARKER.length) : value;
   if (Array.isArray(value)) return value.map((item) => decode(item, tmp));
   if (value === null || typeof value !== "object") return value;
   if ("$number" in value) return Number(value.$number);
@@ -221,7 +218,6 @@ export function runCase(entry, table) {
 
 /**
  * The cases of the corpus as registrable tests: each with its file, id, original title and `skip`. Counting what was registered, executed or skipped, against the manifest is the caller's check, made when it collects and so whatever the run later does with the tests.
- * @param {string} root
  */
 export function collect(root) {
   const { files, problems } = loadCorpus(root);

@@ -11,6 +11,18 @@
       "file": "function/paths.json",
       "match": "/home/u",
       "reason": "A made-up home directory in the original tests, passed in as an argument and never read."
+    },
+    {
+      "class": "home-path",
+      "file": "function/path-norm.json",
+      "match": "/home/u",
+      "reason": "A made-up home directory passed to the functions as an argument and never read."
+    },
+    {
+      "class": "home-path",
+      "file": "function/path-norm.json",
+      "match": "/home/x",
+      "reason": "The result of a made-up home directory joined with a parent segment and a name, never read."
     }
   ]
 }

@@ -28,6 +28,13 @@
         "ts": []
       }
     },
+    "function/path-norm.json": {
+      "cases": 8,
+      "skip": {
+        "rust": [],
+        "ts": []
+      }
+    },
     "function/paths.json": {
       "cases": 13,
       "skip": {
@@ -37,6 +44,13 @@
     },
     "function/same-directory.json": {
       "cases": 3,
+      "skip": {
+        "rust": [],
+        "ts": []
+      }
+    },
+    "function/shell-quote.json": {
+      "cases": 5,
       "skip": {
         "rust": [],
         "ts": []
