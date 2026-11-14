@@ -8,6 +8,7 @@
 
 mod error;
 mod lint_config;
+mod numbers;
 mod scrub;
 mod sha256;
 
