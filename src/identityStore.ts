@@ -19,7 +19,7 @@ import { missingIdentityRemedy, removeSettledNameRenames, requireNoInterruptedNa
 import { requireNameFreeOfUnfinishedRename } from "./identityRenameJournal";
 import { keychainCacheEntryExists, requireNoLeftoverKeychainLogin, type KeychainProbe } from "./keychainLogin";
 import { ignoresCase, sameDirectory, systemErrorCode, UNREACHABLE_CODES } from "./sameDirectory";
-import { FARM_SUFFIX_PATTERN, IDENTITY_FILE, freeIdentityId, identityIdIn, identityNameIn, readIdentityRecords, textRecordsPort, type IdentityRecord } from "./identityRecords";
+import { FARM_SUFFIX_PATTERN, IDENTITY_FILE, freeIdentityId, identityIdIn, identityNameIn, nameOfParsed, readIdentityRecords, textRecordsPort, type IdentityRecord } from "./identityRecords";
 import { liveLaunchesOn } from "./launcher/launchRecords";
 
 /** Raised by any operation that requires an identity to already exist, when it does not. `remedy` says what to do, adding the identity unless given (`identityNotFound` gives it from the state on disk). */
@@ -112,58 +112,114 @@ export function identityNameOf(paths: LayoutPaths, id: string): string | undefin
 
 /** What reads the name of the identity stored under one id (see `createIdentityNameReader`). `reads` counts the `identity.json` files it has read, so a test can tell a cached answer from a fresh one. */
 export interface IdentityNameReader {
+  /** The name, or undefined when no identity is stored under the id or its `identity.json` cannot be read: for a report that names what it can. */
   readonly nameOf: (id: string) => string | undefined;
+  /** The name, or undefined when no identity is stored under the id; throws `UnreadableIdentityNameError` when its `identity.json` is there and cannot be read or names no name, so a caller that routes by the name never takes an unreadable file for no identity. */
+  readonly requireNameOf: (id: string) => string | undefined;
   readonly reads: () => number;
   /** How many times it has read every identity's record to name an id with no `identity.json`. */
   readonly resolves: () => number;
+}
+
+/** The read failures of an `identity.json` that are the file's own (see `FILE_FAULT_CODES` in `readableConfig.ts`); any other is a failure of the moment. */
+const IDENTITY_FILE_FAULT_CODES: ReadonlySet<string> = new Set(["ENOTDIR", "EISDIR", "ELOOP", "ENAMETOOLONG", "EACCES", "EPERM"]);
+
+/** The name in the text of an `identity.json`, or unreadable when it is no JSON or names no name. */
+function nameOfParsedText(text: string): { readonly name: string } | "unreadable" {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return "unreadable";
+  }
+  const read = nameOfParsed(parsed);
+  return typeof read === "object" ? read : "unreadable";
+}
+
+/** Raised for an identity whose `identity.json` is there and cannot be read (`code`, the system's) or names no name (no code). The message names the id and the code, never the path. */
+class UnreadableIdentityNameError extends CliError {
+  readonly code: string | undefined;
+  constructor(id: string, code: string | undefined) {
+    super(code === undefined ? `the identity.json of identity id "${id}" names no identity` : `the identity.json of identity id "${id}" cannot be read (${code})`);
+    this.name = "UnreadableIdentityNameError";
+    this.code = code;
+  }
 }
 
 /**
  * Reads the name of the identity stored under an id from that id's own `identity.json` alone, and keeps it for as long as the file's size, modification time and inode stay as they were, so a long-lived process that names an identity on every event (the front door, once per usage snapshot it writes) stats one file instead of reading every identity's. A file whose name cannot be read names no identity; where there is no file, the name is what `identityNameOf` reads, which finds an identity a resync left displaced in a superseded farm, kept for as long as the identities directory keeps its inode, modification time and entry names, since a superseded farm and an identity's directory come and go as entries of it. The file is looked at every call, so a rename is seen as soon as it is written.
  */
 export function createIdentityNameReader(paths: LayoutPaths): IdentityNameReader {
-  const cached = new Map<string, { readonly mtimeMs: number; readonly size: number; readonly ino: number; readonly name: string | undefined }>();
+  // Only a name read is kept, under the file's size, modification and change times and inode: a file that could not be read is read again on the next call, and a chmod that fixes it changes its change time.
+  const cached = new Map<string, { readonly mtimeMs: number; readonly ctimeMs: number; readonly size: number; readonly ino: number; readonly name: string }>();
   const absent = new Map<string, { readonly mtimeMs: number; readonly ino: number; readonly entries: string; readonly name: string | undefined }>();
   let reads = 0;
   let resolves = 0;
+  const lookUp = (id: string): string | undefined | UnreadableIdentityNameError => {
+    if (!isStoredName(id)) {
+      return undefined;
+    }
+    const file = identityJsonPath(paths, id);
+    const stat = fs.statSync(file, { throwIfNoEntry: false });
+    if (stat === undefined) {
+      // No identity.json under the id: the identity has gone, or a resync was interrupted and its record is in a superseded farm, which the resolver reads as `identityNameOf` does. Every identity's record is read for that, so the answer is kept while the identities directory is the same directory (inode), with the same mtime and the same entry names: an entry added, removed or renamed changes the names even within one tick of the mtime. What it does not see is a file rewritten inside an entry, which no resync or rename does to a superseded farm.
+      cached.delete(id);
+      const directory = fs.statSync(paths.identitiesDir, { throwIfNoEntry: false });
+      const entries = directory === undefined ? "" : fs.readdirSync(paths.identitiesDir).sort().join("\u0000");
+      const known = absent.get(id);
+      if (directory !== undefined && known?.mtimeMs === directory.mtimeMs && known.ino === directory.ino && known.entries === entries) {
+        return known.name;
+      }
+      resolves += 1;
+      const name = identityNameOf(paths, id);
+      if (directory !== undefined) {
+        absent.set(id, { mtimeMs: directory.mtimeMs, ino: directory.ino, entries, name });
+      }
+      return name;
+    }
+    absent.delete(id);
+    const hit = cached.get(id);
+    if (hit?.mtimeMs === stat.mtimeMs && hit.ctimeMs === stat.ctimeMs && hit.size === stat.size && hit.ino === stat.ino) {
+      return hit.name;
+    }
+    reads += 1;
+    let text: string | undefined;
+    try {
+      text = nodeStoreFs.readFileUtf8(file);
+    } catch (error) {
+      cached.delete(id);
+      const code = systemErrorCode(error);
+      // A failure of the moment is the machine's, and is thrown as it is; one of the file's own is the identity's.
+      if (code === undefined || !IDENTITY_FILE_FAULT_CODES.has(code)) {
+        throw error;
+      }
+      return new UnreadableIdentityNameError(id, code);
+    }
+    const read = text === undefined ? "absent" : nameOfParsedText(text);
+    if (typeof read !== "object") {
+      cached.delete(id);
+      return read === "absent" ? undefined : new UnreadableIdentityNameError(id, undefined);
+    }
+    cached.set(id, { mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs, size: stat.size, ino: stat.ino, name: read.name });
+    return read.name;
+  };
   return {
     nameOf: (id) => {
-      if (!isStoredName(id)) {
-        return undefined;
+      const found = lookUp(id);
+      return found instanceof UnreadableIdentityNameError ? undefined : found;
+    },
+    requireNameOf: (id) => {
+      const found = lookUp(id);
+      if (found instanceof UnreadableIdentityNameError) {
+        throw found;
       }
-      const file = identityJsonPath(paths, id);
-      const stat = fs.statSync(file, { throwIfNoEntry: false });
-      if (stat === undefined) {
-        // No identity.json under the id: the identity has gone, or a resync was interrupted and its record is in a superseded farm, which the resolver reads as `identityNameOf` does. Every identity's record is read for that, so the answer is kept while the identities directory is the same directory (inode), with the same mtime and the same entry names: an entry added, removed or renamed changes the names even within one tick of the mtime. What it does not see is a file rewritten inside an entry, which no resync or rename does to a superseded farm.
-        cached.delete(id);
-        const directory = fs.statSync(paths.identitiesDir, { throwIfNoEntry: false });
-        const entries = directory === undefined ? "" : fs.readdirSync(paths.identitiesDir).sort().join("\u0000");
-        const known = absent.get(id);
-        if (directory !== undefined && known?.mtimeMs === directory.mtimeMs && known.ino === directory.ino && known.entries === entries) {
-          return known.name;
-        }
-        resolves += 1;
-        const name = identityNameOf(paths, id);
-        if (directory !== undefined) {
-          absent.set(id, { mtimeMs: directory.mtimeMs, ino: directory.ino, entries, name });
-        }
-        return name;
-      }
-      absent.delete(id);
-      const hit = cached.get(id);
-      if (hit?.mtimeMs === stat.mtimeMs && hit.size === stat.size && hit.ino === stat.ino) {
-        return hit.name;
-      }
-      reads += 1;
-      const read = textRecordsPort({ readdir: () => [], readFileUtf8: nodeStoreFs.readFileUtf8 }).readName(file);
-      const name = typeof read === "object" ? read.name : undefined;
-      cached.set(id, { mtimeMs: stat.mtimeMs, size: stat.size, ino: stat.ino, name });
-      return name;
+      return found;
     },
     reads: () => reads,
     resolves: () => resolves,
   };
 }
+
 
 /** What names the identity stored under an id, in a report of state filed by id (usage snapshots and records): its name; for an identity stored there whose name cannot be read, `unreadableIdentityLabel` of the id; and for state left under an id no identity is stored under now, `goneIdentityLabel` of the id. The records are read once, when this is called. */
 export function identityLabeller(paths: LayoutPaths): (id: string) => string {
