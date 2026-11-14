@@ -111,6 +111,35 @@ Every rule above has a negative fixture, and every negative fixture has a repair
 
 The TypeScript runner (`conformance/runner/run.mjs`, run by `src/conformance.repo.test.ts` inside `pnpm test`) is the only loader that exists, and it asserts all of it: that every invalid file is refused and its repaired twin accepted, the same for manifests and for whole corpus roots, that every valid file is accepted, the loader-selection tree, the text forms, and the real corpus against its manifest. The Rust harness (`rust/tests/agent-shim-conformance`) has no loader and asserts none of these; it executes nothing. A Rust module is ported only once the Rust loader asserts every fixture pair and the loader-selection and text-form fixtures, so that until then the corpus pins the TypeScript behaviour and nothing in Rust.
 
+## Kept tests
+
+A module whose tests moved to the corpus keeps a test only when the test is not a function of its inputs: it reads the process environment the run started with, depends on what the filesystem does with letter case, or makes files in a store. Each such test is a row here, written as the suite's own listing names it: the file relative to `src/` (relative to the repository root outside `src/`), then the title path as a case's `from` writes it (`<describe> > <test>`), then the reason. A pipe in a title is written `\|`.
+
+A file comes into scope when the `from` of some case names it or a row below names it, and stays in scope while either does. A test in a file in scope must be the source of a case or a row. A test cannot leave scope by renaming its file: the row names the old file, and a row for a test that does not exist fails the guard, so the rename has to change the row, which puts the new file in scope. Titles are matched exactly, as the listing resolves them (an `each` title is its expanded text, and a computed title is its computed text), so a title that changes between runs (one that holds a process id or a time) matches nothing and fails: the guard reports it as a test with no case and no row, and the deleted-test check reports it as deleted. Give such a test a stable title.
+
+`src/conformance/keptTests.repo.test.ts` runs the guard inside `pnpm test`. It lists the suite with vitest's own listing and fails for a row that names no test, a repeated row, a test in a file in scope with no case and no row, a test that is both a row and a case's source, and a dropped row (below) whose test exists.
+
+| file | test | reason |
+| --- | --- | --- |
+| paths.test.ts | resolveAgentShimHome > reads AGENT_SHIM_HOME from the environment | reads the process environment the run started with, which a case cannot hold |
+| paths.test.ts | resolveLayoutPaths > resolves every path under the test-scoped AGENT_SHIM_HOME root | reads the process environment the run started with, which a case cannot hold |
+| sameDirectory.test.ts | sameDirectory > is true for two spellings of a name only where the filesystem ignores case | depends on what the filesystem under the temporary directory does with letter case |
+| sameDirectory.test.ts | ignoresCase > answers what the filesystem does with a name in the directory, without leaving anything behind | depends on what the filesystem under the temporary directory does with letter case |
+| config/namesLength.test.ts | the longest name a profile, provider or identity may have > is created and removed as a configuration profile, and its worst-case temporary file can be written | makes files in the profile store, which is store behaviour and not a function of its inputs |
+| config/namesLength.test.ts | the longest name a profile, provider or identity may have > is created and removed as a provider, and its worst-case temporary file can be written | makes files in the provider store, which is store behaviour and not a function of its inputs |
+| config/namesLength.test.ts | the longest name a profile, provider or identity may have > is created as an identity, and the lock, scratch and previous entries a launch makes beside it can be made | makes files in the identity store, which is store behaviour and not a function of its inputs |
+
+## Dropped tests
+
+A test deleted without a case is a row here, in the same table form, with the reason it goes. The guard fails for a row whose test exists, so a row stays true only while the test is gone. The deleted-test check accepts a deleted test that is the source of a case or a row here, and nothing else: a kept row does not account for a deletion, since a kept row for a missing test fails the guard on its own. A test renamed, or moved to another file, is a deletion of its old identity and needs a row too, naming the new place as its reason.
+
+| file | test | reason |
+| --- | --- | --- |
+
+## The deleted-test check
+
+`scripts/deleted-tests.mts` is the `Deleted tests` job of `Required checks`, run on every pull request. It lists the suite at the base of the pull request and at its head with vitest's own listing, and fails for each test the base has and the head lacks (counted, so deleting one of two tests with one title counts) that is neither the source of a case nor a dropped row. Run locally: `node scripts/deleted-tests.mts --base <revision>`.
+
 ## Nothing real in the corpus
 
 The corpus is public. No case holds a credential, a token, an account or organisation identifier, a session identifier, a host name or a personal detail, and anything copied from a real run is replaced first by a made-up value of the same shape. `sh scripts/rust.sh xtask corpus scrub-check`, the `conformance-scrub` job of CI, searches every file under this directory for what such a value looks like. It knows shapes and not values, so a name it has no shape for is for the author and the reviewer to keep out: a person's name, an account's name, and a host name that does not end in one of the suffixes below (`my-laptop`, a machine name on its own).
