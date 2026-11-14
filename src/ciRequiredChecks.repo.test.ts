@@ -28,6 +28,22 @@ describe("ci.yml required-checks", () => {
   });
 });
 
+describe("the Rust and corpus jobs", () => {
+  /** The job ids and the names they report, which the gate and the branch's reviewers look for: cargo-deny by that name, since it is how the check enforcing the dependency allowlist is recognised. */
+  const RUST_JOBS: Readonly<Record<string, string>> = { rust: "Rust", "cargo-deny": "cargo-deny", "conformance-scrub": "conformance-scrub" };
+
+  it("are in the workflow under their names", () => {
+    for (const [id, name] of Object.entries(RUST_JOBS)) {
+      expect(workflow.jobs[id]?.name, id).toBe(name);
+    }
+  });
+
+  it("are needed by the aggregate, so a failure in one blocks the merge", () => {
+    const needs = workflow.jobs[AGGREGATE]?.needs;
+    expect(needs).toEqual(expect.arrayContaining(Object.keys(RUST_JOBS)));
+  });
+});
+
 describe("the Homebrew verification", () => {
   const WORKFLOWS_DIR = path.join(__dirname, "..", ".github", "workflows");
   const ACTIONS_DIR = path.join(__dirname, "..", ".github", "actions");

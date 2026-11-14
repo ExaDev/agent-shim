@@ -1339,11 +1339,66 @@ jobs:
             exit 1
           fi
 
+  # The Rust workspace under rust/ is built and tested by cargo, not by pnpm or turbo, so these jobs need no Node install. The toolchain is whatever rust/rust-toolchain.toml pins, so that file stays the one place that names a version, and every cargo command runs against the committed Cargo.lock through scripts/rust.sh. The job runs on every pull request in full: nothing here narrows a check by what the change touched.
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the pinned toolchain
+        working-directory: rust
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Guards, their tests, format, clippy (warnings denied), tests and the lint configuration
+        run: sh scripts/rust-checks.sh
+
+  # The deny check (bans, licences and sources) fails on any crate not allowlisted in rust/deny.toml, on a licence outside its list and on a source outside crates.io and the sibling project's repository, and a second run confines each third-party crate to the workspace crates that may use it. Advisories are left out on purpose: the database changes without any change here, so a required check that read it would turn every open pull request red at once; .github/workflows/advisories.yml runs them on a schedule and when the lock file changes. The job name contains cargo-deny on purpose: it is how a check on main's head is recognised as the one enforcing the allowlist. The tool is pinned to an exact release and installed as a prebuilt binary, so a new cargo-deny cannot change what passes without a change here.
+  cargo-deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the pinned toolchain
+        working-directory: rust
+        run: rustup toolchain install
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2
+      - name: Check the dependency allowlist
+        run: sh scripts/rust.sh deny
+      - name: Check each third-party crate stays inside the crates that may use it
+        run: sh scripts/rust.sh deny-boundaries
+      # cargo-deny cannot fail on an allowed crate nothing uses, so the allowlist is compared with the graph cargo-deny itself reports, separately.
+      - name: Check the allowlist lists exactly the dependency graph
+        run: python3 -I scripts/check-deny-allowlist.py
+      - name: Test that check against a platform-gated crate
+        run: python3 -I scripts/test_check_deny_allowlist.py
+
+  # The corpus under conformance/ is public and will hold recordings, so every file in it is searched for what a real credential, identifier, address or home-directory path looks like. The check knows shapes and not values, and the xtask tests prove it on made-up values of each shape.
+  conformance-scrub:
+    name: conformance-scrub
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the pinned toolchain
+        working-directory: rust
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Search the corpus for real-shaped values
+        run: sh scripts/rust.sh xtask corpus scrub-check
+
   # One aggregate check for merge-when-green to wait on: it passes only when every other job succeeded or was skipped (the publishing jobs skip on a pull request). A job missing from `needs` would be ignored by the merge, so `src/ciRequiredChecks.repo.test.ts` fails when this list drifts from the jobs above.
   required-checks:
     name: Required checks
     if: always()
-    needs: [lint, typecheck, test, test-macos, audit, knip, semantic-release, build-arm64, build-x64-best-effort, build-linux-x64, build-linux-arm64, build-windows-x64, build-windows-arm64, smoke-test-macos-arm64, smoke-test-macos-x64-best-effort, smoke-test-linux-x64, smoke-test-linux-arm64, smoke-test-windows-x64, smoke-test-windows-arm64, publish-npm, publish-npm-alias, publish-github-packages, release, update-tap, update-scoop, verify-tap-macos, verify-tap-macos-x64, verify-tap-linux, verify-scoop, verify-npm, verify-install-script, verify-install-script-macos-x64]
+    needs: [lint, typecheck, test, test-macos, audit, knip, rust, cargo-deny, conformance-scrub, semantic-release, build-arm64, build-x64-best-effort, build-linux-x64, build-linux-arm64, build-windows-x64, build-windows-arm64, smoke-test-macos-arm64, smoke-test-macos-x64-best-effort, smoke-test-linux-x64, smoke-test-linux-arm64, smoke-test-windows-x64, smoke-test-windows-arm64, publish-npm, publish-npm-alias, publish-github-packages, release, update-tap, update-scoop, verify-tap-macos, verify-tap-macos-x64, verify-tap-linux, verify-scoop, verify-npm, verify-install-script, verify-install-script-macos-x64]
     runs-on: ubuntu-latest
     steps:
       - name: Fail unless every job succeeded or was skipped
