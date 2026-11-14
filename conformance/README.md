@@ -136,6 +136,12 @@ A test deleted without a case is a row here, in the same table form, with the re
 | file | test | reason |
 | --- | --- | --- |
 | frontdoor/servedModelReportOrder.repo.test.ts | the one place a main-loop request's context is recorded > leaves routeOf and begin, the other members of deps and the top-level recordServing alone | renamed in the same file to "leaves routeOf, begin, the note of Claude ids, the other members of deps and the top-level recordServing alone", which also names the note of Claude ids the recorder leaves alone |
+| conformance/keptTests.test.ts | the identity of a test > is read from a from that names a test, counting the cases that name it, and a recorded from names none | reworded when the cases of one test became one account; pinned by the same describe's test of the same name without the counting |
+| conformance/keptTests.test.ts | two tests with one title > need one account each when both are deleted: one case is not enough, two cases or a case and a row are | reworded when the cases of one test became one account; pinned by the test that says a case and a row, or two rows, are needed |
+| conformance/prePushSelection.repo.test.ts | the pre-push hook > runs the guard once, and only when the selection script says the push changes what it can be wrong about | reworded when the selection became a script that reads vitest's configuration; pinned by the test that runs the guard once, only when the selection says run |
+| conformance/prePushSelection.repo.test.ts | which pushes run the kept-tests guard > does not run it for a push that changes only code the guard cannot be wrong about | reworded with the selection; pinned by the test that skips a push changing nothing the guard reads |
+| conformance/prePushSelection.repo.test.ts | which pushes run the kept-tests guard > does not take a name that only resembles those paths | moved to src/conformance/guardSelection.test.ts, where the pure rule is tested with a name that only resembles a test file or an excluded path |
+| conformance/prePushSelection.repo.test.ts | which pushes run the kept-tests guard > runs it for a push that changes a test file, whatever its directory, or a path under conformance/ or src/conformance/ | reworded with the selection; pinned by the test that runs it for a test file in any form vitest takes or a path under the two directories |
 
 ## The deleted-test check
 

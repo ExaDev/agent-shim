@@ -21,6 +21,15 @@ const CONFIG = "vitest.config.ts";
 /** The files that fix the version of vitest and of the packages that expand an `each`. */
 const VERSION_FILES = ["package.json", "pnpm-lock.yaml"];
 
+/** Mebibytes of output read from `git ls-files`: the tracked paths of a repository are a few megabytes at the most. */
+const LISTING_MEBIBYTES = 256;
+
+/** Bytes in a mebibyte. */
+const MEBIBYTE = 1_048_576;
+
+/** The most output of `git ls-files` read. */
+const LISTING_MAX_BYTES = LISTING_MEBIBYTES * MEBIBYTE;
+
 /** The directories the guard reads: the corpus and README tables, and the guard's own modules and call tables. */
 const GUARD_DIRECTORIES = ["conformance/", "src/conformance/"];
 
@@ -32,7 +41,7 @@ const ConfigModule = z.object({
 });
 const { include = configDefaults.include, exclude = configDefaults.exclude, setupFiles = [], globalSetup = [] } = ConfigModule.parse(await import(pathToFileURL(path.join(root, CONFIG)).href)).default.test;
 
-const tracked = new Set(execFileSync("git", ["-C", root, "ls-files", "-z"], { encoding: "utf8", maxBuffer: 1 << 28 }).split("\0").filter((file) => file !== ""));
+const tracked = new Set(execFileSync("git", ["-C", root, "ls-files", "-z"], { encoding: "utf8", maxBuffer: LISTING_MAX_BYTES }).split("\0").filter((file) => file !== ""));
 const isTest = testFileMatcher(include, exclude);
 const tests = new Map([...tracked].filter((file) => isTest(file)).map((file) => [file, fs.readFileSync(path.join(root, file), "utf8")]));
 const inputs = {
