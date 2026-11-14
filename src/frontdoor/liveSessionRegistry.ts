@@ -82,7 +82,15 @@ export function createLiveSessionRegistry(ports: LiveSessionRegistryPorts): Live
 
   /** Reads one file into the view under `stat`, which the caller took first: a write landing between the stat and the read leaves the view holding newer content under an older stat, which the next look reads again, never older content under a newer stat. */
   const load = (name: string, stat: FarmStat): void => {
-    known.set(name, { stat: { mtimeMs: stat.mtimeMs, sizeBytes: stat.sizeBytes }, record: readFrontDoorSessionRecord(fs, sessionsDir, name) });
+    let record: FrontDoorSession | undefined;
+    try {
+      record = readFrontDoorSessionRecord(fs, sessionsDir, name, true);
+    } catch (error) {
+      // A read that failed for the moment is kept as nothing: the file is dropped from the view, so the next lookup reads it again, and the failure is passed on.
+      known.delete(name);
+      throw error;
+    }
+    known.set(name, { stat: { mtimeMs: stat.mtimeMs, sizeBytes: stat.sizeBytes }, record });
   };
 
   /** Stats one record file, or undefined when it vanished since the listing. */
