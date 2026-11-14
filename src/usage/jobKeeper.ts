@@ -82,11 +82,17 @@ export function runJobs(ports: Readonly<JobKeeperPorts>): JobKeeperResult {
 
   const start = (name: string, identity: string, job: Job, stamp: number, detail: string): void => {
     handled[name] = stamp;
+    // Marked running only with the run it guards, cleared in the same chain however it ends, so a run that throws before it starts never leaves the job marked.
     ports.running.add(name);
     outcomes.push({ name, status: "started", detail });
+    let running: Promise<void>;
+    try {
+      running = ports.run(name, identity, job);
+    } catch (error) {
+      running = Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
     runs.push(
-      ports
-        .run(name, identity, job)
+      running
         .catch((error: unknown) => {
           ports.log(`job ${name}: failed as ${identity}: ${error instanceof Error ? error.message : String(error)}`);
         })

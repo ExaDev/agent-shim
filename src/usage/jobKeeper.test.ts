@@ -78,6 +78,16 @@ function harness(options: { readonly jobs?: readonly NamedJob[]; readonly snapsh
 }
 
 describe("runJobs, schedule jobs", () => {
+  it("leaves no job marked running when its run throws before it starts, so a later trigger runs it", async () => {
+    const h = harness({ runJob: () => { throw new Error("EMFILE: too many open files"); } });
+    h.run(BEFORE_ANCHOR);
+    const fired = h.run(AFTER_ANCHOR);
+    expect(fired.outcomes[0]).toMatchObject({ status: "started" });
+    await fired.settled;
+    expect(h.running.size).toBe(0);
+    expect(h.logs.some((line) => line.includes("EMFILE"))).toBe(true);
+  });
+
   it("arms on first sight, then runs once when an anchor falls", async () => {
     const keeper = harness();
     expect(keeper.run(BEFORE_ANCHOR).outcomes[0]).toMatchObject({ name: "digest", status: "armed" });
