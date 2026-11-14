@@ -1,0 +1,186 @@
+name: Claude Code versions
+
+# Keeps the goal, compaction and turn verbs' verified versions (`RC_SESSION_COMMAND_VERIFIED_VERSIONS`) up with Claude Code's releases: each run verifies, with `pnpm verify:claude-code verify`, every published release newer than the newest verified one, then opens a pull request adding the releases that passed and an issue naming what differed for each that did not. A pull request that changes the verification, the lab or the list verifies the newest listed release, which a change to any of them must keep passing. A dispatch with a version verifies that version alone and proposes nothing.
+on:
+  schedule:
+    - cron: "37 5 * * *"
+  pull_request:
+    paths:
+      - .github/workflows/claude-code-versions.yml
+      - scripts/verify-claude-code*
+      - scripts/rc-self-host-lab*
+      - scripts/rc-mock-provider.mts
+      - src/supervise/verifiedVersions.ts
+  workflow_dispatch:
+    inputs:
+      version:
+        description: A Claude Code version to verify and report on, proposing nothing; empty verifies and proposes the releases newer than the newest verified one, as the schedule does.
+        required: false
+        default: ""
+
+# One run at a time per ref, never cancelled: a scheduled run may be part way through opening its pull request or issues.
+concurrency:
+  group: claude-code-versions-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  candidates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      versions: ${{ steps.versions.outputs.versions }}
+      propose: ${{ steps.versions.outputs.propose }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-and-run
+        with:
+          task: claude-code-candidates
+          cache-turbo: "false"
+          command: |
+            if [ "$EVENT" = pull_request ]; then
+              pnpm --silent verify:claude-code newest > "$RUNNER_TEMP/versions.json"
+            elif [ -n "$REQUESTED" ]; then
+              jq -cn --arg version "$REQUESTED" '[$version]' > "$RUNNER_TEMP/versions.json"
+            else
+              pnpm --silent verify:claude-code candidates > "$RUNNER_TEMP/versions.json"
+            fi
+        env:
+          EVENT: ${{ github.event_name }}
+          REQUESTED: ${{ inputs.version }}
+      - id: versions
+        run: |
+          echo "versions=$(cat "$RUNNER_TEMP/versions.json")" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT" = schedule ] || { [ "$EVENT" = workflow_dispatch ] && [ -z "$REQUESTED" ]; }; then
+            echo "propose=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "propose=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Versions to verify: $(cat "$RUNNER_TEMP/versions.json")" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          EVENT: ${{ github.event_name }}
+          REQUESTED: ${{ inputs.version }}
+
+  verify:
+    needs: candidates
+    if: needs.candidates.outputs.versions != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ${{ fromJSON(needs.candidates.outputs.versions) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ matrix.version }}
+    steps:
+      - uses: actions/checkout@v7
+      # The lab runs its CLI and mock provider in tmux and checks their sockets with lsof; each is installed only where the runner image lacks it.
+      - name: Install tmux and lsof where missing
+        run: |
+          if ! command -v tmux >/dev/null || ! command -v lsof >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y tmux lsof
+          fi
+      - uses: ./.github/actions/setup-and-run
+        with:
+          task: claude-code-verify
+          cache-turbo: "false"
+          command: |
+            mkdir -p "$RUNNER_TEMP/report"
+            set +e
+            pnpm --silent verify:claude-code verify "$VERSION" --dir "$RUNNER_TEMP/verify-claude-code" 2>&1 | tee "$RUNNER_TEMP/report/$VERSION.txt"
+            echo "${PIPESTATUS[0]}" > "$RUNNER_TEMP/report/$VERSION.status"
+      - name: Summarise
+        run: |
+          {
+            echo "### Claude Code $VERSION"
+            echo '```'
+            grep -E '^(pass|DIFFERS|Claude Code|verify-claude-code)' "$RUNNER_TEMP/report/$VERSION.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: ./.github/actions/upload-artifact-retry
+        with:
+          name: claude-code-${{ matrix.version }}
+          path: ${{ runner.temp }}/report/
+          retention-days: 7
+      - name: Pass only when every check passed
+        run: test "$(cat "$RUNNER_TEMP/report/$VERSION.status")" = 0
+
+  propose:
+    needs: [candidates, verify]
+    if: always() && needs.candidates.outputs.propose == 'true' && needs.candidates.outputs.versions != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # Pushing the pull request's branch, opening it and the issues, and dispatching CI on the branch: a push made with this token starts no workflow of its own.
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: claude-code-*
+          path: ${{ runner.temp }}/report
+          merge-multiple: true
+      - uses: ./.github/actions/setup-and-run
+        with:
+          task: claude-code-propose
+          cache-turbo: "false"
+          github-token: ${{ github.token }}
+          command: |
+            export GH_TOKEN="$GITHUB_TOKEN"
+            run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            passed=""
+            for version in $(jq -r '.[]' <<< "$VERSIONS"); do
+              report="$RUNNER_TEMP/report/$version"
+              if [ -f "$report.status" ] && [ "$(cat "$report.status")" = 0 ]; then
+                passed="$passed $version"
+                continue
+              fi
+              title="Claude Code $version differs from the verified versions"
+              if [ -n "$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[].number')" ]; then
+                echo "an open issue already reports $version"
+                continue
+              fi
+              {
+                echo "\`pnpm verify:claude-code verify $version\` did not pass, so the goal, compaction and turn verbs stay refused on it ([run]($run_url))."
+                echo
+                echo '```'
+                if [ -f "$report.txt" ]; then
+                  grep -E '^(DIFFERS|Claude Code|verify-claude-code)' "$report.txt"
+                else
+                  echo "the verification job left no report"
+                fi
+                echo '```'
+              } > "$RUNNER_TEMP/issue.md"
+              gh issue create --title "$title" --body-file "$RUNNER_TEMP/issue.md"
+            done
+            if [ -z "$passed" ]; then
+              exit 0
+            fi
+            newest=$(tr ' ' '\n' <<< "$passed" | tail -n 1)
+            branch="claude-code-verified/$newest"
+            if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+              echo "$branch already exists"
+              exit 0
+            fi
+            pnpm --silent verify:claude-code record $passed
+            git switch -c "$branch"
+            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "feat(rc): verify the goal, compaction and turn verbs on Claude Code$passed" -- src/supervise/verifiedVersions.ts docs/rc-slash-commands.md
+            git push origin "$branch"
+            {
+              echo "\`pnpm verify:claude-code verify\` passed every check on Claude Code$passed on the launched, supervised and self-hosted routes ([run]($run_url)), so this adds them to \`RC_SESSION_COMMAND_VERIFIED_VERSIONS\`."
+              echo
+              echo "A push made with the workflow's token starts no workflow, so CI was dispatched on the branch; its checks appear here when it finishes."
+            } > "$RUNNER_TEMP/pr.md"
+            gh pr create --base main --head "$branch" --title "feat(rc): verify the goal, compaction and turn verbs on Claude Code$passed" --body-file "$RUNNER_TEMP/pr.md"
+            gh workflow run ci.yml --ref "$branch"
+        env:
+          VERSIONS: ${{ needs.candidates.outputs.versions }}
