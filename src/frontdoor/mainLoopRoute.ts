@@ -4,7 +4,7 @@ import { Readable } from "node:stream";
 import { HTTP_STATUS } from "../codex/http";
 import type { RouteResolution, ServedModelReport } from "./pipeline";
 import { RequestClassSchema, type RequestClass } from "../usage/schema";
-import { AUTO_MODEL } from "../models/reservedModelNames";
+import { ANTHROPIC_ROUTE_NAME, AUTO_MODEL } from "../models/reservedModelNames";
 import { PROVIDER_PATH_PREFIX, internalHeaderValue, parseProviderPath, type RoutedRequest } from "./route";
 import { abandonBody } from "./cappedBody";
 import { declaredLength, withoutContentLength } from "./contentLength";
@@ -267,8 +267,6 @@ function servedProviderOf(url: string): string | undefined {
   return parseProviderPath(new URL(url, "http://127.0.0.1").pathname)?.provider;
 }
 
-/** The provider part that names the Anthropic route in a qualified name, unless a provider file of that name claims it. */
-export const ANTHROPIC_ROUTE_NAME = "anthropic";
 /** The prefix by which a person selects an Anthropic model by name once their session is on a provider: `/model anthropic/claude-sonnet-5-5`. */
 export const ANTHROPIC_PREFIX = `${ANTHROPIC_ROUTE_NAME}/`;
 
