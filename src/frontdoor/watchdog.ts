@@ -3,6 +3,7 @@ import { Worker } from "node:worker_threads";
 import { FRONTDOOR_PROBE_ATTEMPTS } from "./ensure";
 import { processorShare, type MachineLoadReading } from "./machineLoad";
 import { PROBE_TIMEOUT_MS } from "./probe";
+import { keepTicking } from "../keepTicking";
 
 /**
  * How long the door's main loop may go without a beat before the watchdog ends the process: twice the longest a launcher waits on a door before it calls it unresponsive (its probes, in turn, each bounded by the probe's deadline). A launcher that still counts a door as merely busy has therefore never been acted on by the door's own watchdog, and a loop that is slow but serving beats long before this.
@@ -335,9 +336,9 @@ export function startThreadWatchdog(params: Readonly<ThreadWatchdogParams>): Doo
     workerData: { shared, boundMs: params.boundMs, checkEveryMs: params.checkEveryMs, pauseWaitMs: params.pauseWaitMs, stateFile: params.stateFile, ownPid: params.ownPid, action: params.action, logFile: params.logFile, respawn: params.respawn, respawnGeneration: params.respawnGeneration, respawnMaxGeneration: params.respawnMaxGeneration, cooldownStepMs: params.cooldownStepMs, cooldownCapMs: params.cooldownCapMs, startLockFile: params.startLockFile, ...RESPAWN_ENV_NAMES, nativeSample: params.nativeSample, machineLoad: params.machineLoad },
   });
   worker.unref();
-  const beat = setInterval(() => {
+  const beat = setInterval(keepTicking("watchdog beat", () => {
     Atomics.add(counter, 0, 1);
-  }, params.checkEveryMs);
+  }, params.onReport), params.checkEveryMs);
   beat.unref();
   worker.on("message", (message: unknown) => {
     if (typeof message === "object" && message !== null && "message" in message && typeof message.message === "string") {

@@ -55,7 +55,7 @@ const RAW_OK: readonly RawAllowance[] = [
   { file: "frontdoor/providerReads.ts", expression: "claudeNameTier(requested)", sites: 3, why: "one of the fixed tier names" },
   { file: "providerCatalogue.ts", expression: "{ redirected, unauthorised: refusedCandidates === failedCandidates }", sites: 1, why: "the error constructor's flags, two booleans the fetch tracked and no text" },
   { file: "providerCatalogue.ts", expression: 'outcomes.join("; ")', sites: 1, why: "outcomes the fetch built from redacted addresses, status codes and the door's own error text, never a body a server sent" },
-  { file: "catalogueKeeper.ts", expression: "catalogueReadFault(error)", sites: 1, why: "the class or code of a login file's read failure, which names no path" },
+  { file: "catalogueKeeper.ts", expression: "catalogueReadFault(error)", sites: 2, why: "the class or code of a login file's, or of the providers listing's, read failure, which names no path" },
   { file: "catalogueKeeper.ts", expression: "fault", sites: 1, why: "the class or code of a stored file's read failure, which names no path", declaredBy: /catalogueReadFault\(/ },
   { file: "catalogueKeeper.ts", expression: "error.message", sites: 2, why: "the message of an error the door's own refresh raised" },
   { file: "catalogueKeeper.ts", expression: "String(error)", sites: 2, why: "an error the door's own refresh raised" },

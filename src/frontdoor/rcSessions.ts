@@ -11,6 +11,7 @@ import type { RcStreamEnvelope } from "./rcSchemas";
 import type { FrontDoorRoute, RoutedResponse } from "./route";
 import type { RcObservedCredential } from "./rcWrites";
 import { ownEntry } from "../ownEntry";
+import { keepTicking } from "../keepTicking";
 
 /**
  * Remote Control session tracking: the record of the `cse_` sessions whose traffic crosses the door's terminated API-host session, and of the control requests awaiting an answer inside them. The client-half writes themselves (the prompt inject, the `control_response` answer, and every client-originated control request) live in `rcWrites.ts`, built on the observed credential this tracker holds.
@@ -245,6 +246,8 @@ export interface RcSessionTrackerDeps {
   readonly onTransition?: (transition: RcSessionTransition) => void;
   /** Told when the tracker closes, so whatever its transitions feed stops waiting for more: the door's session event log ends its followers here. */
   readonly onClose?: () => void;
+  /** Where a failed sweep of idle sessions is logged; absent, the sweep's failure is dropped and the next sweep still runs. */
+  readonly log?: (line: string) => void;
 }
 
 /** The live record of observed Remote Control sessions. */
@@ -587,7 +590,7 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
     }
   };
   // Every read accessor sweeps first, so what it returns is always exact however long the timer waits; the timer is what bounds memory between reads and what tells the transition sink of a session expiry nobody read.
-  const timer = setInterval(sweep, deps.idleMs);
+  const timer = setInterval(keepTicking("rc session sweep", sweep, deps.log), deps.idleMs);
   timer.unref();
 
   /** Begins describing one session. Only for an id the tracker does not hold: an entry is never replaced, so a session appears once and every appearance is matched by one ending. */
