@@ -70,7 +70,7 @@ describe("the Homebrew install step", () => {
   });
 
   /** Runs the step against a fake brew; `tapPresent` says whether the tap directory exists afterwards. */
-  function run(env: Readonly<Record<string, string>>, tap: "complete" | "absent" | "no-commit" | "no-formula" = "complete"): { readonly status: number | null; readonly output: string; readonly calls: string } {
+  function run(env: Readonly<Record<string, string>>, tap: "complete" | "absent" | "no-commit" | "no-formula" = "complete", installArgs: readonly [string, string] = ["ExaDev/agent-shim", "ExaDev/agent-shim/agent-shim"]): { readonly status: number | null; readonly output: string; readonly calls: string } {
     const world = fs.mkdtempSync(path.join(dir, "run-"));
     const bin = fakeBrew(world);
     const tapDir = path.join(world, "tap");
@@ -94,7 +94,8 @@ describe("the Homebrew install step", () => {
     const prefix = path.join(world, "prefix");
     fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
     fs.writeFileSync(path.join(prefix, "bin", "agent-shim"), '#!/bin/sh\nif [ "$FAKE_REPORTS" = crash ]; then echo "segfault" >&2; exit 139; fi\nif [ -n "$FAKE_WARNING" ]; then echo "$FAKE_WARNING" >&2; fi\necho "${FAKE_REPORTS-$FAKE_INSTALLED}"\n', { mode: 0o755 });
-    const result = spawnSync("bash", [SCRIPT, "ExaDev/agent-shim", "ExaDev/agent-shim/agent-shim"], {
+    fs.writeFileSync(path.join(prefix, "bin", "tmux"), "#!/bin/sh\n", { mode: 0o755 });
+    const result = spawnSync("bash", [SCRIPT, ...installArgs], {
       encoding: "utf8",
       env: { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`, FAKE_BREW_CALLS: calls, FAKE_TAP_DIR: tapDir, FAKE_PREFIX: prefix, RELEASE_TAG: `v${EXPECTED}`, ...env },
     });
@@ -177,6 +178,21 @@ describe("the Homebrew install step", () => {
     expect(missing.status).not.toBe(0);
     const bare = run({ RELEASE_TAG: EXPECTED, FAKE_INSTALLED: EXPECTED });
     expect(bare.status).toBe(0);
+  });
+
+  it("installs a formula from homebrew/core with no tap and no released version, and passes when brew lists it and its binary is in place", () => {
+    const result = run({ FAKE_INSTALLED: EXPECTED, RELEASE_TAG: "" }, "complete", ["", "tmux"]);
+    expect(result.status).toBe(0);
+    expect(result.calls).not.toContain("tap");
+    expect(result.calls).toContain("install tmux");
+    expect(result.output).toContain("tmux is installed.");
+  });
+
+  it("fails a formula with no tap that brew does not list, or whose binary is not in brew's bin directory", () => {
+    expect(run({ RELEASE_TAG: "" }, "complete", ["", "tmux"]).status).toBe(1);
+    const unlinked = run({ FAKE_INSTALLED: EXPECTED, RELEASE_TAG: "" }, "complete", ["", "other"]);
+    expect(unlinked.status).toBe(1);
+    expect(unlinked.output).toContain("expected other to be installed");
   });
 
   it("fails an install that exited 0 but left a binary reporting another version, which brew's status cannot show", () => {

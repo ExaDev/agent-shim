@@ -1,8 +1,21 @@
-name: Tap and install the Homebrew formula
-description: Taps ExaDev/agent-shim and installs the formula with brew's output kept off the runner's stdout pipe. A brew that dies of a broken pipe is tolerated only on the signatures the failing runs showed, and every path ends in the check that the formula is installed at the released version and the installed binary reports it. The calling job sets RELEASE_TAG, the released tag (vX.Y.Z), as its other verification steps read it.
+name: Tap and install a Homebrew formula
+description: Taps ExaDev/agent-shim and installs the formula with brew's output kept off the runner's stdout pipe, or, with an empty tap, installs a homebrew/core formula. A brew that dies of a broken pipe is tolerated only on the signatures the failing runs showed. With the default tap every path ends in the check that the formula is installed at the released version and the installed binary reports it, and the calling job sets RELEASE_TAG, the released tag (vX.Y.Z), as its other verification steps read it; without a tap the check is that brew lists the formula and its binary is in brew's bin directory.
+
+inputs:
+  tap:
+    description: The tap to add before installing. Empty for a formula in homebrew/core.
+    required: false
+    default: ExaDev/agent-shim
+  formula:
+    description: The formula to install.
+    required: false
+    default: ExaDev/agent-shim/agent-shim
 
 runs:
   using: composite
   steps:
     - shell: bash
-      run: ${{ github.action_path }}/install.sh ExaDev/agent-shim ExaDev/agent-shim/agent-shim
+      run: ${{ github.action_path }}/install.sh "$TAP" "$FORMULA"
+      env:
+        TAP: ${{ inputs.tap }}
+        FORMULA: ${{ inputs.formula }}

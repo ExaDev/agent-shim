@@ -2,16 +2,20 @@
 # Taps ExaDev/agent-shim and installs the formula, and judges the install by what it produced: the job passes only when the formula is installed at the expected version and the installed binary reports that version, whatever brew's exit status was, and a brew failure other than the broken pipe fails with its output.
 #
 # Usage: install.sh <tap> <formula>        (the released tag, vX.Y.Z, is read from RELEASE_TAG, the variable every verification job already sets)
+#        install.sh "" <formula>           (a formula from homebrew/core, with no tap and no released version to compare: the step passes when brew lists the formula and its binary is in brew's bin directory)
 #
 # brew's output goes to a file, never through the runner's stdout pipe, because a pipe has closed under it (a Ruby `Broken pipe` out of `brew install` or `brew tap`, or exit 141 out of `brew tap`) on Linux arm runners. A failure with that signature is tolerated when what the command was for is in place (see `broken_pipe_tolerated`), and every path then ends in the check of the installed version. Any other failure fails the step with brew's own output.
 set -euo pipefail
 
 tap="$1"
 formula="$2"
-# The one place the bare version is derived from the released tag.
-expected="${RELEASE_TAG:?RELEASE_TAG must hold the released tag (vX.Y.Z)}"
-expected="${expected#v}"
 name="${formula##*/}"
+# The one place the bare version is derived from the released tag, read before any brew command so a missing tag fails at once; a formula with no tap has no released version to compare with.
+expected=""
+if [ -n "$tap" ]; then
+  expected="${RELEASE_TAG:?RELEASE_TAG must hold the released tag (vX.Y.Z)}"
+  expected="${expected#v}"
+fi
 log="$(mktemp)"
 trap 'rm -f "$log"' EXIT
 
@@ -65,7 +69,9 @@ run_brew() {
 }
 
 status=0
-run_brew tap "$tap" || status=$?
+if [ -n "$tap" ]; then
+  run_brew tap "$tap" || status=$?
+fi
 if [ "$status" -ne 0 ]; then
   if ! broken_pipe_tolerated "$status" yes tap_in_place "Broken pipe"; then
     echo "error: brew tap $tap failed with status $status" >&2
@@ -83,6 +89,16 @@ if [ "$status" -ne 0 ]; then
     exit "$status"
   fi
   echo "brew install ended with a broken pipe (status $status): judging the install by what it produced."
+fi
+
+# A formula with no tap has no released version to compare with: it passes when brew lists it and its binary is in place.
+if [ -z "$tap" ]; then
+  if [ -z "$(brew list --versions "$name" 2>/dev/null || true)" ] || [ ! -x "$(brew --prefix)/bin/$name" ]; then
+    echo "error: expected $name to be installed in $(brew --prefix)/bin" >&2
+    exit 1
+  fi
+  echo "$name is installed."
+  exit 0
 fi
 
 # Whatever brew said, the job passes only when the formula is installed at the released version and the installed binary reports it.
