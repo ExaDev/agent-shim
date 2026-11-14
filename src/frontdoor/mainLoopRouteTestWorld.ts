@@ -198,7 +198,7 @@ export interface World {
 }
 
 /** The ports the door reads the models the providers serve through. */
-export type ModelPorts = Readonly<Pick<Parameters<typeof createProviderRouteResolver>[0], "targets" | "catalogueModelsOf" | "catalogueFetch" | "selectorState" | "routeOverrides" | "identityNameOf" | "accountMoves">>;
+export type ModelPorts = Readonly<Pick<Parameters<typeof createProviderRouteResolver>[0], "targets" | "catalogueModelsOf" | "catalogueFetch" | "selectorState" | "routeOverrides" | "identityNameOf" | "accountMoves" | "models" | "usageSnapshotOf">>;
 
 /** A door serving an `http` provider `z` (whose tier environment maps haiku) and a `codex` provider `cx`, with the usage middleware recording into `records`. */
 export async function startWorld(

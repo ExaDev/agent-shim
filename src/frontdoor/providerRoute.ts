@@ -17,6 +17,7 @@ import { createAntigravityRouteMount } from "./antigravityMount";
 import { CONNECT_INTERCEPT_HOST, HTTPS_PORT } from "./connect";
 import { restoreCredentials } from "./custody";
 import { createPassthroughRoute } from "./passthrough";
+import { refusingLocalStateFaults } from "./localStateFault";
 import type { RouteResolution, ServedModelReport } from "./pipeline";
 import { evaluateWhen, referencesFact, type ConditionContext } from "../resolve/conditions";
 import { quotaFactsOf } from "../usage/quotaFacts";
@@ -794,7 +795,7 @@ export function createProviderRouteResolver(deps: {
   /** The login the Anthropic route uses for a session, as the context records it: the identity whose login it is, by the directory id its header carries (a rename leaves it true), or the launch's own. */
   const loginOf = (session: RoutedRequest["session"]): string => (session.identity === undefined ? "the launch's login" : `identity ${session.identity} login`);
 
-  return followingMainLoop(
+  return refusingLocalStateFaults(followingMainLoop(
     async (request) => {
       // The first scan reads the body as the client sent it; a later one reads a target's rewrite, which is not what the session asked for.
       let requestedModel: string | undefined;
@@ -819,7 +820,7 @@ export function createProviderRouteResolver(deps: {
       return { ...resolution, servedModelReport: report, ...(requestedModel === undefined ? {} : { requestedModel }), ...(served === undefined ? {} : { servedModel: served.model }) };
     },
     { record: deps.mainLoopRoutes, providerMapping, loginOf, definesProvider, rename: { model: rename, bodyLimitBytes: messagesBodyLimitBytes } },
-  );
+  ), deps.log);
 }
 
 /** The credential headers one resolved provider credential becomes on the wire, in the form Claude Code itself gives that target: a bearer or OAuth token as `Authorization`, an API key as `x-api-key`. */
