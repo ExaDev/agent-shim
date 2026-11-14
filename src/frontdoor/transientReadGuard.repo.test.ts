@@ -34,7 +34,7 @@ function catchesNotPassingOn(module: string, source: string): readonly string[] 
       const tryText = ts.isTryStatement(node.parent) ? node.parent.tryBlock.getText(file) : "";
       // A try that parses text already read, and reads nothing itself, meets no read failure.
       const parsesOnly = tryText.includes("JSON.parse(") && !/\b(readFileUtf8|readFileSync|readdir|readdirSync|statSync|lstat|lstatSync|stat|readConfigFile|fileRevision)\(/u.test(tryText);
-      // A catch that throws the error it caught again passes on every failure it does not handle itself, a failure of the moment included; what it handles is held by fileFaults.repo.test.ts, which finds a file-fault code named by hand.
+      // A catch that throws the error it caught again passes on every failure it does not handle itself, a failure of the moment included. What it handles before the throw this predicate does not read: a file-fault code it names by hand is found by fileFaults.repo.test.ts.
       const caught = node.variableDeclaration?.name.getText(file);
       const rethrows = caught !== undefined && new RegExp(`\\bthrow ${caught}\\b`, "u").test(node.block.getText(file));
       if (!parsesOnly && !rethrows) found.push(`${module} ${name}`);
