@@ -78,4 +78,27 @@ describe("the routing setting", () => {
       spy.mockRestore();
     }
   });
+
+  it("keeps the setting last read through a read of a changed file that fails for the moment, and reads the file again at the next request", () => {
+    const paths = buildLayoutPaths(root);
+    const read = createRoutingSettingReader(paths);
+    writeRoutingSetting(paths, withRoutingChoice(NO_ROUTING_SETTING, { kind: "global" }, { viaHeadroom: true, immediately: false, nowMs: 0 }));
+    expect(read().global).toEqual({ viaHeadroom: true });
+    writeRoutingSetting(paths, withRoutingChoice(NO_ROUTING_SETTING, { kind: "session", sessionId: "s" }, { viaHeadroom: false, immediately: false, nowMs: 0 }));
+    const realRead = fs.readFileSync.bind(fs);
+    let failing = true;
+    const failingRead = (target: fs.PathOrFileDescriptor, encoding: BufferEncoding): string => {
+      if (failing && target === paths.headroomRoutingFile) throw errorWithCode("EMFILE: too many open files", "EMFILE");
+      return realRead(target, encoding);
+    };
+    // `readFileSync` is overloaded and a mock must take its whole type, which no one-signature function has; the setting is read as text only.
+    const spy = vi.spyOn(fs, "readFileSync").mockImplementation(failingRead as typeof fs.readFileSync);
+    try {
+      expect(read().global).toEqual({ viaHeadroom: true });
+      failing = false;
+      expect(read()).toEqual({ schemaVersion: 1, sessions: { s: { viaHeadroom: false } } });
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });

@@ -140,13 +140,15 @@ describe("what the boundary says, by where the fault is", () => {
     }
   }, TIMEOUT_MS);
 
-  it.each(["EROFS", "EACCES"])("answers a %s writing a session's move request as the door's own 500, never as a read of the configuration", async (code) => {
-    const world = await startWorld(undefined, HTTP_STATUS.ok, MODELS, undefined, undefined, { accountMoves: async () => await Promise.reject(errorWithCode(`${code}: no space, write '${PROVIDERS_DIR}/../moves/s-1.json'`, code)) });
+  it.each([["EROFS", "read-only file system"], ["EACCES", "permission denied"]])("answers a %s writing a session's move request as the door's own 500, naming the relaunch, never as a read of the configuration", async (code, text) => {
+    const world = await startWorld(undefined, HTTP_STATUS.ok, MODELS, undefined, undefined, { accountMoves: async () => await Promise.reject(errorWithCode(`${code}: ${text}, open '${PROVIDERS_DIR}/../moves/s-1.json'`, code)) });
     try {
       const answered = await send(world, { model: "acct:work/opus", requestClass: "main", identity: "id-me" });
       expect(answered.status, answered.text).toBe(HTTP_STATUS.internalServerError);
       expect(answered.text).toContain(code);
       expect(answered.text).toContain("move this session");
+      expect(answered.text).toContain("start it there with: claude @work --resume");
+      expect(answered.text).not.toContain("try the request again");
       expect(answered.text).not.toContain("local configuration");
       expect(answered.text).not.toContain(PROVIDERS_DIR);
     } finally {
