@@ -113,7 +113,18 @@ describe("what the boundary says, by where the fault is", () => {
     }
   }, TIMEOUT_MS);
 
-  it.each(["ENOSPC", "EROFS", "EACCES"])("answers a %s writing a session's move request as the door's own 500, never as a read of the configuration", async (code) => {
+  it.each(["EMFILE", "ENOSPC"])("answers a session's move request that failed with %s, a failure of the moment, as retryable", async (code) => {
+    const world = await startWorld(undefined, HTTP_STATUS.ok, MODELS, undefined, undefined, { accountMoves: async () => await Promise.reject(errorWithCode(`${code}: failed`, code)) });
+    try {
+      const answered = await send(world, { model: "acct:work/opus", requestClass: "main", identity: "id-me" });
+      expect(answered.status, answered.text).toBe(HTTP_STATUS.serviceUnavailable);
+      expect(answered.text).toContain(code);
+    } finally {
+      await world.close();
+    }
+  }, TIMEOUT_MS);
+
+  it.each(["EROFS", "EACCES"])("answers a %s writing a session's move request as the door's own 500, never as a read of the configuration", async (code) => {
     const world = await startWorld(undefined, HTTP_STATUS.ok, MODELS, undefined, undefined, { accountMoves: async () => await Promise.reject(errorWithCode(`${code}: no space, write '${PROVIDERS_DIR}/../moves/s-1.json'`, code)) });
     try {
       const answered = await send(world, { model: "acct:work/opus", requestClass: "main", identity: "id-me" });

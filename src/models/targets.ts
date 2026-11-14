@@ -6,7 +6,7 @@ import { providerModelRows } from "../launcher/modelPicker";
 import type { LayoutPaths } from "../paths";
 import { isHttpProvider } from "../config/schema";
 import { catalogueMatchesSettings, parseCatalogueCache, parseCatalogueSettings } from "../providerCatalogue";
-import { StoredCatalogue, TolerantReader, skipUnreadableCatalogue } from "../storedCatalogue";
+import { StoredCatalogue, TolerantReader, skipUnreadableCatalogueUnlessTransient } from "../storedCatalogue";
 import { listProviders } from "../providersStore";
 import { realFarmFs, realFsPort, realIsProcessAlive } from "../realPorts";
 
@@ -18,12 +18,14 @@ export interface ProviderModel {
 
 /** Every model the defined providers offer, from the same rows a launch's /model list is built from: tier models, aliases, declared picker models and the fetched catalogues. A provider whose stored catalogue files cannot be read lists the models its own settings name and none from a catalogue, and no other provider is affected. */
 export function providerModels(paths: Parameters<typeof listProviders>[0]): readonly ProviderModel[] {
-  const door = readFrontDoorState(realFarmFs, paths.frontdoorStateFile);
+  // The door's own files are read so that a read that failed for the moment is passed on (the door answers its request as retryable), never taken for no door.
+  const door = readFrontDoorState(realFarmFs, paths.frontdoorStateFile, true);
   const recordedPid = door?.port === undefined ? undefined : door.supervisorPid;
   const supervisorPid = recordedPid !== undefined && realIsProcessAlive(recordedPid) ? recordedPid : undefined;
-  const doorRecord = supervisorPid === undefined ? undefined : readFrontDoorCodexRecord(realFarmFs, paths.frontdoorDir, supervisorPid);
+  const doorRecord = supervisorPid === undefined ? undefined : readFrontDoorCodexRecord(realFarmFs, paths.frontdoorDir, supervisorPid, true);
   const doorHome = doorRecord?.codexHome;
-  const reader = new TolerantReader((file) => realFsPort.readFileUtf8(file), skipUnreadableCatalogue);
+  // A stored catalogue that cannot be read is skipped, so its provider offers its tier models alone; one whose read failed for the moment is passed on rather than read as no catalogue, so a family's targets never narrow for a request on a failure of the moment.
+  const reader = new TolerantReader((file) => realFsPort.readFileUtf8(file), skipUnreadableCatalogueUnlessTransient);
   const files = new StoredCatalogue(paths, reader);
   return listProviders(paths).flatMap((entry) => {
     if (entry.provider.kind === "codex" && supervisorPid !== undefined && doorRecord === undefined) return [];

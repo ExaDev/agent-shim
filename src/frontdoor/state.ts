@@ -4,6 +4,7 @@ import { z } from "zod";
 import { ModelsConfigSchema, type ModelsConfig } from "../config/schema";
 import type { HeadroomFs } from "../headroom/state";
 import { MAX_TCP_PORT } from "../baseUrlDial";
+import { isTransientReadError } from "../readableConfig";
 
 /**
  * The launcher-to-door wire protocol this release speaks: the headers a launch's child presents, the capability registry's record format, and the routes. Bump it when a change would stop a door of this release serving launches made by an older one, or an older door serving this release's launches.
@@ -116,12 +117,15 @@ export function writeFrontDoorCodexHome(fs: HeadroomFs, frontdoorDir: string, pi
   fs.writeFilePrivate(path.join(directory, `${String(pid)}.json`), `${JSON.stringify({ codexHome, generation })}\n`);
 }
 
-/** Reads the recorded Codex home and generation for one supervisor: none when it is absent, malformed or cannot be read, like the state file beside it (the model listing every request may ask for reads it, and one unreadable record must not fail them). */
-export function readFrontDoorCodexRecord(fs: Pick<HeadroomFs, "readFileUtf8">, frontdoorDir: string, pid: number): { readonly codexHome: string; readonly generation: string } | undefined {
+/** Reads the recorded Codex home and generation for one supervisor: none when it is absent, malformed or cannot be read, like the state file beside it (the model listing every request may ask for reads it, and one unreadable record must not fail them). `passTransient` passes a read that failed for the moment on, for a reader on the request path. */
+export function readFrontDoorCodexRecord(fs: Pick<HeadroomFs, "readFileUtf8">, frontdoorDir: string, pid: number, passTransient = false): { readonly codexHome: string; readonly generation: string } | undefined {
   let raw: string | undefined;
   try {
     raw = fs.readFileUtf8(path.join(frontdoorDir, "codex-homes", `${String(pid)}.json`));
-  } catch {
+  } catch (error) {
+    if (passTransient && isTransientReadError(error)) {
+      throw error;
+    }
     return undefined;
   }
   if (raw === undefined) return undefined;
@@ -143,12 +147,15 @@ export function removeFrontDoorCodexHome(fs: HeadroomFs, frontdoorDir: string, p
   fs.removeRecursive(path.join(frontdoorDir, "codex-homes", `${String(pid)}.json`));
 }
 
-/** Reads state.json, or undefined when absent or malformed: a malformed file is overwritten by the next supervisor rather than failing every launch over one bad write. */
-export function readFrontDoorState(fs: Pick<HeadroomFs, "readFileUtf8">, stateFile: string): FrontDoorState | undefined {
+/** Reads state.json, or undefined when absent, malformed or unreadable: a malformed file is overwritten by the next supervisor rather than failing every launch over one bad write, and a supervisor's or launch's own loop reads again on its next turn. `passTransient` is for a reader on the request path, which passes a read that failed for the moment on (`isTransientReadError`) so the request is answered as retryable instead of as no door. */
+export function readFrontDoorState(fs: Pick<HeadroomFs, "readFileUtf8">, stateFile: string, passTransient = false): FrontDoorState | undefined {
   let raw: string | undefined;
   try {
     raw = fs.readFileUtf8(stateFile);
-  } catch {
+  } catch (error) {
+    if (passTransient && isTransientReadError(error)) {
+      throw error;
+    }
     return undefined;
   }
   if (raw === undefined || raw.trim() === "") {

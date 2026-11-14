@@ -17,7 +17,7 @@ import { createAntigravityRouteMount } from "./antigravityMount";
 import { CONNECT_INTERCEPT_HOST, HTTPS_PORT } from "./connect";
 import { restoreCredentials } from "./custody";
 import { createPassthroughRoute } from "./passthrough";
-import { isSystemReadError } from "../readableConfig";
+import { isSystemReadError, isTransientReadError } from "../readableConfig";
 import { refusingLocalStateFaults } from "./localStateFault";
 import type { RouteResolution, ServedModelReport } from "./pipeline";
 import { evaluateWhen, referencesFact, type ConditionContext } from "../resolve/conditions";
@@ -690,7 +690,8 @@ export function createProviderRouteResolver(deps: {
             moved = sessionId !== "" && ((await deps.accountMoves?.(sessionId, account.identity, account.model)) ?? false);
           } catch (error) {
             // Leaving the move request reads the supervisors' registries and the identity records, then writes the request; a failure in any of these is the door's own, never the person's configuration being wrong, so it is answered as the door's 500.
-            if (!isSystemReadError(error)) {
+            // A failure of the moment is passed on, so the request is answered as retryable.
+            if (!isSystemReadError(error) || isTransientReadError(error)) {
               throw error;
             }
             deps.log(`front door: could not leave a session's move request (${configFaultOf(error)})`);

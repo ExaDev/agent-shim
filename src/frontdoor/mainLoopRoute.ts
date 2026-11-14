@@ -5,6 +5,7 @@ import { HTTP_STATUS } from "../codex/http";
 import type { RouteResolution, ServedModelReport } from "./pipeline";
 import { RequestClassSchema, type RequestClass } from "../usage/schema";
 import { ANTHROPIC_ROUTE_NAME, AUTO_MODEL } from "../models/reservedModelNames";
+import { isTransientReadError } from "../readableConfig";
 import { PROVIDER_PATH_PREFIX, internalHeaderValue, parseProviderPath, type RoutedRequest } from "./route";
 import { abandonBody } from "./cappedBody";
 import { declaredLength, withoutContentLength } from "./contentLength";
@@ -140,6 +141,10 @@ export function createMainLoopRouteRecord(ports: MainLoopRoutePorts): MainLoopRo
     try {
       stored = ports.stored.read(launch);
     } catch (error) {
+      // A read that failed for the moment is passed on, so nothing is kept under the copy's identity and the request is answered as retryable; the next lookup reads again.
+      if (isTransientReadError(error)) {
+        throw error;
+      }
       ports.log(`front door: could not read where launch ${String(launch.pid)}'s main loop went (${error instanceof Error ? error.message : String(error)}), so its helpers go the route the launch was launched on until its next main-loop request`);
     }
     return { launch, route: stored, persisted: stored, identity };
