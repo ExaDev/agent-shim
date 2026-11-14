@@ -8,80 +8,80 @@
         {
           "args": [
             "~",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
-            "value": "/home/u"
+            "value": "/h/u"
           },
           "fn": "expandTilde"
         },
         {
           "args": [
             "~/",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
-            "value": "/home/u"
+            "value": "/h/u"
           },
           "fn": "expandTilde"
         },
         {
           "args": [
             "~/a",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
-            "value": "/home/u/a"
+            "value": "/h/u/a"
           },
           "fn": "expandTilde"
         },
         {
           "args": [
             "~/a/b",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
-            "value": "/home/u/a/b"
+            "value": "/h/u/a/b"
           },
           "fn": "expandTilde"
         },
         {
           "args": [
             "~/a/b/",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
-            "value": "/home/u/a/b/"
+            "value": "/h/u/a/b/"
           },
           "fn": "expandTilde"
         },
         {
           "args": [
             "~/../x",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
-            "value": "/home/x"
+            "value": "/h/x"
           },
           "fn": "expandTilde"
         },
         {
           "args": [
             "~/.",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
-            "value": "/home/u"
+            "value": "/h/u"
           },
           "fn": "expandTilde"
         },
         {
           "args": [
             "~//a",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
-            "value": "/home/u/a"
+            "value": "/h/u/a"
           },
           "fn": "expandTilde"
         }
@@ -95,20 +95,20 @@
         {
           "args": [
             "~/a",
-            "/home/u/"
+            "/h/u/"
           ],
           "expect": {
-            "value": "/home/u/a"
+            "value": "/h/u/a"
           },
           "fn": "expandTilde"
         },
         {
           "args": [
             "~",
-            "/home/u/"
+            "/h/u/"
           ],
           "expect": {
-            "value": "/home/u/"
+            "value": "/h/u/"
           },
           "fn": "expandTilde"
         },
@@ -152,7 +152,7 @@
         {
           "args": [
             "~other",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
             "value": "~other"
@@ -162,7 +162,7 @@
         {
           "args": [
             "~other/x",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
             "value": "~other/x"
@@ -172,7 +172,7 @@
         {
           "args": [
             "~~",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
             "value": "~~"
@@ -182,7 +182,7 @@
         {
           "args": [
             "a/~",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
             "value": "a/~"
@@ -192,7 +192,7 @@
         {
           "args": [
             "a/~/b",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
             "value": "a/~/b"
@@ -202,7 +202,7 @@
         {
           "args": [
             "./~/x",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
             "value": "./~/x"
@@ -212,7 +212,7 @@
         {
           "args": [
             "",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
             "value": ""
@@ -222,7 +222,7 @@
         {
           "args": [
             "/abs/path",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
             "value": "/abs/path"
@@ -232,7 +232,7 @@
         {
           "args": [
             "relative/path",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
             "value": "relative/path"
@@ -242,7 +242,7 @@
         {
           "args": [
             " ~/a",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
             "value": " ~/a"
@@ -252,7 +252,7 @@
         {
           "args": [
             "~\\a",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
             "value": "~\\a"
@@ -269,97 +269,97 @@
         {
           "args": [
             "~",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
-            "value": "/home/u"
+            "value": "/h/u"
           },
           "fn": "normaliseRulePath"
         },
         {
           "args": [
             "~/",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
-            "value": "/home/u"
+            "value": "/h/u"
           },
           "fn": "normaliseRulePath"
         },
         {
           "args": [
             "~/p",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
-            "value": "/home/u/p"
+            "value": "/h/u/p"
           },
           "fn": "normaliseRulePath"
         },
         {
           "args": [
             "~/p/",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
-            "value": "/home/u/p"
+            "value": "/h/u/p"
           },
           "fn": "normaliseRulePath"
         },
         {
           "args": [
             "~/p/../q",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
-            "value": "/home/u/q"
+            "value": "/h/u/q"
           },
           "fn": "normaliseRulePath"
         },
         {
           "args": [
             "~/p/./q",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
-            "value": "/home/u/p/q"
+            "value": "/h/u/p/q"
           },
           "fn": "normaliseRulePath"
         },
         {
           "args": [
             "~/p//q",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
-            "value": "/home/u/p/q"
+            "value": "/h/u/p/q"
           },
           "fn": "normaliseRulePath"
         },
         {
           "args": [
             "~/.",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
-            "value": "/home/u"
+            "value": "/h/u"
           },
           "fn": "normaliseRulePath"
         },
         {
           "args": [
             "~/..",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
-            "value": "/home"
+            "value": "/h"
           },
           "fn": "normaliseRulePath"
         },
         {
           "args": [
             "~/../../..",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
             "value": "/"
@@ -376,7 +376,7 @@
         {
           "args": [
             "/",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
             "value": "/"
@@ -386,7 +386,7 @@
         {
           "args": [
             "//",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
             "value": "/"
@@ -396,7 +396,7 @@
         {
           "args": [
             "/..",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
             "value": "/"
@@ -406,7 +406,7 @@
         {
           "args": [
             "/a/./b//c",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
             "value": "/a/b/c"
@@ -416,7 +416,7 @@
         {
           "args": [
             "/a/b/..",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
             "value": "/a"
@@ -426,7 +426,7 @@
         {
           "args": [
             "/a/b/../../..",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
             "value": "/"
@@ -436,7 +436,7 @@
         {
           "args": [
             "/a/b/",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
             "value": "/a/b"
@@ -446,7 +446,7 @@
         {
           "args": [
             "//a",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
             "value": "/a"
@@ -456,7 +456,7 @@
         {
           "args": [
             "/a/../b/./c/",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
             "value": "/b/c"
@@ -466,7 +466,7 @@
         {
           "args": [
             "/a b/c",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
             "value": "/a b/c"
@@ -476,7 +476,7 @@
         {
           "args": [
             "/a/~/b",
-            "/home/u"
+            "/h/u"
           ],
           "expect": {
             "value": "/a/~/b"
@@ -502,28 +502,8 @@
         },
         {
           "args": [
-            "/a/",
-            "/a/"
-          ],
-          "expect": {
-            "value": true
-          },
-          "fn": "isAncestorOrSelf"
-        },
-        {
-          "args": [
             "/",
             "/"
-          ],
-          "expect": {
-            "value": true
-          },
-          "fn": "isAncestorOrSelf"
-        },
-        {
-          "args": [
-            "",
-            ""
           ],
           "expect": {
             "value": true
@@ -559,16 +539,6 @@
         },
         {
           "args": [
-            "/a/",
-            "/a/b"
-          ],
-          "expect": {
-            "value": true
-          },
-          "fn": "isAncestorOrSelf"
-        },
-        {
-          "args": [
             "/",
             "/a"
           ],
@@ -580,27 +550,7 @@
         {
           "args": [
             "/a",
-            "/a/"
-          ],
-          "expect": {
-            "value": true
-          },
-          "fn": "isAncestorOrSelf"
-        },
-        {
-          "args": [
-            "/a",
             "/a/b/c/d"
-          ],
-          "expect": {
-            "value": true
-          },
-          "fn": "isAncestorOrSelf"
-        },
-        {
-          "args": [
-            "",
-            "/a"
           ],
           "expect": {
             "value": true
@@ -648,26 +598,6 @@
           "args": [
             "/a",
             "/b/a"
-          ],
-          "expect": {
-            "value": false
-          },
-          "fn": "isAncestorOrSelf"
-        },
-        {
-          "args": [
-            "/a",
-            ""
-          ],
-          "expect": {
-            "value": false
-          },
-          "fn": "isAncestorOrSelf"
-        },
-        {
-          "args": [
-            "/a/b/",
-            "/a/b"
           ],
           "expect": {
             "value": false
