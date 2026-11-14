@@ -85,13 +85,14 @@ describe("what the configuration model says the door does", () => {
     }
   }, TIMEOUT_MS);
 
-  it("lets a provider file called anthropic claim the name in a session launched on a provider", async () => {
+  it("refuses a selector on the session's own login in a session launched on a provider, even beside a provider file called anthropic, which claims only the name the session writes", async () => {
     const world = await door();
     try {
       world.setProvider("anthropic", { displayName: "A", baseUrl: `http://127.0.0.1:${String(world.upstreamPort)}`, credential: { sources: [{ literal: "a" }] } });
       const answered = await send(world, { model: "auto/plain/claude-opus-5-1", requestClass: "main", identity: "id-me", provider: "z" });
-      expect(answered.status).toBe(HTTP_STATUS.ok);
-      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["claude-opus-5-1"]);
+      expect(answered.status).toBe(HTTP_STATUS.badRequest);
+      expect(answered.text).toContain("without --provider");
+      expect(world.upstream.seen).toEqual([]);
     } finally {
       await world.close();
     }

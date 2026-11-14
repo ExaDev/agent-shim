@@ -263,7 +263,7 @@ export interface RenameContext {
 }
 
 /** Replaces one model name: the name to route by, a refusal the request is answered with (a 400), or undefined to leave the name as it is. */
-export type RenameModel = (model: string, context: Readonly<RenameContext>) => { readonly name: string; /** Set when a route override, not the request's own name, chose the name: what the context records as the reason the main loop moved. */ readonly overridden?: true } | { readonly refusal: string } | undefined;
+export type RenameModel = (model: string, context: Readonly<RenameContext>) => { readonly name: string; /** Set when a route override, not the request's own name, chose the name: what the context records as the reason the main loop moved. */ readonly overridden?: true; /** Set when the door placed the name on the Anthropic route of the session's own login (`anthropic/<model>`): it is served there whatever the providers are called, since a provider file called `anthropic` claims that spelling only for a name the session sent. */ readonly onAnthropic?: true } | { readonly refusal: string } | undefined;
 
 /** The provider a served request target names, or undefined for a bare target (the Anthropic route, or a path the session's launch provider scoped). */
 function servedProviderOf(url: string): string | undefined {
@@ -362,7 +362,7 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
   /**
    * `request` with its model renamed by `deps.rename`, and the name it asked for, when the rename replaced it: only a Messages request carries a model, and only its head is read and rewritten, the rest streaming through unread. A request that names the model field twice is refused where it would be rewritten, since only the first field would change. A request the rename leaves alone goes on as the scan's replay, its bytes as they came.
    */
-  const renamed = async (request: RoutedRequest, arrival: ReturnType<typeof arrivalOf>, rename: RenameModel, bodyLimitBytes: number): Promise<{ readonly request: RoutedRequest; readonly asked?: string; readonly overridden?: true } | { readonly refused: RouteResolution }> => {
+  const renamed = async (request: RoutedRequest, arrival: ReturnType<typeof arrivalOf>, rename: RenameModel, bodyLimitBytes: number): Promise<{ readonly request: RoutedRequest; readonly asked?: string; readonly overridden?: true; /** The name the door placed on the Anthropic route of the session's own login, when it did (see `RenameModel`). */ readonly ownLogin?: string } | { readonly refused: RouteResolution }> => {
     const path = new URL(request.url, "http://127.0.0.1").pathname;
     // A body that declares more than the limit is refused by the resolver from its declared length before any of it is read, so it is not read here either.
     if (!isMessagesRequest(request.method, path) || declaredLength(request.headers) > bodyLimitBytes) {
@@ -394,7 +394,7 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
       abandonBody(scan.replayed.body);
       return { refused: { ok: false, status: HTTP_STATUS.badRequest, message: AMBIGUOUS_MODEL_MESSAGE } };
     }
-    return { request: withModelInHead(scan.replayed, scan.headBytes, asked, decided.name), asked, ...(decided.overridden === undefined ? {} : { overridden: true }) };
+    return { request: withModelInHead(scan.replayed, scan.headBytes, asked, decided.name), asked, ...(decided.overridden === undefined ? {} : { overridden: true }), ...(decided.onAnthropic === undefined ? {} : { ownLogin: decided.name }) };
   };
 
   /** A request the main loop's context governs, its place in the launch's order and the context as it stood, taken when the request arrives and before anything is awaited, so a request whose head is read late cannot out-record one that arrived after it; undefined for any other request. */
@@ -406,9 +406,9 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
     return { launch, ticket: deps.record.begin(launch), current: deps.record.routeOf(launch) };
   };
 
-  const routed = async (request: RoutedRequest, arrival: ReturnType<typeof arrivalOf>, asked: string | undefined, overridden: boolean): Promise<RouteResolution> => {
+  const routed = async (request: RoutedRequest, arrival: ReturnType<typeof arrivalOf>, asked: string | undefined, overridden: boolean, ownLogin: string | undefined): Promise<RouteResolution> => {
     if (arrival === undefined) {
-      return await resolve(request);
+      return ownLogin === undefined ? await resolve(request) : (await toAnthropic(request, ownLogin)).resolution;
     }
     const { launch, ticket, current } = arrival;
     const path = new URL(request.url, "http://127.0.0.1").pathname;
@@ -417,6 +417,9 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
       // A helper is placed by the context before anything resolves it. Only a Messages request carries a model, so only its head is read: any other request on a Messages sub-resource goes on with its body untouched.
       const scan = isMessagesRequest(request.method, path) ? await scanRequestHead(request) : undefined;
       const helper = scan?.replayed ?? request;
+      if (ownLogin !== undefined) {
+        return (await toAnthropic(helper, ownLogin)).resolution;
+      }
       if (scan?.model?.startsWith(ANTHROPIC_PREFIX) === true && !deps.definesProvider(ANTHROPIC_ROUTE_NAME)) {
         return (await toAnthropic(helper, scan.model)).resolution;
       }
@@ -424,6 +427,14 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
         return await resolve(helper);
       }
       return (await toProvider(helper, current.provider, request.session)).resolution;
+    }
+    // A name the door placed on the Anthropic route of the session's own login goes there before the resolver sees it, which would give `anthropic/<model>` to a provider file called `anthropic`.
+    if (ownLogin !== undefined) {
+      const placed = await toAnthropic(request, ownLogin);
+      if (placed.resolution.ok) {
+        recordServing(launch, ticket, placed.resolution, (servedModel) => contextOf({ kind: "anthropic" }, deps.loginOf(request.session), asked ?? ownLogin, servedModel, overridden ? { context: current } : undefined), placed.served);
+      }
+      return placed.resolution;
     }
     const resolution = await resolve(request);
     if (!resolution.ok) {
@@ -479,13 +490,13 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
   return async (request) => {
     const arrival = arrivalOf(request);
     if (deps.rename === undefined) {
-      return await routed(request, arrival, undefined, false);
+      return await routed(request, arrival, undefined, false, undefined);
     }
     const named = await renamed(request, arrival, deps.rename.model, deps.rename.bodyLimitBytes);
     if ("refused" in named) {
       return named.refused;
     }
-    const resolution = await routed(named.request, arrival, named.asked, named.overridden === true);
+    const resolution = await routed(named.request, arrival, named.asked, named.overridden === true, named.ownLogin);
     // The usage log records the name the request asked for, as the context does.
     return resolution.ok && named.asked !== undefined ? { ...resolution, requestedModel: named.asked } : resolution;
   };
