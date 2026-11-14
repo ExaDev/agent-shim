@@ -1,12 +1,13 @@
 name: Claude Code versions
 
-# Keeps the goal, compaction and turn verbs' verified versions (`RC_SESSION_COMMAND_VERIFIED_VERSIONS`) up with Claude Code's releases: each run verifies, with `pnpm verify:claude-code verify`, every published release newer than the newest verified one, then opens a pull request adding the releases that passed and an issue naming what differed for each that did not. A pull request that changes the verification, the lab or the list verifies the newest listed release, which a change to any of them must keep passing. A dispatch with a version verifies that version alone and proposes nothing.
+# Keeps the goal, compaction and turn verbs' verified versions (`RC_SESSION_COMMAND_VERIFIED_VERSIONS`) up with Claude Code's releases: each run verifies, with `pnpm verify:claude-code verify`, every published release newer than the newest verified one on each platform in `PLATFORMS`, then opens a pull request adding the releases that passed on every platform and an issue naming what differed, and where, for each that did not. A pull request that changes the verification, the lab or the list verifies the newest listed release, which a change to any of them must keep passing. A dispatch with a version verifies that version alone and proposes nothing.
 on:
   schedule:
     - cron: "37 5 * * *"
   pull_request:
     paths:
       - .github/workflows/claude-code-versions.yml
+      - .github/actions/brew-install/**
       - scripts/verify-claude-code*
       - scripts/rc-self-host-lab*
       - scripts/rc-mock-provider.mts
@@ -33,6 +34,7 @@ jobs:
       contents: read
     outputs:
       versions: ${{ steps.versions.outputs.versions }}
+      platforms: ${{ steps.versions.outputs.platforms }}
       propose: ${{ steps.versions.outputs.propose }}
     steps:
       - uses: actions/checkout@v7
@@ -54,6 +56,8 @@ jobs:
       - id: versions
         run: |
           echo "versions=$(cat "$RUNNER_TEMP/versions.json")" >> "$GITHUB_OUTPUT"
+          # Claude Code ships a binary per platform, and the lab's tmux, lsof and socket checks differ between them, so a release is verified on each runner here and proposed only when every one passed. The one list: the verification matrix and the proposal both read it.
+          echo 'platforms=["ubuntu-latest","macos-latest"]' >> "$GITHUB_OUTPUT"
           if [ "$EVENT" = schedule ] || { [ "$EVENT" = workflow_dispatch ] && [ -z "$REQUESTED" ]; }; then
             echo "propose=true" >> "$GITHUB_OUTPUT"
           else
@@ -71,21 +75,40 @@ jobs:
       fail-fast: false
       matrix:
         version: ${{ fromJSON(needs.candidates.outputs.versions) }}
-    runs-on: ubuntu-latest
+        platform: ${{ fromJSON(needs.candidates.outputs.platforms) }}
+    runs-on: ${{ matrix.platform }}
     timeout-minutes: 45
     permissions:
       contents: read
     env:
       VERSION: ${{ matrix.version }}
+      PLATFORM: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v7
       # The lab runs its CLI and mock provider in tmux and checks their sockets with lsof; each is installed only where the runner image lacks it.
       - name: Install tmux and lsof where missing
+        if: runner.os == 'Linux'
         run: |
           if ! command -v tmux >/dev/null || ! command -v lsof >/dev/null; then
             sudo apt-get update
             sudo apt-get install -y tmux lsof
           fi
+      # macOS ships lsof; tmux comes from Homebrew, through the shared install step that keeps brew's output off the runner's stdout pipe.
+      - name: Find whether tmux is missing
+        id: tmux
+        if: runner.os == 'macOS'
+        run: |
+          if command -v tmux >/dev/null; then
+            echo "missing=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "missing=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install tmux
+        if: steps.tmux.outputs.missing == 'true'
+        uses: ./.github/actions/brew-install
+        with:
+          tap: ""
+          formula: tmux
       - uses: ./.github/actions/setup-and-run
         with:
           task: claude-code-verify
@@ -93,23 +116,23 @@ jobs:
           command: |
             mkdir -p "$RUNNER_TEMP/report"
             set +e
-            pnpm --silent verify:claude-code verify "$VERSION" --dir "$RUNNER_TEMP/verify-claude-code" 2>&1 | tee "$RUNNER_TEMP/report/$VERSION.txt"
-            echo "${PIPESTATUS[0]}" > "$RUNNER_TEMP/report/$VERSION.status"
+            pnpm --silent verify:claude-code verify "$VERSION" --dir "$RUNNER_TEMP/verify-claude-code" 2>&1 | tee "$RUNNER_TEMP/report/$VERSION.$PLATFORM.txt"
+            echo "${PIPESTATUS[0]}" > "$RUNNER_TEMP/report/$VERSION.$PLATFORM.status"
       - name: Summarise
         run: |
           {
-            echo "### Claude Code $VERSION"
+            echo "### Claude Code $VERSION on $PLATFORM"
             echo '```'
-            grep -E '^(pass|DIFFERS|Claude Code|verify-claude-code)' "$RUNNER_TEMP/report/$VERSION.txt"
+            grep -E '^(pass|DIFFERS|Claude Code|verify-claude-code)' "$RUNNER_TEMP/report/$VERSION.$PLATFORM.txt"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: ./.github/actions/upload-artifact-retry
         with:
-          name: claude-code-${{ matrix.version }}
+          name: claude-code-${{ matrix.version }}-${{ matrix.platform }}
           path: ${{ runner.temp }}/report/
           retention-days: 7
       - name: Pass only when every check passed
-        run: test "$(cat "$RUNNER_TEMP/report/$VERSION.status")" = 0
+        run: test "$(cat "$RUNNER_TEMP/report/$VERSION.$PLATFORM.status")" = 0
 
   propose:
     needs: [candidates, verify]
@@ -139,8 +162,14 @@ jobs:
             run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
             passed=""
             for version in $(jq -r '.[]' <<< "$VERSIONS"); do
-              report="$RUNNER_TEMP/report/$version"
-              if [ -f "$report.status" ] && [ "$(cat "$report.status")" = 0 ]; then
+              # A platform whose job left no status counts as failed: only a status of 0 is a pass.
+              failed=""
+              for platform in $(jq -r '.[]' <<< "$PLATFORMS"); do
+                if [ ! -f "$RUNNER_TEMP/report/$version.$platform.status" ] || [ "$(cat "$RUNNER_TEMP/report/$version.$platform.status")" != 0 ]; then
+                  failed="$failed $platform"
+                fi
+              done
+              if [ -z "$failed" ]; then
                 passed="$passed $version"
                 continue
               fi
@@ -149,17 +178,25 @@ jobs:
                 echo "an open issue already reports $version"
                 continue
               fi
+
+              names="${failed# }"
               {
-                echo "\`pnpm verify:claude-code verify $version\` did not pass, so the goal, compaction and turn verbs stay refused on it ([run]($run_url))."
-                echo
-                echo '```'
-                if [ -f "$report.txt" ]; then
-                  grep -E '^(DIFFERS|Claude Code|verify-claude-code)' "$report.txt"
-                else
-                  echo "the verification job left no report"
-                fi
-                echo '```'
+                echo "\`pnpm verify:claude-code verify $version\` did not pass on ${names// /, }, so the goal, compaction and turn verbs stay refused on it ([run]($run_url))."
+                for platform in $failed; do
+                  report="$RUNNER_TEMP/report/$version.$platform"
+                  echo
+                  echo "On $platform:"
+                  echo
+                  echo '```'
+                  if [ -f "$report.txt" ]; then
+                    grep -E '^(DIFFERS|Claude Code|verify-claude-code)' "$report.txt"
+                  else
+                    echo "the verification job left no report"
+                  fi
+                  echo '```'
+                done
               } > "$RUNNER_TEMP/issue.md"
+
               gh issue create --title "$title" --body-file "$RUNNER_TEMP/issue.md"
             done
             if [ -z "$passed" ]; then
@@ -176,7 +213,7 @@ jobs:
             git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "feat(rc): verify the goal, compaction and turn verbs on Claude Code$passed" -- src/supervise/verifiedVersions.ts docs/rc-slash-commands.md
             git push origin "$branch"
             {
-              echo "\`pnpm verify:claude-code verify\` passed every check on Claude Code$passed on the launched, supervised and self-hosted routes ([run]($run_url)), so this adds them to \`RC_SESSION_COMMAND_VERIFIED_VERSIONS\`."
+              echo "\`pnpm verify:claude-code verify\` passed every check on Claude Code$passed on the launched, supervised and self-hosted routes, on every platform the workflow verifies ([run]($run_url)), so this adds them to \`RC_SESSION_COMMAND_VERIFIED_VERSIONS\`."
               echo
               echo "A push made with the workflow's token starts no workflow, so CI was dispatched on the branch; its checks appear here when it finishes."
             } > "$RUNNER_TEMP/pr.md"
@@ -184,3 +221,4 @@ jobs:
             gh workflow run ci.yml --ref "$branch"
         env:
           VERSIONS: ${{ needs.candidates.outputs.versions }}
+          PLATFORMS: ${{ needs.candidates.outputs.platforms }}
