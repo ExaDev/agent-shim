@@ -106,7 +106,8 @@ it.each(["other-account", undefined])("refuses a cached Codex catalogue with fin
   await expect(program.parseAsync(["provider", "models", "c", "--json"], { from: "user" })).rejects.toThrow("different Codex account");
 });
 
-it.each([process.ppid, undefined])("refuses a cached catalogue with non-current supervisor %s", async (owner) => {
+// The title names each owner and never holds its pid, which differs between runs: the deleted-test check compares the suite's listings by title.
+it.each([["another process", process.ppid], ["no recorded supervisor", undefined]])("refuses a cached catalogue whose supervisor is %s", async (_owner, owner) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-provider-models-"));
   roots.push(root);
   const paths = buildLayoutPaths(root);

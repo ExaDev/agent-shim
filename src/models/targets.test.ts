@@ -60,7 +60,8 @@ it("uses the local Codex account when the recorded front door has exited", () =>
   expect(providerModels(paths)).toContainEqual({ provider: "c", model: "local-model" });
 });
 
-it.each([process.ppid, undefined])("does not expose a catalogue with non-current supervisor %s", (owner) => {
+// The title names each owner and never holds its pid, which differs between runs: the deleted-test check compares the suite's listings by title.
+it.each([["another process", process.ppid], ["no recorded supervisor", undefined]])("does not expose a catalogue whose supervisor is %s", (_owner, owner) => {
   const paths = buildLayoutPaths(root);
   const codexHome = path.join(root, "codex-home");
   vi.stubEnv("CODEX_HOME", codexHome);
