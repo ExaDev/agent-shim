@@ -25,7 +25,6 @@ import { configFaultOf } from "../config/load";
 /** The part of a selector's live state that is the person's configuration (profiles, identities, pools and logins), as opposed to the providers and families the door reads itself. */
 export type SelectorStatePorts = Pick<SelectorPorts, "profile" | "identity" | "pool" | "poolPick" | "sameLogin">;
 
-/** The message of a failed read, for a refusal: the store's own error names the file and what is wrong with it. */
 /**
  * Why the `what` named `name` cannot be used, from the error its read raised, for a refusal the session's client reads: the error's class or code and the command that says more, never the error's own message, which names files under the state root and identities' directory ids. A name two identities claim says so, since that is the person's to fix.
  */
