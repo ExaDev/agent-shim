@@ -8,12 +8,14 @@ import { writeFrontDoorCodexHome, writeFrontDoorState } from "../frontdoor/state
 import { buildLayoutPaths } from "../paths";
 import { catalogueCachePath, catalogueSettingsFingerprint, catalogueSettingsPath, catalogueSettingsText, parseCatalogueCache } from "../providerCatalogue";
 import { realFarmFs } from "../realPorts";
+import { errorWithCode } from "../test-helpers";
 import { providerModels } from "./targets";
 
 const TEST_GENERATION = "10000000-0000-4000-8000-000000000001";
 let root: string;
 beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-model-targets-")); });
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   fs.rmSync(root, { recursive: true, force: true });
 });
@@ -118,3 +120,56 @@ it("offers the models of an http catalogue only while it was fetched under the p
   store("https://new.example");
   expect(providerModels(paths)).toContainEqual({ provider: "h", model: "served" });
 });
+
+/** Makes `fs.readFileSync` throw `code` for `file`; every other read goes to the real file system. The readers under test read text (`readFileSync(path, "utf8")`), the one form this answers. */
+function failReadsOf(file: string, code: string): void {
+  const real = fs.readFileSync.bind(fs);
+  const failingRead = (target: fs.PathOrFileDescriptor, encoding: BufferEncoding): string => {
+    if (target === file) throw errorWithCode(`${code}: failed, open '${file}'`, code);
+    return real(target, encoding);
+  };
+  // `readFileSync` is overloaded and a mock must take its whole type, which no one-signature function has; the readers under test call the text form only.
+  vi.spyOn(fs, "readFileSync").mockImplementation(failingRead as typeof fs.readFileSync);
+}
+
+/** A layout with an http provider `z` that opted into a catalogue whose stored list names `cat-model`, fetched under z's settings as they are. */
+function catalogued(): ReturnType<typeof buildLayoutPaths> {
+  const paths = buildLayoutPaths(root);
+  const z = { displayName: "Z", baseUrl: "https://z.example", credential: { sources: [{ literal: "unused" }] }, catalogue: { tier: "opus" as const } };
+  fs.mkdirSync(paths.providersDir, { recursive: true });
+  fs.writeFileSync(path.join(paths.providersDir, "z.json"), JSON.stringify(z));
+  const cache = { fetchedAt: 1, url: "https://z.example/v1/models", models: [{ id: "cat-model" }] };
+  fs.mkdirSync(path.dirname(catalogueCachePath(paths, "z")), { recursive: true });
+  fs.writeFileSync(catalogueCachePath(paths, "z"), JSON.stringify(cache));
+  const parsed = parseCatalogueCache(JSON.stringify(cache));
+  if (parsed === undefined) throw new Error("the fixture catalogue does not parse");
+  fs.mkdirSync(path.dirname(catalogueSettingsPath(paths, "z")), { recursive: true });
+  fs.writeFileSync(catalogueSettingsPath(paths, "z"), catalogueSettingsText(catalogueSettingsFingerprint(z), parsed.fetchedAt));
+  return paths;
+}
+
+it("lists a provider's catalogue models in its targets, and passes a read of that catalogue that fails for the moment on rather than leaving them out", () => {
+  const paths = catalogued();
+  expect(providerModels(paths)).toContainEqual({ provider: "z", model: "cat-model" });
+  failReadsOf(catalogueCachePath(paths, "z"), "EMFILE");
+  expect(() => providerModels(paths)).toThrow(expect.objectContaining({ code: "EMFILE" }));
+  vi.restoreAllMocks();
+  failReadsOf(catalogueCachePath(paths, "z"), "EACCES");
+  expect(providerModels(paths).map((row) => row.model)).not.toContain("cat-model");
+});
+
+it("passes a read of the door's state file that fails for the moment on rather than reading it as no door", () => {
+  const paths = catalogued();
+  writeFrontDoorState(realFarmFs, paths.frontdoorStateFile, { supervisorPid: process.pid, port: 1234 });
+  failReadsOf(paths.frontdoorStateFile, "EMFILE");
+  expect(() => providerModels(paths)).toThrow(/EMFILE/u);
+});
+
+it("passes a read of the serving door's Codex record that fails for the moment on rather than reading it as no record", () => {
+  const paths = catalogued();
+  writeFrontDoorState(realFarmFs, paths.frontdoorStateFile, { supervisorPid: process.pid, port: 1234 });
+  writeFrontDoorCodexHome(realFarmFs, paths.frontdoorDir, process.pid, path.join(root, "codex-home"), TEST_GENERATION);
+  failReadsOf(path.join(paths.frontdoorDir, "codex-homes", `${String(process.pid)}.json`), "EMFILE");
+  expect(() => providerModels(paths)).toThrow(/EMFILE/u);
+});
+
