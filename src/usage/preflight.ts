@@ -1,5 +1,6 @@
 import { soleOverageWindow } from "./rateLimit";
 import type { QuotaWindow, UsageSnapshot } from "./schema";
+import { ownEntry } from "../ownEntry";
 
 const MS_PER_SECOND = 1000;
 const SECONDS_PER_MINUTE = 60;
@@ -49,7 +50,7 @@ export function effectiveWindow(window: Readonly<QuotaWindow>, nowMs: number): E
  * The launch-time warnings for an identity's quota, from the last rate-limit state the front door recorded for the provider this launch will use (`anthropic` for an OAuth launch). A window is reported when the API itself last marked it `allowed_warning` or `rejected`, and only while that window has not reset since: a reset time in the past means the observation describes a window that no longer exists. Each warning states how old the observation is, because the snapshot only changes when a request goes through the front door. Warnings never block a launch.
  */
 export function quotaWarnings(snapshot: UsageSnapshot | undefined, provider: string, nowMs: number): string[] {
-  const rateLimit = snapshot?.providers[provider]?.rateLimit;
+  const rateLimit = ownEntry(snapshot?.providers, provider)?.rateLimit;
   const unified = rateLimit?.unified;
   if (snapshot === undefined || rateLimit === undefined || unified === undefined) {
     return [];

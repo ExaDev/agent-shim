@@ -24,3 +24,8 @@ export const TIER_ENV_VARIABLES: Readonly<Record<ClaudeTier, string>> = Object.f
   sonnet: "ANTHROPIC_DEFAULT_SONNET_MODEL",
   haiku: "ANTHROPIC_DEFAULT_HAIKU_MODEL",
 });
+
+/** Whether a model name is a bare Claude name (`claude-sonnet-5-5`, `opus`): one that selects a tier and names no provider. */
+export function isBareClaudeName(model: string): boolean {
+  return !model.includes("/") && claudeNameTier(model) !== undefined;
+}

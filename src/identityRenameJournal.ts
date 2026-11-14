@@ -4,7 +4,9 @@ import path from "node:path";
 import { z } from "zod";
 
 import { CliError } from "./cliError";
+import { configFaultOf } from "./config/load";
 import type { FarmFs } from "./launcher/ports";
+import { isSystemReadError } from "./readableConfig";
 
 /**
  * What a rename writes before its first step and keeps current until its last: the pair of names and each step with whether it was begun and whether it is done. A rename that is killed, or whose rollback fails, leaves its journal behind, and that is the only trace it leaves of being unfinished: a re-run of the same pair finds it and carries on, `doctor` reports it, and a rename of anything else that names either identity refuses until it is dealt with.
@@ -57,9 +59,17 @@ export function renamePairFileName(from: string, to: string, suffix: string): st
   return `${createHash("sha256").update(`${from}\u0000${to}`).digest("hex").slice(0, FILE_NAME_HASH_DIGITS)}${suffix}`;
 }
 
-/** The journal in `file`, or undefined when there is none. Throws `RenameJournalUnreadableError` for a file that is there but is not a journal. */
+/** The journal in `file`, or undefined when there is none. Throws `RenameJournalUnreadableError` for a file that is there but is not a journal, or that the system will not let it read (a directory in its place, no permission). */
 export function readRenameJournal(fs: Pick<RenameJournalFs, "readFileUtf8">, file: string): RenameJournal | undefined {
-  const raw = fs.readFileUtf8(file);
+  let raw: string | undefined;
+  try {
+    raw = fs.readFileUtf8(file);
+  } catch (error) {
+    if (!isSystemReadError(error)) {
+      throw error;
+    }
+    throw new RenameJournalUnreadableError(file, `cannot be read: ${configFaultOf(error)}`);
+  }
   if (raw === undefined) {
     return undefined;
   }

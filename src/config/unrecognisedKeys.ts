@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import { ownEntry } from "../ownEntry";
 
 /** Keys a file carries that the schema does not know, and where in the file they sit. */
 export interface IgnoredKeys {
@@ -35,10 +36,10 @@ export function parseIgnoringUnrecognisedKeys<S extends z.ZodType>(schema: S, ra
   for (const issue of unrecognised) {
     let holder: unknown = stripped;
     for (const step of issue.path) {
-      holder = isRecord(holder) ? holder[step] : undefined;
+      holder = isRecord(holder) ? ownEntry(holder, String(step)) : undefined;
     }
     if (isRecord(holder)) {
-      const values = Object.fromEntries(issue.keys.map((key) => [key, holder[key]]));
+      const values = Object.fromEntries(issue.keys.map((key) => [key, ownEntry(holder, key)]));
       for (const key of issue.keys) {
         Reflect.deleteProperty(holder, key);
       }
@@ -88,7 +89,7 @@ export function restoreIgnoredKeys(filePath: string, value: unknown): unknown {
   for (const { path, values } of ignored) {
     let holder: unknown = restored;
     for (const step of path) {
-      holder = isRecord(holder) ? holder[step] : undefined;
+      holder = isRecord(holder) ? ownEntry(holder, String(step)) : undefined;
     }
     if (isRecord(holder)) {
       for (const [key, held] of Object.entries(values)) {

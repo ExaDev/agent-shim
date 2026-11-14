@@ -68,6 +68,7 @@ import { createProviderRouteResolver } from "./providerRoute";
 import { createMainLoopRouteRecord } from "./mainLoopRoute";
 import { readModels } from "../modelsStore";
 import { servedModelPorts } from "./cachedCatalogue";
+import { doorRoutingState } from "../models/selectorPorts";
 import { FRONTDOOR_START_TIMEOUT_MS } from "./ensure";
 import type { ListenSource, Predecessor } from "./handover";
 import { predecessorOfThisProcess, realHandOverListeners } from "./realHandover";
@@ -316,7 +317,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       accountMoves: async (sessionId, to, model) => await requestAccountMove({ fs: realFarmFs, paths, runningAmong: realRunningAmong, idOf: (name) => identityIdOf(paths, name), now: () => Date.now() }, sessionId, to, model),
       ...(rcSelfHostSurface === undefined ? {} : { rcSelfHostRoute: rcSelfHostSurface.route }),
       ...(capture === undefined ? {} : { observeAnthropicPassthrough: (request: RoutedRequest) => { capture.routedForward(request); } }),
-      ...servedModelPorts(paths, log), log, now: () => Date.now(), mainLoopRoutes: createMainLoopRouteRecord({ holdsLaunch: sessionRegistry.holdsLaunch, stored: launchRouteStore(realFarmFs, paths.frontdoorSessionsDir, log), log }),
+      ...servedModelPorts(paths, log), ...doorRoutingState(paths, log, os.homedir()), log, now: () => Date.now(), mainLoopRoutes: createMainLoopRouteRecord({ holdsLaunch: sessionRegistry.holdsLaunch, stored: launchRouteStore(realFarmFs, paths.frontdoorSessionsDir, log), log }),
     }),
     rcTracker,
     rcHub,
@@ -582,7 +583,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         // The pool table is read per call, not captured here, so a pool created or removed after the door started is ranked or refused by its live name the same moment the CLI would see it. The door's own environment is never a substitute for a caller's, so each member's provider is resolved from the directory's configuration and the member's own declaration alone.
         poolPick: (pool: string, directory: string) => {
           const pools = readPools(paths);
-          return pools[pool] === undefined ? undefined : collectPoolPick({ paths, fs: realFsPort, usageFs: realFarmFs, poolName: pool, pools, directory, nowMs: Date.now(), providerOf: realMemberProviderResolver({ paths, cwd: directory, env: {} }) });
+          return !Object.hasOwn(pools, pool) ? undefined : collectPoolPick({ paths, fs: realFsPort, usageFs: realFarmFs, poolName: pool, pools, directory, nowMs: Date.now(), providerOf: realMemberProviderResolver({ paths, cwd: directory, env: {} }) });
         },
         poolNames: () => Object.keys(readPools(paths)).sort(),
         // A read-only resolution of what a launch from one directory would do: the launcher's own decision with its effects left out, so a read never recovers or resyncs a farm, starts a daemon, records a pool pick or runs a credential command.

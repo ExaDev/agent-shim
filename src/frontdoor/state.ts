@@ -53,11 +53,19 @@ const ContextText = z.string().min(1).max(MAX_CONTEXT_TEXT_LENGTH);
 const LaunchRouteSchema = z.union([z.strictObject({ kind: z.literal("anthropic") }), z.strictObject({ kind: z.literal("provider"), provider: z.string().min(1) })]);
 
 /** The facts about a route that are names, never values: the credential by what describes it (a variable name, a path, a program, a reference, a Keychain service, the identity whose login it is), and the model the main loop last asked for with the one the route served it under. */
-const ContextFactsSchema = z.strictObject({ credential: ContextText.optional(), requestedModel: ContextText.optional(), servedModel: ContextText.optional() });
+const ContextFactsSchema = z.strictObject({
+  credential: ContextText.optional(),
+  requestedModel: ContextText.optional(),
+  servedModel: ContextText.optional(),
+  /** Set when a route override, not a name the session chose, moved the main loop to this route: a bare Claude name no override covers any longer goes back from such a context to the route the session itself chose (`chosenProvider`, else the launch's own), and the provider scope and a class alone read that route meanwhile. A door that cannot read the facts loses it, and the session then keeps the route until a name it chooses moves it. */
+  movedBy: z.literal("override").optional(),
+  /** With `movedBy`, the provider the session's own request had put its main loop on before an override moved it (absent when that was the launch's own route): where the session goes back to once the override no longer applies, and the provider scope its overrides are looked up in meanwhile. */
+  chosenProvider: ContextText.optional(),
+});
 type ContextFacts = z.infer<typeof ContextFactsSchema>;
 
 /**
- * What the door knows of a launch's main loop, held per launch: the route it is on and, as names, the credential that route uses and the models asked for and served. The configuration that applied is not part of it: the provider file and the `models` block are read afresh for every request, so a changed file applies to the next one, and a stored copy would only go stale. No routing decision reads the facts, only the route: they describe the route and are never what places a request.
+ * What the door knows of a launch's main loop, held per launch: the route it is on and, as names, the credential that route uses and the models asked for and served, and whether a route override put it there. The configuration that applied is not part of it: the provider file and the `models` block are read afresh for every request, so a changed file applies to the next one, and a stored copy would only go stale. The facts describe the route and never place a request on one, except `movedBy`, which lets a context an override made lapse with the override.
  */
 export type RouteContext = z.infer<typeof LaunchRouteSchema> & ContextFacts;
 
@@ -426,7 +434,7 @@ export function writeLaunchRoute(fs: HeadroomFs, sessionsDir: string, launch: Re
 
 /** The route and the facts of a context, each checked against its schema: a name over the bound, an empty one or an unknown field throws. */
 function splitContext(context: RouteContext): { readonly route: z.infer<typeof LaunchRouteSchema>; readonly facts: ContextFacts } {
-  const facts = ContextFactsSchema.parse({ ...(context.credential === undefined ? {} : { credential: context.credential }), ...(context.requestedModel === undefined ? {} : { requestedModel: context.requestedModel }), ...(context.servedModel === undefined ? {} : { servedModel: context.servedModel }) });
+  const facts = ContextFactsSchema.parse({ ...(context.credential === undefined ? {} : { credential: context.credential }), ...(context.requestedModel === undefined ? {} : { requestedModel: context.requestedModel }), ...(context.servedModel === undefined ? {} : { servedModel: context.servedModel }), ...(context.movedBy === undefined ? {} : { movedBy: context.movedBy }), ...(context.chosenProvider === undefined ? {} : { chosenProvider: context.chosenProvider }) });
   const route = LaunchRouteSchema.parse(context.kind === "provider" ? { kind: "provider", provider: context.provider } : { kind: "anthropic" });
   return { route, facts };
 }

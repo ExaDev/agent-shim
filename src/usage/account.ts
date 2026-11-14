@@ -5,6 +5,7 @@ import { isStoredName, STORED_NAME_RULE } from "../config/names";
 import { IdentitySchema } from "../config/schema";
 import type { FarmFs } from "../launcher/ports";
 import { AccountMetadataSchema, type AccountMetadata } from "./schema";
+import { ownEntry } from "../ownEntry";
 
 /** The file Claude Code keeps an identity's profile in, inside the identity's configuration directory. */
 const CLAUDE_JSON = ".claude.json";
@@ -86,7 +87,7 @@ export function readAccountMetadataFile(fs: Pick<FarmFs, "readFileUtf8">, file: 
   }
   const picked: Record<string, unknown> = {};
   for (const key of Object.keys(AccountMetadataSchema.shape)) {
-    const value = oauthAccount[key];
+    const value = ownEntry(oauthAccount, key);
     // Claude Code writes null for a field it fetched and found empty; absence is how the metadata models that.
     if (value !== null && value !== undefined) {
       picked[key] = value;

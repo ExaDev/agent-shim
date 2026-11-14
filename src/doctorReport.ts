@@ -2,7 +2,6 @@ import { codexIdentityFindings } from "./codex/doctor";
 import { ClaudeShimStateSchema, commandFilename, findPathShadow, resolveOwnBinaryCheck, type ClaudeShimState, type PathShadowStatus } from "./claudeShim";
 import type { LayoutPaths } from "./paths";
 import { readableOr } from "./readableConfig";
-import { readJson } from "./config/store";
 import { identityIdExists, identityRecords, listIdentityDirectories, type UnreachableIdentityEntry } from "./identityStore";
 import { identityNameIn, type IdentityRecord } from "./identityRecords";
 import { identityRecordFindings, type DisplacedIdentityRecord } from "./doctorIdentityRecords";
@@ -34,6 +33,12 @@ import { realCredentialCacheEnv } from "./realCredentialCache";
 import { isMovingGitSource } from "./headroom/source";
 import { modelsFindings } from "./models/doctor";
 import { targetRefs } from "./models/targets";
+import { routeOverrideDoctorFindings } from "./routeOverrideChecks";
+import { isAbsent, readForDoctor, unreadableMessage } from "./doctorFileReads";
+import { isSystemReadError } from "./readableConfig";
+import { routeTargetPorts } from "./models/selectorPorts";
+import type { SelectorPorts } from "./models/selectors";
+import { RouteOverridesSchema } from "./routeOverridesSchema";
 import { readGlobalConfig } from "./configProfilesStore";
 import { diagnoseAllowlistDrift } from "./headroom/allowlistDrift";
 import { earlierReleaseDaemon } from "./headroom/earlierRelease";
@@ -48,7 +53,7 @@ import { readFrontDoorListeners, realFrontDoorListenerProbes, type FrontDoorList
 import { listFrontDoorSupervisors, type FrontDoorSupervisorListing } from "./frontdoor/supervisorProcesses";
 import { ENV_PREFIX, LEGACY_ENV_PREFIX, LEGACY_HOME_DIRNAME } from "./legacy";
 import { describeUnfinishedRename, finishabilityOf, listRenameJournals, type RenameJournalListing } from "./identityRenameJournal";
-import { aliasFindings, readProviderAliases, type ProviderAliases } from "./providerAliases";
+import { aliasFindings, ProviderAliasesSchema, type ProviderAliases } from "./providerAliases";
 import { describeProviderEndpoint, legacyProviderConversion, LegacyProviderFileError } from "./providersStore";
 import { ambientCredentialFinding } from "./launcher/guard";
 import { poolNameOf } from "./launcher/identity";
@@ -59,6 +64,7 @@ import type { RunPort } from "./launcher/ports";
 import { lineariseProfile, type ProfileLoader, type ProfileSource } from "./resolve/extends";
 import { claudeCodeVersionGate } from "./supervise/verifiedVersions";
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
+import { ownEntry } from "./ownEntry";
 
 export const DOCTOR_SEVERITIES = ["pass", "warn", "fail"] as const;
 export type DoctorSeverity = (typeof DOCTOR_SEVERITIES)[number];
@@ -83,6 +89,7 @@ export const DOCTOR_SECTIONS = [
   "headroom",
   "frontdoor",
   "models",
+  "route-overrides",
 ] as const;
 export type DoctorSection = (typeof DOCTOR_SECTIONS)[number];
 
@@ -108,6 +115,8 @@ export interface DoctorIdentityInput {
   readonly id: string;
   readonly path: string;
   readonly raw: string | undefined;
+  /** Set when the file exists and cannot be read (a directory in its place, no permission): the read failure's code. `raw` is then undefined, and the file is reported as unreadable, never as missing. */
+  readonly unreadable?: string;
   /** The identity's own farm root (`identitiesDir/<id>`): the account name the Keychain lookup uses. */
   readonly farmRoot: string;
   /** Whether the identity's `.credentials.json` exists, pre-resolved by the wiring layer since it is a file-existence check. */
@@ -121,6 +130,8 @@ export interface DoctorConfigProfileInput {
   readonly name: string;
   readonly path: string;
   readonly raw: string | undefined;
+  /** Set when the file exists and cannot be read (a directory in its place, no permission): the read failure's code. `raw` is then undefined, and the file is reported as unreadable, never as missing. */
+  readonly unreadable?: string;
 }
 
 /** One provider's raw `<name>.json`, unparsed. */
@@ -128,12 +139,16 @@ export interface DoctorProviderInput {
   readonly name: string;
   readonly path: string;
   readonly raw: string | undefined;
+  /** Set when the file exists and cannot be read (a directory in its place, no permission): the read failure's code. `raw` is then undefined, and the file is reported as unreadable, never as missing. */
+  readonly unreadable?: string;
 }
 
 /** A single optional top-level file `runDoctor` validates against a schema when present — absent is a legitimate, unconfigured state, not a failure. */
 interface DoctorFileInput {
   readonly path: string;
   readonly raw: string | undefined;
+  /** Set when the file exists and cannot be read (a directory in its place, no permission): the read failure's code. `raw` is then undefined, and the file is reported as unreadable, never as missing. */
+  readonly unreadable?: string;
 }
 
 /** The outcome of resolving the real Claude Code binary, pre-resolved by the wiring layer since `discoverClaudeBinary` is not itself a parse-shaped pure operation and already has its own dedicated test coverage. */
@@ -178,7 +193,7 @@ export interface RunDoctorParams {
   /** Where cached credentials live. Omit to leave a credential cache's age out of the identity and provider findings; with it, a block that caches reports whether it holds an entry, how old it is and whether it has expired, never the token. */
   readonly credentialCache?: CredentialCacheEnv;
   /** The Sign in with ChatGPT file. Omit to leave it out of the findings; with it, a codex provider whose `codex.login` is `chatgpt-sign-in` warns when there is no usable sign-in to spend. */
-  readonly chatgptSignIn?: { readonly path: string; readonly raw: string | undefined };
+  readonly chatgptSignIn?: { readonly path: string; readonly raw: string | undefined; readonly unreadable?: string };
   readonly identities: readonly DoctorIdentityInput[];
   /** The links in each identity's farm that lead nowhere (`danglingFarmLinks`). Omit to leave the farm-links section out; with it, each such link warns, naming the identity, the entry and what brings the farm up to date. */
   readonly farmLinks?: readonly DoctorFarmLinksInput[];
@@ -186,8 +201,8 @@ export interface RunDoctorParams {
   readonly usageSnapshots?: Readonly<Record<string, UsageSnapshot>>;
   readonly configProfiles: readonly DoctorConfigProfileInput[];
   readonly providers: readonly DoctorProviderInput[];
-  /** The recorded former names of renamed providers. Omit to leave them out of the findings. */
-  readonly providerAliases?: ProviderAliases;
+  /** `provider-aliases.json`, the recorded former names of renamed providers: absent when no provider was ever renamed. Omit to leave them out of the findings. */
+  readonly providerAliases?: DoctorFileInput;
   /** Probes the base URLs of every valid http provider, up to `MAX_CONCURRENT_PROBES` distinct targets together and any more in rounds of that many, one connection each, each bounded by its provider's connect timeout. Omit to leave reachability out of the findings; with it, a valid http provider whose base URL accepts no connection fails, naming the URL. */
   readonly probeBaseUrls?: BaseUrlBatchProbe;
   /** The providers whose last catalogue refresh, as the serving front door recorded it, failed on a redirect it does not follow, each with the reason it recorded. Omit to leave the finding out. */
@@ -204,11 +219,15 @@ export interface RunDoctorParams {
   readonly models?: ModelsConfig;
   /** Every target the defined providers offer as `<provider>/<model>` refs, for checking a `family:` member against the families they form. Omit to skip that check. */
   readonly modelTargets?: readonly string[];
+  /** The route overrides file. Omit to skip the route override checks; a missing file is a pass (nothing is overridden). */
+  readonly routeOverrides?: DoctorFileInput;
+  /** The configuration's selector ports a target is checked with, for a session on a provider or none, as `route set` checks it. Omit to check by the defined names alone. */
+  readonly routeOverrideTargetPorts?: (routeProvider: string | undefined) => SelectorPorts;
   readonly categoriesLocal: DoctorFileInput;
   readonly activeIdentity: DoctorFileInput;
   readonly binaryDiscovery: DoctorBinaryDiscovery;
   /** Whether `agent-shim shim enable` has been run, and whether its recorded target still exists on disk — pre-resolved by the wiring layer, since checking a file's existence is real I/O, not a parse-shaped pure operation. */
-  readonly claudeShim: { readonly state: ClaudeShimState | undefined; readonly targetExists: boolean };
+  readonly claudeShim: { readonly state: ClaudeShimState | undefined; readonly targetExists: boolean; /** Why the shim record cannot be used, when it exists and cannot be read or parsed. */ readonly problem?: string };
   /** Which executables a bare `agent-shim` (and, when the shim is enabled, a bare `claude`) would actually run — pre-resolved by the wiring layer, since scanning PATH is real I/O. */
   readonly pathResolution: DoctorPathResolution;
   /** The resolved state root (`paths.root`), whose directory name says whether this installation still lives under the former `.claude-use` name. */
@@ -244,6 +263,9 @@ function validateJson<S extends z.ZodType>(
   schema: S,
   input: DoctorFileInput,
 ): { readonly ok: true; readonly data: z.infer<S>; readonly warning?: string } | { readonly ok: false; readonly message: string } {
+  if (input.unreadable !== undefined) {
+    return { ok: false, message: unreadableMessage(input.path, input.unreadable) };
+  }
   if (input.raw === undefined) {
     return { ok: false, message: `${input.path} is missing.` };
   }
@@ -345,6 +367,9 @@ function cacheClause(cacheEnv: CredentialCacheEnv | undefined, owner: string, bl
 
 /** Why the Sign in with ChatGPT file cannot serve a request, or undefined when it can. */
 function signInProblem(signIn: NonNullable<RunDoctorParams["chatgptSignIn"]>): string | undefined {
+  if (signIn.unreadable !== undefined) {
+    return unreadableMessage(signIn.path, signIn.unreadable);
+  }
   if (signIn.raw === undefined) {
     return "nobody is signed in: run `agent-shim codex login`.";
   }
@@ -378,6 +403,10 @@ function validProviderOf(entry: DoctorProviderInput): readonly { readonly name: 
  * Reports one provider file: an old-format file (before the credential block) fails with the old fields named and the whole file rewritten in the current format, since that is the one change converting it needs; any other invalid file fails with its validation errors; a valid one passes with its credential described by source kind and target.
  */
 function pushProvider(push: (section: DoctorSection, severity: DoctorSeverity, message: string, subject?: string) => void, entry: DoctorProviderInput, cacheEnv: CredentialCacheEnv | undefined, signIn: RunDoctorParams["chatgptSignIn"], unreachable: string | undefined): void {
+  if (entry.unreadable !== undefined) {
+    push("provider", "fail", unreadableMessage(entry.path, entry.unreadable), entry.name);
+    return;
+  }
   if (entry.raw === undefined) {
     push("provider", "fail", `${entry.path} is missing.`, entry.name);
     return;
@@ -430,7 +459,7 @@ function pushLegacyName(
   push: (section: DoctorSection, severity: DoctorSeverity, message: string, subject?: string) => void,
   params: Pick<RunDoctorParams, "env" | "rootPath">,
 ): void {
-  const legacyVariables = Object.keys(params.env).filter((name) => name.startsWith(LEGACY_ENV_PREFIX) && params.env[name] !== undefined).sort();
+  const legacyVariables = Object.keys(params.env).filter((name) => name.startsWith(LEGACY_ENV_PREFIX) && ownEntry(params.env, name) !== undefined).sort();
   if (legacyVariables.length === 0 && path.basename(params.rootPath) !== LEGACY_HOME_DIRNAME) {
     push("legacy-name", "pass", "Nothing here still uses the former `claude-use` name.");
     return;
@@ -492,7 +521,9 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     push("binary-discovery", "fail", params.binaryDiscovery.message);
   }
 
-  if (params.claudeShim.state === undefined) {
+  if (params.claudeShim.problem !== undefined) {
+    push("claude-shim", "fail", params.claudeShim.problem);
+  } else if (params.claudeShim.state === undefined) {
     push("claude-shim", "pass", "No `claude` command shim enabled (the default). Run `agent-shim shim enable` to add one.");
   } else if (!params.claudeShim.targetExists) {
     push(
@@ -538,11 +569,24 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     }
   }
   const validProfileNames = new Set(profileSources.keys());
+  // The recorded former names: none when no provider was ever renamed, and none, with the failure, for a file that cannot be used.
+  const providerAliases = ((): ProviderAliases => {
+    const input = params.providerAliases;
+    if (input === undefined || (input.raw === undefined && input.unreadable === undefined)) {
+      return {};
+    }
+    const validated = validate(ProviderAliasesSchema, input, "provider");
+    if (!validated.ok) {
+      push("provider", "fail", validated.message);
+      return {};
+    }
+    return validated.data;
+  })();
   // A recorded former name still resolves to the provider it became, so an identity may name a provider by either.
-  const validProviderNames = new Set([...params.providers.map((entry) => entry.name), ...Object.keys(params.providerAliases ?? {})]);
+  const validProviderNames = new Set([...params.providers.map((entry) => entry.name), ...Object.keys(providerAliases)]);
 
   // An id is an identity's when its directory has an `identity.json`, the test `identityIdExists` makes, so that the hint below says what the rename will do. A directory without one is not.
-  const identityIds = new Set(params.identities.filter((entry) => entry.raw !== undefined).map((entry) => entry.id));
+  const identityIds = new Set(params.identities.filter((entry) => !isAbsent(entry)).map((entry) => entry.id));
   for (const journal of params.renameJournals?.journals ?? []) {
     push("identity", "fail", `There is ${describeUnfinishedRename(journal, finishabilityOf(journal, (name) => identityIds.has(name)))}`, journal.from);
   }
@@ -633,14 +677,14 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     );
   }
 
-  const validatedGlobalConfig = params.globalConfig.raw === undefined ? undefined : validateJson(GlobalConfigSchema, params.globalConfig);
+  const validatedGlobalConfig = isAbsent(params.globalConfig) ? undefined : validateJson(GlobalConfigSchema, params.globalConfig);
   const pools = validatedGlobalConfig?.ok === true ? (validatedGlobalConfig.data.pools ?? {}) : {};
   const accountByIdentity = new Map(params.identities.flatMap((entry) => (validIdentityAgents.has(entry.name) && entry.account !== undefined ? [[entry.name, entry.account] as const] : [])));
   for (const [poolName, pool] of Object.entries(pools)) {
     const missing = pool.identities.filter((member) => poolNameOf(poolMemberIdentity(member)) === undefined && !validIdentityAgents.has(poolMemberIdentity(member)));
     const undefinedPools = pool.identities.flatMap((member) => {
       const nested = poolNameOf(poolMemberIdentity(member));
-      return nested === undefined || nested in pools ? [] : [nested];
+      return nested === undefined || Object.hasOwn(pools, nested) ? [] : [nested];
     });
     if (missing.length === 0 && undefinedPools.length === 0) {
       push("pool", "pass", `${poolName} is valid (${pool.identities.map(poolMemberIdentity).join(", ")}).`, poolName);
@@ -673,7 +717,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   // A window an identity does not receive answers nothing, so whatever reads it for that identity stays undecided or idle without failing.
   const { usageSnapshots } = params;
   if (usageSnapshots !== undefined) {
-    const windowsOf = (identityName: string) => receivedWindows(usageSnapshots[identityName]);
+    const windowsOf = (identityName: string) => receivedWindows(ownEntry(usageSnapshots, identityName));
     for (const finding of poolWindowReadFindings(pools, windowsOf)) {
       push("pool", "warn", finding.message, finding.subject);
     }
@@ -685,7 +729,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   /** Whether what a rule or the active-identity file selects (an identity, or `pool:<name>`) exists. */
   const selectionExists = (selector: string): boolean => {
     const poolName = poolNameOf(selector);
-    return poolName === undefined ? validIdentityAgents.has(selector) : poolName in pools;
+    return poolName === undefined ? validIdentityAgents.has(selector) : Object.hasOwn(pools, poolName);
   };
 
   // Every http provider's base URL is probed in one batch before any finding is pushed, up to `MAX_CONCURRENT_PROBES` distinct targets at once, so their bounds run together within a round and add only across rounds.
@@ -701,7 +745,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     }
   }
   const providerNames = new Set(params.providers.map((entry) => entry.name));
-  for (const finding of aliasFindings(params.providerAliases ?? {}, providerNames)) {
+  for (const finding of aliasFindings(providerAliases, providerNames)) {
     push("provider", finding.level, finding.message, finding.alias);
   }
 
@@ -710,7 +754,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     pushFarmLinkFindings(push, params.farmLinks, validIdentityAgents);
   }
 
-  if (params.directoryRules.raw === undefined) {
+  if (isAbsent(params.directoryRules)) {
     push("directory-rules", "pass", "No directory-rules.json configured.");
   } else {
     const validated = validate(DirectoryRulesSchema, params.directoryRules, "directory-rules");
@@ -736,7 +780,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     }
   }
 
-  if (params.globalConfig.raw === undefined) {
+  if (isAbsent(params.globalConfig)) {
     push("global-config", "pass", "No config.json configured.");
   } else {
     const validated = validate(GlobalConfigSchema, params.globalConfig, "global-config");
@@ -769,7 +813,13 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     }
   }
 
-  if (params.categoriesLocal.raw === undefined) {
+  if (params.routeOverrides !== undefined) {
+    for (const finding of routeOverrideDoctorFindings(params.routeOverrides.path, isAbsent(params.routeOverrides) ? undefined : validate(RouteOverridesSchema, params.routeOverrides, "route-overrides"), { providers: params.providers.map((entry) => entry.name), identities: params.identities.map((entry) => entry.name), profiles: params.configProfiles.map((entry) => entry.name), pools: Object.keys(pools), models: params.models, targets: params.modelTargets ?? [] }, params.routeOverrideTargetPorts)) {
+      push("route-overrides", finding.severity, finding.message);
+    }
+  }
+
+  if (isAbsent(params.categoriesLocal)) {
     push("categories-local", "pass", "No categories.local.json configured.");
   } else {
     const validated = validate(CategoryClassificationOverlaySchema, params.categoriesLocal, "categories-local");
@@ -780,7 +830,9 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     );
   }
 
-  if (params.headroom.state.raw === undefined) {
+  if (params.headroom.state.unreadable !== undefined) {
+    push("headroom", "fail", unreadableMessage(params.headroom.state.path, params.headroom.state.unreadable));
+  } else if (params.headroom.state.raw === undefined) {
     push("headroom", "pass", "No headroom daemon has ever run; nothing to check.");
   } else if (tcpPortEraRecord(params.headroom.state.raw)) {
     // Claimable, not broken: the single-file design treats this content as absent and the next launch through headroom overwrites it, so it must not fail the audit on a machine that never launches with headroom on.
@@ -847,12 +899,17 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   }
 
   if (params.frontDoor !== undefined) {
-    const validated = params.frontDoor.state.raw === undefined ? undefined : validateJson(FrontDoorStateSchema, params.frontDoor.state);
+    const validated = isAbsent(params.frontDoor.state) ? undefined : validateJson(FrontDoorStateSchema, params.frontDoor.state);
+    if (params.frontDoor.state.unreadable !== undefined) {
+      push("frontdoor", "fail", unreadableMessage(params.frontDoor.state.path, params.frontDoor.state.unreadable));
+    }
     pushFrontDoor(push, params.frontDoor.supervisors, validated?.ok === true ? validated.data.supervisorPid : undefined, params.frontDoor.liveSessions, params.frontDoor.draining ?? []);
     pushFrontDoorReadings(push, params.frontDoor);
   }
 
-  if (params.activeIdentity.raw === undefined) {
+  if (params.activeIdentity.unreadable !== undefined) {
+    push("active-identity", "fail", unreadableMessage(params.activeIdentity.path, params.activeIdentity.unreadable));
+  } else if (params.activeIdentity.raw === undefined) {
     push("active-identity", "pass", "No active identity set.");
   } else {
     const trimmed = params.activeIdentity.raw.trim();
@@ -894,7 +951,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
   const identities: DoctorIdentityInput[] = identityNames.filter((id) => (records.some((record) => record.id === id) || !fs.existsSync(path.join(paths.identitiesDir, id, "identity.json"))) && !displacedIdentities.some((record) => record.id === id)).map((id) => {
     const farmRoot = path.join(paths.identitiesDir, id);
     const identityPath = path.join(farmRoot, "identity.json");
-    return { name: identityNameIn(records, id) ?? id, id, path: identityPath, raw: realFsPort.readFileUtf8(identityPath), farmRoot, credentialsFilePresent: fs.existsSync(credentialsFilePath(farmRoot)), account: readIdentityAccount(realFsPort, paths.identitiesDir, id)?.account };
+    return { name: identityNameIn(records, id) ?? id, id, path: identityPath, ...readForDoctor(realFsPort, identityPath), farmRoot, credentialsFilePresent: fs.existsSync(credentialsFilePath(farmRoot)), account: readIdentityAccount(realFsPort, paths.identitiesDir, id)?.account };
   });
 
   // An unreadable snapshot leaves that identity's windows unknown, which the window checks report nothing for, rather than failing the audit. Snapshots are filed by id and looked up by the name the checks reason in.
@@ -906,7 +963,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
         usageSnapshots[name] = snapshot;
       }
     } catch (error) {
-      if (!(error instanceof UsageSnapshotError)) {
+      if (!(error instanceof UsageSnapshotError || isSystemReadError(error))) {
         throw error;
       }
     }
@@ -921,7 +978,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
     : [];
   const configProfiles: DoctorConfigProfileInput[] = profileNames.map((name) => {
     const profilePath = path.join(paths.configProfilesDir, `${name}.json`);
-    return { name, path: profilePath, raw: realFsPort.readFileUtf8(profilePath) };
+    return { name, path: profilePath, ...readForDoctor(realFsPort, profilePath) };
   });
 
   const providerNames = fs.existsSync(paths.providersDir)
@@ -933,7 +990,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
     : [];
   const providers: DoctorProviderInput[] = providerNames.map((name) => {
     const providerPath = path.join(paths.providersDir, `${name}.json`);
-    return { name, path: providerPath, raw: realFsPort.readFileUtf8(providerPath) };
+    return { name, path: providerPath, ...readForDoctor(realFsPort, providerPath) };
   });
 
   const ownExecutablePath = realOwnExecutablePath();
@@ -946,7 +1003,11 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
     binaryDiscovery = { ok: false, message: error instanceof Error ? error.message : String(error) };
   }
 
-  const shimState = readJson(paths.claudeShimFile, ClaudeShimStateSchema);
+  // The shim record is read as every audited file is: one that cannot be read or does not parse is a finding in its section, never an abort.
+  const shimRead = readForDoctor(realFsPort, paths.claudeShimFile);
+  const shimValidated = shimRead.raw === undefined ? undefined : validateJson(ClaudeShimStateSchema, { path: paths.claudeShimFile, raw: shimRead.raw });
+  const shimState = shimValidated?.ok === true ? shimValidated.data : undefined;
+  const shimProblem = shimRead.unreadable !== undefined ? unreadableMessage(paths.claudeShimFile, shimRead.unreadable) : shimValidated?.ok === false ? shimValidated.message : undefined;
 
   const pathDirs = (params.env.PATH ?? "").split(path.delimiter).filter((dir) => dir !== "");
   const claudeShimShadow =
@@ -966,7 +1027,8 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
 
   // Process listing needs a POSIX uid; where there is none the front-door check is skipped rather than guessed.
   const uid = process.getuid?.();
-  const allowlistContent = realFarmFs.readFileUtf8(paths.headroomAllowlistFile);
+  const allowlistRead = readForDoctor(realFarmFs, paths.headroomAllowlistFile);
+  const allowlistContent = allowlistRead.raw;
   const allowlistInputs = currentHeadroomAllowlistInputs(realFarmFs, paths, realFrontDoorLiveness);
   const servingHeadroom = resolveServingHeadroomState(realFarmFs, { stateFile: paths.headroomStateFile, legacyStateFile: paths.headroomLegacyStateFile }, realIsProcessRunning);
   const servingState = servingHeadroom?.state;
@@ -976,27 +1038,29 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
   const report = runDoctor({
     env: params.env,
     credentialCache: realCredentialCacheEnv(paths),
-    chatgptSignIn: { path: paths.chatgptSignInFile, raw: realFsPort.readFileUtf8(paths.chatgptSignInFile) },
+    chatgptSignIn: { path: paths.chatgptSignInFile, ...readForDoctor(realFsPort, paths.chatgptSignInFile) },
     installedClaudeVersions: realInstalledClaudeVersions(),
     identities,
     farmLinks: identities.map(({ name, id, farmRoot }) => ({ name, id, dangling: danglingFarmLinks(realFarmFs, farmRoot) })),
     usageSnapshots,
     configProfiles,
     providers,
-    providerAliases: readProviderAliases(paths),
+    providerAliases: { path: paths.providerAliasesFile, ...readForDoctor(realFsPort, paths.providerAliasesFile) },
     probeBaseUrls: realBaseUrlBatchProbe,
     catalogueRedirects: providersWithRedirectedCatalogue(realFarmFs, paths, new Map(providers.map((entry) => [entry.name, currentCatalogueSettings(paths, entry.name)] as const))),
     renameJournals: listRenameJournals(realFarmFs, paths.identityRenamesDir),
     unreachableIdentities,
     identityRecords: { all: records, displaced: displacedIdentities.map((record) => ({ ...record, directoryPresent: fs.existsSync(path.join(paths.identitiesDir, record.id)) })), nameRenames: unfinishedNameRenames(paths).map((record) => ({ from: record.from, description: describeInterruptedNameRename(paths, record) })), strayNameRenameFiles: strayNameRenameRecordFiles(paths) },
-    directoryRules: { path: paths.directoryRulesFile, raw: realFsPort.readFileUtf8(paths.directoryRulesFile) },
-    globalConfig: { path: paths.globalConfigFile, raw: realFsPort.readFileUtf8(paths.globalConfigFile) },
+    directoryRules: { path: paths.directoryRulesFile, ...readForDoctor(realFsPort, paths.directoryRulesFile) },
+    globalConfig: { path: paths.globalConfigFile, ...readForDoctor(realFsPort, paths.globalConfigFile) },
     models: readableOr(() => readGlobalConfig(paths)?.models, undefined),
     modelTargets: targetRefs(paths),
-    categoriesLocal: { path: paths.categoriesLocalFile, raw: realFsPort.readFileUtf8(paths.categoriesLocalFile) },
-    activeIdentity: { path: paths.activeIdentityFile, raw: realFsPort.readFileUtf8(paths.activeIdentityFile) },
+    routeOverrides: { path: paths.routeOverridesFile, ...readForDoctor(realFsPort, paths.routeOverridesFile) },
+    routeOverrideTargetPorts: (routeProvider) => routeTargetPorts(paths, routeProvider),
+    categoriesLocal: { path: paths.categoriesLocalFile, ...readForDoctor(realFsPort, paths.categoriesLocalFile) },
+    activeIdentity: { path: paths.activeIdentityFile, ...readForDoctor(realFsPort, paths.activeIdentityFile) },
     binaryDiscovery,
-    claudeShim: { state: shimState, targetExists: shimState !== undefined && fs.existsSync(shimState.targetPath) },
+    claudeShim: { state: shimState, targetExists: shimState !== undefined && fs.existsSync(shimState.targetPath), ...(shimProblem === undefined ? {} : { problem: shimProblem }) },
     rootPath: paths.root,
     pathResolution: {
       ownExecutablePath,
@@ -1020,7 +1084,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
       state: (() => {
         const resolved = resolveServingHeadroomState(realFarmFs, { stateFile: paths.headroomStateFile, legacyStateFile: paths.headroomLegacyStateFile }, realIsProcessRunning);
         const statePath = resolved?.path ?? paths.headroomStateFile;
-        return { path: statePath, raw: realFarmFs.readFileUtf8(statePath) };
+        return { path: statePath, ...readForDoctor(realFarmFs, statePath) };
       })(),
       isRunning: realIsProcessRunning,
       allowlist: {
@@ -1033,13 +1097,14 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
         file: paths.headroomAllowlistFile,
         undeterminedFrontDoors: undeterminedFrontDoors(allowlistInputs),
         // An earlier release's daemon reads no allowlist file, so there is nothing to check while one serves.
-        fileProblem: servingEarlierRelease === undefined ? reportableAllowlistFileProblem(paths.headroomAllowlistFile, realHeadroomSocketTrust, servingHeadroom?.state.allowlistHash !== undefined) : undefined,
+        // A file that cannot be read is one headroom cannot read either, which no supervisor tick repairs.
+        fileProblem: allowlistRead.unreadable !== undefined ? { message: `it cannot be read (${allowlistRead.unreadable})`, repairable: false } : servingEarlierRelease === undefined ? reportableAllowlistFileProblem(paths.headroomAllowlistFile, realHeadroomSocketTrust, servingHeadroom?.state.allowlistHash !== undefined) : undefined,
         logPath: paths.headroomLogPath,
       },
     },
     ...(uid === undefined
       ? {}
-      : { frontDoor: { state: { path: paths.frontdoorStateFile, raw: realFsPort.readFileUtf8(paths.frontdoorStateFile) }, supervisors: listFrontDoorSupervisors(realRunPort, uid), liveSessions: listFrontDoorSessions(realFarmFs, paths.frontdoorSessionsDir).filter((session) => realIsProcessRunning(session.pid)), draining: listDrainingFrontDoors(realFarmFs, paths.frontdoorDrainingDir, realIsProcessRunning), listeners: servingDoorListeners(paths), ...rcSelfHostMintFacts(realFarmFs, paths.identitiesDir, paths.frontdoorDir) } }),
+      : { frontDoor: { state: { path: paths.frontdoorStateFile, ...readForDoctor(realFsPort, paths.frontdoorStateFile) }, supervisors: listFrontDoorSupervisors(realRunPort, uid), liveSessions: listFrontDoorSessions(realFarmFs, paths.frontdoorSessionsDir).filter((session) => realIsProcessRunning(session.pid)), draining: listDrainingFrontDoors(realFarmFs, paths.frontdoorDrainingDir, realIsProcessRunning), listeners: servingDoorListeners(paths), ...rcSelfHostMintFacts(realFarmFs, paths.identitiesDir, paths.frontdoorDir) } }),
   });
   return report;
 }

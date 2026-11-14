@@ -4,13 +4,16 @@ import { Readable } from "node:stream";
 import { HTTP_STATUS } from "../codex/http";
 import type { RouteResolution, ServedModelReport } from "./pipeline";
 import { RequestClassSchema, type RequestClass } from "../usage/schema";
-import { AUTO_MODEL } from "../models/reservedModelNames";
+import { ANTHROPIC_ROUTE_NAME, AUTO_MODEL } from "../models/reservedModelNames";
 import { PROVIDER_PATH_PREFIX, internalHeaderValue, parseProviderPath, type RoutedRequest } from "./route";
-import { withoutContentLength } from "./contentLength";
+import { abandonBody } from "./cappedBody";
+import { declaredLength, withoutContentLength } from "./contentLength";
 import { REQUEST_SCAN_CAP_BYTES, type RequestScan, scanRequestHead } from "./requestScan";
 import { isMessagesInferencePath, isMessagesRequest } from "./messagesBodyLimit";
 import { AMBIGUOUS_MODEL_MESSAGE, topLevelModel } from "./topLevelModel";
-import { claudeNameTier } from "../models/tiers";
+import { withoutContextMarker } from "../models/identity";
+import { claudeNameTier, isBareClaudeName } from "../models/tiers";
+import type { ClaudeTier } from "../config/schema";
 import { MAX_CONTEXT_TEXT_LENGTH, launchKeyOf, type FrontDoorLaunch, type MainLoopRouteStore, type RouteContext } from "./state";
 
 /**
@@ -51,6 +54,10 @@ export interface MainLoopRouteRecord {
   readonly begin: (launch: Readonly<FrontDoorLaunch>) => number;
   /** Where `launch`'s latest main-loop request was served, or undefined when none has been recorded. */
   readonly routeOf: (launch: Readonly<FrontDoorLaunch>) => RouteContext | undefined;
+  /** Notes a bare Claude model name `launch` sent (main loop or helper): the model id its Claude Code resolved that name's tier to, which is what `/model <tier>` would send. A launch that is not registered notes nothing. */
+  readonly noteClaudeName: (launch: Readonly<FrontDoorLaunch>, model: string) => void;
+  /** The Claude model id `launch` last sent for `tier`, or undefined when it has sent none this door saw. Held in memory only: a door that replaced the one that saw it starts with none. */
+  readonly claudeNameOf: (launch: Readonly<FrontDoorLaunch>, tier: ClaudeTier) => string | undefined;
 }
 
 /** What `createMainLoopRouteRecord` reads the registry through. */
@@ -65,7 +72,7 @@ export interface MainLoopRoutePorts {
 
 /** Whether two contexts say the same: the same route and the same credential and model names, so a context is written again only when one of them changed. */
 function sameContext(a: RouteContext, b: RouteContext): boolean {
-  return a.kind === b.kind && (a.kind !== "provider" || (b.kind === "provider" && a.provider === b.provider)) && a.credential === b.credential && a.requestedModel === b.requestedModel && a.servedModel === b.servedModel;
+  return a.kind === b.kind && (a.kind !== "provider" || (b.kind === "provider" && a.provider === b.provider)) && a.credential === b.credential && a.requestedModel === b.requestedModel && a.servedModel === b.servedModel && a.movedBy === b.movedBy && a.chosenProvider === b.chosenProvider;
 }
 
 /**
@@ -87,7 +94,14 @@ export function createMainLoopRouteRecord(ports: MainLoopRoutePorts): MainLoopRo
   const recordedUnder = new Map<string, number>();
   // The launches whose durable copy failed to write, so a store that keeps failing is reported once per launch until a write succeeds, not once per request. A failure to read is reported once per identity of the copy by the read itself.
   const failed = new Set<string>();
+  // The Claude model id each launch last sent per tier, bounded like the routes: a launch's entry goes when it is no longer registered.
+  const claudeNames = new Map<string, { readonly launch: FrontDoorLaunch; readonly byTier: Map<ClaudeTier, string> }>();
   const dropEnded = (except: string): void => {
+    for (const [held, entry] of claudeNames) {
+      if (held !== except && !ports.holdsLaunch(entry.launch)) {
+        claudeNames.delete(held);
+      }
+    }
     for (const [held, entry] of routes) {
       if (held !== except && !ports.holdsLaunch(entry.launch)) {
         routes.delete(held);
@@ -131,6 +145,23 @@ export function createMainLoopRouteRecord(ports: MainLoopRoutePorts): MainLoopRo
     return { launch, route: stored, persisted: stored, identity };
   };
   return {
+    noteClaudeName: (launch, model) => {
+      // A name with a provider part is no id the session's Claude Code resolved a tier to, even one whose last part reads as a Claude name (`claude-haiku-5-5/x`).
+      const tier = isBareClaudeName(model) ? claudeNameTier(model) : undefined;
+      if (tier === undefined || !ports.holdsLaunch(launch)) {
+        return;
+      }
+      const key = launchKeyOf(launch);
+      dropEnded(key);
+      const entry = claudeNames.get(key) ?? { launch: { pid: launch.pid, startedAt: launch.startedAt }, byTier: new Map<ClaudeTier, string>() };
+      // A bare tier alias (`sonnet`) names no model id, so it is never what a tier resolves to.
+      const id = withoutContextMarker(model);
+      if (id.toLowerCase() !== tier) {
+        entry.byTier.set(tier, id);
+      }
+      claudeNames.set(key, entry);
+    },
+    claudeNameOf: (launch, tier) => claudeNames.get(launchKeyOf(launch))?.byTier.get(tier),
     begin: (launch) => {
       const key = launchKeyOf(launch);
       dropEnded(key);
@@ -201,7 +232,38 @@ export interface MainLoopRoutingDeps {
   readonly loginOf: (session: RoutedRequest["session"]) => string;
   /** Whether a provider file defines `name`: `anthropic/<model>` names the Anthropic route only when no provider is called `anthropic`. */
   readonly definesProvider: (name: string) => boolean;
+  /** Replaces a Messages request's model name with the one it is routed by before anything else reads it (a selector's expansion, a route override's target), or leaves it, for a body no longer than `bodyLimitBytes` declares (a body that declares more is left to the resolver, which refuses it before reading any of it). Absent, no name is replaced. */
+  readonly rename?: { readonly model: RenameModel; readonly bodyLimitBytes: number };
 }
+
+/**
+ * The provider of the route a session itself chose: the provider it was launched on, else the provider its recorded context names when the session's own request put it there, else, for a context a route override made, the provider the session had chosen before the override moved it (`chosenProvider`), else none (the Anthropic route). A context a route override made is the override's, not the session's: reading an override's scope from it would let an override's own move decide which override applies next, so a provider-scoped entry for the provider a global entry moved the session to would flip the session between the two on every request. Every scope and route a renaming reads comes from here.
+ */
+export function sessionRouteProvider(launchProvider: string | undefined, context: Readonly<RouteContext> | undefined): string | undefined {
+  if (launchProvider !== undefined) {
+    return launchProvider;
+  }
+  if (context?.movedBy === "override") {
+    return context.chosenProvider;
+  }
+  return context?.kind === "provider" ? context.provider : undefined;
+}
+
+/** What a renaming knows of the request whose model it may replace. */
+export interface RenameContext {
+  readonly session: RoutedRequest["session"];
+  /** Whether the request is the main loop's (class `main`, or no class and no agent id). */
+  readonly main: boolean;
+  /** Whether the request's path names no provider: the session's own request, as against one a routing layer or the headroom hop scoped. */
+  readonly unscoped: boolean;
+  /** The provider of the route the session itself chose, as `sessionRouteProvider` reads it: the launch's own, else the provider its main loop was last served on when the session's own request put it there, else, for a context a route override made, the provider the session had chosen before the override moved it (`chosenProvider`); undefined on the Anthropic route. So a class alone and the override provider scope follow the route the session chose, never the one an override moved it to. Asked only when needed, since it reads the route context. */
+  readonly routeProvider: () => string | undefined;
+  /** The Claude model id this launch last sent for a tier (see `MainLoopRouteRecord.claudeNameOf`), which a class on the Anthropic route is sent as. */
+  readonly claudeNameOf: (tier: ClaudeTier) => string | undefined;
+}
+
+/** Replaces one model name: the name to route by, a refusal the request is answered with (a 400), or undefined to leave the name as it is. */
+export type RenameModel = (model: string, context: Readonly<RenameContext>) => { readonly name: string; /** Set when a route override, not the request's own name, chose the name: what the context records as the reason the main loop moved. */ readonly overridden?: true; /** Set when the door placed the name on the Anthropic route of the session's own login (`anthropic/<model>`): it is served there whatever the providers are called, since a provider file called `anthropic` claims that spelling only for a name the session sent. */ readonly onAnthropic?: true } | { readonly refusal: string } | undefined;
 
 /** The provider a served request target names, or undefined for a bare target (the Anthropic route, or a path the session's launch provider scoped). */
 function servedProviderOf(url: string): string | undefined {
@@ -209,12 +271,7 @@ function servedProviderOf(url: string): string | undefined {
 }
 
 /** The prefix by which a person selects an Anthropic model by name once their session is on a provider: `/model anthropic/claude-sonnet-5-5`. */
-const ANTHROPIC_PREFIX = "anthropic/";
-
-/** Whether a model name is a bare Claude name (`claude-sonnet-5-5`, `opus`): one that selects a tier and names no provider. */
-function isBareClaudeName(model: string): boolean {
-  return !model.includes("/") && claudeNameTier(model) !== undefined;
-}
+export const ANTHROPIC_PREFIX = `${ANTHROPIC_ROUTE_NAME}/`;
 
 /** The text of a model or credential name, or none when it is too long to keep in the context: a name is a fact about the route, never worth a rejected file. */
 function boundedName(text: string | undefined): string | undefined {
@@ -229,10 +286,11 @@ function boundedName(text: string | undefined): string | undefined {
  * A main-loop request (class `main`, or no class at all, and no agent id) is resolved first, and where it was served is recorded with the credential and model names; one the resolver left on the Anthropic route is placed by the context as above. Any other class is placed by the context without resolving first. With no context the session has never left the route it was launched on, so its requests go there: Claude Code sends helpers (the startup quota check, a model validation) before its first main-loop request, and they belong to the launch's own account.
  */
 export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<RouteResolution>, deps: MainLoopRoutingDeps): (request: RoutedRequest) => Promise<RouteResolution> {
-  /** The context recorded for a request served on `route`, with the facts about it. */
-  const contextOf = (route: RouteOf, credentialName: string | undefined, requested: string | undefined, served: string | undefined): RouteContext => {
+  /** The context of a served request. `overriddenFrom` is set when an override placed it: the context the session was in, from which the route the session itself chose is kept (`chosenProvider`), so the session goes back there once the override no longer applies. */
+  const contextOf = (route: RouteOf, credentialName: string | undefined, requested: string | undefined, served: string | undefined, overriddenFrom?: { readonly context: Readonly<RouteContext> | undefined }): RouteContext => {
     const credential = boundedName(credentialName);
-    const facts = { ...(credential === undefined ? {} : { credential }), ...(boundedName(requested) === undefined ? {} : { requestedModel: boundedName(requested) }), ...(boundedName(served) === undefined ? {} : { servedModel: boundedName(served) }) };
+    const chosen = overriddenFrom === undefined ? undefined : sessionRouteProvider(undefined, overriddenFrom.context);
+    const facts = { ...(credential === undefined ? {} : { credential }), ...(boundedName(requested) === undefined ? {} : { requestedModel: boundedName(requested) }), ...(boundedName(served) === undefined ? {} : { servedModel: boundedName(served) }), ...(overriddenFrom === undefined ? {} : { movedBy: "override" as const }), ...(chosen === undefined ? {} : { chosenProvider: chosen }) };
     return { ...route, ...facts };
   };
 
@@ -254,6 +312,11 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
   /** `base` placed on the Anthropic route under its bare model name, for a request that asked for `requested` as `anthropic/<model>`. */
   const toAnthropic = async (base: RoutedRequest, requested: string): Promise<{ readonly resolution: RouteResolution; readonly served: string }> => {
     const served = requested.slice(ANTHROPIC_PREFIX.length);
+    // `anthropic/` alone names no model, and the Anthropic route would be sent an empty one.
+    if (withoutContextMarker(served).trim() === "") {
+      abandonBody(base.body);
+      return { resolution: { ok: false, status: HTTP_STATUS.badRequest, message: `the model name ${JSON.stringify(requested)} names no model after ${JSON.stringify(ANTHROPIC_PREFIX)}: write ${ANTHROPIC_PREFIX}<model>` }, served };
+    }
     // The rewrite below changes only the first of two model fields, so the head is inspected for a second one first: this site always rewrites, so it always inspects those bytes (the whole body when it ends sooner).
     const found = await scanRequestHead(base);
     const scan = await scanRequestHead(found.replayed, false, REQUEST_SCAN_CAP_BYTES);
@@ -295,20 +358,68 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
     return { resolution: { ...resolution, request: resolution.request, ...(requested === undefined ? {} : { requestedModel: requested }) }, requested, served: choice.kind === "mapped" ? choice.model : requested, credential };
   };
 
-  return async (request) => {
-    const { launch, provider } = request.session;
+  /**
+   * `request` with its model renamed by `deps.rename`, and the name it asked for, when the rename replaced it: only a Messages request carries a model, and only its head is read and rewritten, the rest streaming through unread. A request that names the model field twice is refused where it would be rewritten, since only the first field would change. A request the rename leaves alone goes on as the scan's replay, its bytes as they came.
+   */
+  const renamed = async (request: RoutedRequest, arrival: ReturnType<typeof arrivalOf>, rename: RenameModel, bodyLimitBytes: number): Promise<{ readonly request: RoutedRequest; readonly asked?: string; readonly overridden?: true; /** The name the door placed on the Anthropic route of the session's own login, when it did (see `RenameModel`). */ readonly ownLogin?: string } | { readonly refused: RouteResolution }> => {
     const path = new URL(request.url, "http://127.0.0.1").pathname;
-    if (launch === undefined || provider !== undefined || !isMessagesInferencePath(path)) {
-      return await resolve(request);
+    // A body that declares more than the limit is refused by the resolver from its declared length before any of it is read, so it is not read here either.
+    if (!isMessagesRequest(request.method, path) || declaredLength(request.headers) > bodyLimitBytes) {
+      return { request };
     }
+    const found = await scanRequestHead(request);
+    const asked = found.model;
     const requestClass = requestClassOf(request.headers);
-    const ticket = deps.record.begin(launch);
-    const current = deps.record.routeOf(launch);
+    const { launch } = request.session;
+    if (launch !== undefined && asked !== undefined) {
+      deps.record.noteClaudeName(launch, asked);
+    }
+    const decided = asked === undefined ? undefined : rename(asked, {
+      session: request.session,
+      main: requestClass === undefined || requestClass === MAIN_REQUEST_CLASS,
+      unscoped: parseProviderPath(path) === undefined,
+      routeProvider: () => sessionRouteProvider(request.session.provider, arrival === undefined ? (launch === undefined ? undefined : deps.record.routeOf(launch)) : arrival.current),
+      claudeNameOf: (tier) => (launch === undefined ? undefined : deps.record.claudeNameOf(launch, tier)),
+    });
+    if (decided === undefined || asked === undefined) {
+      return { request: found.replayed };
+    }
+    if ("refusal" in decided) {
+      abandonBody(found.replayed.body);
+      return { refused: { ok: false, status: HTTP_STATUS.badRequest, message: decided.refusal } };
+    }
+    const scan = await scanRequestHead(found.replayed, false, REQUEST_SCAN_CAP_BYTES);
+    if (scan.hasSeveralModelFields()) {
+      abandonBody(scan.replayed.body);
+      return { refused: { ok: false, status: HTTP_STATUS.badRequest, message: AMBIGUOUS_MODEL_MESSAGE } };
+    }
+    return { request: withModelInHead(scan.replayed, scan.headBytes, asked, decided.name), asked, ...(decided.overridden === undefined ? {} : { overridden: true }), ...(decided.onAnthropic === undefined ? {} : { ownLogin: decided.name }) };
+  };
+
+  /** A request the main loop's context governs, its place in the launch's order and the context as it stood, taken when the request arrives and before anything is awaited, so a request whose head is read late cannot out-record one that arrived after it; undefined for any other request. */
+  const arrivalOf = (request: RoutedRequest): { readonly launch: Readonly<FrontDoorLaunch>; readonly ticket: number; readonly current: Readonly<RouteContext> | undefined } | undefined => {
+    const { launch, provider } = request.session;
+    if (launch === undefined || provider !== undefined || !isMessagesInferencePath(new URL(request.url, "http://127.0.0.1").pathname)) {
+      return undefined;
+    }
+    return { launch, ticket: deps.record.begin(launch), current: deps.record.routeOf(launch) };
+  };
+
+  const routed = async (request: RoutedRequest, arrival: ReturnType<typeof arrivalOf>, asked: string | undefined, overridden: boolean, ownLogin: string | undefined): Promise<RouteResolution> => {
+    if (arrival === undefined) {
+      return ownLogin === undefined ? await resolve(request) : (await toAnthropic(request, ownLogin)).resolution;
+    }
+    const { launch, ticket, current } = arrival;
+    const path = new URL(request.url, "http://127.0.0.1").pathname;
+    const requestClass = requestClassOf(request.headers);
     if (requestClass !== undefined && requestClass !== MAIN_REQUEST_CLASS) {
       // A helper is placed by the context before anything resolves it. Only a Messages request carries a model, so only its head is read: any other request on a Messages sub-resource goes on with its body untouched.
       const scan = isMessagesRequest(request.method, path) ? await scanRequestHead(request) : undefined;
       const helper = scan?.replayed ?? request;
-      if (scan?.model?.startsWith(ANTHROPIC_PREFIX) === true && !deps.definesProvider("anthropic")) {
+      if (ownLogin !== undefined) {
+        return (await toAnthropic(helper, ownLogin)).resolution;
+      }
+      if (scan?.model?.startsWith(ANTHROPIC_PREFIX) === true && !deps.definesProvider(ANTHROPIC_ROUTE_NAME)) {
         return (await toAnthropic(helper, scan.model)).resolution;
       }
       if (current === undefined || current.kind === "anthropic") {
@@ -316,27 +427,48 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
       }
       return (await toProvider(helper, current.provider, request.session)).resolution;
     }
+    // A name the door placed on the Anthropic route of the session's own login goes there before the resolver sees it, which would give `anthropic/<model>` to a provider file called `anthropic`.
+    if (ownLogin !== undefined) {
+      const placed = await toAnthropic(request, ownLogin);
+      if (placed.resolution.ok) {
+        recordServing(launch, ticket, placed.resolution, (servedModel) => contextOf({ kind: "anthropic" }, deps.loginOf(request.session), asked ?? ownLogin, servedModel, overridden ? { context: current } : undefined), placed.served);
+      }
+      return placed.resolution;
+    }
     const resolution = await resolve(request);
     if (!resolution.ok) {
       return resolution;
     }
     const requested = resolution.requestedModel;
+    // The name the session asked for is what the context records, whatever it was renamed to: the selector or Claude name, never its expansion.
+    const recordedAs = asked ?? requested;
     const served = servedProviderOf(resolution.request?.url ?? request.url);
     if (served === undefined) {
       // The resolver left the request on the Anthropic route, which a request that chose it by `anthropic/<model>` is entitled to; any other goes where the context says. Under a provider context that is the provider, whatever the request names (a name no provider claims and that is no Claude name, a name with a typo, no model at all, a body that is no JSON): it is served as asked, and never by the launch's account.
       const base = resolution.request ?? request;
-      if (requested?.startsWith(ANTHROPIC_PREFIX) === true && !deps.definesProvider("anthropic")) {
+      if (requested?.startsWith(ANTHROPIC_PREFIX) === true && !deps.definesProvider(ANTHROPIC_ROUTE_NAME)) {
         const placed = await toAnthropic(base, requested);
         if (placed.resolution.ok) {
-          recordServing(launch, ticket, placed.resolution, (servedModel) => contextOf({ kind: "anthropic" }, deps.loginOf(request.session), requested, servedModel), placed.served);
+          recordServing(launch, ticket, placed.resolution, (servedModel) => contextOf({ kind: "anthropic" }, deps.loginOf(request.session), recordedAs, servedModel, overridden ? { context: current } : undefined), placed.served);
         }
         return placed.resolution;
       }
-      if (current?.kind === "provider") {
+      // A context an override put the main loop in lasts only while an override still applies: a bare Claude name no override covers now goes back to the route the session itself chose (below), and the context is recorded there. A context the person chose (`/model <provider>/<model>`) is no override's and stays.
+      const overrideLapsed = current?.movedBy === "override" && !overridden && requested !== undefined && isBareClaudeName(requested);
+      // That is the provider the session had chosen before the override moved it, when it had chosen one, else the launch's own route.
+      const chosenProvider = overrideLapsed ? current.chosenProvider : undefined;
+      if (chosenProvider !== undefined) {
+        const placed = await toProvider(base, chosenProvider, request.session);
+        if (placed.resolution.ok) {
+          recordServing(launch, ticket, placed.resolution, (servedModel) => contextOf({ kind: "provider", provider: chosenProvider }, placed.credential, recordedAs, servedModel), unlessAuto(placed.served));
+        }
+        return placed.resolution;
+      }
+      if (current?.kind === "provider" && !overrideLapsed) {
         const placed = await toProvider(base, current.provider, request.session);
         // Only a Claude name asked for on the main loop is a fact about it worth recording, and the route stays what it was: a request that chose no route moves nothing.
         if (placed.resolution.ok && requested !== undefined && (isBareClaudeName(requested) || requested === AUTO_MODEL)) {
-          recordServing(launch, ticket, placed.resolution, (servedModel) => contextOf({ kind: "provider", provider: current.provider }, placed.credential, requested, servedModel), unlessAuto(placed.served));
+          recordServing(launch, ticket, placed.resolution, (servedModel) => contextOf({ kind: "provider", provider: current.provider }, placed.credential, recordedAs, servedModel, current.movedBy === "override" ? { context: current } : undefined), unlessAuto(placed.served));
         }
         return placed.resolution;
       }
@@ -350,8 +482,22 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
     const servedModel = resolution.servedModel ?? (served === undefined ? requested : undefined);
     // The credential is named from the provider's file as read for this request, which is read for every request anyway, so an edited credential block shows its new name at the next one.
     const credential = served === undefined ? deps.loginOf(request.session) : deps.providerMapping(served, request.session, "").credential;
-    recordServing(launch, ticket, resolution, (model) => contextOf(route, credential, requested, model), served === undefined ? servedModel : unlessAuto(servedModel));
+    recordServing(launch, ticket, resolution, (model) => contextOf(route, credential, recordedAs, model, overridden ? { context: current } : undefined), served === undefined ? servedModel : unlessAuto(servedModel));
     return resolution;
+  };
+
+  return async (request) => {
+    const arrival = arrivalOf(request);
+    if (deps.rename === undefined) {
+      return await routed(request, arrival, undefined, false, undefined);
+    }
+    const named = await renamed(request, arrival, deps.rename.model, deps.rename.bodyLimitBytes);
+    if ("refused" in named) {
+      return named.refused;
+    }
+    const resolution = await routed(named.request, arrival, named.asked, named.overridden === true, named.ownLogin);
+    // The usage log records the name the request asked for, as the context does.
+    return resolution.ok && named.asked !== undefined ? { ...resolution, requestedModel: named.asked } : resolution;
   };
 }
 

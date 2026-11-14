@@ -1,89 +1,18 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { Help, type Command } from "commander";
 import { isRouterProvider, type Provider } from "./config/schema";
 import { STATUSLINE_HEADER_SEGMENTS } from "./config/statusline";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { EXIT_FAILURE, EXIT_USAGE } from "./cliError";
-import { reportFatalError } from "./cliReport";
 import { addIdentity, readActiveIdentity, readIdentity, useIdentity } from "./identityStore";
 import { readJobs } from "./jobStore";
 import { createProfile, readGlobalConfig, readProfile } from "./configProfilesStore";
 import { readProvider } from "./providersStore";
 import { listDirectoryRules } from "./directoryRulesStore";
-import { buildLayoutPaths, type LayoutPaths } from "./paths";
-import { buildProgram } from "./program";
-import { fakeCommandDeps } from "./test-helpers";
-
-let root: string;
-let paths: LayoutPaths;
-
-beforeEach(() => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-program-"));
-  paths = buildLayoutPaths(root);
-  process.exitCode = undefined;
-});
-
-afterEach(() => {
-  vi.restoreAllMocks();
-  process.exitCode = undefined;
-  fs.rmSync(root, { recursive: true, force: true });
-});
-
-interface CliResult {
-  readonly code: number;
-  readonly stdout: string;
-  readonly stderr: string;
-}
-
-type RunClaude = (args: readonly string[]) => Promise<void>;
-
-function program(runClaude: RunClaude = vi.fn<RunClaude>(), options: Parameters<typeof fakeCommandDeps>[1] = {}): Command {
-  return buildProgram({ ...fakeCommandDeps(paths, options), runClaude });
-}
-
-/** Runs one `agent-shim` invocation against the throwaway layout the way `src/cli.ts` does, capturing both streams and the exit status `reportFatalError` or the command itself decided. */
-async function cli(argv: readonly string[], options: Parameters<typeof fakeCommandDeps>[1] = {}): Promise<CliResult> {
-  const out: string[] = [];
-  const err: string[] = [];
-  vi.spyOn(console, "log").mockImplementation((...args: readonly unknown[]) => {
-    out.push(`${args.map(String).join(" ")}\n`);
-  });
-  vi.spyOn(console, "error").mockImplementation((...args: readonly unknown[]) => {
-    err.push(`${args.map(String).join(" ")}\n`);
-  });
-  vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
-    out.push(String(chunk));
-    return true;
-  });
-  vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
-    err.push(String(chunk));
-    return true;
-  });
-  let code: number;
-  try {
-    await program(vi.fn<RunClaude>(), options).parseAsync([...argv], { from: "user" });
-    code = typeof process.exitCode === "number" ? process.exitCode : 0;
-  } catch (error) {
-    code = reportFatalError(error, {
-      writeErr: (line) => {
-        err.push(`${line}\n`);
-      },
-      env: {},
-    });
-  } finally {
-    vi.restoreAllMocks();
-    process.exitCode = undefined;
-  }
-  return { code, stdout: out.join(""), stderr: err.join("") };
-}
-
-function parseJson(text: string): unknown {
-  return JSON.parse(text);
-}
+import { cli, parseJson, paths, program, root, type RunClaude } from "./programTestWorld";
 
 function subcommandNames(command: Command, name: string): string[] {
   const noun = command.commands.find((candidate) => candidate.name() === name);
@@ -105,7 +34,7 @@ describe("buildProgram", () => {
     const built = program(runClaude);
 
     expect(built.commands.map((command) => command.name()).sort()).toEqual(
-      ["__frontdoor-supervisor", "__headroom-supervisor", "__identity-lock-v1", "__open-window", "__run-job", "__supervise-mark", "account", "check", "codex", "completion", "configure", "credential", "doctor", "frontdoor", "headroom", "identity", "job", "mcp", "model", "pool", "profile", "provider", "rule", "run", "session", "shim", "statusline", "update", "usage"].sort(),
+      ["__frontdoor-supervisor", "__headroom-supervisor", "__identity-lock-v1", "__open-window", "__run-job", "__supervise-mark", "account", "check", "codex", "completion", "configure", "credential", "doctor", "frontdoor", "headroom", "identity", "job", "mcp", "model", "pool", "profile", "provider", "route", "rule", "run", "session", "shim", "statusline", "update", "usage"].sort(),
     );
     expect(runClaude).not.toHaveBeenCalled();
     expect(fs.readdirSync(root)).toEqual([]);
@@ -119,6 +48,7 @@ describe("buildProgram", () => {
     expect(subcommandNames(built, "profile")).toEqual(["add", "list", "remove", "set", "show", "use"]);
     expect(subcommandNames(built, "provider")).toEqual(["add", "list", "models", "remove", "rename", "set", "show", "unalias"]);
     expect(subcommandNames(built, "rule")).toEqual(["add", "list", "remove", "set", "show"]);
+    expect(subcommandNames(built, "route")).toEqual(["list", "remove", "set"]);
     expect(subcommandNames(built, "credential")).toEqual(["forget", "push", "store", "warm"]);
   });
 

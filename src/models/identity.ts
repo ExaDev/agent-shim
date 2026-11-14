@@ -1,3 +1,4 @@
+import { ownEntry } from "../ownEntry";
 /**
  * Model identity: what makes two model names the same model.
  *
@@ -142,8 +143,8 @@ export function modelIdentity(rawName: string): ModelIdentity {
   // A vendor the name's own words carry outranks the namespace it arrived in, because a marketplace re-spells the vendor while the family name travels unchanged.
   const tokenVendor = familyTokens.find((token) => Object.keys(VENDOR_BY_TOKEN).some((key) => token === key || token.startsWith(key)));
   const namespace = segments.length >= 2 ? (segments[0] ?? "").split(":").pop() ?? "" : "";
-  const namespaceVendor = VENDOR_BY_NAMESPACE[namespace] ?? "";
-  const tokenVendorName = tokenVendor === undefined ? "" : VENDOR_BY_TOKEN[Object.keys(VENDOR_BY_TOKEN).find((key) => tokenVendor === key || tokenVendor.startsWith(key)) ?? ""] ?? "";
+  const namespaceVendor = ownEntry(VENDOR_BY_NAMESPACE, namespace) ?? "";
+  const tokenVendorName = tokenVendor === undefined ? "" : ownEntry(VENDOR_BY_TOKEN, Object.keys(VENDOR_BY_TOKEN).find((key) => tokenVendor === key || tokenVendor.startsWith(key)) ?? "") ?? "";
   return {
     vendor: tokenVendorName === "" ? namespaceVendor : tokenVendorName,
     vendorConflict: tokenVendorName !== "" && namespaceVendor !== "" && tokenVendorName !== namespaceVendor,

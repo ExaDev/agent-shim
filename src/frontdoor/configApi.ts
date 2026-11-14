@@ -57,11 +57,18 @@ import {
   ConfigRuleRemoveOutputSchema,
   ConfigRuleSetInputSchema,
   ConfigRuleSetOutputSchema,
+  ConfigRouteSetInputSchema,
+  ConfigRouteSetOutputSchema,
+  ConfigRouteRemoveInputSchema,
+  ConfigRouteRemoveOutputSchema,
 } from "./configSchemas";
+import { removeRouteOverride, setRouteOverride } from "../routeOverrides";
+import { overrideKeyOf, scopeLabelOf } from "../routeOverridesStore";
 import { doorApiAuth } from "./rcApi";
+import { ownEntry } from "../ownEntry";
 
 /**
- * The door's configuration management as a typed oRPC API: the writes the CLI's `identity`, `profile`, `pool`, `provider` and `rule` verbs make, as `config.<noun>.<verb>` procedures, every one behind the same per-generation control token as the rest of the mount.
+ * The door's configuration management as a typed oRPC API: the writes the CLI's `identity`, `profile`, `pool`, `provider` and `rule` verbs make, (and `route set|remove`) as `config.<noun>.<verb>` procedures, every one behind the same per-generation control token as the rest of the mount.
  *
  * Each procedure makes the checks its verb makes and calls the store function it calls (and the shared rules extracted beside them), so a write through the API and a write through the CLI are the same write: the same validation, the same atomic store write, the same refusals. The one check that reaches outside the stores is `config.identity.add`'s question to the macOS Keychain, asked through the asynchronous runner in `deps.keychain` so the door's event loop is never held, by the function the CLI asks it with. A refusal is the CLI's own message carried as an oRPC error (`NOT_FOUND` for a name that does not exist, `CONFLICT` for one that already does or for a Keychain login in the way, `BAD_REQUEST` for anything else the store refuses, and the retryable `SERVICE_UNAVAILABLE` for a Keychain that could not be asked), and every outcome is the `--json` object the verb prints.
  *
@@ -390,7 +397,7 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
           .output(ConfigPoolUseOutputSchema)
           .handler(({ input }) =>
             guarded(() => {
-              if (readPools(paths)[input.name] === undefined) {
+              if (ownEntry(readPools(paths), input.name) === undefined) {
                 throw new PoolNotFoundError(input.name);
               }
               useIdentity(paths, `pool:${input.name}`, nonWaitingIdentityNamesLockPorts);
@@ -508,6 +515,27 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
               }
               removeDirectoryRule(paths, input.path);
               return { action: "removed" as const, kind: "rule" as const, name: input.path };
+            });
+          }),
+      },
+      route: {
+        set: route("/rest/config/route/set", "Route a Claude model name or class to a target in one scope, from each session's next request")
+          .input(ConfigRouteSetInputSchema)
+          .output(ConfigRouteSetOutputSchema)
+          .handler(({ input }) =>
+            guarded(() => {
+              setRouteOverride(paths, input.scope, input.model, input.target);
+              const stored = overrideKeyOf(input.model);
+              return { action: "updated" as const, kind: "route" as const, name: stored, value: { scope: scopeLabelOf(input.scope), model: stored, target: input.target } };
+            }),
+          ),
+        remove: route("/rest/config/route/remove", "Remove one route override")
+          .input(ConfigRouteRemoveInputSchema)
+          .output(ConfigRouteRemoveOutputSchema)
+          .handler(({ input }) => {
+            requireConfirmation(input.confirm, `the route override of "${input.model}"`);
+            return guarded(() => {
+              return { action: "removed" as const, kind: "route" as const, name: removeRouteOverride(paths, input.scope, input.model).removed };
             });
           }),
       },

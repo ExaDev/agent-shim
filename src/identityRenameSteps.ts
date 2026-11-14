@@ -13,6 +13,8 @@ import type { FarmFs } from "./launcher/ports";
 import { renameAccountModelRefs } from "./modelRefs";
 import type { LayoutPaths } from "./paths";
 import { renameIdentityInPools } from "./poolStore";
+import { RouteOverridesSchema } from "./routeOverridesSchema";
+import { routeOverridesRenamed } from "./routeOverridesStore";
 import { stampsWithKeyRenamed } from "./usage/handledStamps";
 import { picksWithIdentityRenamed } from "./usage/poolPick";
 
@@ -108,7 +110,7 @@ export function textRewriteStep(paths: LayoutPaths, ports: StepPorts, file: stri
   };
 }
 
-/** The steps that rewrite the name where the configuration refers to it: the pools, jobs and account model refs of the global configuration, and the account model refs of every configuration profile. Shared by both renames, since the name is what these hold. */
+/** The steps that rewrite the name where the configuration refers to it: the pools, jobs and account model refs of the global configuration, the route overrides (the identity's scope and every target naming it), and the account model refs of every configuration profile. Shared by both renames, since the name is what these hold. */
 export function configReferenceSteps(paths: LayoutPaths, ports: StepPorts, from: string, to: string): readonly (Step | undefined)[] {
   return [
     jsonRewriteStep(paths, ports, paths.globalConfigFile, GlobalConfigSchema, (config) => {
@@ -120,6 +122,7 @@ export function configReferenceSteps(paths: LayoutPaths, ports: StepPorts, from:
         ? undefined
         : { value: { ...config, ...(pools === undefined ? {} : { pools: pools.pools }), ...(jobs === undefined ? {} : { jobs: jobs.jobs }), ...(models === undefined ? {} : { models }) }, changes };
     }),
+    jsonRewriteStep(paths, ports, paths.routeOverridesFile, RouteOverridesSchema, (overrides) => routeOverridesRenamed(overrides, "identity", from, to)),
     ...listProfiles(paths).map(({ name }) =>
       jsonRewriteStep(paths, ports, path.join(paths.configProfilesDir, `${name}.json`), ConfigProfileSchema, (profile) => {
         const models = profile.models === undefined ? undefined : renameAccountModelRefs(profile.models, from, to);

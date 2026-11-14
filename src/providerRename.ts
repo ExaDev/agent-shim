@@ -14,11 +14,13 @@ import { listUsageSnapshots, snapshotPath, type UsageReadFs } from "./usage/read
 import { readDirectoryRules, writeDirectoryRules } from "./directoryRulesStore";
 import { requireNewProviderName } from "./config/names";
 import { requireUnreservedProviderName } from "./models/reservedModelNames";
+import { readRouteOverrides, routeOverridesRenamed, writeRouteOverrides } from "./routeOverridesStore";
 import { mapModelRefs } from "./modelRefs";
 import { listIdentities, requireNoUnreachableIdentities, setIdentityProvider } from "./identityStore";
 import type { LayoutPaths } from "./paths";
 import { aliasesAfterRename, readProviderAliases, writeProviderAliases } from "./providerAliases";
 import { ProviderAlreadyExistsError, ProviderNotFoundError, listProviders, providerExists, providerJsonPath, readProvider } from "./providersStore";
+import { ownEntry } from "./ownEntry";
 
 /** A model ref with a leading `<from>/` provider qualifier rewritten to `<to>/`. Refs that name no provider (`acct:work/opus`, `family:glm-5-1`, a virtual model's name) never start with a provider's name followed by a slash, because `:` is outside the provider alphabet. */
 function renameRef(ref: string, from: string, to: string): string {
@@ -57,7 +59,7 @@ export interface ProviderRenamePorts {
 export interface ProviderRenameReport {
   readonly from: string;
   readonly to: string;
-  /** Everything that named the provider and now names its new name or holds its state under it: `config.json`, `profile <name>`, `identity <name>`, `rule <path>`, `provider <name> routes`, `usage <identity>`, `catalogue` and `credential cache`. */
+  /** Everything that named the provider and now names its new name or holds its state under it: `config.json`, `profile <name>`, `identity <name>`, `rule <path>`, `provider <name> routes`, `route overrides`, `usage <identity>`, `catalogue` and `credential cache`. */
   readonly updated: readonly string[];
 }
 
@@ -95,12 +97,12 @@ export function renameProvider(paths: LayoutPaths, from: string, to: string, por
 function moveState(paths: LayoutPaths, from: string, to: string, ports: ProviderRenamePorts): readonly string[] {
   const moved: string[] = [];
   for (const snapshot of listUsageSnapshots(ports.fs, paths.usageSnapshotsDir)) {
-    const slice = snapshot.providers[from];
+    const slice = ownEntry(snapshot.providers, from);
     if (slice === undefined) {
       continue;
     }
     const others = Object.entries(snapshot.providers).filter(([name]) => name !== from);
-    const providers = Object.fromEntries(snapshot.providers[to] === undefined ? [...others, [to, slice]] : others);
+    const providers = Object.fromEntries(ownEntry(snapshot.providers, to) === undefined ? [...others, [to, slice]] : others);
     ports.fs.writeFilePrivate(snapshotPath(paths.usageSnapshotsDir, snapshot.identity), `${JSON.stringify(UsageSnapshotSchema.parse({ ...snapshot, providers }), null, 2)}\n`);
     moved.push(`usage ${snapshot.identity}`);
   }
@@ -160,7 +162,7 @@ function moveState(paths: LayoutPaths, from: string, to: string, ports: Provider
   return moved;
 }
 
-/** Rewrites every reference to provider `from` in the configuration this installation owns, returning where it found one. */
+/** Rewrites every reference to provider `from` in the configuration this installation owns (the route overrides' provider scope and targets among it), returning where it found one. */
 function rewriteReferences(paths: LayoutPaths, from: string, to: string): readonly string[] {
   const rewritten: string[] = [];
   const global = readGlobalConfig(paths);
@@ -198,6 +200,11 @@ function rewriteReferences(paths: LayoutPaths, from: string, to: string): readon
   });
   if (renamedRules.some((rule, index) => rule !== rules.rules[index])) {
     writeDirectoryRules(paths, { ...rules, rules: renamedRules });
+  }
+  const overrides = routeOverridesRenamed(readRouteOverrides(paths), "provider", from, to);
+  if (overrides !== undefined) {
+    writeRouteOverrides(paths, overrides.value);
+    rewritten.push("route overrides");
   }
   for (const { name, provider } of listProviders(paths)) {
     if (isHttpProvider(provider) && provider.routes?.some((route) => route.provider === from) === true) {

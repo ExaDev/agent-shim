@@ -17,6 +17,7 @@ import { runNativeLaunch } from "./launcher/native";
 import { decideConfigProfile, decideIdentity, loadIdentity, readActiveIdentity } from "./launcher/identity";
 import { realFsPort, realLogPort, realProcPort, realRunPort, realSpawnPort, spawnDetachedSupervisor } from "./realPorts";
 import { realLaunchUpdatePort } from "./update/commands";
+import { ownEntry } from "./ownEntry";
 
 /** Runs the launcher pipeline. `argvOverride`, when given, replaces `realProcPort`'s own `process.argv.slice(2)`; this is what lets `agent-shim run [args...]` reach the identical pipeline the `claude` binary name uses, fed the args Commander collected instead of the real argv. */
 export async function runClaude(argvOverride?: readonly string[]): Promise<void> {
@@ -134,7 +135,7 @@ export async function runClaude(argvOverride?: readonly string[]): Promise<void>
 
   // A pool that resumes on a spent quota runs its interactive session launches under the supervisor, which moves the session to another member when its identity runs out. A launch it cannot supervise falls through to the ordinary one below.
   const poolName = launchDecision.pool;
-  if (poolName !== undefined && farm.pools !== undefined && supervisesLaunch(farm.pools[poolName], nativeArgv.rest)) {
+  if (poolName !== undefined && farm.pools !== undefined && supervisesLaunch(ownEntry(farm.pools, poolName), nativeArgv.rest)) {
     const code = await runSupervised({
       paths,
       pool: poolName,

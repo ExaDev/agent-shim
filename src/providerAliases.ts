@@ -5,13 +5,15 @@ import { ConfigValidationError } from "./config/load";
 import { readJson, writeJsonAtomic } from "./config/store";
 import type { FsPort } from "./launcher/ports";
 import type { LayoutPaths } from "./paths";
+import { ownEntry } from "./ownEntry";
 
 /**
  * The former names of renamed providers, by the old name: `{ "z": "zai" }` means a request or a launch that names `z` is served by the provider now called `zai`.
  *
  * A running session has its provider's name fixed at launch, and the front door resolves that name against the providers directory on every request, so renaming a provider file alone strands every session launched before the rename. An alias is what keeps those sessions served until they end. Targets are always current provider names: renaming a provider repoints every alias that targeted it, so a lookup is one step and never a chain.
  */
-const ProviderAliasesSchema = z.record(z.string().min(1), z.string().min(1));
+/** A `provider-aliases.json`: each former name of a renamed provider, mapped to the name it became. */
+export const ProviderAliasesSchema = z.record(z.string().min(1), z.string().min(1));
 export type ProviderAliases = z.infer<typeof ProviderAliasesSchema>;
 
 /** Parses the aliases file's JSON, naming the file in the failure. */
@@ -52,7 +54,7 @@ export function canonicalProviderName(name: string, defined: (name: string) => b
   if (defined(name)) {
     return name;
   }
-  return aliases()[name] ?? name;
+  return ownEntry(aliases(), name) ?? name;
 }
 
 /**
@@ -85,7 +87,7 @@ export function aliasesOf(aliases: Readonly<ProviderAliases>, name: string): rea
 /** Forgets the former name `alias`, so a session still launched under it stops being served. Throws `ProviderAliasNotFoundError` when it is not recorded. */
 export function removeProviderAlias(paths: LayoutPaths, alias: string): void {
   const aliases = readProviderAliases(paths);
-  if (!(alias in aliases)) {
+  if (!(Object.hasOwn(aliases, alias))) {
     throw new ProviderAliasNotFoundError(alias);
   }
   writeProviderAliases(paths, Object.fromEntries(Object.entries(aliases).filter(([name]) => name !== alias)));

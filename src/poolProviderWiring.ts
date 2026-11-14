@@ -20,13 +20,15 @@ export interface RealMemberProviderParams {
   readonly cliFlagConfigProfile?: string;
   /** The cascade of `cwd`, when the caller has already loaded it. */
   readonly loaded?: LoadedCascade;
+  /** The home directory the cascade walk stops at and reads committed files up to; absent, the process's own. */
+  readonly home?: string;
 }
 
 /**
  * `memberProviderResolver` over this machine's real files: the cascade of `params.cwd` is read once for its directory selections and again, per configuration profile, as a launch reads it for the identity it runs as. Used by every read-only report of what a pool launch would pick, so each ranks the pool on the quota the launch itself would spend.
  */
 export function realMemberProviderResolver(params: Readonly<RealMemberProviderParams>): ProviderOf {
-  const home = os.homedir();
+  const home = params.home ?? os.homedir();
   const read = cosmiconfigReader();
   const loaded = params.loaded ?? loadCascadeInput({ paths: params.paths, home, cwd: params.cwd, read });
   const selections = readDirectorySelections(loaded);

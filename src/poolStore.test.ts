@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { UsageError } from "./cliError";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
-import { addPool, changePool, isPoolChange, PoolNotFoundError, poolPolicyOf, readPools } from "./poolStore";
+import { addPool, changePool, isPoolChange, PoolNotFoundError, poolPolicyOf, readPools, requirePool } from "./poolStore";
 
 let root: string;
 let paths: LayoutPaths;
@@ -114,5 +114,13 @@ describe("addPool and changePool", () => {
     expect(() => changePool(paths, "outer", { identities: ["pool:missing"] })).toThrow(UsageError);
     expect(() => changePool(paths, "inner", { identities: ["pool:outer"] })).toThrow(/reach itself/);
     expect(readPools(paths)).toEqual({ inner: { identities: ["work"] }, outer: { identities: ["pool:inner"] } });
+  });
+});
+
+describe("a pool named like a member every object inherits", () => {
+  it.each(["constructor", "toString", "valueOf", "hasOwnProperty"])("is not found before it is added, and is added as any pool is: %j", (name) => {
+    expect(() => requirePool(paths, name)).toThrow(PoolNotFoundError);
+    addPool(paths, name, ["work"]);
+    expect(requirePool(paths, name)).toEqual({ identities: ["work"] });
   });
 });

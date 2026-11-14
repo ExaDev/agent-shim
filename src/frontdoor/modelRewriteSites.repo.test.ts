@@ -11,15 +11,20 @@ import { AUTH_HEADER, SESSION_HEADER } from "./route";
 /** A body naming its model twice, as a client that wants a server's last-wins parse to read another model than the door rewrote would send. */
 const twice = (first: string): string => `{"model":"${first}","model":"other","stream":false,"max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`;
 
-/** The calls of `withModel` in `providerRoute.ts` (the name-resolving scan and the routes list) and of `withModelInHead` in `mainLoopRoute.ts` (the Anthropic way back and the tier mapping), each of which has a row above. */
+/** The calls of `withModel` in `providerRoute.ts` (the name-resolving scan and the routes list) and of `withModelInHead` in `mainLoopRoute.ts` (the Anthropic way back, the tier mapping and the renaming of a selector or an overridden name), each of which has a row above. */
 const PROVIDER_ROUTE_CALLS = 2;
-const MAIN_LOOP_CALLS = 2;
+const MAIN_LOOP_CALLS = 3;
 
 interface Site {
   /** Where the rewrite is made: the file and the call it uses. */
   readonly rewrite: string;
   readonly drive: (world: World) => Promise<{ readonly status: number; readonly text: string }>;
 }
+
+/** A Claude name the worlds below override to provider `z`, which no other row names. */
+const OVERRIDDEN = "claude-opus-5-1";
+/** A Claude name the worlds below override to another Claude name, which reaches the Anthropic route with no later rewrite to refuse a doubled field. */
+const TO_CLAUDE = "claude-haiku-5-1";
 
 /** Puts the session's main loop on provider `z`, then sends the request of the site. */
 const underZ = async (world: World, request: Parameters<typeof send>[1]): ReturnType<typeof send> => {
@@ -37,6 +42,9 @@ const SITES: Readonly<Record<string, Site>> = {
   "the main loop's Claude name under a provider context": { rewrite: "mainLoopRoute.ts: withModelInHead", drive: async (world) => await underZ(world, { model: "", rawBody: twice("claude-opus-5-5"), requestClass: "main" }) },
   "a helper's Claude name under a provider context": { rewrite: "mainLoopRoute.ts: withModelInHead", drive: async (world) => await underZ(world, { model: "", rawBody: twice(HAIKU_NAME), requestClass: "auxiliary" }) },
   "the main loop's anthropic/ name": { rewrite: "mainLoopRoute.ts: withModelInHead", drive: async (world) => await underZ(world, { model: "", rawBody: twice("anthropic/claude-opus-5-5"), requestClass: "main" }) },
+  "a route override's target": { rewrite: "mainLoopRoute.ts: withModelInHead", drive: async (world) => await send(world, { model: "", rawBody: twice(OVERRIDDEN), requestClass: "main" }) },
+  "a route override to a Claude name on the Anthropic route": { rewrite: "mainLoopRoute.ts: withModelInHead", drive: async (world) => await send(world, { model: "", rawBody: twice(TO_CLAUDE), requestClass: "main" }) },
+  "a selector's expansion": { rewrite: "mainLoopRoute.ts: withModelInHead", drive: async (world) => await send(world, { model: "", rawBody: twice("auto/provider:z/sonnet"), requestClass: "main" }) },
   "a helper's anthropic/ name": { rewrite: "mainLoopRoute.ts: withModelInHead", drive: async (world) => await underZ(world, { model: "", rawBody: twice("anthropic/claude-haiku-5-5"), requestClass: "auxiliary" }) },
 };
 
@@ -85,7 +93,7 @@ describe("a doubled model field gets the same decision however the client chunks
 
 describe("every rewrite of the model field refuses a body that names it twice", () => {
   it.each(Object.entries(SITES))("refuses %s with the 400, forwarding nothing", async (_name, site) => {
-    const world = await startWorld(mainLoopRoutesOfLiveSessions());
+    const world = await startWorld(mainLoopRoutesOfLiveSessions(), undefined, undefined, undefined, undefined, { routeOverrides: () => ({ table: { schemaVersion: 1, global: { [OVERRIDDEN]: "z/glm-5.3", [TO_CLAUDE]: "claude-haiku-5-5" } } }) });
     try {
       world.setProvider("spark", { displayName: "Spark", baseUrl: `http://127.0.0.1:${String(world.upstreamPort)}`, credential: { sources: [{ literal: "t" }] }, env: { ANTHROPIC_DEFAULT_SONNET_MODEL: "spark-main" } });
       world.setProvider("rw", { displayName: "Rw", baseUrl: `http://127.0.0.1:${String(world.upstreamPort)}`, credential: { sources: [{ literal: "t" }] }, routes: [{ when: { kind: "textCompare", op: "matches", left: { kind: "reference", key: "request.model" }, right: { kind: "textLiteral", value: ".*sonnet.*" } }, provider: "z", model: "glm-9" }] });

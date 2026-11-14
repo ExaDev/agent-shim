@@ -1,4 +1,5 @@
 import { AnchorSchema, WEEKDAYS, type Anchor, type Weekday } from "../config/schema";
+import { ownEntry } from "../ownEntry";
 
 /**
  * Anchors: the wall-clock times at which an identity should have a five-hour window open. Pure: the zone a bare anchor means and the clock both come in as values, so the front door's keeper and the tests share one reading of "when is the next anchor".
@@ -110,7 +111,7 @@ export function parseAnchor(spec: string): Anchor {
   if (days === undefined || time === undefined) {
     throw new Error(`"${spec}" is not an anchor: write <days>@<HH:MM>[/<time zone>], such as mon-fri@06:00 or sat,sun@08:30/Europe/London`);
   }
-  const named = WEEKDAY_SHORTHANDS[days] ?? days.split(",").flatMap(parseDayItem);
+  const named = ownEntry(WEEKDAY_SHORTHANDS, days) ?? days.split(",").flatMap(parseDayItem);
   const parsed = AnchorSchema.safeParse({ days: [...new Set(named)], time, ...(zone === undefined ? {} : { timeZone: zone }) });
   if (!parsed.success) {
     throw new Error(`"${spec}" is not an anchor: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`);

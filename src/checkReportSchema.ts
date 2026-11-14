@@ -130,5 +130,10 @@ export const CheckReportJsonSchema = z.strictObject({
   credential: CheckCredentialSchema,
   claudeVersion: CheckClaudeVersionSchema.optional(),
   providerReachability: CheckProviderReachabilitySchema.optional(),
+  /** The route overrides that apply to a launch here (its identity's, its provider's and the global ones), each with the entries it outranks, or why the file cannot be used. */
+  routeOverrides: z.union([
+    z.strictObject({ applying: z.readonly(z.array(z.strictObject({ model: z.string(), target: z.string(), scope: z.string(), outranks: z.readonly(z.array(z.strictObject({ scope: z.string(), target: z.string() }))) }))) }),
+    z.strictObject({ fault: z.string() }),
+  ]).optional(),
 });
 export type CheckReportJson = z.output<typeof CheckReportJsonSchema>;

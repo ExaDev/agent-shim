@@ -1,3 +1,4 @@
+import os from "node:os";
 import type { Command } from "commander";
 
 import { printJson, reportMutation, withExamples, confirmRemoval, type CommandDeps } from "./cli/commandDeps";
@@ -16,6 +17,13 @@ import { candidateOf, type CandidateWindowFacts } from "./selection/candidates";
 import type { LayoutPaths } from "./paths";
 import type { UsageSnapshot } from "./usage/schema";
 import { selectMember } from "./selection/engine";
+import { cliSelectorPorts } from "./models/selectorPorts";
+import { expandSelectorName, parseSelectorName, type SelectorKind } from "./models/selectors";
+import { isBareClaudeName } from "./models/tiers";
+import { realFsPort } from "./realPorts";
+import { identityIdOf } from "./identityStore";
+import { createRouteOverridesReader, overrideMatches, scopeLabelOf } from "./routeOverridesStore";
+import { ownEntry } from "./ownEntry";
 
 /** The quota facts for one provider, from the newest snapshot of any identity that records it: the identities this machine actually uses, each contributing what it last saw. */
 function providerQuotaOf(paths: LayoutPaths): (provider: string) => Readonly<Partial<Record<"fiveHour" | "sevenDay" | "extraUsage", CandidateWindowFacts>>> {
@@ -38,7 +46,7 @@ function providerQuotaOf(paths: LayoutPaths): (provider: string) => Readonly<Par
   }
   return (provider) => {
     const snapshot = newest.get(provider);
-    return snapshot === undefined ? {} : quotaFactsOf(snapshot.providers[provider]?.rateLimit?.unified, Date.now());
+    return snapshot === undefined ? {} : quotaFactsOf(ownEntry(snapshot.providers, provider)?.rateLimit?.unified, Date.now());
   };
 }
 
@@ -53,14 +61,24 @@ export function describeUnroutedMembers(members: readonly string[], families: re
   });
 }
 
+/** What `explain` says of one virtual model's (or family row's) choice. */
+interface VirtualModelExplanation {
+  readonly name: string;
+  readonly mode: SelectionModeName;
+  readonly chooses: string | undefined;
+  /** The members the mode ranked: every one but the account members, which only a relaunch serves. */
+  readonly candidates: readonly string[];
+  readonly reasons: readonly string[];
+}
+
 /** Explains one virtual model's (or family row's) choice: the member its mode picks over the live signals, and why each candidate stands where it does. */
-function explainVirtualModel(paths: LayoutPaths, name: string): void {
+function explainVirtualModel(paths: LayoutPaths, name: string): VirtualModelExplanation {
   const models = readModels(paths);
-  const virtual = models?.virtual?.[name];
+  const virtual = ownEntry(models?.virtual, name);
   const families = buildFamilies(targetRefs(paths), models);
   const isFamily = name.startsWith(FAMILY_PREFIX);
   if (virtual === undefined && !isFamily) {
-    throw new UsageError(`No virtual model named "${name}".`);
+    throw new UsageError(`No virtual model named "${name}". explain takes a virtual model, a family (family:<key>) or a selector (auto/<selector>[/<class>]).`);
   }
   const mode = virtual?.mode ?? familyMode(familyNamed(families, name)?.settings ?? {});
   const quotaOf = providerQuotaOf(paths);
@@ -70,16 +88,75 @@ function explainVirtualModel(paths: LayoutPaths, name: string): void {
     .filter((member) => !member.startsWith("acct:"))
     .map((ref, order) => {
       const [provider] = ref.split("/");
-      return candidateOf(ref, order, { quota: quotaOf(provider ?? ""), ...(observations.observation(ref) === undefined ? {} : { observation: observations.observation(ref) }), ...(models?.prices?.[ref] === undefined ? {} : { price: models.prices[ref] }) }, false);
+      return candidateOf(ref, order, { quota: quotaOf(provider ?? ""), ...(observations.observation(ref) === undefined ? {} : { observation: observations.observation(ref) }), ...(ownEntry(models?.prices, ref) === undefined ? {} : { price: ownEntry(models?.prices, ref) }) }, false);
     });
   const evaluated = candidates.map((candidate) => ({ candidate, capabilities: familyCapabilities(familyOfRef(families, candidate.ref)?.settings ?? {}) }));
   const selection = selectMember(mode, evaluated, {});
   const unrouted = describeUnroutedMembers(members, families);
-  console.log(`${name} (${mode}) chooses ${selection.ref ?? (candidates.length === 0 ? "nothing by quota" : "nothing")}:`);
   // With no routable candidate the engine's own reasons describe an empty set (it reads as every member being spent), so only what the members are is said.
-  for (const line of candidates.length === 0 ? unrouted : [...selection.reasons, ...unrouted]) {
-    console.log(`  ${line}`);
+  return { name, mode, chooses: selection.ref, candidates: candidates.map((candidate) => candidate.ref), reasons: candidates.length === 0 ? unrouted : [...selection.reasons, ...unrouted] };
+}
+
+/** What `explain` says of a selector: how it parsed, the kind it named and the name the door routes it by, or why the door refuses it. */
+/** `ownLogin` is set when the name is on the Anthropic route of the session's own login, which the door serves there even beside a provider file called `anthropic`. */
+type SelectorExplanation = { readonly name: string; readonly kind: SelectorKind | "class"; readonly routedAs: string; readonly ownLogin?: true } | { readonly name: string; readonly refusal: string };
+
+/** The session `explain` expands for: one running as the identity named `identity` (`--identity` takes a name; the door compares by the directory id its header carries), or one with no identity. A name no identity has is a usage error. */
+function sessionOf(paths: LayoutPaths, identity: string | undefined): { readonly identityId?: string } {
+  if (identity === undefined) {
+    return {};
   }
+  const id = identityIdOf(paths, identity);
+  if (id === undefined) {
+    throw new UsageError(`No identity named "${identity}".`);
+  }
+  return { identityId: id };
+}
+
+/** What `explain` adds after a name on the Anthropic route of the session's own login. */
+const OWN_LOGIN_TEXT = " on the Anthropic route of the session's own login";
+
+/** Expands a selector exactly as the door would for a session running as `identity`, against the same files. */
+function explainSelector(paths: LayoutPaths, name: string, identity: string | undefined, provider: string | undefined): SelectorExplanation {
+  const expanded = expandSelectorName(name, cliSelectorPorts(paths, () => Date.now(), os.homedir(), provider), sessionOf(paths, identity));
+  if (expanded === undefined) {
+    throw new UsageError(`"${name}" is not a selector.`);
+  }
+  return "refusal" in expanded ? { name, refusal: expanded.refusal } : { name, kind: expanded.kind, routedAs: expanded.name, ...(expanded.onAnthropic === true ? { ownLogin: true } : {}) };
+}
+
+/** What `explain` says of a Claude name: the route override that applies to a main-loop request for it in the given scopes, with those it outranks and what its target is routed as, or that none applies, or why the overrides cannot be used. */
+type OverrideExplanation =
+  | { readonly name: string; readonly override: { readonly scope: string; readonly target: string; readonly match: "exact" | "class"; readonly routedAs?: string; readonly ownLogin?: true; readonly refusal?: string }; readonly outranks: readonly { readonly scope: string; readonly target: string }[] }
+  | { readonly name: string; readonly override?: never; readonly fault?: string };
+
+/** The route override a main-loop request for `name` meets in the scopes `options` names, read as the door reads the file, and, when its target is a selector, what that expands to for the identity. */
+function explainOverride(paths: LayoutPaths, name: string, options: Readonly<{ identity?: string; session?: string; provider?: string }>): OverrideExplanation {
+  const read = createRouteOverridesReader(realFsPort, paths.routeOverridesFile, () => undefined)();
+  if ("fault" in read) {
+    return { name, fault: read.fault };
+  }
+  const [winner, ...rest] = overrideMatches(read.table, { ...(options.session === undefined ? {} : { sessionId: options.session }), ...(options.identity === undefined ? {} : { identity: options.identity }), ...(options.provider === undefined ? {} : { provider: options.provider }) }, name);
+  if (winner === undefined) {
+    return { name };
+  }
+  // The session is on the provider `--provider` names, so a class alone (`auto/<class>`) is expanded there, as the door expands it.
+  const expanded = expandSelectorName(winner.target, cliSelectorPorts(paths, () => Date.now(), os.homedir(), options.provider), sessionOf(paths, options.identity));
+  return {
+    name,
+    override: { scope: scopeLabelOf(winner.scope), target: winner.target, match: winner.match, ...(expanded === undefined ? {} : "refusal" in expanded ? { refusal: expanded.refusal } : { routedAs: expanded.name, ...(expanded.onAnthropic === true ? { ownLogin: true } : {}) }) },
+    outranks: rest.map((match) => ({ scope: scopeLabelOf(match.scope), target: match.target })),
+  };
+}
+
+/** `explainOverride`'s answer as text lines. */
+function describeOverride(explained: Readonly<OverrideExplanation>): readonly string[] {
+  if (explained.override === undefined) {
+    return [explained.fault === undefined ? `No route override applies to ${explained.name} in these scopes.` : `${explained.fault}: the front door refuses the main loop's requests for Claude names until it is fixed (agent-shim doctor).`];
+  }
+  const { override } = explained;
+  const routed = override.routedAs === undefined ? (override.refusal === undefined ? "" : `, which is refused: ${override.refusal}`) : `, routed as ${override.routedAs}${override.ownLogin === true ? OWN_LOGIN_TEXT : ""}`;
+  return [`${explained.name} is routed to ${override.target} by the ${override.scope} override of its ${override.match === "exact" ? "name" : "class"}${routed}`, ...explained.outranks.map((other) => `  outranks ${other.scope} -> ${other.target}`)];
 }
 
 /** Groups the models whose names are the same model across providers (a family, with the user's assertions applied), and lists the pairs that are merely similar, across every provider given. */
@@ -118,11 +195,43 @@ export function registerModelsCommand(program: Command, deps: CommandDeps): void
   withExamples(
     modelsCommand
       .command("explain <name>")
-      .description("Show which member a virtual model's (or a family row's) mode picks over the live signals, and why each candidate stands where it does.")
-      .action((name: string) => {
-        explainVirtualModel(paths, name);
+      .description("Show which member a virtual model's (or a family row's) mode picks over the live signals, and why each candidate stands where it does; what a selector (auto/<selector>[/<class>]) is routed as; or, for a Claude name, the route override that applies to it in the given scopes and the ones it outranks.")
+      .option("--identity <name>", "The identity the session runs as, which an account selector is compared with and an identity's route overrides cover.")
+      .option("--session <id>", "The launch session whose route overrides apply, for a Claude name.")
+      .option("--provider <name>", "The provider the session's request would reach, whose route overrides apply, for a Claude name.")
+      .option("--json", "Print the explanation as JSON.")
+      .action((name: string, options: Readonly<{ identity?: string; session?: string; provider?: string; json?: boolean }>) => {
+        if (isBareClaudeName(name)) {
+          const explained = explainOverride(paths, name, options);
+          if (options.json === true) {
+            printJson(explained);
+            return;
+          }
+          for (const line of describeOverride(explained)) {
+            console.log(line);
+          }
+          return;
+        }
+        if (parseSelectorName(name) !== undefined) {
+          const explained = explainSelector(paths, name, options.identity, options.provider);
+          if (options.json === true) {
+            printJson(explained);
+            return;
+          }
+          console.log("refusal" in explained ? `${name} is refused: ${explained.refusal}` : `${name} selects the ${explained.kind} and is routed as ${explained.routedAs}${"ownLogin" in explained && explained.ownLogin === true ? OWN_LOGIN_TEXT : ""}`);
+          return;
+        }
+        const explained = explainVirtualModel(paths, name);
+        if (options.json === true) {
+          printJson(explained);
+          return;
+        }
+        console.log(`${name} (${explained.mode}) chooses ${explained.chooses ?? (explained.candidates.length === 0 ? "nothing by quota" : "nothing")}:`);
+        for (const line of explained.reasons) {
+          console.log(`  ${line}`);
+        }
       }),
-    ["agent-shim model explain fast"],
+    ["agent-shim model explain fast", "agent-shim model explain auto/z/sonnet", "agent-shim model explain auto/pool:subs/sonnet --identity work --json", "agent-shim model explain claude-opus-5-5 --identity work --provider z"],
   );
   withExamples(modelsCommand, ["agent-shim model match", "agent-shim model add fast --mode soonest-reset --member z/glm-5.3 --member m/MiniMax-M3"]);
   withExamples(
@@ -169,7 +278,7 @@ export function registerModelsCommand(program: Command, deps: CommandDeps): void
       .option("--member <ref>", "Add or replace one member (repeatable).", collectRepeated),
     ["agent-shim model set fast --mode most-allowance"],
   ).action((name: string, options: { mode?: SelectionModeName; member?: string[] }) => {
-    const existing = readModels(paths)?.virtual?.[name];
+    const existing = ownEntry(readModels(paths)?.virtual, name);
     if (existing === undefined) {
       throw new VirtualModelNotFoundError(name);
     }
@@ -267,7 +376,7 @@ export function registerModelsCommand(program: Command, deps: CommandDeps): void
       console.log(`Removed the settings of family ${key}.`);
       return;
     }
-    const existing = readModels(paths)?.families?.[key] ?? {};
+    const existing = ownEntry(readModels(paths)?.families, key) ?? {};
     const settings = {
       ...existing,
       ...(options.mode === undefined ? {} : { mode: options.mode }),

@@ -29,7 +29,7 @@ describe("runDoctor: identity provider", () => {
       baseParams({
         identities: [identity("minimax", { raw: JSON.stringify({ name: "minimax", allowAmbientCredential: false, provider: "mm" }) })],
         providers: [minimax],
-        providerAliases: { mm: "minimax" },
+        providerAliases: { path: "/state/provider-aliases.json", raw: JSON.stringify({ mm: "minimax" }) },
       }),
     );
     expect(findingsFor(former, "identity")[0]?.severity).toBe("pass");

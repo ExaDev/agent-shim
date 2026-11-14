@@ -4,6 +4,7 @@ import { z } from "zod";
 import { drawsNothing } from "../statusline/blank";
 import { graphemesOf } from "../statusline/graphemes";
 import { STATUSLINE_LANGUAGES } from "../statusline/messages/languages";
+import { ownEntry } from "../ownEntry";
 
 /** The segments of the statusline's header, in the order they are drawn unless a setting reorders them. */
 export const STATUSLINE_HEADER_SEGMENTS = ["model", "provider", "route", "account", "identity", "headroom", "project", "vcs", "effort", "advisor", "version", "outputStyle", "cost", "dailyCost", "sessionName", "duration", "speed", "extra"] as const;
@@ -521,7 +522,7 @@ function mergeKeys(base: unknown, over: unknown): unknown {
     if (value === null) {
       Reflect.deleteProperty(merged, key);
     } else {
-      merged[key] = mergeKeys(merged[key], value);
+      merged[key] = mergeKeys(ownEntry(merged, key), value);
     }
   }
   return merged;

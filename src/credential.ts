@@ -1,5 +1,6 @@
 import type { Credential, CredentialCache, CredentialSource, CredentialTarget, CredentialTargetVar } from "./config/schema";
 import { effectiveStore, isFresh, type AsyncCredentialCachePort, type CachedCredential, type CredentialCachePort } from "./credentialCache";
+import { ownEntry } from "./ownEntry";
 
 /** The exit status for a launch whose selected provider or identity has a credential block none of whose sources yields a token: 64, the conventional `EX_USAGE`, because the invocation asked for a credential the environment cannot supply. */
 export const CREDENTIAL_UNAVAILABLE_EXIT = 64;
@@ -278,7 +279,7 @@ function isCommandBacked(source: CredentialSource): source is CommandBackedSourc
 /** What a source that spawns nothing yields: an `env` variable, a `literal`, or a secret `file` (refused when group or others can read or write it). */
 function immediateOutcome(source: Exclude<CredentialSource, CommandBackedSource>, params: Readonly<{ env: Readonly<Record<string, string | undefined>>; port: Pick<CredentialPort, "readSecretFile"> }>): SourceOutcome {
   if ("env" in source) {
-    const value = params.env[source.env];
+    const value = ownEntry(params.env, source.env);
     return value === undefined || value === "" ? declined("is unset or empty") : { ok: true, token: unpackKeyringToken(value) };
   }
   if ("literal" in source) {

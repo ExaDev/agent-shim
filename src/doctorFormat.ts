@@ -2,6 +2,7 @@ import type { DoctorReport, DoctorSection, DoctorSeverity } from "./doctorReport
 
 const SECTION_TITLES: Readonly<Record<DoctorSection, string>> = {
   models: "Virtual models",
+  "route-overrides": "Route overrides",
   "ambient-credential": "Ambient-credential exposure",
   "binary-discovery": "Claude Code binary discovery",
   "claude-shim": "`claude` command shim",
@@ -39,6 +40,7 @@ const SECTION_ORDER: readonly DoctorSection[] = [
   "directory-rules",
   "global-config",
   "models",
+  "route-overrides",
   "headroom",
   "frontdoor",
   "categories-local",

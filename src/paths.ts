@@ -36,6 +36,8 @@ export interface LayoutPaths {
   readonly headroomStateFile: string;
   /** The live routing setting `agent-shim headroom enable|disable` writes and the front door re-reads per request: which sessions go through headroom, whatever their launch asked for. */
   readonly headroomRoutingFile: string;
+  /** The runtime route overrides `agent-shim route set|remove` writes and the front door re-reads on change: per scope (session, identity, provider, global), the name a request asking for a Claude name or class is routed by instead. At the root, beside `provider-aliases.json`, since it is the door's routing and not headroom's. */
+  readonly routeOverridesFile: string;
   /** The previous release's versioned name for the state file, read only while a supervisor from that release is still alive and removed once its generation has drained (see `migrateHeadroomState`). */
   readonly headroomLegacyStateFile: string;
   /** Path to the file the headroom daemon reads its upstream allowlist from (`--allowed-base-urls-file`): the direct origin of every live front door, one per line. It lives in the owner-only socket directory because headroom refuses an allowlist file whose directory another user could write to, and that directory is the one this tool already creates mode 0700 (narrowing it if it existed wider) and checks before every daemon start. The supervisor replaces the file owner-only and atomically whenever a door's origin changes, and the daemon re-reads it on its next request, so a moved or retired front door never needs a restart. */
@@ -164,6 +166,7 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     headroomDir: path.join(root, "headroom"),
     headroomStateFile: path.join(root, "headroom", "state.json"),
     headroomRoutingFile: path.join(root, "headroom", "routing.json"),
+    routeOverridesFile: path.join(root, "route-overrides.json"),
     headroomLegacyStateFile: path.join(root, "headroom", "state.v2.json"),
     headroomAllowlistFile: path.join(root, "headroom", "run", "allowlist.txt"),
     headroomSocketDir: path.join(root, "headroom", "run"),

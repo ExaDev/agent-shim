@@ -1,5 +1,6 @@
 import type { FamilySettings, ModelsConfig, SelectionModeName } from "../config/schema";
 import { modelIdentity, relateModels, type IdentityAssertions } from "./identity";
+import { ownEntry } from "../ownEntry";
 
 /** The prefix a member or a picker row's model name carries to name a whole family. */
 export const FAMILY_PREFIX = "family:";
@@ -71,7 +72,7 @@ export function buildFamilies(refs: readonly string[], models: ModelsConfig | un
       groups.push({ key: pinnedKey ?? familyKeyOf(modelOf(ref)), refs: [ref] });
     }
   }
-  return groups.map((group) => ({ key: group.key, refs: group.refs, settings: settingsByKey[group.key] ?? {} }));
+  return groups.map((group) => ({ key: group.key, refs: group.refs, settings: ownEntry(settingsByKey, group.key) ?? {} }));
 }
 
 /** The family a `family:<key>` member or row names, or undefined when the catalogue holds none by that key. */

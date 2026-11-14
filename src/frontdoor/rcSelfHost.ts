@@ -12,6 +12,7 @@ import { RC_WEB_FETCH_MAX_BYTES, type RcWebFetcher } from "./rcWebFetch";
 import type { FrontDoorRoute, RoutedRequest, RoutedResponse } from "./route";
 import type { FrontDoorLaunch } from "./state";
 import type { RcStreamEnvelope } from "./rcSchemas";
+import { ownEntry } from "../ownEntry";
 
 /**
  * The self-hosted Remote Control service: the door serving, locally, the CCR surface it normally only observes (ExaDev/agent-shim#207). When the mode is on, a Claude Code session activates Remote Control against this surface and is controlled through it with no Anthropic credential anywhere: the door answers the session family itself instead of piping it to the real API host, so the `cse_` sessions, their sequence numbers, their worker and client streams and their event writes all live on this machine.
@@ -105,13 +106,13 @@ function isWebSearchRefusal(value: readonly RcWebSearchResult[] | { readonly err
 
 /** A record's string field when it is a non-empty string, else undefined. */
 function nonEmptyString(record: Record<string, unknown> | undefined, field: string): string | undefined {
-  const value = record === undefined ? undefined : record[field];
+  const value = record === undefined ? undefined : ownEntry(record, field);
   return typeof value === "string" && value !== "" ? value : undefined;
 }
 
 /** A record's finite number field, accepting a numeric string too, because the real service has been observed serialising the protocol's numbers both ways (the write answer's `sequence_num` above all). */
 function numberOf(record: Record<string, unknown> | undefined, field: string): number | undefined {
-  const value = record === undefined ? undefined : record[field];
+  const value = record === undefined ? undefined : ownEntry(record, field);
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
   }
@@ -123,7 +124,7 @@ function numberOf(record: Record<string, unknown> | undefined, field: string): n
 
 /** A record's field as a string array when every member is a string, else undefined: the shape the web-search request's domain filters carry. */
 function stringArray(record: Record<string, unknown> | undefined, field: string): readonly string[] | undefined {
-  const value = record === undefined ? undefined : record[field];
+  const value = record === undefined ? undefined : ownEntry(record, field);
   if (!Array.isArray(value)) {
     return undefined;
   }
@@ -139,7 +140,7 @@ function stringArray(record: Record<string, unknown> | undefined, field: string)
 
 /** One header's single value, or undefined when absent or an unusable repeat. */
 function singleHeader(headers: Readonly<IncomingHttpHeaders>, name: string): string | undefined {
-  const value = headers[name];
+  const value = ownEntry(headers, name);
   return typeof value === "string" ? value : undefined;
 }
 

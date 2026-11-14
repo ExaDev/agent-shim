@@ -11,6 +11,7 @@ import { readPools } from "../poolStore";
 import { readProvider } from "../providersStore";
 import { listDirectoryRules } from "../directoryRulesStore";
 import { profileExists } from "../configProfilesStore";
+import { readRouteOverrides, writeRouteOverrides } from "../routeOverridesStore";
 import { createConfigApiRouter } from "./configApi";
 import { LIFECYCLE_AND_CODEX_TEST_DEPS } from "./lifecycleCodexTestDeps";
 
@@ -342,5 +343,29 @@ describe("config API: directory rules", () => {
 
     expect(await api.rule.remove({ path: "/work/acme", confirm: true })).toEqual({ action: "removed", kind: "rule", name: "/work/acme" });
     expect(listDirectoryRules(paths)).toEqual([]);
+  });
+});
+
+describe("config API: route overrides", () => {
+  it("sets and removes an override in a scope, as route set and remove do, refusing what they refuse", async () => {
+    const api = clientWith(TOKEN).config;
+    await api.provider.add({ name: "z", displayName: "Z", baseUrl: "https://example.test/anthropic", credential: { sources: [{ literal: LITERAL_PLACEHOLDER }] } });
+    expect(await api.route.set({ scope: { kind: "global" }, model: "opus", target: "z/glm-5.3" })).toEqual({ action: "updated", kind: "route", name: "opus", value: { scope: "global", model: "opus", target: "z/glm-5.3" } });
+    expect(await api.route.set({ scope: { kind: "session", name: "abc" }, model: "haiku", target: "z/air" })).toEqual({ action: "updated", kind: "route", name: "haiku", value: { scope: "session:abc", model: "haiku", target: "z/air" } });
+    expect(readRouteOverrides(paths)).toEqual({ schemaVersion: 1, global: { opus: "z/glm-5.3" }, sessions: { abc: { haiku: "z/air" } } });
+    expect(await codeOf(api.route.set({ scope: { kind: "global" }, model: "opus", target: "nowhere/glm" }))).toBe("BAD_REQUEST");
+    expect(await codeOf(api.route.set({ scope: { kind: "identity", name: "ghost" }, model: "opus", target: "z/glm" }))).toBe("BAD_REQUEST");
+    expect(await codeOf(api.route.set({ scope: { kind: "global" }, model: "z/opus", target: "z/glm" }))).toBe("BAD_REQUEST");
+    expect(await codeOf(api.route.remove({ scope: { kind: "global" }, model: "opus", confirm: false }))).toBe("BAD_REQUEST");
+    expect(readRouteOverrides(paths).global).toEqual({ opus: "z/glm-5.3" });
+    expect(await api.route.remove({ scope: { kind: "global" }, model: "opus", confirm: true })).toEqual({ action: "removed", kind: "route", name: "opus" });
+    expect(await codeOf(api.route.remove({ scope: { kind: "global" }, model: "opus", confirm: true }))).toBe("BAD_REQUEST");
+    expect(readRouteOverrides(paths)).toEqual({ schemaVersion: 1, sessions: { abc: { haiku: "z/air" } } });
+    // A key typed in another case is reported as stored, by a set and by a removal.
+    expect(await api.route.set({ scope: { kind: "global" }, model: "HAIKU", target: "z/air" })).toEqual({ action: "updated", kind: "route", name: "haiku", value: { scope: "global", model: "haiku", target: "z/air" } });
+    expect(await api.route.remove({ scope: { kind: "global" }, model: "Haiku", confirm: true })).toEqual({ action: "removed", kind: "route", name: "haiku" });
+    // A key a hand edit stored in another case is reported by that spelling.
+    writeRouteOverrides(paths, { schemaVersion: 1, global: { Opus: "z/glm-5.3" } });
+    expect(await api.route.remove({ scope: { kind: "global" }, model: "opus", confirm: true })).toEqual({ action: "removed", kind: "route", name: "Opus" });
   });
 });

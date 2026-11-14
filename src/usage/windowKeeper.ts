@@ -5,6 +5,7 @@ import { effectiveWindow, formatAge } from "./preflight";
 import { rankPool } from "./pick";
 import { ANTHROPIC_PROVIDER } from "./middleware";
 import type { UsageSnapshot } from "./schema";
+import { ownEntry } from "../ownEntry";
 
 /**
  * The window keeper: at each of an identity's anchors, opens a five-hour window when none is open, so the window's reset falls where the person wants it. Pure orchestration over injected ports (clock, snapshots, the opener, the handled-anchor file), so the front door's timer and the tests share one decision.
@@ -79,12 +80,15 @@ export async function runWindowKeeper(ports: Readonly<WindowKeeperPorts>): Promi
   const anchored = ports.anchored();
   const previous = readHandled(ports.fs, ports.stampsFile);
   // Identities that lost their anchors drop out of the file with them.
-  const handled: Record<string, number> = Object.fromEntries(anchored.flatMap(({ id }) => (previous[id] === undefined ? [] : [[id, previous[id]]])));
+  const handled: Record<string, number> = Object.fromEntries(anchored.flatMap(({ id }) => {
+    const stamp = ownEntry(previous, id);
+    return stamp === undefined ? [] : [[id, stamp] as const];
+  }));
   // The stamps this run sets, written over what is on disk when the run ends, not over what it read: another writer, or a `--move` that rekeyed a stamp while a window was being opened, keeps what it wrote.
   const changed: Record<string, number> = {};
   const outcomes: KeeperOutcome[] = [];
   for (const { id, identity, anchors } of anchored) {
-    const last = handled[id];
+    const last = ownEntry(handled, id);
     if (last === undefined) {
       changed[id] = nowMs;
       outcomes.push({ identity, status: "armed", detail: "anchors noted; the next anchor to fall is the first acted on" });

@@ -66,8 +66,8 @@ export default defineConfig([
   {
     files: ["src/doctorReport.ts"],
     rules: {
-      // This file is the whole-config audit: one section per noun the tool owns, over shared validate-and-report helpers. Splitting it would duplicate those helpers across a file per noun.
-      "max-lines": ["error", { max: 1000, skipComments: true }],
+      // This file is the whole-config audit: one section per noun the tool owns, over shared validate-and-report helpers. Splitting it would duplicate those helpers across a file per noun, so it grows by a section with each noun and its limit is lifted with it (each section's own checks live in the noun's module, as `routeOverrideDoctorFindings` and `modelsFindings` do).
+      "max-lines": ["error", { max: 1050, skipComments: true }],
     },
   },
   {

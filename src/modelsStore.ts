@@ -1,7 +1,10 @@
 import { applyPatch } from "./config/store";
 import { GlobalConfigSchema, type FamilySettings, type ModelsConfig, type VirtualModel } from "./config/schema";
 import { readGlobalConfig } from "./configProfilesStore";
+import { UsageError } from "./cliError";
+import { reservedVirtualModelNameReason } from "./models/reservedModelNames";
 import type { LayoutPaths } from "./paths";
+import { ownEntry } from "./ownEntry";
 
 /** The `models` block defined in `~/.agent-shim/config.json`, or undefined when none is. */
 export function readModels(paths: LayoutPaths): ModelsConfig | undefined {
@@ -60,7 +63,7 @@ export function memberKindOf(ref: string, models: ModelsConfig | undefined): "vi
   if (ref.startsWith("family:")) {
     return "family";
   }
-  return models?.virtual !== undefined && ref in models.virtual ? "virtual" : "provider";
+  return ownEntry(models?.virtual, ref) !== undefined ? "virtual" : "provider";
 }
 
 /**
@@ -70,7 +73,7 @@ export function expandMembers(name: string, models: ModelsConfig | undefined): r
   const virtual = models?.virtual ?? {};
   const expanded: string[] = [];
   const walk = (current: string, chain: readonly string[]): void => {
-    const nested = virtual[current];
+    const nested = ownEntry(virtual, current);
     if (nested !== undefined) {
       if (chain.includes(current)) {
         throw new Error(`virtual model cycle: ${[...chain, current].join(" -> ")}`);
@@ -84,7 +87,7 @@ export function expandMembers(name: string, models: ModelsConfig | undefined): r
       expanded.push(current);
     }
   };
-  const top = virtual[name];
+  const top = ownEntry(virtual, name);
   if (top === undefined) {
     throw new VirtualModelNotFoundError(name);
   }
@@ -94,16 +97,20 @@ export function expandMembers(name: string, models: ModelsConfig | undefined): r
   return expanded;
 }
 
-/** Sets one virtual model, creating or replacing it, with the block written back. */
+/** Sets one virtual model, creating or replacing it, with the block written back. A new virtual model may not take a reserved name (`reservedVirtualModelNameReason`), which throws `UsageError` and writes nothing; one already defined under such a name can still be changed or removed. */
 export function setVirtualModel(paths: LayoutPaths, name: string, model: VirtualModel): void {
   const current = readModels(paths) ?? {};
+  const reserved = ownEntry(current.virtual, name) === undefined ? reservedVirtualModelNameReason(name) : undefined;
+  if (reserved !== undefined) {
+    throw new UsageError(`A virtual model cannot be called ${JSON.stringify(name)}: ${reserved}. Choose another name.`);
+  }
   writeModels(paths, { ...current, virtual: { ...(current.virtual ?? {}), [name]: model } });
 }
 
 /** Removes one virtual model; throws `VirtualModelNotFoundError` when none is defined. */
 export function removeVirtualModel(paths: LayoutPaths, name: string): void {
   const current = readModels(paths);
-  if (current?.virtual?.[name] === undefined) {
+  if (current === undefined || ownEntry(current.virtual, name) === undefined) {
     throw new VirtualModelNotFoundError(name);
   }
   const virtual = Object.fromEntries(Object.entries(current.virtual ?? {}).filter(([existing]) => existing !== name));

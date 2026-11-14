@@ -14,6 +14,7 @@ import { renameModelRefs, renameProvider, type ProviderRenamePorts } from "./pro
 import { InvalidProviderNameError } from "./config/names";
 import { addProvider, ProviderAlreadyExistsError, ProviderNotFoundError, providerExists, readProvider } from "./providersStore";
 import { realFarmFs } from "./realPorts";
+import { readRouteOverrides } from "./routeOverridesStore";
 import { USAGE_SCHEMA_VERSION } from "./usage/schema";
 
 describe("renameModelRefs", () => {
@@ -86,6 +87,14 @@ describe("renameProvider", () => {
     expect(readProvider(paths, "zai")?.displayName).toBe("z.ai");
     expect(readProviderAliases(paths)).toEqual({ z: "zai" });
     expect(report).toEqual({ from: "z", to: "zai", updated: [] });
+  });
+
+  it("rewrites the route overrides that name the provider: its scope and the targets on it", () => {
+    addProvider(paths, "z", base);
+    writeJsonAtomic(paths.routeOverridesFile, { schemaVersion: 1, global: { opus: "z/glm-5.3" }, providers: { z: { haiku: "auto/provider:z/haiku" } } });
+    const report = renameProvider(paths, "z", "zai", ports);
+    expect(readRouteOverrides(paths)).toEqual({ schemaVersion: 1, global: { opus: "zai/glm-5.3" }, providers: { zai: { haiku: "auto/provider:zai/haiku" } } });
+    expect(report.updated).toContain("route overrides");
   });
 
   it("repoints an earlier alias, so a second rename leaves no chain", () => {

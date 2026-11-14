@@ -238,3 +238,17 @@ export const ConfigRuleSetOutputSchema = storedMutationOutput("rule", "updated",
 
 export const ConfigRuleRemoveInputSchema = z.strictObject({ path: z.string().min(1), confirm: RemovalConfirmationSchema });
 export const ConfigRuleRemoveOutputSchema = mutationOutput("rule", "removed");
+
+/** The scope a route override is set in: `global`, or one session, identity or provider by name, as the CLI's `--session`, `--identity` and `--provider` say. */
+const RouteScopeInputSchema = z.union([
+  z.strictObject({ kind: z.literal("global") }),
+  z.strictObject({ kind: z.enum(["session", "identity", "provider"]), name: z.string().min(1) }),
+]);
+
+/** One route override: a Claude model name or class in one scope, routed to a target name. */
+export const ConfigRouteSetInputSchema = z.strictObject({ scope: RouteScopeInputSchema, model: z.string().min(1), target: z.string().min(1) });
+export const ConfigRouteSetOutputSchema = storedMutationOutput("route", "updated", z.strictObject({ scope: z.string(), model: z.string(), target: z.string() }));
+
+/** Removing an override states its confirmation, as every removal does (the API's form of `route remove --yes`). */
+export const ConfigRouteRemoveInputSchema = z.strictObject({ scope: RouteScopeInputSchema, model: z.string().min(1), confirm: RemovalConfirmationSchema });
+export const ConfigRouteRemoveOutputSchema = mutationOutput("route", "removed");

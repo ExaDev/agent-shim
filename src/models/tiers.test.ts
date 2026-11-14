@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { CLAUDE_TIERS, MODEL_ENV_VARIABLES, OTHER_MODEL_ENV_VARIABLES, TIER_MODEL_ENV_VARIABLES } from "../config/schema";
-import { TIER_ENV_VARIABLES, claudeNameTier, claudeTierOf } from "./tiers";
+import { TIER_ENV_VARIABLES, claudeNameTier, claudeTierOf, isBareClaudeName } from "./tiers";
 
 describe("claudeTierOf", () => {
   it("selects the tier a model name names, case-insensitively", () => {
@@ -83,5 +83,11 @@ describe("the env variables that name a model", () => {
     expect([...MODEL_ENV_VARIABLES].sort()).toEqual([...tierVariables, "ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL"].sort());
     expect([...TIER_MODEL_ENV_VARIABLES, ...OTHER_MODEL_ENV_VARIABLES].sort()).toEqual([...MODEL_ENV_VARIABLES].sort());
     expect(new Set(MODEL_ENV_VARIABLES).size).toBe(MODEL_ENV_VARIABLES.length);
+  });
+});
+
+describe("isBareClaudeName", () => {
+  it.each<[string, boolean]>([["claude-opus-5-5", true], ["opus", true], ["z/claude-opus-5-5", false], ["z/opus", false], ["glm-5", false]])("says %j is a bare Claude name: %j", (name, bare) => {
+    expect(isBareClaudeName(name)).toBe(bare);
   });
 });

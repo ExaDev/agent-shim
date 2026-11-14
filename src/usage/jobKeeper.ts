@@ -7,6 +7,7 @@ import { FIVE_HOUR_WINDOW_MS, SEVEN_DAY_WINDOW_MS } from "./windowLengths";
 import { effectiveWindow, formatAge } from "./preflight";
 import type { UsageSnapshot } from "./schema";
 import { refusalReason } from "./windowKeeper";
+import { ownEntry } from "../ownEntry";
 
 /**
  * The job keeper: runs each job when its trigger fires. A schedule trigger fires at the latest anchor that has fallen since the job was last handled; a before-reset trigger fires once per instance of the named quota window, when the window has the job's lead or less left. Pure orchestration over injected ports, so the front door's timer, `job run` and the tests share one decision.
@@ -72,7 +73,10 @@ export function runJobs(ports: Readonly<JobKeeperPorts>): JobKeeperResult {
   const jobs = ports.jobs();
   const previous = readHandled(ports.fs, ports.stampsFile);
   // A job removed from the configuration drops out of the file with it.
-  const handled: Record<string, number> = Object.fromEntries(jobs.flatMap(({ name }) => (previous[name] === undefined ? [] : [[name, previous[name]]])));
+  const handled: Record<string, number> = Object.fromEntries(jobs.flatMap(({ name }) => {
+    const stamp = ownEntry(previous, name);
+    return stamp === undefined ? [] : [[name, stamp] as const];
+  }));
   const outcomes: JobOutcome[] = [];
   const runs: Promise<void>[] = [];
 
@@ -120,7 +124,7 @@ export function runJobs(ports: Readonly<JobKeeperPorts>): JobKeeperResult {
     }
     const { trigger } = job;
     if ("at" in trigger) {
-      const last = handled[name];
+      const last = ownEntry(handled, name);
       if (last === undefined) {
         handled[name] = nowMs;
         outcomes.push({ name, status: "armed", detail: "schedule noted; the next anchor to fall is the first acted on" });
@@ -151,7 +155,7 @@ export function runJobs(ports: Readonly<JobKeeperPorts>): JobKeeperResult {
       outcomes.push({ name, status: "skipped", detail: `${identity} has no ${trigger.beforeReset} window to run before` });
       continue;
     }
-    if (resetsAtMs - parseDuration(trigger.lead) > nowMs || sameWindowInstance(handled[name], resetsAtMs, trigger.beforeReset)) {
+    if (resetsAtMs - parseDuration(trigger.lead) > nowMs || sameWindowInstance(ownEntry(handled, name), resetsAtMs, trigger.beforeReset)) {
       outcomes.push({ name, status: "waiting", detail: `${trigger.beforeReset} window resets in ${formatAge(resetsAtMs - nowMs)}` });
       continue;
     }
@@ -160,7 +164,7 @@ export function runJobs(ports: Readonly<JobKeeperPorts>): JobKeeperResult {
   writeHandled(ports.fs, ports.stampsFile, handled);
   // Only an outcome that consumed a trigger instance is logged, so a job that is merely waiting, or skipped on a condition that persists, does not repeat itself on every run.
   for (const outcome of outcomes) {
-    if ((outcome.status === "started" || outcome.status === "skipped") && handled[outcome.name] !== previous[outcome.name]) {
+    if ((outcome.status === "started" || outcome.status === "skipped") && ownEntry(handled, outcome.name) !== ownEntry(previous, outcome.name)) {
       ports.log(`job ${outcome.name}: ${outcome.detail}`);
     }
   }

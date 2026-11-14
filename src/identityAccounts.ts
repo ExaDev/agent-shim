@@ -2,6 +2,8 @@ import { AccountMetadataError, readAccountMetadata } from "./usage/account";
 import { describeAccountOrganisation, describeAccountPlan } from "./usage/accountDescription";
 import type { FarmFs } from "./launcher/ports";
 import type { AccountMetadata } from "./usage/schema";
+import { configFaultOf } from "./config/load";
+import { isSystemReadError } from "./readableConfig";
 
 /** The account fields `identity list` and `identity show` carry: who the login is, the organisation it belongs to, the role it holds there and the plan it is on. Never an identifier or a token. */
 export type IdentityAccountSummary = Pick<AccountMetadata, "emailAddress" | "organizationName" | "organizationType" | "organizationRole" | "billingType" | "seatTier">;
@@ -19,6 +21,10 @@ export function readIdentityAccount(fs: Pick<FarmFs, "readFileUtf8">, identities
   } catch (error) {
     if (error instanceof AccountMetadataError) {
       return { problem: error.message };
+    }
+    // A file that cannot be read at all (a directory in its place, no permission) is the identity's own problem as much as one that is malformed.
+    if (isSystemReadError(error)) {
+      return { problem: `its .claude.json cannot be read (${configFaultOf(error)})` };
     }
     throw error;
   }

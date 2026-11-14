@@ -511,3 +511,29 @@ describe("runCheck pool pick", () => {
     expect(formatCheckReport(runCheck(baseParams({ identitySource: "argv", poolPick: refused })))).toContain("Pool: subs, every member is refused right now");
   });
 });
+
+describe("the route overrides check reports", () => {
+  const table = { schemaVersion: 1 as const, global: { opus: "z/g", "claude-sonnet-5-5": "z/s" }, identities: { work: { opus: "z/w" } }, providers: { z: { haiku: "z/h" } }, sessions: { other: { fable: "z/never" } } };
+
+  it("lists the overrides that apply to a launch here, each with the ones it outranks, in text and JSON", () => {
+    const report = runCheck(baseParams({ identityName: "work", provider: { name: "z", problem: "not read in this test" }, routeOverrides: { table } }));
+    expect(report.routeOverrides).toEqual({
+      applying: [
+        { model: "claude-sonnet-5-5", target: "z/s", scope: "global", outranks: [] },
+        { model: "haiku", target: "z/h", scope: "provider:z", outranks: [] },
+        { model: "opus", target: "z/w", scope: "identity:work", outranks: [{ scope: "global", target: "z/g" }] },
+      ],
+    });
+    expect(formatCheckReport(report)).toContain("  opus -> z/w [identity:work] (outranks global -> z/g)");
+    expect(checkReportToJson(report).routeOverrides).toEqual(report.routeOverrides);
+    // Overrides that apply are no warning: a report whose only finding is one passes --strict.
+    expect(checkReportHasWarnings(runCheck(baseParams({ identityName: "work", routeOverrides: { table } })))).toBe(false);
+  });
+
+  it("says none apply, and fails --strict on a file the door cannot use", () => {
+    expect(formatCheckReport(runCheck(baseParams({ routeOverrides: { table: { schemaVersion: 1 } } })))).toContain("  none apply here.");
+    const broken = runCheck(baseParams({ routeOverrides: { fault: "the route overrides file is not JSON" } }));
+    expect(formatCheckReport(broken).join("\n")).toContain("not JSON: the front door refuses");
+    expect(checkReportHasWarnings(broken)).toBe(true);
+  });
+});

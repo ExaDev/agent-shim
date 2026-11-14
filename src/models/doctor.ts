@@ -2,6 +2,8 @@ import type { ModelsConfig } from "../config/schema";
 import { expandMembers, memberKindOf } from "../modelsStore";
 import { FAMILY_PREFIX, buildFamilies, familyKeyOf } from "./families";
 import { relateModels } from "./identity";
+import { reservedVirtualModelNameReason } from "./reservedModelNames";
+import { ownEntry } from "../ownEntry";
 
 /** What the models doctor check needs from its surroundings. */
 export interface ModelsDoctorInput {
@@ -30,6 +32,10 @@ export function modelsFindings(input: Readonly<ModelsDoctorInput>): readonly Mod
   const identities = new Set(input.identities);
   const virtualNames = new Set(Object.keys(models.virtual ?? {}));
   for (const [name, model] of Object.entries(models.virtual ?? {})) {
+    const reserved = reservedVirtualModelNameReason(name);
+    if (reserved !== undefined) {
+      findings.push({ severity: "warn", message: `Virtual model "${name}" is called a reserved name: ${reserved}, so no session reaches it by that name. Define it under another name and remove this one with \`agent-shim model remove ${name} --yes\`.` });
+    }
     for (const member of model.members) {
       const kind = memberKindOf(member, models);
       if (kind === "provider" && !member.includes("/")) {
@@ -54,7 +60,7 @@ export function modelsFindings(input: Readonly<ModelsDoctorInput>): readonly Mod
     }
     if (model.mode === "cheapest") {
       const expanded = expandMembers(name, models);
-      const unpriced = expanded.filter((member) => models.prices?.[member] === undefined && memberKindOf(member, models) !== "virtual");
+      const unpriced = expanded.filter((member) => ownEntry(models.prices, member) === undefined && memberKindOf(member, models) !== "virtual");
       if (unpriced.length > 0) {
         findings.push({ severity: "warn", message: `Virtual model "${name}" chooses by price, but no prices are set for: ${unpriced.join(", ")}.` });
       }

@@ -1,6 +1,7 @@
 import { UsageError } from "../cliError";
 import { isPlainObject, StatuslineSchema, type StatuslineSettings } from "../config/statusline";
 import { statuslineKeys, type StatuslineKey } from "./keys";
+import { ownEntry } from "../ownEntry";
 
 /** A change to a layer's statusline settings: dotted setting paths to the values to set, and dotted paths to remove so the shallower layers or the default apply again. */
 export interface StatuslineChange {
@@ -87,7 +88,7 @@ function setAt(target: Record<string, unknown>, path: readonly string[], value: 
     target[head] = value;
     return;
   }
-  const child = target[head];
+  const child = ownEntry(target, head);
   const next = isPlainObject(child) ? child : {};
   target[head] = next;
   setAt(next, rest, value);
@@ -98,7 +99,7 @@ function removeAt(target: Record<string, unknown>, path: readonly string[]): voi
   if (head === undefined) {
     return;
   }
-  const child = target[head];
+  const child = ownEntry(target, head);
   if (rest.length === 0) {
     Reflect.deleteProperty(target, head);
     return;

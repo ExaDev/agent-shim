@@ -3,6 +3,7 @@ import type { StatuslineSummary } from "./enrich";
 import type { RenderContext } from "./elements/context";
 import type { ClientPayload } from "./payload";
 import { isBedrockModelId } from "./platform";
+import { ownEntry } from "../ownEntry";
 
 /** A model's prices in US dollars per million tokens, as `agent-shim model price` stores them, keyed by `<provider>/<model>`. */
 export type ModelPrices = Readonly<Record<string, Readonly<{ input: number; output: number }>>>;
@@ -24,7 +25,7 @@ export function doorCostUsdOf(records: readonly UsageRecord[], prices: ModelPric
     if (usage === undefined) {
       continue;
     }
-    const price = record.model === undefined ? undefined : prices[`${record.provider}/${record.model}`];
+    const price = record.model === undefined ? undefined : ownEntry(prices, `${record.provider}/${record.model}`);
     if (price === undefined) {
       return undefined;
     }
