@@ -15,6 +15,7 @@ import type { SelectorTarget } from "../models/selectors";
 import type { MappedModel } from "./mainLoopRoute";
 import { configFaultOf } from "../config/load";
 import { ownEntry } from "../ownEntry";
+import { isTransientReadError } from "../readableConfig";
 
 /**
  * Whether `model` is one of the models a provider serves itself, from the lists of its served models in the order they are asked: its `env` first (a lookup by revision, no listing), then the wider ones (the targets of every provider, or the provider's own rows with its catalogue), which are asked only when the earlier ones did not say. The one test of what a provider serves, shared by the resolver and by the tier mapping of a Claude name. A model compares without its context-window marker, on either side.
@@ -119,6 +120,9 @@ export function createProviderReads(deps: Readonly<ProviderReadsDeps>): Provider
       const definition = providerOf(name);
       return definition === undefined ? { kind: "absent" } : { kind: "found", definition };
     } catch (error) {
+      if (isTransientReadError(error)) {
+        throw error;
+      }
       return { kind: "invalid", reason: `provider "${name}" cannot be used because its file is invalid (${configFaultOf(error)}): agent-shim doctor says what is wrong` };
     }
   };
@@ -130,7 +134,10 @@ export function createProviderReads(deps: Readonly<ProviderReadsDeps>): Provider
   const definesProvider = (name: string): boolean => {
     try {
       return providerOf(name) !== undefined;
-    } catch {
+    } catch (error) {
+      if (isTransientReadError(error)) {
+        throw error;
+      }
       return false;
     }
   };
@@ -139,7 +146,10 @@ export function createProviderReads(deps: Readonly<ProviderReadsDeps>): Provider
       const definition = providerOf(name);
       const env = definition === undefined || isRouterProvider(definition) ? undefined : definition.env;
       return [...TIER_MODEL_ENV_VARIABLES, ...OTHER_MODEL_ENV_VARIABLES].flatMap((variable) => env?.[variable] ?? []);
-    } catch {
+    } catch (error) {
+      if (isTransientReadError(error)) {
+        throw error;
+      }
       return [];
     }
   };
@@ -148,6 +158,9 @@ export function createProviderReads(deps: Readonly<ProviderReadsDeps>): Provider
     try {
       return { models: deps.catalogueModelsOf?.(name, definition) ?? [] };
     } catch (error) {
+      if (isTransientReadError(error)) {
+        throw error;
+      }
       return { models: [], fault: catalogueReadFault(error) };
     }
   };
@@ -185,7 +198,10 @@ export function createProviderReads(deps: Readonly<ProviderReadsDeps>): Provider
     let definition;
     try {
       definition = providerOf(provider);
-    } catch {
+    } catch (error) {
+      if (isTransientReadError(error)) {
+        throw error;
+      }
       // An invalid provider file is the routing loop's own refusal to report, with its reason, when the request reaches it.
       return { model: asIs, credential: undefined };
     }

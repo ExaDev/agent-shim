@@ -1,7 +1,7 @@
 import { CliError } from "../cliError";
 import { HTTP_STATUS } from "../codex/http";
 import { configFaultOf } from "../config/load";
-import { isSystemReadError } from "../readableConfig";
+import { isSystemReadError, isTransientReadError } from "../readableConfig";
 import { UsageSnapshotError } from "../usage/read";
 import type { RouteResolution } from "./pipeline";
 import type { RoutedRequest } from "./route";
@@ -19,6 +19,12 @@ export function refusingLocalStateFaults(resolve: (request: RoutedRequest) => Pr
     try {
       return await resolve(request);
     } catch (error) {
+      // A read that failed for a reason of the moment (out of file descriptors, an I/O error) says nothing of the person's configuration: it is answered as retryable, with no hint to fix a file, and nothing kept it.
+      if (isTransientReadError(error)) {
+        const code = configFaultOf(error);
+        log(`front door: a request could not be routed because a local read failed for the moment (${code}); it was answered as retryable`);
+        return { ok: false, status: HTTP_STATUS.serviceUnavailable, message: `the front door could not read the local configuration this request is routed by just now (${code}); try the request again` };
+      }
       if (!isLocalStateFault(error)) {
         throw error;
       }

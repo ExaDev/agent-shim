@@ -12,6 +12,7 @@ import type { LayoutPaths } from "./paths";
 import { catalogueReadFault } from "./storedCatalogue";
 import { RepairableRouteOverridesSchema, RouteOverridesSchema, type OverrideTable, type RouteOverrides } from "./routeOverridesSchema";
 import { ownEntry } from "./ownEntry";
+import { isTransientReadError } from "./readableConfig";
 
 /**
  * The runtime route overrides: per scope, a table from a bare Claude model name or class to the name a request asking for it is routed by instead. Stored at `LayoutPaths.routeOverridesFile`, written by `agent-shim route set|remove` and `config.route.set|remove`, and read by the door on change (`createRouteOverridesReader`), so an edit applies to the next request with no restart and nothing changed in Claude Code.
@@ -242,6 +243,10 @@ export function createRouteOverridesReader(fs: Readonly<Pick<FsPort, "fileRevisi
     try {
       text = fs.readFileUtf8(file);
     } catch (error) {
+      // A failure of the moment is no fault of the file: it fails this read alone and is never kept under the file's revision.
+      if (isTransientReadError(error)) {
+        throw error;
+      }
       return { fault: `the route overrides file cannot be read (${catalogueReadFault(error)})` };
     }
     if (text === undefined) {

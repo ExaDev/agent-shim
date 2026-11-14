@@ -8,7 +8,7 @@ import type { LayoutPaths } from "../paths";
 import { collectPoolPick } from "../poolPickReport";
 import { realMemberProviderResolver } from "../poolProviderWiring";
 import { readPools } from "../poolStore";
-import { readableOr } from "../readableConfig";
+import { isTransientReadError, readableOr } from "../readableConfig";
 import { realFarmFs, realFsPort } from "../realPorts";
 import { lineariseProfile } from "../resolve/extends";
 import { servedModelPorts } from "../frontdoor/cachedCatalogue";
@@ -61,6 +61,9 @@ export function realSelectorStatePorts(paths: LayoutPaths, now: () => number, ho
       const value = read();
       return value === undefined ? { kind: "absent" } : { kind: "found", value };
     } catch (error) {
+      if (isTransientReadError(error)) {
+        throw error;
+      }
       return { kind: "invalid", reason: reasonOf(what, name, error) };
     }
   };
@@ -85,6 +88,9 @@ export function realSelectorStatePorts(paths: LayoutPaths, now: () => number, ho
         const report = collectPoolPick({ paths, fs: realFsPort, usageFs: realFarmFs, poolName: name, pools, directory: home, nowMs: now(), providerOf: realMemberProviderResolver({ paths, cwd: home, env: {}, home }) });
         return report.pick === undefined ? { refusal: poolRefusal(name, report.earliestReturn) } : { identity: report.pick };
       } catch (error) {
+        if (isTransientReadError(error)) {
+          throw error;
+        }
         // A pool that cannot be ranked (a member pool nesting it, a member whose files cannot be read) is the person's configuration to fix, and `pool pick` names what.
         return { refusal: `${reasonOf("pool", name, error)}, or run agent-shim pool pick ${name}` };
       }
@@ -102,6 +108,9 @@ export function realSelectorStatePorts(paths: LayoutPaths, now: () => number, ho
         const login = loginOfId(id);
         return login !== undefined && login === loginOfId(sessionIdentityId);
       } catch (error) {
+        if (isTransientReadError(error)) {
+          throw error;
+        }
         return { refusal: reasonOf("identity", identity, error) };
       }
     },
