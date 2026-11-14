@@ -43,7 +43,7 @@ function hasEmbeddedAppend(module: string, source: string): boolean {
 const sourceOf = (module: string): string => fs.readFileSync(path.join(__dirname, module), "utf8");
 
 describe("an append to a log file in src", () => {
-  it("is made in logFile.ts alone, whose appendLogText drops what it cannot write, so the door's log, headroom's log and the capture built on it do not throw", () => {
+  it("calls appendFile or appendFileSync in logFile.ts alone, whose appendLogText the door's log, headroom's log and the capture append through; an append through an opened descriptor is not read", () => {
     expect(modules().flatMap((module) => appendCalls(module, sourceOf(module))).map((site) => site.split(" ")[0])).toEqual(["logFile.ts"]);
   });
 
