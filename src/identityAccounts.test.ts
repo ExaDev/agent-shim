@@ -130,3 +130,18 @@ describe("readIdentityAccount", () => {
     expect(readIdentityAccount(fs, paths.identitiesDir, "work")).toEqual({ problem: `${WORK_PROFILE}: not valid JSON, so its account metadata cannot be read.` });
   });
 });
+
+describe("an identity's .claude.json that cannot be read", () => {
+  it("is reported as that identity's own problem by its code, never thrown", () => {
+    const unreadable = {
+      readFileUtf8: (): string | undefined => {
+        const error: Error & { code?: string } = new Error("EISDIR: illegal operation on a directory, read");
+        error.code = "EISDIR";
+        throw error;
+      },
+    };
+    const read = readIdentityAccount(unreadable, "/state/identities", "work");
+    expect(read?.problem).toContain("EISDIR");
+    expect(read?.problem).not.toContain("/state/");
+  });
+});
