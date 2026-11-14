@@ -108,6 +108,21 @@ describe("an unmarked anthropic/<model> in a session launched on a provider", ()
   }, TIMEOUT_MS);
 });
 
+describe("a name on the path of the launch's own provider", () => {
+  it.each(["acct:me/claude-opus-5-1", "auto/me/claude-opus-5-1"])("serves %j as sent on that provider in a session launched on it, as on any provider-scoped path, with no move", async (model) => {
+    const moves: string[] = [];
+    const started = await startWorld(mainLoopRoutesOfLiveSessions(), HTTP_STATUS.ok, undefined, undefined, undefined, { selectorState: SELF, routeOverrides: () => ({ table: NO_ROUTE_OVERRIDES }), identityNameOf: (id) => (id === "id-me" ? "me" : undefined), accountMoves: async (_sessionId, to) => { moves.push(to); return await Promise.resolve(true); } });
+    try {
+      const answered = await send(started, { model, requestClass: "main", identity: "id-me", provider: "z", path: "/providers/z/v1/messages" });
+      expect(answered.status, answered.text).toBe(HTTP_STATUS.ok);
+      expect(started.upstream.seen.map((seen) => seen.model)).toEqual([model]);
+      expect(moves).toEqual([]);
+    } finally {
+      await started.close();
+    }
+  }, TIMEOUT_MS);
+});
+
 describe("a name on a provider-scoped path", () => {
   it.each(["auto/me/claude-opus-5-1", "acct:me/claude-opus-5-1", "acct:work/claude-opus-5-1"])("serves %j as sent on the provider the path names, never expanding it, moving the session or reaching the Anthropic route", async (model) => {
     const moves: string[] = [];

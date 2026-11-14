@@ -56,8 +56,8 @@ describe("a name in a request cannot reach a file outside its directory", () => 
       moves.push([sessionId, to, model]);
       return await Promise.resolve(true);
     });
-    await resolve(request("/providers/z/v1/messages", "acct:../../x/opus"));
-    await resolve(request("/providers/z/v1/messages", "sneaky"));
+    await resolve(request("/v1/messages", "acct:../../x/opus"));
+    await resolve(request("/v1/messages", "sneaky"));
     expect(moves).toEqual([]);
   });
 
@@ -67,7 +67,7 @@ describe("a name in a request cannot reach a file outside its directory", () => 
       moves.push([sessionId, to, model]);
       return await Promise.resolve(true);
     });
-    await resolve(request("/providers/z/v1/messages", "acct:work/opus"));
+    await resolve(request("/v1/messages", "acct:work/opus"));
     expect(moves).toEqual([["s-1", "work", "opus"]]);
   });
 });
