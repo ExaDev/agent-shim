@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { caseSources, deletedProblems, guardProblems, listedCounts, parseTable, relativeFile, testId, type Accounting, type Row } from "./keptTests";
+import { caseSources, deletedProblems, guardProblems, listedCounts, parseTable, relativeFile, testId, unstableIds, unstableProblems, type Accounting, type Row } from "./keptTests";
 
 const ROOT = "/repo";
 const row = (file: string, test: string): Row => ({ file, test, reason: "not a function of its inputs" });
@@ -140,5 +140,23 @@ describe("deletedProblems", () => {
   it("counts two tests with one title, so deleting one of them is a deletion", () => {
     const twice = listing(["src/a.test.ts", "x > same"], ["src/a.test.ts", "x > same"]);
     expect(deletedProblems(twice, listing(["src/a.test.ts", "x > same"]), accounting())).toEqual(["deleted test has no case and no dropped row: a.test.ts: x > same"]);
+  });
+});
+
+describe("unstable titles", () => {
+  it("are the identities two listings of one commit disagree on, in either direction and by count", () => {
+    const first = listing(["src/a.test.ts", "x > same"], ["src/a.test.ts", "x > pid 1"], ["src/a.test.ts", "x > twice"], ["src/a.test.ts", "x > twice"]);
+    const second = listing(["src/a.test.ts", "x > same"], ["src/a.test.ts", "x > pid 2"], ["src/a.test.ts", "x > twice"]);
+    expect([...unstableIds(first, second)].sort()).toEqual(["a.test.ts: x > pid 1", "a.test.ts: x > pid 2", "a.test.ts: x > twice"]);
+    expect(unstableIds(first, first).size).toBe(0);
+  });
+
+  it("are reported as unstable by name, and are not also reported as deleted", () => {
+    const base = listing(["src/a.test.ts", "x > pid 1"]);
+    const head = listing(["src/a.test.ts", "x > pid 3"]);
+    const unstable = new Set(["a.test.ts: x > pid 1"]);
+    expect(unstableProblems(unstable)).toEqual(["unstable title, different in two listings of one commit: a.test.ts: x > pid 1"]);
+    expect(deletedProblems(base, head, accounting(), unstable)).toEqual([]);
+    expect(deletedProblems(base, head, accounting())).toHaveLength(1);
   });
 });
