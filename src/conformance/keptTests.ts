@@ -6,6 +6,25 @@ import { z } from "zod";
  * A test is identified by its file and its title path as the suite's own listing resolves them: `<file>: <describe> > <test>`, the form a case's `from` uses. The file is relative to `src/` for a file under it and to the repository root otherwise. A listing holds titles after the suite has run its `each` expansions and evaluated any computed title, so there is no literal and non-literal title here: a title either equals what a `from` or a row says, character for character, or it is unaccounted for.
  */
 
+/** Milliseconds of CPU collection takes per test file: a full listing of 539 files took 162 s of user and 27 s of system CPU on 16 cores, 350 ms a file, rounded up. */
+const COLLECTION_CPU_MS_PER_FILE = 400;
+
+/** The least share of one core a listing is assumed to get: a host that holds a job to two cores and shares them with another job at lowered priority. */
+const LEAST_CORE_SHARE = 0.25;
+
+/** Milliseconds for starting vitest and its pool, whatever the number of files. */
+const LISTING_START_MS = 60_000;
+
+/** How long a full listing of `files` test files may take: the CPU its collection needs, at the least share of a core, and the time to start. A listing that takes longer was held back by its host, and is reported as that. */
+export function listingBudgetMs(files: number): number {
+  return Math.ceil((files * COLLECTION_CPU_MS_PER_FILE) / LEAST_CORE_SHARE) + LISTING_START_MS;
+}
+
+/** What a listing that overran its budget is reported as, so a slow host is not read as a wrong table. */
+export function slowListingMessage(files: number): string {
+  return `the suite listing of ${String(files)} test files was not finished within ${String(listingBudgetMs(files))} ms (${String(files)} files at ${String(COLLECTION_CPU_MS_PER_FILE)} ms of CPU each at a quarter of a core, and ${String(LISTING_START_MS)} ms to start): this host was too slow for it, and the table and the corpus are not in question`;
+}
+
 /** What `vitest list --json` prints: one entry per test, with its title path and the absolute path of its file. */
 export const ListingSchema = z.array(z.object({ name: z.string(), file: z.string() }));
 
