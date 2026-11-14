@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
 import { createRouteOverridesReader, NO_ROUTE_OVERRIDES } from "../routeOverridesStore";
+import { raiseUnreadableCatalogue } from "../storedCatalogue";
 import { errorWithCode } from "../test-helpers";
 import { PROVIDERS_DIR, Z_OPUS_MODEL, send, startWorld } from "./mainLoopRouteTestWorld";
 
@@ -76,6 +77,39 @@ describe("a local read that fails for the moment", () => {
       const served = await send(world, { model: "auto/provider:z/opus", requestClass: "main" });
       expect(served.status, served.text).toBe(HTTP_STATUS.ok);
       expect(world.upstream.seen.map((seen) => seen.model)).toEqual([Z_OPUS_MODEL]);
+    } finally {
+      await world.close();
+    }
+  }, TIMEOUT_MS);
+
+  it.each(TRANSIENT)("answers a %s listing the providers directory as retryable, keeps no empty listing, and serves the provider once the listing succeeds", async (code) => {
+    const world = await startWorld();
+    try {
+      world.failRead(PROVIDERS_DIR, errorWithCode(`${code}: failed, scandir '${PROVIDERS_DIR}'`, code));
+      const refused = await send(world, { model: "auto/provider:z/opus", requestClass: "main" });
+      expect(refused.status, refused.text).toBe(HTTP_STATUS.serviceUnavailable);
+      expect(refused.text).not.toContain(PROVIDERS_DIR);
+      world.failRead(PROVIDERS_DIR, undefined);
+      const served = await send(world, { model: "auto/provider:z/opus", requestClass: "main" });
+      expect(served.status, served.text).toBe(HTTP_STATUS.ok);
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual([Z_OPUS_MODEL]);
+    } finally {
+      await world.close();
+    }
+  }, TIMEOUT_MS);
+
+  it.each(TRANSIENT)("answers a %s reading a provider's stored catalogue as retryable, never as the file's permissions to fix", async (code) => {
+    let failing = true;
+    const world = await startWorld(undefined, HTTP_STATUS.ok, undefined, undefined, undefined, { catalogueModelsOf: () => (failing ? raiseUnreadableCatalogue(code, errorWithCode(`${code}: failed`, code)) : [{ id: "glm-cat" }]) });
+    try {
+      world.setProvider("c", { displayName: "C", baseUrl: `http://127.0.0.1:${String(world.upstreamPort)}`, credential: { sources: [{ literal: "c-token" }] }, catalogue: { tier: "opus" } });
+      const refused = await send(world, { model: "c", requestClass: "main" });
+      expect(refused.status, refused.text).toBe(HTTP_STATUS.serviceUnavailable);
+      expect(refused.text).not.toContain("permissions");
+      failing = false;
+      const served = await send(world, { model: "c", requestClass: "main" });
+      expect(served.status, served.text).toBe(HTTP_STATUS.ok);
+      expect(world.upstream.seen.map((seen) => seen.model)).toEqual(["glm-cat"]);
     } finally {
       await world.close();
     }

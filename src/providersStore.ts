@@ -34,7 +34,7 @@ import type { LayoutPaths } from "./paths";
 import { FAMILY_PREFIX, buildFamilies, expandFamilyMembers, type Family } from "./models/families";
 import { isStoredName, providerFilePath, requireNewProviderName, UnsafeNameError } from "./config/names";
 import { requireUnreservedProviderName } from "./models/reservedModelNames";
-import { isSystemReadError } from "./readableConfig";
+import { isSystemReadError, isTransientReadError } from "./readableConfig";
 import { configFaultOf } from "./config/load";
 
 /** Raised by any operation that requires a provider to already exist, when it does not. */
@@ -210,7 +210,8 @@ export function listProviders(paths: LayoutPaths, onInvalid: (name: string, mess
         onInvalid(name, error.message);
         continue;
       }
-      if (!isSystemReadError(error)) {
+      // A read that failed for a reason of the moment says nothing of the file, so the provider is not reported as invalid.
+      if (!isSystemReadError(error) || isTransientReadError(error)) {
         throw error;
       }
       onInvalid(name, `its file cannot be read (${configFaultOf(error)})`);
@@ -230,8 +231,11 @@ export function listProviderNames(readdir: (dir: string) => readonly string[], p
   let entries: readonly string[];
   try {
     entries = readdir(providersDir);
-  } catch {
-    // An absent providers directory means no providers, which is not an error anywhere this is used.
+  } catch (error) {
+    // A listing that failed for a reason of the moment is thrown, so no caller keeps it as "no providers"; an absent providers directory means no providers, which is not an error anywhere this is used.
+    if (isTransientReadError(error)) {
+      throw error;
+    }
     return [];
   }
   return entries.filter((entry) => entry.endsWith(".json")).map((entry) => entry.slice(0, -".json".length)).sort();
