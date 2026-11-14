@@ -536,7 +536,7 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
             requireConfirmation(input.confirm, `the route override of "${input.model}"`);
             return guarded(() => {
               removeRouteOverride(paths, input.scope, input.model);
-              return { action: "removed" as const, kind: "route" as const, name: input.model };
+              return { action: "removed" as const, kind: "route" as const, name: overrideKeyOf(input.model) };
             });
           }),
       },
