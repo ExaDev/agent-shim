@@ -35,7 +35,7 @@ interface ListedOverride {
   readonly target: string;
 }
 
-/** Every entry of the overrides, in scope precedence order (session, identity, provider, global) and by name within a kind. */
+/** Every entry of the overrides, in scope precedence order (session, identity, provider, global), by scope label within a kind and by key within a scope. */
 function listed(overrides: Readonly<RouteOverrides>): readonly ListedOverride[] {
   const tables: Readonly<Record<(typeof ROUTE_OVERRIDE_SCOPES)[number], readonly (readonly [RouteOverrideScope, Readonly<Record<string, string>>])[]>> = {
     session: Object.entries(overrides.sessions ?? {}).map(([name, table]) => [{ kind: "session", name }, table] as const),
