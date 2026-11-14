@@ -430,7 +430,7 @@ export async function runSupervisor(
     }
     ticks += 1;
     let inputs: ReturnType<typeof currentHeadroomAllowlistInputs>;
-    // A failure reading the supervisor's own files (a file descriptor shortage, an I/O error) fails this tick alone: it is logged, the daemon goes on serving, and the next tick reads again.
+    // An error thrown in this block (a read of the supervisor's own files that failed for the moment, or any other) is logged through `faultLog`, the turn skips the rest of the loop body, and the next turn runs the block again.
     try {
       // First in the tick, so a start attempt later in it takes its log offset after the last rotation it could be invalidated by.
       if (ports.rotateDaemonLog({ maxBytes: HEADROOM_LOG_MAX_BYTES, keptGenerations: HEADROOM_LOG_KEPT_GENERATIONS })) {
