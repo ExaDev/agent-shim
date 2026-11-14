@@ -21,8 +21,9 @@ export default defineConfig([
     languageOptions: { parserOptions: { projectService: false } },
     // The config's own rules that read types, which have nothing to read here; its others (the barrel policy, `Object.assign`) stay on.
     rules: {
-      // The runner's types are JSDoc types, which these two rules refuse in favour of the TypeScript syntax the file does not have.
+      // The runner's types are JSDoc types and typedefs, which these rules refuse in favour of the TypeScript syntax the file does not have.
       "jsdoc/no-types": "off",
+      "jsdoc/check-tag-names": "off",
       "tsdoc/syntax": "off",
       ...Object.fromEntries(
       [

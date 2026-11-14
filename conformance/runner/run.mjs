@@ -159,7 +159,7 @@ export function manifestProblems(bytes, validate) {
  * Loads the corpus under `root` and checks it: every file, the ids across files, each file's kind against its directory, and the manifest against the cases. The schemas are read from `schemas`, which is `root` for the real corpus and the real corpus for a fixture root.
  * @param {string} root
  * @param {string} [schemas]
- * @returns {{ files: { file: string, cases: any[] }[], problems: string[] }}
+ * @returns {{ files: { file: string, cases: unknown[] }[], problems: string[] }}
  */
 export function loadCorpus(root, schemas = root) {
   const { caseFile, manifest } = validatorsFrom(schemas);
