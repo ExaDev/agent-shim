@@ -1,8 +1,9 @@
-import * as fs from "node:fs";
+import fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { errorWithCode } from "../test-helpers";
 import { CHUNK_LOG_CAP_BYTES, STREAM_LOG_CAP_BYTES, captureFromEnv, createFileCapture, redactBody, redactHeaders } from "./capture";
 
 /** The status the fake upstream answers with, named so a status literal never reads as a magic number. */
@@ -91,6 +92,29 @@ describe("captureFromEnv", () => {
 });
 
 describe("createFileCapture", () => {
+  it.each(["EMFILE", "ENOSPC"])("drops a record whose write fails with %s rather than throwing it into the connection, and writes the next one", (code) => {
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-capture-fault-")), "frontdoor-capture.jsonl");
+    try {
+      const capture = createFileCapture(file);
+      // Each call a file write can be made through fails for the capture's file, so the record is lost however the capture writes it.
+      const fault = (): never => { throw errorWithCode(`${code}: failed, open '${file}'`, code); };
+      const failing = [
+        vi.spyOn(fs, "appendFileSync").mockImplementation(fault),
+        vi.spyOn(fs, "writeFileSync").mockImplementation(fault),
+        vi.spyOn(fs, "openSync").mockImplementation(fault),
+      ];
+      try {
+        expect(() => { capture.connect({ host: "api.example.com", port: 443 }, false); }).not.toThrow();
+      } finally {
+        for (const spy of failing) spy.mockRestore();
+      }
+      capture.connect({ host: "api.example.org", port: 443 }, false);
+      expect(fs.readFileSync(file, "utf8").trim().split("\n").map((line) => (JSON.parse(line) as { host: string }).host)).toEqual(["api.example.org"]);
+    } finally {
+      fs.rmSync(path.dirname(file), { recursive: true, force: true });
+    }
+  });
+
   it("creates its file readable by its owner alone, since a capture holds request lines and redacted bodies", () => {
     const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-capture-mode-")), "logs", "frontdoor-capture.jsonl");
     try {
