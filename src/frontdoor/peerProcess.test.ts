@@ -18,6 +18,12 @@ describe("reading the process that holds a loopback connection's client end", ()
     expect(pidHoldingLocalPort(fields, CLIENT_PORT + 1)).toBeUndefined();
   });
 
+  it("reads the port of a bracketed IPv6 endpoint after its closing bracket", () => {
+    const fields = [`p${String(CLIENT_PID)}`, "f3", `n[::1]:${String(CLIENT_PORT)}->[::1]:${String(LISTENER_PORT)}`].join("\n");
+    expect(pidHoldingLocalPort(fields, CLIENT_PORT)).toBe(CLIENT_PID);
+    expect(pidHoldingLocalPort(fields, LISTENER_PORT)).toBeUndefined();
+  });
+
   it("reads the established socket's inode from /proc/net/tcp by its hexadecimal local port", () => {
     const table = [
       "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode",

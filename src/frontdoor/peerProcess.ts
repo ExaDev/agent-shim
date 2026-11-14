@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import { promises as fsp } from "node:fs";
 
+import { parseDialAuthority } from "../baseUrlDial";
+
 /**
  * Which local process holds the other end of a loopback TCP connection, and which process started which: what lets the front door attribute a connection that arrived by an operating-system redirect (and so carries no launch capability) to the launch it belongs to. Every lookup is asynchronous, because the door's event loop answers every session.
  *
@@ -26,11 +28,13 @@ async function outputOf(command: string, args: readonly string[]): Promise<strin
   });
 }
 
-/** The port of one `host:port` endpoint as lsof prints it (IPv6 bracketed), or undefined when it names none. */
+/** The port an endpoint without one is read as: port 0 is never a connection's, so it stands for none. */
+const NO_PORT = 0;
+
+/** The port of one `host:port` endpoint as lsof prints it (IPv6 bracketed), or undefined when it names none or cannot be read. */
 function portOf(endpoint: string): number | undefined {
-  const colon = endpoint.lastIndexOf(":");
-  const port = Number(endpoint.slice(colon + 1));
-  return colon < 0 || !Number.isInteger(port) ? undefined : port;
+  const parsed = parseDialAuthority(endpoint, NO_PORT);
+  return "refusal" in parsed || parsed.port === NO_PORT ? undefined : parsed.port;
 }
 
 /**
