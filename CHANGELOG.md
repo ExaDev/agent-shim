@@ -1,3 +1,17 @@
+## [14.10.0](https://github.com/ExaDev/agent-shim/compare/v14.9.0...v14.10.0) (2026-11-14)
+
+### Features
+
+* **rc:** run the verbs on an unverified patch release of a verified minor, with a warning ([b98f887](https://github.com/ExaDev/agent-shim/commit/b98f8878931cb30f88ecf211d9f962e0c45242ed))
+
+### Bug Fixes
+
+* **ci:** turn the git hooks off for the release commit and its push ([7232e45](https://github.com/ExaDev/agent-shim/commit/7232e456ccb60f56eb9187ddbd693dfe1c102a28)), references [#531](https://github.com/ExaDev/agent-shim/issues/531)
+
+### Continuous Integration
+
+* merge the daily Claude Code versions pull request once its dispatched CI passes ([0c41738](https://github.com/ExaDev/agent-shim/commit/0c41738ec19e3783b1011e37e6577afa288f5d2a))
+
 ## [14.9.0](https://github.com/ExaDev/agent-shim/compare/v14.8.0...v14.9.0) (2026-11-14)
 
 ### Features
