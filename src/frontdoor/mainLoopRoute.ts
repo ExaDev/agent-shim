@@ -256,7 +256,7 @@ export interface RenameContext {
   readonly main: boolean;
   /** Whether the request's path names no provider: the session's own request, as against one a routing layer or the headroom hop scoped. */
   readonly unscoped: boolean;
-  /** The provider of the route the session itself chose: the launch's own, else the provider its main loop was last served on when the session's own request put it there; undefined on the Anthropic route. A context a route override made (`movedBy: "override"`) is no choice of the session's and counts as the launch's own route, so nothing read from it decides which override applies (see `sessionRouteProvider`). Asked only when needed, since it reads the route context. */
+  /** The provider of the route the session itself chose, as `sessionRouteProvider` reads it: the launch's own, else the provider its main loop was last served on when the session's own request put it there, else, for a context a route override made, the provider the session had chosen before the override moved it (`chosenProvider`); undefined on the Anthropic route. So a class alone and the override provider scope follow the route the session chose, never the one an override moved it to. Asked only when needed, since it reads the route context. */
   readonly routeProvider: () => string | undefined;
   /** The Claude model id this launch last sent for a tier (see `MainLoopRouteRecord.claudeNameOf`), which a class on the Anthropic route is sent as. */
   readonly claudeNameOf: (tier: ClaudeTier) => string | undefined;
@@ -286,7 +286,6 @@ function boundedName(text: string | undefined): string | undefined {
  * A main-loop request (class `main`, or no class at all, and no agent id) is resolved first, and where it was served is recorded with the credential and model names; one the resolver left on the Anthropic route is placed by the context as above. Any other class is placed by the context without resolving first. With no context the session has never left the route it was launched on, so its requests go there: Claude Code sends helpers (the startup quota check, a model validation) before its first main-loop request, and they belong to the launch's own account.
  */
 export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<RouteResolution>, deps: MainLoopRoutingDeps): (request: RoutedRequest) => Promise<RouteResolution> {
-  /** The context recorded for a request served on `route`, with the facts about it. */
   /** The context of a served request. `overriddenFrom` is set when an override placed it: the context the session was in, from which the route the session itself chose is kept (`chosenProvider`), so the session goes back there once the override no longer applies. */
   const contextOf = (route: RouteOf, credentialName: string | undefined, requested: string | undefined, served: string | undefined, overriddenFrom?: { readonly context: Readonly<RouteContext> | undefined }): RouteContext => {
     const credential = boundedName(credentialName);
@@ -454,9 +453,9 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
         }
         return placed.resolution;
       }
-      // A context an override put the main loop in lasts only while an override still applies: a bare Claude name no override covers now goes where it would with no override, the launch's own route, and the context is recorded there. A context the person chose (`/model <provider>/<model>`) is no override's and stays.
+      // A context an override put the main loop in lasts only while an override still applies: a bare Claude name no override covers now goes back to the route the session itself chose (below), and the context is recorded there. A context the person chose (`/model <provider>/<model>`) is no override's and stays.
       const overrideLapsed = current?.movedBy === "override" && !overridden && requested !== undefined && isBareClaudeName(requested);
-      // A lapsed override's context goes back to the provider the session had chosen, when it had chosen one.
+      // That is the provider the session had chosen before the override moved it, when it had chosen one, else the launch's own route.
       const chosenProvider = overrideLapsed ? current.chosenProvider : undefined;
       if (chosenProvider !== undefined) {
         const placed = await toProvider(base, chosenProvider, request.session);
