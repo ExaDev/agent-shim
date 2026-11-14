@@ -67,3 +67,28 @@ describe("the identity scope of a session whose identity.json cannot be read", (
     }
   }, TIMEOUT_MS);
 });
+
+// With an identity scope in the table, even one naming another identity, the session's name decides whether it applies (a rename may have given it that name), so an unreadable name is refused, as above.
+describe("an identity.json that cannot be read when the table has no identity scope", () => {
+  it.each<[string, Record<string, unknown>]>([
+    ["no overrides at all", {}],
+    ["only a global override for another name", { global: { haiku: "z/glm-global" } }],
+  ])("routes the main loop as with no overrides, with %s", async (_label, tables) => {
+    if (process.getuid?.() === 0) return;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "identity-scope-none-"));
+    roots.push(root);
+    const paths = buildLayoutPaths(root);
+    const file = path.join(paths.identitiesDir, "work", "identity.json");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ name: "work", allowAmbientCredential: false }), { mode: OWNER_ONLY });
+    fs.chmodSync(file, 0);
+    const door = await startWorld(undefined, HTTP_STATUS.ok, undefined, undefined, undefined, { routeOverrides: () => ({ table: { ...NO_ROUTE_OVERRIDES, ...tables } }), identityNameOf: createIdentityNameReader(paths).requireNameOf });
+    try {
+      await send(door, { model: "z/glm-chosen", requestClass: "main", identity: "work" });
+      const answered = await send(door, { model: "claude-opus-5-5", requestClass: "main", identity: "work" });
+      expect(answered.status, answered.text).toBe(HTTP_STATUS.ok);
+    } finally {
+      await door.close();
+    }
+  }, TIMEOUT_MS);
+});
