@@ -97,7 +97,11 @@ pub fn run() -> Result<Vec<String>, TaskError> {
 /// Every `.rs` file under `directory`, as its path and text, leaving out a `target` directory of build output.
 fn rust_sources(directory: &Path, found: &mut Vec<(String, String)>) -> Result<(), TaskError> {
     let mut entries: Vec<_> = std::fs::read_dir(directory)
-        .and_then(|listing| listing.map(|entry| entry.map(|entry| entry.path())).collect())
+        .and_then(|listing| {
+            listing
+                .map(|entry| entry.map(|entry| entry.path()))
+                .collect()
+        })
         .map_err(|source| TaskError::Io {
             path: directory.to_path_buf(),
             source,
@@ -120,7 +124,8 @@ fn mentions_unsafe(text: &str) -> bool {
     text.match_indices("unsafe").any(|(index, word)| {
         let before = text[..index].chars().next_back();
         let after = text[index + word.len()..].chars().next();
-        let part_of_word = |character: Option<char>| character.is_some_and(|c| c.is_alphanumeric() || c == '_');
+        let part_of_word =
+            |character: Option<char>| character.is_some_and(|c| c.is_alphanumeric() || c == '_');
         !part_of_word(before) && !part_of_word(after)
     })
 }
@@ -149,6 +154,12 @@ fn problems_in(
     let workspace_lints = lint_entries(workspace, "workspace.lints");
     if workspace_lints.is_empty() {
         problems.push("[workspace.lints] is not set".to_owned());
+    } else if !workspace_lints.contains(&(
+        "rust".to_owned(),
+        "unsafe_code".to_owned(),
+        "\"forbid\"".to_owned(),
+    )) {
+        problems.push("[workspace.lints.rust] does not set unsafe_code = \"forbid\"".to_owned());
     }
     if members.is_empty() {
         problems.push("the workspace has no member crates".to_owned());
@@ -162,7 +173,12 @@ fn problems_in(
             }
         }
         if name == WINDOWS_CRATE {
-            problems.extend(exception_problems(name, manifest, &workspace_lints, &WINDOWS_EXTRA_LINTS));
+            problems.extend(exception_problems(
+                name,
+                manifest,
+                &workspace_lints,
+                &WINDOWS_EXTRA_LINTS,
+            ));
         } else if name == WASM_CRATE {
             problems.extend(exception_problems(name, manifest, &workspace_lints, &[]));
             for (file, text) in wasm_sources {
@@ -410,6 +426,22 @@ dbg_macro = \"deny\"
     }
 
     #[test]
+    fn a_workspace_that_does_not_forbid_unsafe_code_fails() {
+        for lints in [
+            "unsafe_code = \"allow\"",
+            "unsafe_code = \"deny\"",
+            "other = \"deny\"",
+        ] {
+            let workspace = WORKSPACE.replace("unsafe_code = \"forbid\"", lints);
+            assert_eq!(
+                check(&workspace, &members(&[("a", MEMBER)])),
+                ["[workspace.lints.rust] does not set unsafe_code = \"forbid\""],
+                "{lints}"
+            );
+        }
+    }
+
+    #[test]
     fn a_workspace_that_sets_nothing_fails_for_each_missing_part() {
         assert_eq!(
             check("[workspace]\nmembers = []\n", &members(&[])),
@@ -484,16 +516,26 @@ dbg_macro = \"deny\"
     fn the_binding_crate_may_restate_the_table_with_unsafe_allowed_and_no_hand_written_unsafe() {
         let members = members(&[("a", MEMBER), ("agent-shim-wasm", WASM)]);
         let sources = source("use wasm_bindgen::prelude::*;\n#[wasm_bindgen]\npub fn f() {}\n");
-        assert_eq!(problems_in(WORKSPACE, &members, &sources), Vec::<String>::new());
+        assert_eq!(
+            problems_in(WORKSPACE, &members, &sources),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
     fn the_binding_crate_fails_on_hand_written_unsafe_in_code_comment_or_string() {
         let members = members(&[("agent-shim-wasm", WASM)]);
-        for text in ["unsafe { x() }", "// unsafe", "let s = \"an unsafe word\";", "pub unsafe fn f() {}"] {
+        for text in [
+            "unsafe { x() }",
+            "// unsafe",
+            "let s = \"an unsafe word\";",
+            "pub unsafe fn f() {}",
+        ] {
             assert_eq!(
                 problems_in(WORKSPACE, &members, &source(text)),
-                ["agent-shim-wasm: src/lib.rs holds the word unsafe, which only the macro's generated code may"],
+                [
+                    "agent-shim-wasm: src/lib.rs holds the word unsafe, which only the macro's generated code may"
+                ],
                 "{text}"
             );
         }
@@ -502,8 +544,16 @@ dbg_macro = \"deny\"
     #[test]
     fn the_word_unsafe_inside_a_longer_identifier_is_not_the_word() {
         let members = members(&[("agent-shim-wasm", WASM)]);
-        for text in ["fn is_unsafely() {}", "let unsafe_code_count = 0;", "fn notunsafe() {}"] {
-            assert_eq!(problems_in(WORKSPACE, &members, &source(text)), Vec::<String>::new(), "{text}");
+        for text in [
+            "fn is_unsafely() {}",
+            "let unsafe_code_count = 0;",
+            "fn notunsafe() {}",
+        ] {
+            assert_eq!(
+                problems_in(WORKSPACE, &members, &source(text)),
+                Vec::<String>::new(),
+                "{text}"
+            );
         }
     }
 
@@ -512,12 +562,16 @@ dbg_macro = \"deny\"
         let inheriting = format!("{WASM}\n[lints]\nworkspace = true\n");
         assert_eq!(
             check(WORKSPACE, &members(&[("agent-shim-wasm", &inheriting)])),
-            ["agent-shim-wasm: it restates the lint table instead of inheriting it, since it allows unsafe_code"]
+            [
+                "agent-shim-wasm: it restates the lint table instead of inheriting it, since it allows unsafe_code"
+            ]
         );
         let extra = format!("{WASM}undocumented_unsafe_blocks = \"deny\"\n");
         assert_eq!(
             check(WORKSPACE, &members(&[("agent-shim-wasm", &extra)])),
-            ["agent-shim-wasm: [lints.clippy] undocumented_unsafe_blocks = \"deny\" is not in the workspace table or the exception"]
+            [
+                "agent-shim-wasm: [lints.clippy] undocumented_unsafe_blocks = \"deny\" is not in the workspace table or the exception"
+            ]
         );
     }
 
@@ -525,7 +579,11 @@ dbg_macro = \"deny\"
     fn a_third_crate_that_opts_out_fails_whatever_it_is_named() {
         let third = WASM.replace("agent-shim-wasm", "agent-shim-third");
         assert_eq!(
-            problems_in(WORKSPACE, &members(&[("agent-shim-third", &third)]), &source("unsafe")),
+            problems_in(
+                WORKSPACE,
+                &members(&[("agent-shim-third", &third)]),
+                &source("unsafe")
+            ),
             ["agent-shim-third: [lints] workspace = true is missing"]
         );
     }
