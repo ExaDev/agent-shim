@@ -2,6 +2,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { IncomingHttpHeaders } from "node:http";
 
+import { appendLogText } from "../logFile";
+
 /**
  * An opt-in diagnostic tap on the front door's CONNECT surface, for answering "what is this client actually saying to whom" against one's own machine: which hosts every launch dials, and the method, path, redacted headers and redacted body excerpts of each request the terminated session pipes to the real upstream (the non-`/v1/` paths, where Claude Code's own Remote Control streaming and OAuth refreshes live). Routed `/v1/` requests are deliberately not captured: the routed pipeline already records their usage, and duplicating it here would double the sensitive surface for no new information.
  *
@@ -134,7 +136,8 @@ export function createFileCapture(file: string, now: () => Date = () => new Date
   fs.mkdirSync(path.dirname(file), { recursive: true });
   let nextId = 0;
   const append = (record: Record<string, unknown>): void => {
-    fs.appendFileSync(file, `${JSON.stringify({ ts: now().toISOString(), ...record })}\n`, { mode: CAPTURE_FILE_MODE });
+    // Through `appendLogText`, which drops a record it cannot write: the capture is a debugging log, and a write failing under EMFILE or ENOSPC must not end the connection it describes.
+    appendLogText(path.dirname(file), file, `${JSON.stringify({ ts: now().toISOString(), ...record })}\n`, CAPTURE_FILE_MODE);
   };
 
   return {

@@ -262,7 +262,7 @@ export async function startWorld(
       await serveRouted(pipelineRequest, { resolveRoute: standingInForAnthropic(resolve, (requestClass, model) => {
           toAnthropic.push(requestClass);
           anthropicModels.push(model);
-        }), canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [usage], admit, now: () => 0, log: (line) => { pipelineLog.push(line); } });
+        }), canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [usage], admit, now: () => 0, log: (line) => { pipelineLog.push(line); modelPorts.log?.(line); } });
     },
     () => undefined,
   );
