@@ -105,6 +105,14 @@ export function overrideMatches(overrides: Readonly<RouteOverrides>, ids: Readon
   });
 }
 
+/** Whether the identity scope could decide the override of `model` for a request of session `sessionId`: some identity's table holds an entry for `model` (its name or its class), and no entry of the session's own table, which outranks every identity's, does. Only then does the identity the request runs as need to be known. */
+export function identityScopeCouldApply(overrides: Readonly<RouteOverrides>, sessionId: string | undefined, model: string): boolean {
+  if (sessionId !== undefined && overrideMatches(overrides, { sessionId }, model).some((match) => match.scope.kind === "session")) {
+    return false;
+  }
+  return Object.keys(overrides.identities ?? {}).some((identity) => overrideMatches(overrides, { identity }, model).some((match) => match.scope.kind === "identity"));
+}
+
 /** The override that applies to `model` for a request covered by `ids`, or undefined. */
 export function overrideFor(overrides: Readonly<RouteOverrides>, ids: Readonly<OverrideScopeIds>, model: string): OverrideMatch | undefined {
   return overrideMatches(overrides, ids, model)[0];

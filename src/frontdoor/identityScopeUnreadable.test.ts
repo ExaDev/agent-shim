@@ -68,11 +68,12 @@ describe("the identity scope of a session whose identity.json cannot be read", (
   }, TIMEOUT_MS);
 });
 
-// With an identity scope in the table, even one naming another identity, the session's name decides whether it applies (a rename may have given it that name), so an unreadable name is refused, as above.
-describe("an identity.json that cannot be read when the table has no identity scope", () => {
+describe("an identity.json that cannot be read when no identity scope could decide the request", () => {
   it.each<[string, Record<string, unknown>]>([
     ["no overrides at all", {}],
     ["only a global override for another name", { global: { haiku: "z/glm-global" } }],
+    ["an identity scope for another model only", { identities: { work: { haiku: "z/glm-h" } } }],
+    ["the session's own entry for the model, which outranks every identity's", { sessions: { "s-1": { "claude-opus-5-5": "z/glm-s" } }, identities: { other: { opus: "z/glm-other" } } }],
   ])("routes the main loop as with no overrides, with %s", async (_label, tables) => {
     if (process.getuid?.() === 0) return;
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "identity-scope-none-"));
@@ -87,6 +88,28 @@ describe("an identity.json that cannot be read when the table has no identity sc
       await send(door, { model: "z/glm-chosen", requestClass: "main", identity: "work" });
       const answered = await send(door, { model: "claude-opus-5-5", requestClass: "main", identity: "work" });
       expect(answered.status, answered.text).toBe(HTTP_STATUS.ok);
+    } finally {
+      await door.close();
+    }
+  }, TIMEOUT_MS);
+});
+
+describe("an identity.json that cannot be read when another identity's scope could decide the request", () => {
+  it("refuses the request naming the fault, since a rename may have given the session that identity's name", async () => {
+    if (process.getuid?.() === 0) return;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "identity-scope-other-"));
+    roots.push(root);
+    const paths = buildLayoutPaths(root);
+    const file = path.join(paths.identitiesDir, "work", "identity.json");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ name: "work", allowAmbientCredential: false }), { mode: OWNER_ONLY });
+    fs.chmodSync(file, 0);
+    const door = await startWorld(undefined, HTTP_STATUS.ok, undefined, undefined, undefined, { routeOverrides: () => ({ table: { ...NO_ROUTE_OVERRIDES, identities: { other: { opus: "z/glm-other" } } } }), identityNameOf: createIdentityNameReader(paths).requireNameOf });
+    try {
+      const answered = await send(door, { model: "claude-opus-5-5", requestClass: "main", identity: "work" });
+      expect(answered.status, answered.text).toBe(HTTP_STATUS.badRequest);
+      expect(answered.text).toContain("EACCES");
+      expect(door.upstream.seen).toEqual([]);
     } finally {
       await door.close();
     }

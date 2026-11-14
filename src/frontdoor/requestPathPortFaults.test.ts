@@ -17,8 +17,8 @@ const TIMEOUT_MS = 30_000;
 /** A local file the door reads on the request path that it cannot read: what the system raises for one with no permissions, naming its path as the system does. */
 const unreadable = (): Error => errorWithCode(`EACCES: permission denied, open '${PROVIDERS_DIR}/../state/file.json'`, "EACCES");
 
-/** An overrides table with an identity scope, so a main-loop Claude name reads the session's identity name to know whether it applies. */
-const WITH_IDENTITY_SCOPE = { ...NO_ROUTE_OVERRIDES, identities: { me: { haiku: "z/glm-me" } } };
+/** An overrides table whose identity scope holds an entry for the opus class, so a main-loop `claude-opus-5-5` reads the session's identity name to know whether it applies. */
+const WITH_IDENTITY_SCOPE = { ...NO_ROUTE_OVERRIDES, identities: { me: { opus: "z/glm-me" } } };
 
 /** A virtual model with one provider member, so a request for it ranks members on the identity's usage snapshot. */
 const MODELS: ModelsConfig = { virtual: { ranked: { mode: "ordered", members: ["z/glm-9"] } } };
