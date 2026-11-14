@@ -2,7 +2,6 @@ import { codexIdentityFindings } from "./codex/doctor";
 import { ClaudeShimStateSchema, commandFilename, findPathShadow, resolveOwnBinaryCheck, type ClaudeShimState, type PathShadowStatus } from "./claudeShim";
 import type { LayoutPaths } from "./paths";
 import { readableOr } from "./readableConfig";
-import { readJson } from "./config/store";
 import { identityIdExists, identityRecords, listIdentityDirectories, type UnreachableIdentityEntry } from "./identityStore";
 import { identityNameIn, type IdentityRecord } from "./identityRecords";
 import { identityRecordFindings, type DisplacedIdentityRecord } from "./doctorIdentityRecords";
@@ -36,6 +35,7 @@ import { modelsFindings } from "./models/doctor";
 import { targetRefs } from "./models/targets";
 import { routeOverrideDoctorFindings } from "./routeOverrideChecks";
 import { isAbsent, readForDoctor, unreadableMessage } from "./doctorFileReads";
+import { isSystemReadError } from "./readableConfig";
 import { routeTargetPorts } from "./models/selectorPorts";
 import type { SelectorPorts } from "./models/selectors";
 import { RouteOverridesSchema } from "./routeOverridesSchema";
@@ -227,7 +227,7 @@ export interface RunDoctorParams {
   readonly activeIdentity: DoctorFileInput;
   readonly binaryDiscovery: DoctorBinaryDiscovery;
   /** Whether `agent-shim shim enable` has been run, and whether its recorded target still exists on disk — pre-resolved by the wiring layer, since checking a file's existence is real I/O, not a parse-shaped pure operation. */
-  readonly claudeShim: { readonly state: ClaudeShimState | undefined; readonly targetExists: boolean };
+  readonly claudeShim: { readonly state: ClaudeShimState | undefined; readonly targetExists: boolean; /** Why the shim record cannot be used, when it exists and cannot be read or parsed. */ readonly problem?: string };
   /** Which executables a bare `agent-shim` (and, when the shim is enabled, a bare `claude`) would actually run — pre-resolved by the wiring layer, since scanning PATH is real I/O. */
   readonly pathResolution: DoctorPathResolution;
   /** The resolved state root (`paths.root`), whose directory name says whether this installation still lives under the former `.claude-use` name. */
@@ -521,7 +521,9 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     push("binary-discovery", "fail", params.binaryDiscovery.message);
   }
 
-  if (params.claudeShim.state === undefined) {
+  if (params.claudeShim.problem !== undefined) {
+    push("claude-shim", "fail", params.claudeShim.problem);
+  } else if (params.claudeShim.state === undefined) {
     push("claude-shim", "pass", "No `claude` command shim enabled (the default). Run `agent-shim shim enable` to add one.");
   } else if (!params.claudeShim.targetExists) {
     push(
@@ -948,7 +950,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
         usageSnapshots[name] = snapshot;
       }
     } catch (error) {
-      if (!(error instanceof UsageSnapshotError)) {
+      if (!(error instanceof UsageSnapshotError || isSystemReadError(error))) {
         throw error;
       }
     }
@@ -988,7 +990,11 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
     binaryDiscovery = { ok: false, message: error instanceof Error ? error.message : String(error) };
   }
 
-  const shimState = readJson(paths.claudeShimFile, ClaudeShimStateSchema);
+  // The shim record is read as every audited file is: one that cannot be read or does not parse is a finding in its section, never an abort.
+  const shimRead = readForDoctor(realFsPort, paths.claudeShimFile);
+  const shimValidated = shimRead.raw === undefined ? undefined : validateJson(ClaudeShimStateSchema, { path: paths.claudeShimFile, raw: shimRead.raw });
+  const shimState = shimValidated?.ok === true ? shimValidated.data : undefined;
+  const shimProblem = shimRead.unreadable !== undefined ? unreadableMessage(paths.claudeShimFile, shimRead.unreadable) : shimValidated?.ok === false ? shimValidated.message : undefined;
 
   const pathDirs = (params.env.PATH ?? "").split(path.delimiter).filter((dir) => dir !== "");
   const claudeShimShadow =
@@ -1041,7 +1047,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
     categoriesLocal: { path: paths.categoriesLocalFile, ...readForDoctor(realFsPort, paths.categoriesLocalFile) },
     activeIdentity: { path: paths.activeIdentityFile, ...readForDoctor(realFsPort, paths.activeIdentityFile) },
     binaryDiscovery,
-    claudeShim: { state: shimState, targetExists: shimState !== undefined && fs.existsSync(shimState.targetPath) },
+    claudeShim: { state: shimState, targetExists: shimState !== undefined && fs.existsSync(shimState.targetPath), ...(shimProblem === undefined ? {} : { problem: shimProblem }) },
     rootPath: paths.root,
     pathResolution: {
       ownExecutablePath,

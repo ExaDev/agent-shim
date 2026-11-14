@@ -24,9 +24,11 @@ const FILES: readonly (readonly [string, DoctorSection, (paths: LayoutPaths) => 
   ["a provider's file", "provider", (paths) => path.join(paths.providersDir, "z.json"), "no-permission"],
   ["an identity's identity.json", "identity", (paths) => path.join(paths.identitiesDir, "work", "identity.json"), "directory"],
   ["the ChatGPT sign-in file", "provider", (paths) => paths.chatgptSignInFile, "directory"],
+  ["claude-shim.json", "claude-shim", (paths) => paths.claudeShimFile, "directory"],
 ];
 
 describe("a file doctor cannot read is a finding, never an abort", () => {
+
   let root: string;
   let paths: LayoutPaths;
 
@@ -69,5 +71,19 @@ describe("a file doctor cannot read is a finding, never an abort", () => {
     expect(found.some((finding) => finding.severity !== "pass" && finding.message.includes("cannot be read") && finding.message.includes(code))).toBe(true);
     // The report goes on: another section is still there.
     expect(report === undefined ? [] : findingsFor(report, "models")).not.toEqual([]);
+  });
+
+  it.each<[string, (paths: LayoutPaths) => string]>([
+    ["an identity's .claude.json", (layout) => path.join(layout.identitiesDir, "work", ".claude.json")],
+    ["an identity's usage snapshot", (layout) => path.join(layout.usageSnapshotsDir, "work.json")],
+  ])("goes on with the report when %s cannot be read, as when it is malformed", (_label, fileOf) => {
+    fs.mkdirSync(path.join(paths.identitiesDir, "work"), { recursive: true });
+    fs.writeFileSync(path.join(paths.identitiesDir, "work", "identity.json"), JSON.stringify({ name: "work", allowAmbientCredential: false }));
+    fs.mkdirSync(fileOf(paths), { recursive: true });
+    let report: ReturnType<typeof collectDoctorReport> | undefined;
+    expect(() => {
+      report = collectDoctorReport({ paths, env: { PATH: "" } });
+    }).not.toThrow();
+    expect(report === undefined ? [] : findingsFor(report, "identity")).not.toEqual([]);
   });
 });
