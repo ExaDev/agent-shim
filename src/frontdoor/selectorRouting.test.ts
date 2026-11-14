@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import { HTTP_STATUS } from "../codex/http";
 import type { SelectorStatePorts } from "../models/selectorPorts";
 import { mainLoopRoutesOfLiveSessions } from "../test-helpers";
-import { PROVIDERS_DIR, HAIKU_NAME, Z_HAIKU_MODEL, Z_OPUS_MODEL, Z_SONNET_MODEL, launchOfSession, send, startWorld } from "./mainLoopRouteTestWorld";
+import { PROVIDERS_DIR, HAIKU_NAME, Z_HAIKU_MODEL, Z_OPUS_MODEL, Z_SONNET_MODEL, launchOfSession, send, startWorld, tokenOf } from "./mainLoopRouteTestWorld";
+import { AUTH_HEADER, SESSION_HEADER } from "./route";
 
 /** The configuration a selector reads: the session's own identity `me` and its twin `twin` (one login), another login `work`, an identity `zid` on provider `z`, a pool `subs` picking `work`, a pool `mine` picking `twin`, a pool named like the provider `z`, a profile `zprof` on `z` and a profile `plain` with no provider. */
 const STATE: SelectorStatePorts = {
@@ -287,6 +288,22 @@ describe("a model name auto/<selector>[/<class>] through the real door", () => {
       expect(refused.text).toContain("without --provider");
       expect(door.upstream.seen).toEqual([]);
       expect(door.toAnthropic).toEqual([]);
+    } finally {
+      await door.close();
+    }
+  }, TIMEOUT_MS);
+
+  it("refuses a request scoped to a provider whose file is of another shape, naming the fault and never the file's path", async () => {
+    const door = await world();
+    try {
+      door.setProvider("z", { displayName: 5 });
+      const answered = await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: tokenOf("s-1"), [SESSION_HEADER]: "s-1" }, body: JSON.stringify({ model: "glm-5.3", max_tokens: 1, messages: [] }) });
+      const text = await answered.text();
+      expect(text).toContain('provider \\"z\\" cannot be used because its file is invalid');
+      expect(text).toContain("displayName");
+      expect(text).not.toContain(PROVIDERS_DIR);
+      expect(text).not.toContain("z.json");
+      expect(door.upstream.seen).toEqual([]);
     } finally {
       await door.close();
     }

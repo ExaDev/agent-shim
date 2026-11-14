@@ -251,7 +251,8 @@ describe("createProviderRouteResolver", () => {
     expect(resolution.ok).toBe(false);
     if (!resolution.ok) {
       expect(resolution.status).toBe(HTTP_STATUS.internalServerError);
-      expect(resolution.message).toContain("provider broken is invalid");
+      expect(resolution.message).toContain('provider "broken" cannot be used because its file is invalid');
+      expect(resolution.message).not.toContain(PROVIDERS_DIR);
     }
   });
 });
