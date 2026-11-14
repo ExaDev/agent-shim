@@ -1,9 +1,15 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
 import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
+import { configDefaults } from "vitest/config";
 import { z } from "zod";
+
+import vitestConfig from "../vitest.config";
+import { testFileMatcher } from "./conformance/guardSelection";
+import { listingBudgetMs } from "./conformance/keptTests";
 
 const WorkflowSchema = z.object({
   jobs: z.record(z.string(), z.object({ name: z.string().optional(), needs: z.union([z.string(), z.array(z.string())]).optional() })),
@@ -65,6 +71,24 @@ describe("the deleted-test check", () => {
     expect(checkout?.with?.["fetch-depth"]).toBe(0);
     const command = job?.steps.map((step) => step.with?.command).find((value) => typeof value === "string");
     expect(command).toBe("node scripts/deleted-tests.mts --base HEAD^1");
+  });
+});
+
+describe("the deleted-test job's time limit", () => {
+  const MS_PER_MINUTE = 60_000;
+  /** Minutes for the checkout and the setup around the listings, which take no part in their budgets. */
+  const SETUP_MINUTES = 15;
+  const root = path.join(__dirname, "..");
+  const TimedJobSchema = z.object({ jobs: z.record(z.string(), z.looseObject({ "timeout-minutes": z.number().optional() })) });
+  const limit = TimedJobSchema.parse(parse(fs.readFileSync(path.join(root, ".github", "workflows", "ci.yml"), "utf8"))).jobs["deleted-tests"]?.["timeout-minutes"];
+
+  it("is set, and covers every listing of the script at its budget for the suite's number of test files, each with the call that finds the files, plus the setup", () => {
+    const isTest = testFileMatcher(vitestConfig.test?.include ?? configDefaults.include, vitestConfig.test?.exclude ?? configDefaults.exclude);
+    const files = execFileSync("git", ["-C", root, "ls-files"], { encoding: "utf8" }).split("\n").filter((file) => isTest(file)).length;
+    const listings = (fs.readFileSync(path.join(root, "scripts", "deleted-tests.mts"), "utf8").match(/await listSuite\(/gu) ?? []).length;
+    expect(listings).toBeGreaterThan(0);
+    expect(files).toBeGreaterThan(0);
+    expect(limit).toBeGreaterThanOrEqual(Math.ceil((listings * (listingBudgetMs(files) + listingBudgetMs(0))) / MS_PER_MINUTE) + SETUP_MINUTES);
   });
 });
 

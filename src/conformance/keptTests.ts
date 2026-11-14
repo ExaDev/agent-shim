@@ -7,10 +7,10 @@ import { z } from "zod";
  */
 
 /** A ceiling of CPU milliseconds per collected test file, kept above what collecting one costs, so a listing that outruns a budget built on it was held back by its host and not slowed by the suite. To re-measure: run `time pnpm exec vitest list --json` in a checkout, add its user and system CPU seconds, and divide by the number of test files `pnpm exec vitest list --filesOnly --json` finds; the result, in milliseconds, must stay below this figure. */
-const COLLECTION_CPU_MS_PER_FILE = 400;
+export const COLLECTION_CPU_MS_PER_FILE = 400;
 
 /** The least share of one core a listing is assumed to get: a host that holds a job to two cores and shares them with another job at lowered priority. */
-const LEAST_CORE_SHARE = 0.25;
+export const LEAST_CORE_SHARE = 0.25;
 
 /** Milliseconds for starting vitest and its pool, whatever the number of files. */
 const LISTING_START_MS = 60_000;
@@ -18,6 +18,11 @@ const LISTING_START_MS = 60_000;
 /** How long a full listing of `files` test files may take: the CPU its collection needs, at the least share of a core, and the time to start. A listing that takes longer was held back by its host, and is reported as that. */
 export function listingBudgetMs(files: number): number {
   return Math.ceil((files * COLLECTION_CPU_MS_PER_FILE) / LEAST_CORE_SHARE) + LISTING_START_MS;
+}
+
+/** What finding the suite's test files (`vitest list --filesOnly`, which collects no test) that overran its budget, the time to start, is reported as. */
+export function slowFileCountMessage(): string {
+  return `finding the suite's test files was not finished within ${String(listingBudgetMs(0))} ms, the time to start vitest: this host was too slow for it, and the table and the corpus are not in question`;
 }
 
 /** What a listing that overran its budget is reported as, so a slow host is not read as a wrong table. */

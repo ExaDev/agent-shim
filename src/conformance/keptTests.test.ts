@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { caseSources, deletedProblems, guardProblems, listedCounts, listingBudgetMs, parseTable, relativeFile, slowListingMessage, testId, unstableIds, unstableProblems, type Accounting, type Row } from "./keptTests";
+import { caseSources, deletedProblems, guardProblems, listedCounts, COLLECTION_CPU_MS_PER_FILE, LEAST_CORE_SHARE, listingBudgetMs, parseTable, relativeFile, slowFileCountMessage, slowListingMessage, testId, unstableIds, unstableProblems, type Accounting, type Row } from "./keptTests";
 
 const ROOT = "/repo";
 const row = (file: string, test: string): Row => ({ file, test, reason: "not a function of its inputs" });
@@ -207,10 +207,23 @@ describe("the time a suite listing may take", () => {
     expect(listingBudgetMs(LARGE)).toBeGreaterThan(listingBudgetMs(SMALL));
   });
 
+  it("gives each file the CPU a collection needs at the least share of a core, not at a whole core", () => {
+    const perFile = (listingBudgetMs(LARGE) - listingBudgetMs(0)) / LARGE;
+    expect(perFile).toBeGreaterThanOrEqual(COLLECTION_CPU_MS_PER_FILE / LEAST_CORE_SHARE);
+    expect(perFile).toBeGreaterThan(COLLECTION_CPU_MS_PER_FILE);
+  });
+
   it("is reported as a slow host, with the file count and the budget, and not as a wrong table", () => {
     const message = slowListingMessage(LARGE);
     expect(message).toContain(`${String(LARGE)} test files`);
     expect(message).toContain(`${String(listingBudgetMs(LARGE))} ms`);
+    expect(message).toContain("this host was too slow");
+    expect(message).toContain("the table and the corpus are not in question");
+  });
+
+  it("reports a call that only finds the test files, past the time to start, as a slow host", () => {
+    const message = slowFileCountMessage();
+    expect(message).toContain(`${String(listingBudgetMs(0))} ms`);
     expect(message).toContain("this host was too slow");
     expect(message).toContain("the table and the corpus are not in question");
   });
