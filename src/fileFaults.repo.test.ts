@@ -3,6 +3,7 @@ import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
+import { FILE_FAULT_CODE_LIST } from "./fileFaults";
 import { guardedNameRead } from "./identityRecords";
 import { errorWithCode } from "./test-helpers";
 
@@ -14,17 +15,16 @@ const ALLOWED: Readonly<Record<string, string>> = {
   "frontdoor/headroomHop.ts HOP_RESET_CODES": "the codes a socket gives when its peer reset it, which is no file",
 };
 
-/** Each `new Set([...])` of string literals that look like system error codes (`E` and capitals) in `source`, as `<module> <constant>`. */
+/** Each array of string literals that look like system error codes (`E` and capitals) in `source`, a `Set` built from one included, as `<module> <constant>`. */
 function errorCodeSets(module: string, source: string): readonly string[] {
   const file = ts.createSourceFile(module, source, ts.ScriptTarget.Latest, true);
   const found: string[] = [];
   const visit = (node: ts.Node): void => {
-    if (ts.isNewExpression(node) && node.expression.getText(file) === "Set" && node.arguments?.[0] !== undefined && ts.isArrayLiteralExpression(node.arguments[0])) {
-      const elements = node.arguments[0].elements;
-      if (elements.length > 0 && elements.every((element) => ts.isStringLiteral(element) && /^E[A-Z]+$/u.test(element.text))) {
-        const holder = node.parent;
-        found.push(`${module} ${ts.isVariableDeclaration(holder) ? holder.name.getText(file) : "(inline)"}`);
-      }
+    // An array of codes, whether a `Set` is built from it or not: a list of codes is a set of them however it is held.
+    if (ts.isArrayLiteralExpression(node) && node.elements.length > 0 && node.elements.every((element) => ts.isStringLiteral(element) && /^E[A-Z]+$/u.test(element.text))) {
+      let holder: ts.Node = node.parent;
+      while (ts.isNewExpression(holder) || ts.isAsExpression(holder) || ts.isSatisfiesExpression(holder) || ts.isParenthesizedExpression(holder)) holder = holder.parent;
+      found.push(`${module} ${ts.isVariableDeclaration(holder) ? holder.name.getText(file) : "(inline)"}`);
     }
     ts.forEachChild(node, visit);
   };
@@ -51,8 +51,8 @@ function modules(directory: string): readonly string[] {
   });
 }
 
-/** The file-fault codes, other than absence (`ENOENT`), whose use outside `fileFaults.ts` would classify a failure by hand. */
-const FILE_FAULT_LITERALS: ReadonlySet<string> = new Set(["EACCES", "EPERM", "ELOOP", "EISDIR", "ENOTDIR", "ENAMETOOLONG"]);
+/** The file-fault codes, from `fileFaults.ts` itself, whose naming outside it would classify a failure by hand: all but absence (`ENOENT`), which a reader that asks only whether a file is there compares itself. */
+const FILE_FAULT_LITERALS: ReadonlySet<string> = new Set(FILE_FAULT_CODE_LIST.filter((code) => code !== "ENOENT"));
 
 /** The places `src` may name one of those codes by hand, by module, enclosing function and code, each with why it asks another question than whether a read failure is the file's own. */
 const INLINE_ALLOWED: Readonly<Record<string, string>> = {
@@ -89,16 +89,16 @@ function inlineFaultCodes(module: string, source: string): readonly string[] {
 describe("which read failures are a file's own", () => {
   const found = modules(__dirname).flatMap((module) => errorCodeSets(module, sourceOf(module)));
 
-  it("are said in one place, so every reader of local files classifies a failure alike", () => {
-    expect(found.filter((key) => key !== "fileFaults.ts FILE_FAULT_CODES" && ALLOWED[key] === undefined)).toEqual([]);
+  it("are listed as a set in fileFaults.ts alone, but where an allowance names another question a set of codes answers", () => {
+    expect(found.filter((key) => key !== "fileFaults.ts FILE_FAULT_CODE_LIST" && ALLOWED[key] === undefined)).toEqual([]);
   });
 
   it("names in each allowance a set the module still has, and the one set itself", () => {
-    expect(found).toContain("fileFaults.ts FILE_FAULT_CODES");
+    expect(found).toContain("fileFaults.ts FILE_FAULT_CODE_LIST");
     expect(Object.keys(ALLOWED).filter((key) => !found.includes(key))).toEqual([]);
   });
 
-  it("are never named by hand elsewhere, in a comparison, a code check or a set, but where another question is asked", () => {
+  it("are named by hand outside fileFaults.ts, all but ENOENT, only where an allowance names another question", () => {
     const inline = modules(__dirname).filter((module) => module !== "fileFaults.ts").flatMap((module) => inlineFaultCodes(module, sourceOf(module)));
     expect(inline.filter((key) => INLINE_ALLOWED[key] === undefined)).toEqual([]);
     expect(Object.keys(INLINE_ALLOWED).filter((key) => !inline.includes(key))).toEqual([]);
