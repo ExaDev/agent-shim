@@ -115,7 +115,7 @@ export interface SelectorPorts {
   readonly sameLogin: (identity: string, sessionIdentityId: string) => boolean | SelectorRefusal;
   /** The Claude model id the session last sent for a tier, as its own Claude Code resolved the tier: what a class is sent as on the Anthropic route. Undefined until the session has sent one. */
   readonly claudeNameOf: (tier: ClaudeTier) => string | undefined;
-  /** The provider the session's main loop is on now (its launch's own, else the one its route context records), or undefined on the Anthropic route: where a class alone (`auto/<class>`) goes. */
+  /** The provider of the route the session itself chose (the door reads it with `sessionRouteProvider`: its launch's own, else the one its own request put the main loop on, else, while an override has moved it, the one it had chosen before), or undefined on the Anthropic route: where a class alone (`auto/<class>`) goes. */
   readonly routeProvider: () => string | undefined;
 }
 

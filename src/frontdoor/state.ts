@@ -57,7 +57,7 @@ const ContextFactsSchema = z.strictObject({
   credential: ContextText.optional(),
   requestedModel: ContextText.optional(),
   servedModel: ContextText.optional(),
-  /** Set when a route override, not a name the session chose, moved the main loop to this route: the one fact a routing decision reads, since a bare Claude name no override covers any longer goes back to the launch's own route from such a context. A door that cannot read the facts loses it, and the session then keeps the route until a name it chooses moves it. */
+  /** Set when a route override, not a name the session chose, moved the main loop to this route: a bare Claude name no override covers any longer goes back from such a context to the route the session itself chose (`chosenProvider`, else the launch's own), and the provider scope and a class alone read that route meanwhile. A door that cannot read the facts loses it, and the session then keeps the route until a name it chooses moves it. */
   movedBy: z.literal("override").optional(),
   /** With `movedBy`, the provider the session's own request had put its main loop on before an override moved it (absent when that was the launch's own route): where the session goes back to once the override no longer applies, and the provider scope its overrides are looked up in meanwhile. */
   chosenProvider: ContextText.optional(),
