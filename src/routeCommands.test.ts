@@ -2,7 +2,7 @@ import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { EXIT_USAGE } from "./cliError";
-import { cli, parseJson, paths } from "./programTestWorld";
+import { cli, expectOk, keychain, parseJson, paths } from "./programTestWorld";
 import { realFsPort } from "./realPorts";
 import { createRouteOverridesReader, readRouteOverrides } from "./routeOverridesStore";
 
@@ -10,13 +10,13 @@ describe("route commands", () => {
   const addZ = ["provider", "add", "z", "--display-name", "z.ai", "--base-url", "https://api.z.ai/api/anthropic", "--credential", "env:Z_API_TOKEN"];
 
   it("sets, lists and unsets an override per scope, with one report object under --json", async () => {
-    expect((await cli(addZ)).code).toBe(0);
-    expect((await cli(["identity", "add", "work"])).code).toBe(0);
+    expectOk(await cli(addZ));
+    expectOk(await cli(["identity", "add", "work"]));
     const set = await cli(["route", "set", "opus", "z/glm-5.3", "--json"]);
-    expect(set.code).toBe(0);
+    expectOk(set);
     expect(parseJson(set.stdout)).toEqual({ action: "updated", kind: "route", name: "opus", value: { scope: "global", model: "opus", target: "z/glm-5.3" } });
-    expect((await cli(["route", "set", "claude-sonnet-5-5", "auto/z/sonnet", "--identity", "work"])).code).toBe(0);
-    expect((await cli(["route", "set", "haiku", "z/air", "--session", "abc"])).code).toBe(0);
+    expectOk(await cli(["route", "set", "claude-sonnet-5-5", "auto/z/sonnet", "--identity", "work"]));
+    expectOk(await cli(["route", "set", "haiku", "z/air", "--session", "abc"]));
     const list = await cli(["route", "list", "--json"]);
     expect(parseJson(list.stdout)).toEqual([
       { scope: "session:abc", model: "haiku", target: "z/air" },
@@ -39,7 +39,7 @@ describe("route commands", () => {
   it("repairs a file an entry it cannot read made unusable, by removing that entry", async () => {
     fs.writeFileSync(paths.routeOverridesFile, JSON.stringify({ schemaVersion: 1, global: { haiku: "claude-haiku-5-1" }, sessions: { "": { opus: "claude-sonnet-5-5" } } }));
     expect(createRouteOverridesReader(realFsPort, paths.routeOverridesFile, () => undefined)()).toHaveProperty("fault");
-    expect((await cli(["route", "remove", "opus", "--session", "", "--yes"])).code).toBe(0);
+    expectOk(await cli(["route", "remove", "opus", "--session", "", "--yes"]));
     expect(createRouteOverridesReader(realFsPort, paths.routeOverridesFile, () => undefined)()).toEqual({ table: { schemaVersion: 1, global: { haiku: "claude-haiku-5-1" } } });
   });
 
@@ -51,13 +51,13 @@ describe("route commands", () => {
     [["route", "set", "opus", "auto/z/opus"], true],
     [["route", "set", "opus", "auto/sonnet", "--provider", "z"], true],
   ])("decides %j as the door would route it: accepted %j", async (argv, accepted) => {
-    expect((await cli(addZ)).code).toBe(0);
+    expectOk(await cli(addZ));
     const result = await cli(argv);
     expect(result.code === 0).toBe(accepted);
   });
 
   it("reports the key as stored, in lower case, whatever case it was typed in", async () => {
-    expect((await cli(addZ)).code).toBe(0);
+    expectOk(await cli(addZ));
     expect(parseJson((await cli(["route", "set", "OPUS", "z/glm-5.3", "--json"])).stdout)).toEqual({ action: "updated", kind: "route", name: "opus", value: { scope: "global", model: "opus", target: "z/glm-5.3" } });
     expect((await cli(["route", "set", "Claude-Sonnet-5-5", "z/glm-5.3"])).stdout).toContain("Routing claude-sonnet-5-5 to z/glm-5.3");
   });
@@ -77,7 +77,7 @@ describe("route commands", () => {
     [["route", "set", "opus", "z/glm", "--identity", "a", "--session", "b"], "at most one"],
     [["route", "remove", "opus", "--yes"], "No override"],
   ])("refuses %j, naming why, and writes nothing", async (argv, fragment) => {
-    expect((await cli(addZ)).code).toBe(0);
+    expectOk(await cli(addZ));
     const result = await cli(argv);
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain(fragment);
@@ -89,7 +89,7 @@ describe("model explain for a selector and a Claude name", () => {
   const addZ = ["provider", "add", "z", "--display-name", "z.ai", "--base-url", "https://api.z.ai/api/anthropic", "--credential", "env:Z_API_TOKEN", "--env", "ANTHROPIC_DEFAULT_SONNET_MODEL=glm-4.7"];
 
   it("says what a selector is routed as, or why it is refused", async () => {
-    expect((await cli(addZ)).code).toBe(0);
+    expectOk(await cli(addZ));
     expect(parseJson((await cli(["model", "explain", "auto/z/sonnet", "--json"])).stdout)).toEqual({ name: "auto/z/sonnet", kind: "provider", routedAs: "z/glm-4.7" });
     expect((await cli(["model", "explain", "auto/z/sonnet"])).stdout).toContain("auto/z/sonnet selects the provider and is routed as z/glm-4.7");
     const refused = parseJson((await cli(["model", "explain", "auto/nothing", "--json"])).stdout);
@@ -98,10 +98,10 @@ describe("model explain for a selector and a Claude name", () => {
   });
 
   it("names the route override that applies to a Claude name in the given scopes, what its target is routed as, and what it outranks", async () => {
-    expect((await cli(addZ)).code).toBe(0);
-    expect((await cli(["identity", "add", "work"])).code).toBe(0);
-    expect((await cli(["route", "set", "opus", "z/glm-5.3"])).code).toBe(0);
-    expect((await cli(["route", "set", "claude-opus-5-5", "auto/z/sonnet", "--identity", "work"])).code).toBe(0);
+    expectOk(await cli(addZ));
+    expectOk(await cli(["identity", "add", "work"]));
+    expectOk(await cli(["route", "set", "opus", "z/glm-5.3"]));
+    expectOk(await cli(["route", "set", "claude-opus-5-5", "auto/z/sonnet", "--identity", "work"]));
     expect(parseJson((await cli(["model", "explain", "claude-opus-5-5", "--identity", "work", "--json"])).stdout)).toEqual({
       name: "claude-opus-5-5",
       override: { scope: "identity:work", target: "auto/z/sonnet", match: "exact", routedAs: "z/glm-4.7" },
@@ -110,33 +110,35 @@ describe("model explain for a selector and a Claude name", () => {
     const text = (await cli(["model", "explain", "claude-opus-5-1"])).stdout;
     expect(text).toContain("claude-opus-5-1 is routed to z/glm-5.3 by the global override of its class");
     expect((await cli(["model", "explain", "claude-haiku-5-5"])).stdout).toContain("No route override applies to claude-haiku-5-5");
-    expect((await cli(["route", "set", "haiku", "auto/z", "--session", "s1"])).code).toBe(0);
+    expectOk(await cli(["route", "set", "haiku", "auto/z", "--session", "s1"]));
     expect(parseJson((await cli(["model", "explain", "claude-haiku-5-5", "--session", "s1", "--json"])).stdout)).toMatchObject({ override: { scope: "session:s1", target: "auto/z" } });
-    expect((await cli(["route", "set", "sonnet", "auto/work/sonnet"])).code).toBe(0);
+    expectOk(await cli(["route", "set", "sonnet", "auto/work/sonnet"]));
     expect((await cli(["model", "explain", "claude-sonnet-5-5", "--identity", "work"])).stdout).toContain("which is refused:");
     expect(parseJson((await cli(["model", "explain", "claude-sonnet-5-5", "--json"])).stdout)).toMatchObject({ override: { routedAs: "acct:work/sonnet" } });
   });
 
   it("expands a class-alone target on the provider --provider names, as the door does for a session there", async () => {
-    expect((await cli(addZ)).code).toBe(0);
-    expect((await cli(["route", "set", "opus", "auto/sonnet"])).code).toBe(0);
+    expectOk(await cli(addZ));
+    expectOk(await cli(["route", "set", "opus", "auto/sonnet"]));
     expect(parseJson((await cli(["model", "explain", "claude-opus-5-5", "--provider", "z", "--json"])).stdout)).toMatchObject({ override: { target: "auto/sonnet", routedAs: "z/glm-4.7" } });
     expect(parseJson((await cli(["model", "explain", "claude-opus-5-5", "--json"])).stdout)).toMatchObject({ override: { target: "auto/sonnet", refusal: expect.stringContaining("Anthropic route") as unknown } });
   });
 
   it("compares an account selector with the identity --identity names", async () => {
-    expect((await cli(["identity", "add", "work"])).code).toBe(0);
+    expectOk(await cli(["identity", "add", "work"]));
+    // The Keychain lookup `identity add` makes went to the fake, never `security` on this machine.
+    expect(keychain.calls.length).toBeGreaterThan(0);
     expect(parseJson((await cli(["model", "explain", "auto/work/claude-opus-5-5", "--json"])).stdout)).toMatchObject({ routedAs: "acct:work/claude-opus-5-5" });
     expect(parseJson((await cli(["model", "explain", "auto/work/claude-opus-5-5", "--identity", "work", "--json"])).stdout)).toMatchObject({ routedAs: "anthropic/claude-opus-5-5" });
   });
 
   it("still explains a virtual model, as text and as JSON", async () => {
-    expect((await cli(addZ)).code).toBe(0);
-    expect((await cli(["model", "add", "fast", "--mode", "ordered", "--member", "z/glm-5.3"])).code).toBe(0);
+    expectOk(await cli(addZ));
+    expectOk(await cli(["model", "add", "fast", "--mode", "ordered", "--member", "z/glm-5.3"]));
     expect((await cli(["model", "explain", "fast"])).stdout).toContain("fast (ordered) chooses z/glm-5.3:");
     expect(parseJson((await cli(["model", "explain", "fast", "--json"])).stdout)).toMatchObject({ name: "fast", mode: "ordered", chooses: "z/glm-5.3", candidates: ["z/glm-5.3"] });
-    expect((await cli(["identity", "add", "work"])).code).toBe(0);
-    expect((await cli(["model", "add", "mine", "--mode", "ordered", "--member", "acct:work/opus"])).code).toBe(0);
+    expectOk(await cli(["identity", "add", "work"]));
+    expectOk(await cli(["model", "add", "mine", "--mode", "ordered", "--member", "acct:work/opus"]));
     const accountOnly = (await cli(["model", "explain", "mine"])).stdout;
     expect(accountOnly).toContain("mine (ordered) chooses nothing by quota:");
     expect(accountOnly).toContain("served by relaunching the session");
