@@ -3,26 +3,114 @@
     {
       "class": "home-path",
       "file": "function/names.json",
-      "match": "/home/.agent-shim",
-      "reason": "A made-up directory in the original test, which joins names onto it and never reads it."
+      "pointer": "/cases/52/steps/0/args/0",
+      "reason": "A made-up directory in the original test, which joins names onto it and never reads it.",
+      "sha256": "6a7a97a2c081a0b459832c1392c7c5ea84b2a0f9f74fd6d640f733eddde87cc3"
+    },
+    {
+      "class": "home-path",
+      "file": "function/names.json",
+      "pointer": "/cases/52/steps/0/expect/value",
+      "reason": "A made-up directory in the original test, which joins names onto it and never reads it.",
+      "sha256": "6a7a97a2c081a0b459832c1392c7c5ea84b2a0f9f74fd6d640f733eddde87cc3"
+    },
+    {
+      "class": "home-path",
+      "file": "function/names.json",
+      "pointer": "/cases/52/steps/1/args/0",
+      "reason": "A made-up directory in the original test, which joins names onto it and never reads it.",
+      "sha256": "6a7a97a2c081a0b459832c1392c7c5ea84b2a0f9f74fd6d640f733eddde87cc3"
+    },
+    {
+      "class": "home-path",
+      "file": "function/names.json",
+      "pointer": "/cases/52/steps/1/expect/value",
+      "reason": "A made-up directory in the original test, which joins names onto it and never reads it.",
+      "sha256": "6a7a97a2c081a0b459832c1392c7c5ea84b2a0f9f74fd6d640f733eddde87cc3"
+    },
+    {
+      "class": "home-path",
+      "file": "function/names.json",
+      "pointer": "/cases/52/steps/2/args/0",
+      "reason": "A made-up directory in the original test, which joins names onto it and never reads it.",
+      "sha256": "6a7a97a2c081a0b459832c1392c7c5ea84b2a0f9f74fd6d640f733eddde87cc3"
+    },
+    {
+      "class": "home-path",
+      "file": "function/names.json",
+      "pointer": "/cases/52/steps/2/expect/value",
+      "reason": "A made-up directory in the original test, which joins names onto it and never reads it.",
+      "sha256": "6a7a97a2c081a0b459832c1392c7c5ea84b2a0f9f74fd6d640f733eddde87cc3"
     },
     {
       "class": "home-path",
       "file": "function/paths.json",
-      "match": "/home/u",
-      "reason": "A made-up home directory in the original tests, passed in as an argument and never read."
+      "pointer": "/cases/0/steps/0/args/1",
+      "reason": "A made-up home directory in the original tests, passed in as an argument and never read.",
+      "sha256": "f9e409c5c16ecfdd5883da4f3ad045b4af5677740c9e703ad2d47ba231718350"
     },
     {
       "class": "home-path",
-      "file": "function/path-norm.json",
-      "match": "/home/u",
-      "reason": "A made-up home directory passed to the functions as an argument and never read."
+      "file": "function/paths.json",
+      "pointer": "/cases/1/steps/0/args/1",
+      "reason": "A made-up home directory in the original tests, passed in as an argument and never read.",
+      "sha256": "f9e409c5c16ecfdd5883da4f3ad045b4af5677740c9e703ad2d47ba231718350"
     },
     {
       "class": "home-path",
-      "file": "function/path-norm.json",
-      "match": "/home/x",
-      "reason": "The result of a made-up home directory joined with a parent segment and a name, never read."
+      "file": "function/paths.json",
+      "pointer": "/cases/1/steps/0/expect/value",
+      "reason": "A made-up home directory in the original tests, passed in as an argument and never read.",
+      "sha256": "f9e409c5c16ecfdd5883da4f3ad045b4af5677740c9e703ad2d47ba231718350"
+    },
+    {
+      "class": "home-path",
+      "file": "function/paths.json",
+      "pointer": "/cases/2/steps/0/args/1",
+      "reason": "A made-up home directory in the original tests, passed in as an argument and never read.",
+      "sha256": "f9e409c5c16ecfdd5883da4f3ad045b4af5677740c9e703ad2d47ba231718350"
+    },
+    {
+      "class": "home-path",
+      "file": "function/paths.json",
+      "pointer": "/cases/2/steps/0/expect/value",
+      "reason": "A made-up home directory in the original tests, passed in as an argument and never read.",
+      "sha256": "f9e409c5c16ecfdd5883da4f3ad045b4af5677740c9e703ad2d47ba231718350"
+    },
+    {
+      "class": "home-path",
+      "file": "function/paths.json",
+      "pointer": "/cases/3/steps/0/args/1",
+      "reason": "A made-up home directory in the original tests, passed in as an argument and never read.",
+      "sha256": "f9e409c5c16ecfdd5883da4f3ad045b4af5677740c9e703ad2d47ba231718350"
+    },
+    {
+      "class": "home-path",
+      "file": "function/paths.json",
+      "pointer": "/cases/3/steps/0/args/2/0",
+      "reason": "A made-up home directory in the original tests, passed in as an argument and never read.",
+      "sha256": "f9e409c5c16ecfdd5883da4f3ad045b4af5677740c9e703ad2d47ba231718350"
+    },
+    {
+      "class": "home-path",
+      "file": "function/paths.json",
+      "pointer": "/cases/3/steps/0/expect/value",
+      "reason": "A made-up home directory in the original tests, passed in as an argument and never read.",
+      "sha256": "f9e409c5c16ecfdd5883da4f3ad045b4af5677740c9e703ad2d47ba231718350"
+    },
+    {
+      "class": "home-path",
+      "file": "function/paths.json",
+      "pointer": "/cases/4/steps/0/args/1",
+      "reason": "A made-up home directory in the original tests, passed in as an argument and never read.",
+      "sha256": "f9e409c5c16ecfdd5883da4f3ad045b4af5677740c9e703ad2d47ba231718350"
+    },
+    {
+      "class": "home-path",
+      "file": "function/paths.json",
+      "pointer": "/cases/4/steps/0/expect/value",
+      "reason": "A made-up home directory in the original tests, passed in as an argument and never read.",
+      "sha256": "f9e409c5c16ecfdd5883da4f3ad045b4af5677740c9e703ad2d47ba231718350"
     }
   ]
 }
