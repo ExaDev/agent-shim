@@ -742,8 +742,9 @@ describe("a router provider", () => {
 });
 
 describe("an account model member", () => {
+  // A session launched on z sends its own bare path; the door scopes it to z.
   const sessionRequest = (model: string): RoutedRequest => ({
-    ...request("/providers/z/v1/messages", JSON.stringify({ model, max_tokens: 16, messages: [{ role: "user", content: "hi" }] })),
+    ...request("/v1/messages", JSON.stringify({ model, max_tokens: 16, messages: [{ role: "user", content: "hi" }] })),
     session: { identity: undefined, sessionId: "s-1", provider: "z", headroom: false, projectId: undefined },
   });
 
