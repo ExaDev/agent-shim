@@ -33,7 +33,7 @@ import { PROVIDER_PATH_PREFIX, directOrigin, parseProviderPath, type FrontDoorRo
 import { AMBIGUOUS_MODEL_MESSAGE } from "./topLevelModel";
 import { ANTHROPIC_ROUTE_NAME, SELECTOR_PREFIX, reservedProviderNameReason } from "../models/reservedModelNames";
 import { ANTHROPIC_PREFIX, followingMainLoop, withModel, type MainLoopRouteRecord, type RenameContext, type RenameModel } from "./mainLoopRoute";
-import { overrideFor, type RouteOverridesRead } from "../routeOverridesStore";
+import { overrideFor, type RouteOverridesRead, identityScopeCouldApply } from "../routeOverridesStore";
 import { isBareClaudeName } from "../models/tiers";
 import { expandSelectorName, type RoutedName, type SelectorPorts } from "../models/selectors";
 import type { SelectorStatePorts } from "../models/selectorPorts";
@@ -335,8 +335,8 @@ export function createProviderRouteResolver(deps: {
       return { refusal: `${read.fault}, so the door cannot tell where to route ${JSON.stringify(model)}; fix or remove the file (agent-shim doctor names what is wrong)` };
     }
     const { sessionId } = context.session;
-    // Each scope's key is looked up only when the table has that scope, so a request no such scope could cover never depends on the file it is read from. The header carries the identity's directory id, and the identity scopes are keyed by its name as it is now, read from its identity.json.
-    const identity = read.table.identities === undefined || context.session.identity === undefined ? undefined : deps.identityNameOf?.(context.session.identity);
+    // The identity's name is read only when an identity scope could decide this request (an identity's entry for this model, and none of the session's own), so a request no identity scope could cover never depends on the identity.json it is read from. The header carries the identity's directory id, and the identity scopes are keyed by its name as it is now: any identity's entry for the model counts, since a rename may have given the session that name.
+    const identity = context.session.identity === undefined || !identityScopeCouldApply(read.table, sessionId, model) ? undefined : deps.identityNameOf?.(context.session.identity);
     // The provider scope is read off the route context, which costs a stat of the context file.
     const provider = read.table.providers === undefined ? undefined : context.routeProvider();
     const match = overrideFor(read.table, { ...(sessionId === undefined ? {} : { sessionId }), ...(identity === undefined ? {} : { identity }), ...(provider === undefined ? {} : { provider }) }, model);
