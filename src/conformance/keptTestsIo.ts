@@ -4,7 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 
 import { loadCorpus } from "../../conformance/runner/run.mjs";
-import { accountingFrom, listingBudgetMs, ListingSchema, slowListingMessage, type Accounting, type CaseRef, type Listing } from "./keptTests.ts";
+import { accountingFrom, listingBudgetMs, ListingSchema, slowFileCountMessage, slowListingMessage, type Accounting, type CaseRef, type Listing } from "./keptTests.ts";
 
 /** Mebibytes of output read from `vitest list --json`. */
 const LISTING_MEBIBYTES = 256;
@@ -40,14 +40,18 @@ export async function runCommand(file: string, args: readonly string[], options:
 
 const CaseRefSchema = z.object({ from: z.string(), skip: z.enum(["ts", "rust"]).optional() });
 
-/** The suite's own listing of `root`: `vitest list --json`, run with the checkout's own vitest and the environment of a person's shell with the variables of an enclosing vitest removed, so a run inside a test lists and does not inherit its worker. The time it may take derives from the number of test files (`vitest list --filesOnly`, which only finds them), and a listing past its budget fails saying that the host was too slow. */
-export async function listSuite(root: string): Promise<Listing> {
+/** The suite's own listing of `root`: `vitest list --json`, run with the checkout's own vitest and the environment of a person's shell with the variables of an enclosing vitest removed, so a run inside a test lists and does not inherit its worker. The time it may take derives from the number of test files, which `vitest list --filesOnly` finds in the time to start vitest (the budget of no files), and a call past its budget fails saying that the host was too slow. `budgetMs` replaces the derivation, for a test of the wiring. */
+export async function listSuite(root: string, options: { readonly budgetMs?: (files: number) => number } = {}): Promise<Listing> {
+  const budgetMs = options.budgetMs ?? listingBudgetMs;
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("VITEST") && name !== "NODE_OPTIONS"));
   const vitest = path.join(root, "node_modules", "vitest", "vitest.mjs");
-  const files = z.array(z.object({ file: z.string() })).parse(JSON.parse(await runCommand(process.execPath, [vitest, "list", "--filesOnly", "--json"], { cwd: root, env, maxBuffer: LISTING_MAX_BYTES }))).length;
+  const found = await runCommand(process.execPath, [vitest, "list", "--filesOnly", "--json"], { cwd: root, env, maxBuffer: LISTING_MAX_BYTES, timeout: budgetMs(0) }).catch((error: unknown) => {
+    throw error instanceof CommandTimeout ? new Error(slowFileCountMessage()) : error;
+  });
+  const files = z.array(z.object({ file: z.string() })).parse(JSON.parse(found)).length;
   try {
     // `--json` stays last: it takes the next argument that does not start with a dash as the file to write to.
-    const stdout = await runCommand(process.execPath, [vitest, "list", "--json"], { cwd: root, env, maxBuffer: LISTING_MAX_BYTES, timeout: listingBudgetMs(files) });
+    const stdout = await runCommand(process.execPath, [vitest, "list", "--json"], { cwd: root, env, maxBuffer: LISTING_MAX_BYTES, timeout: budgetMs(files) });
     return ListingSchema.parse(JSON.parse(stdout));
   } catch (error) {
     throw error instanceof CommandTimeout ? new Error(slowListingMessage(files)) : error;

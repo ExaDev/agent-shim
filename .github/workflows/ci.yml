@@ -1404,6 +1404,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    # Longer than the script's listings can take, each at the budget its number of test files gives (src/conformance/keptTests.ts, listingBudgetMs) together with the call that finds the files, plus the setup around them; src/ciRequiredChecks.repo.test.ts derives the least this can be from the number of test files and fails when the suite has outgrown it. It bounds a hung vitest, which would otherwise hold the runner for the default limit.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
         with:
