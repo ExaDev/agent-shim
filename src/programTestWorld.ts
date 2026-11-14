@@ -2,16 +2,21 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Command } from "commander";
-import { afterEach, beforeEach, vi } from "vitest";
+import { afterEach, beforeEach, expect, vi } from "vitest";
 
 import { reportFatalError } from "./cliReport";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { buildProgram } from "./program";
+import { createFakeKeychain, type FakeKeychain } from "./keychainTestWorld";
+import { realIdentityRenamePorts } from "./realIdentityRename";
 import { fakeCommandDeps } from "./test-helpers";
 
 /**
  * The command-line harness the program's tests share: a throwaway state root per test (its hooks register in the test file that imports this module) and `cli`, which runs one `agent-shim` invocation against it as `src/cli.ts` does.
  */
+
+/** The fake Keychain the commands of the test running now ask, set before each test. */
+export let keychain: FakeKeychain = createFakeKeychain();
 
 /** The throwaway state root of the test running now, set before each test. */
 export let root: string;
@@ -19,6 +24,7 @@ export let root: string;
 export let paths: LayoutPaths;
 
 beforeEach(() => {
+  keychain = createFakeKeychain();
   root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-program-"));
   paths = buildLayoutPaths(root);
   process.exitCode = undefined;
@@ -39,7 +45,8 @@ export interface CliResult {
 export type RunClaude = (args: readonly string[]) => Promise<void>;
 
 export function program(runClaude: RunClaude = vi.fn<RunClaude>(), options: Parameters<typeof fakeCommandDeps>[1] = {}): Command {
-  return buildProgram({ ...fakeCommandDeps(paths, options), runClaude });
+  // The identity commands ask the Keychain whether a login is filed for a directory; a fake one answers, so no test runs `security` against the real Keychain, whose answer depends on the machine and whose time limit a loaded machine can exceed.
+  return buildProgram({ ...fakeCommandDeps(paths, options), runClaude, identityRenamePorts: { ...realIdentityRenamePorts(paths), run: keychain.run } });
 }
 
 /** Runs one `agent-shim` invocation against the throwaway layout the way `src/cli.ts` does, capturing both streams and the exit status `reportFatalError` or the command itself decided. */
@@ -82,3 +89,8 @@ export function parseJson(text: string): unknown {
   return JSON.parse(text);
 }
 
+
+/** Asserts that a command succeeded, with its standard error as the failure message, so a failure says why the command failed and not only that it did. */
+export function expectOk(result: Readonly<CliResult>): void {
+  expect(result.code, result.stderr).toBe(0);
+}
