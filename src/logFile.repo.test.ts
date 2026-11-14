@@ -57,7 +57,7 @@ function callsAppendLogText(module: string, source: string): boolean {
   return found;
 }
 
-it("finds the appendFile and appendFileSync calls in the TypeScript of src in logFile.ts only; an append through an opened descriptor is not read", () => {
+it("finds appendFile and appendFileSync called in the non-test modules of src in logFile.ts only", () => {
   expect(modules().flatMap((module) => appendCalls(module, sourceOf(module))).map((site) => site.split(" ")[0])).toEqual(["logFile.ts"]);
 });
 

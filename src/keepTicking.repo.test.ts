@@ -148,7 +148,7 @@ function hasEmbeddedTimer(module: string, source: string): boolean {
 describe("a background loop in a long-lived process", () => {
   const found = modules(__dirname).flatMap((module) => unwrappedTimers(module, sourceOf(module)));
 
-  it("ticks through keepTicking at each setInterval and clock.every call in the TypeScript of src, but where an allowance says why not", () => {
+  it("ticks through keepTicking at each setInterval and clock.every call in the non-test modules of src, but where an allowance says why not", () => {
     expect(found.filter((key) => ALLOWED[key] === undefined)).toEqual([]);
   });
 
