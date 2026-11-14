@@ -1,10 +1,12 @@
 import { CliError } from "../cliError";
 import { HTTP_STATUS } from "../codex/http";
 import { configFaultOf } from "../config/load";
+import { STORED_NAME_RULE } from "../config/names";
 import { isSystemReadError, isTransientReadError } from "../readableConfig";
 import { UsageSnapshotError } from "../usage/read";
 import type { RouteResolution } from "./pipeline";
-import type { RoutedRequest } from "./route";
+import { IDENTITY_HEADER, type RoutedRequest } from "./route";
+import { isIdentityId } from "../usage/account";
 
 /** Whether `error` says a file of the person's local state could not be used: one the system would not read (a code such as `EACCES`, `EISDIR`, `ENOTDIR`, `ELOOP`), one that is no valid file of its kind (every expected failure of this program is a `CliError`), or a usage snapshot of another shape. Anything else is a defect. */
 function isLocalStateFault(error: unknown): boolean {
@@ -16,6 +18,11 @@ function isLocalStateFault(error: unknown): boolean {
  */
 export function refusingLocalStateFaults(resolve: (request: RoutedRequest) => Promise<RouteResolution>, log: (line: string) => void): (request: RoutedRequest) => Promise<RouteResolution> {
   return async (request) => {
+    // The identity header is the client's to send: an id no identity directory can have is the request's fault, refused before any port reads a file by it.
+    const { identity } = request.session;
+    if (identity !== undefined && !isIdentityId(identity)) {
+      return { ok: false, status: HTTP_STATUS.badRequest, message: `the ${IDENTITY_HEADER} header does not name an identity id: an id ${STORED_NAME_RULE}, and does not start with a dot` };
+    }
     try {
       return await resolve(request);
     } catch (error) {

@@ -21,6 +21,7 @@ import { targetRefs } from "./targets";
 import { ownEntry } from "../ownEntry";
 import { DuplicateIdentityNameError } from "../identityRecords";
 import { configFaultOf } from "../config/load";
+import { UnsafeNameError } from "../config/names";
 
 /** The part of a selector's live state that is the person's configuration (profiles, identities, pools and logins), as opposed to the providers and families the door reads itself. */
 export type SelectorStatePorts = Pick<SelectorPorts, "profile" | "identity" | "pool" | "poolPick" | "sameLogin">;
@@ -63,6 +64,10 @@ export function realSelectorStatePorts(paths: LayoutPaths, now: () => number, ho
     } catch (error) {
       if (isTransientReadError(error)) {
         throw error;
+      }
+      // A name that could name no file (a path, a NUL, too long) comes from the request, not from a file: no entry is called that.
+      if (error instanceof UnsafeNameError) {
+        return { kind: "absent" };
       }
       return { kind: "invalid", reason: reasonOf(what, name, error) };
     }
