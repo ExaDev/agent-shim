@@ -2,9 +2,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildLayoutPaths } from "../paths";
+import { errorWithCode } from "../test-helpers";
 import { NO_ROUTING_SETTING, asksForHeadroom, choiceFor, createRoutingSettingReader, readRoutingSetting, withRoutingChoice, writeRoutingSetting } from "./routingSetting";
 
 describe("the routing setting", () => {
@@ -55,5 +56,26 @@ describe("the routing setting", () => {
     expect(read().global).toEqual({ viaHeadroom: false });
     fs.rmSync(paths.headroomRoutingFile);
     expect(read()).toEqual(NO_ROUTING_SETTING);
+  });
+
+  it("keeps the setting last read through a stat that fails for the moment, and reads the file as it is once the stat succeeds", () => {
+    const paths = buildLayoutPaths(root);
+    const read = createRoutingSettingReader(paths);
+    writeRoutingSetting(paths, withRoutingChoice(NO_ROUTING_SETTING, { kind: "global" }, { viaHeadroom: true, immediately: false, nowMs: 0 }));
+    expect(read().global).toEqual({ viaHeadroom: true });
+    const realStat = fs.statSync.bind(fs);
+    let failing = true;
+    const spy = vi.spyOn(fs, "statSync").mockImplementation(((target: fs.PathLike) => {
+      if (failing && target === paths.headroomRoutingFile) throw errorWithCode("EMFILE: too many open files", "EMFILE");
+      return realStat(target);
+    }));
+    try {
+      expect(read().global).toEqual({ viaHeadroom: true });
+      failing = false;
+      writeRoutingSetting(paths, withRoutingChoice(NO_ROUTING_SETTING, { kind: "global" }, { viaHeadroom: false, immediately: false, nowMs: 0 }));
+      expect(read().global).toEqual({ viaHeadroom: false });
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
