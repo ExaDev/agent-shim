@@ -1,0 +1,46 @@
+{
+  "files": {
+    "function/canonical-json.json": {
+      "cases": 4,
+      "skip": {
+        "rust": [],
+        "ts": []
+      }
+    },
+    "function/elapsed-window.json": {
+      "cases": 13,
+      "skip": {
+        "rust": [],
+        "ts": []
+      }
+    },
+    "function/names-length.json": {
+      "cases": 1,
+      "skip": {
+        "rust": [],
+        "ts": []
+      }
+    },
+    "function/names.json": {
+      "cases": 90,
+      "skip": {
+        "rust": [],
+        "ts": []
+      }
+    },
+    "function/paths.json": {
+      "cases": 13,
+      "skip": {
+        "rust": [],
+        "ts": []
+      }
+    },
+    "function/same-directory.json": {
+      "cases": 3,
+      "skip": {
+        "rust": [],
+        "ts": []
+      }
+    }
+  }
+}

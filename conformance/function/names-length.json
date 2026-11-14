@@ -1,0 +1,65 @@
+{
+  "cases": [
+    {
+      "from": "config/namesLength.test.ts: the longest name a profile, provider or identity may have > is one byte short of being refused by both rules, and measured in bytes, not characters",
+      "id": "names-length.one-byte-short-of-refused",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isStoredName"
+        }
+      ]
+    }
+  ]
+}

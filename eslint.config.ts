@@ -4,7 +4,15 @@ import exadev from "@exadev/eslint-config";
 import { dialPlugin } from "./eslint-rules/dial";
 
 export default defineConfig([
-  { ignores: ["dist", "coverage", "node_modules"] },
+  {
+    ignores: [
+      "dist",
+      "coverage",
+      "node_modules",
+      // The conformance runner is plain JavaScript on purpose: it is shared by runners for a browser and a worker, which load it without a build, so it has no place in the TypeScript project this config lints against. `src/conformance.repo.test.ts` executes it, types it through `run.d.mts` and holds its size.
+      "conformance/runner/*.mjs",
+    ],
+  },
   {
     languageOptions: {
       // Every file this project lints (src/, scripts/, the various *.config.ts files) is already listed in tsconfig.json's own include -- no allowDefaultProject fallback list needed now that stamp-schema-ids has been converted from .mjs to .mts, closing the one gap that used to require it.

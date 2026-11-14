@@ -19,3 +19,6 @@
 *.sh     filter=secrets merge=text
 *.bash   filter=secrets merge=text
 *.diff   filter=secrets merge=text
+
+# A fixture that is deliberately not UTF-8 must reach the object store byte for byte, and the text filter refuses input that is not UTF-8.
+conformance/fixtures/invalid-cases/file-not-utf8.json -filter -merge

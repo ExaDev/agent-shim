@@ -1,0 +1,2258 @@
+{
+  "cases": [
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > accept \"client-base\"",
+      "id": "names.file-name.accept.1",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "client-base"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "client-base"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > accept \"me@example.com\"",
+      "id": "names.file-name.accept.2",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "me@example.com"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "me@example.com"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > accept \"a.b_c-d\"",
+      "id": "names.file-name.accept.3",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a.b_c-d"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "a.b_c-d"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > accept \"Work2\"",
+      "id": "names.file-name.accept.4",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "Work2"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "Work2"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > accept \"0\"",
+      "id": "names.file-name.accept.5",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "0"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "0"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > accept \"x..y\"",
+      "id": "names.file-name.accept.6",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "x..y"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "x..y"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > accept \"a.json\"",
+      "id": "names.file-name.accept.7",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a.json"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "a.json"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > accept \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"",
+      "id": "names.file-name.accept.8",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > refuse \"\"",
+      "id": "names.file-name.refuse.1",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            ""
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            ""
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > refuse \".\"",
+      "id": "names.file-name.refuse.2",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "."
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "."
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > refuse \"..\"",
+      "id": "names.file-name.refuse.3",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            ".."
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            ".."
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > refuse \"../x\"",
+      "id": "names.file-name.refuse.4",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "../x"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "../x"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > refuse \"a/b\"",
+      "id": "names.file-name.refuse.5",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a/b"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "a/b"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > refuse \"a\\\\b\"",
+      "id": "names.file-name.refuse.6",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a\\b"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "a\\b"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > refuse \"/abs\"",
+      "id": "names.file-name.refuse.7",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/abs"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "/abs"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > refuse \"../../proj/evil\"",
+      "id": "names.file-name.refuse.8",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "../../proj/evil"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "../../proj/evil"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > refuse \"a\\u0000b\"",
+      "id": "names.file-name.refuse.9",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a\u0000b"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "a\u0000b"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > refuse \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"",
+      "id": "names.file-name.refuse.10",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > refuse \".hidden\"",
+      "id": "names.file-name.refuse.11",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            ".hidden"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            ".hidden"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > refuse \"my profile\"",
+      "id": "names.file-name.refuse.12",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "my profile"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "my profile"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > refuse \"_old\"",
+      "id": "names.file-name.refuse.13",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "_old"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "_old"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > refuse \"-leading\"",
+      "id": "names.file-name.refuse.14",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "-leading"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "-leading"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > refuse \"@leading\"",
+      "id": "names.file-name.refuse.15",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "@leading"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "@leading"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > refuse \"a\\nb\"",
+      "id": "names.file-name.refuse.16",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a\nb"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "a\nb"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > refuse \"a\\n\"",
+      "id": "names.file-name.refuse.17",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a\n"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "a\n"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isFileName and FileNameSchema (what a project file or a new name may use) > refuse \"tab\\there\"",
+      "id": "names.file-name.refuse.18",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "tab\there"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isFileName"
+        },
+        {
+          "args": [
+            "tab\there"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "FileNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > accept \"client-base\"",
+      "id": "names.stored-name.accept.1",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "client-base"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "client-base"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > accept \"me@example.com\"",
+      "id": "names.stored-name.accept.2",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "me@example.com"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "me@example.com"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > accept \"a.b_c-d\"",
+      "id": "names.stored-name.accept.3",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a.b_c-d"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "a.b_c-d"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > accept \"Work2\"",
+      "id": "names.stored-name.accept.4",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "Work2"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "Work2"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > accept \"0\"",
+      "id": "names.stored-name.accept.5",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "0"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "0"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > accept \"x..y\"",
+      "id": "names.stored-name.accept.6",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "x..y"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "x..y"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > accept \"a.json\"",
+      "id": "names.stored-name.accept.7",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a.json"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "a.json"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > accept \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"",
+      "id": "names.stored-name.accept.8",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > accept \".hidden\"",
+      "id": "names.stored-name.accept.9",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            ".hidden"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            ".hidden"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > accept \"my profile\"",
+      "id": "names.stored-name.accept.10",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "my profile"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "my profile"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > accept \"_old\"",
+      "id": "names.stored-name.accept.11",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "_old"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "_old"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > accept \"-leading\"",
+      "id": "names.stored-name.accept.12",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "-leading"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "-leading"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > accept \"@leading\"",
+      "id": "names.stored-name.accept.13",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "@leading"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "@leading"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > accept \"a\\nb\"",
+      "id": "names.stored-name.accept.14",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a\nb"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "a\nb"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > accept \"a\\n\"",
+      "id": "names.stored-name.accept.15",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a\n"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "a\n"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > accept \"tab\\there\"",
+      "id": "names.stored-name.accept.16",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "tab\there"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "tab\there"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > refuse \"\"",
+      "id": "names.stored-name.refuse.1",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            ""
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            ""
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > refuse \".\"",
+      "id": "names.stored-name.refuse.2",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "."
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "."
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > refuse \"..\"",
+      "id": "names.stored-name.refuse.3",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            ".."
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            ".."
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > refuse \"../x\"",
+      "id": "names.stored-name.refuse.4",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "../x"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "../x"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > refuse \"a/b\"",
+      "id": "names.stored-name.refuse.5",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a/b"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "a/b"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > refuse \"a\\\\b\"",
+      "id": "names.stored-name.refuse.6",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a\\b"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "a\\b"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > refuse \"/abs\"",
+      "id": "names.stored-name.refuse.7",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/abs"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "/abs"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > refuse \"../../proj/evil\"",
+      "id": "names.stored-name.refuse.8",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "../../proj/evil"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "../../proj/evil"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > refuse \"a\\u0000b\"",
+      "id": "names.stored-name.refuse.9",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a\u0000b"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "a\u0000b"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: isStoredName and StoredNameSchema (what the person's own configuration may use) > refuse \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"",
+      "id": "names.stored-name.refuse.10",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isStoredName"
+        },
+        {
+          "args": [
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "StoredNameSchema.accepts"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: profileFilePath and providerFilePath > place a name directly inside the directory, including one stored under an older rule",
+      "id": "names.file-path.places-inside-the-directory",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/home/.agent-shim/config-profiles",
+            "client-base"
+          ],
+          "expect": {
+            "value": "/home/.agent-shim/config-profiles/client-base.json"
+          },
+          "fn": "profileFilePath"
+        },
+        {
+          "args": [
+            "/home/.agent-shim/config-profiles",
+            "my profile"
+          ],
+          "expect": {
+            "value": "/home/.agent-shim/config-profiles/my profile.json"
+          },
+          "fn": "profileFilePath"
+        },
+        {
+          "args": [
+            "/home/.agent-shim/providers",
+            "_old"
+          ],
+          "expect": {
+            "value": "/home/.agent-shim/providers/_old.json"
+          },
+          "fn": "providerFilePath"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: profileFilePath and providerFilePath > refuse \"\"",
+      "id": "names.file-path.refuse.1",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/d",
+            ""
+          ],
+          "expect": {
+            "throws": {
+              "message": {
+                "contains": [
+                  "not a valid configuration profile name"
+                ]
+              },
+              "name": "UnsafeNameError"
+            }
+          },
+          "fn": "profileFilePath"
+        },
+        {
+          "args": [
+            "/d",
+            ""
+          ],
+          "expect": {
+            "throws": {
+              "message": {
+                "contains": [
+                  "not a valid provider name"
+                ]
+              },
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "providerFilePath"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: profileFilePath and providerFilePath > refuse \".\"",
+      "id": "names.file-path.refuse.2",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/d",
+            "."
+          ],
+          "expect": {
+            "throws": {
+              "message": {
+                "contains": [
+                  "not a valid configuration profile name"
+                ]
+              },
+              "name": "UnsafeNameError"
+            }
+          },
+          "fn": "profileFilePath"
+        },
+        {
+          "args": [
+            "/d",
+            "."
+          ],
+          "expect": {
+            "throws": {
+              "message": {
+                "contains": [
+                  "not a valid provider name"
+                ]
+              },
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "providerFilePath"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: profileFilePath and providerFilePath > refuse \"..\"",
+      "id": "names.file-path.refuse.3",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/d",
+            ".."
+          ],
+          "expect": {
+            "throws": {
+              "message": {
+                "contains": [
+                  "not a valid configuration profile name"
+                ]
+              },
+              "name": "UnsafeNameError"
+            }
+          },
+          "fn": "profileFilePath"
+        },
+        {
+          "args": [
+            "/d",
+            ".."
+          ],
+          "expect": {
+            "throws": {
+              "message": {
+                "contains": [
+                  "not a valid provider name"
+                ]
+              },
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "providerFilePath"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: profileFilePath and providerFilePath > refuse \"../x\"",
+      "id": "names.file-path.refuse.4",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/d",
+            "../x"
+          ],
+          "expect": {
+            "throws": {
+              "message": {
+                "contains": [
+                  "not a valid configuration profile name"
+                ]
+              },
+              "name": "UnsafeNameError"
+            }
+          },
+          "fn": "profileFilePath"
+        },
+        {
+          "args": [
+            "/d",
+            "../x"
+          ],
+          "expect": {
+            "throws": {
+              "message": {
+                "contains": [
+                  "not a valid provider name"
+                ]
+              },
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "providerFilePath"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: profileFilePath and providerFilePath > refuse \"a/b\"",
+      "id": "names.file-path.refuse.5",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/d",
+            "a/b"
+          ],
+          "expect": {
+            "throws": {
+              "message": {
+                "contains": [
+                  "not a valid configuration profile name"
+                ]
+              },
+              "name": "UnsafeNameError"
+            }
+          },
+          "fn": "profileFilePath"
+        },
+        {
+          "args": [
+            "/d",
+            "a/b"
+          ],
+          "expect": {
+            "throws": {
+              "message": {
+                "contains": [
+                  "not a valid provider name"
+                ]
+              },
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "providerFilePath"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: profileFilePath and providerFilePath > refuse \"a\\\\b\"",
+      "id": "names.file-path.refuse.6",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/d",
+            "a\\b"
+          ],
+          "expect": {
+            "throws": {
+              "message": {
+                "contains": [
+                  "not a valid configuration profile name"
+                ]
+              },
+              "name": "UnsafeNameError"
+            }
+          },
+          "fn": "profileFilePath"
+        },
+        {
+          "args": [
+            "/d",
+            "a\\b"
+          ],
+          "expect": {
+            "throws": {
+              "message": {
+                "contains": [
+                  "not a valid provider name"
+                ]
+              },
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "providerFilePath"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: profileFilePath and providerFilePath > refuse \"/abs\"",
+      "id": "names.file-path.refuse.7",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/d",
+            "/abs"
+          ],
+          "expect": {
+            "throws": {
+              "message": {
+                "contains": [
+                  "not a valid configuration profile name"
+                ]
+              },
+              "name": "UnsafeNameError"
+            }
+          },
+          "fn": "profileFilePath"
+        },
+        {
+          "args": [
+            "/d",
+            "/abs"
+          ],
+          "expect": {
+            "throws": {
+              "message": {
+                "contains": [
+                  "not a valid provider name"
+                ]
+              },
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "providerFilePath"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: profileFilePath and providerFilePath > refuse \"../../proj/evil\"",
+      "id": "names.file-path.refuse.8",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/d",
+            "../../proj/evil"
+          ],
+          "expect": {
+            "throws": {
+              "message": {
+                "contains": [
+                  "not a valid configuration profile name"
+                ]
+              },
+              "name": "UnsafeNameError"
+            }
+          },
+          "fn": "profileFilePath"
+        },
+        {
+          "args": [
+            "/d",
+            "../../proj/evil"
+          ],
+          "expect": {
+            "throws": {
+              "message": {
+                "contains": [
+                  "not a valid provider name"
+                ]
+              },
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "providerFilePath"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: profileFilePath and providerFilePath > refuse \"a\\u0000b\"",
+      "id": "names.file-path.refuse.9",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/d",
+            "a\u0000b"
+          ],
+          "expect": {
+            "throws": {
+              "message": {
+                "contains": [
+                  "not a valid configuration profile name"
+                ]
+              },
+              "name": "UnsafeNameError"
+            }
+          },
+          "fn": "profileFilePath"
+        },
+        {
+          "args": [
+            "/d",
+            "a\u0000b"
+          ],
+          "expect": {
+            "throws": {
+              "message": {
+                "contains": [
+                  "not a valid provider name"
+                ]
+              },
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "providerFilePath"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: profileFilePath and providerFilePath > refuse \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"",
+      "id": "names.file-path.refuse.10",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/d",
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          ],
+          "expect": {
+            "throws": {
+              "message": {
+                "contains": [
+                  "not a valid configuration profile name"
+                ]
+              },
+              "name": "UnsafeNameError"
+            }
+          },
+          "fn": "profileFilePath"
+        },
+        {
+          "args": [
+            "/d",
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          ],
+          "expect": {
+            "throws": {
+              "message": {
+                "contains": [
+                  "not a valid provider name"
+                ]
+              },
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "providerFilePath"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: profileFilePath and providerFilePath > name where the name came from, when the caller says",
+      "id": "names.file-path.names-the-source",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/d",
+            "../x",
+            "--config-profile"
+          ],
+          "expect": {
+            "throws": {
+              "message": {
+                "startsWith": "--config-profile: \"../x\" is not a valid configuration profile name"
+              },
+              "name": "UnsafeNameError"
+            }
+          },
+          "fn": "profileFilePath"
+        },
+        {
+          "args": [
+            "/d",
+            "../x",
+            "launch.provider"
+          ],
+          "expect": {
+            "throws": {
+              "message": {
+                "startsWith": "launch.provider: "
+              },
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "providerFilePath"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > refuses \"\", which a new provider may not be named",
+      "id": "names.require-new-provider.refuse.1",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            ""
+          ],
+          "expect": {
+            "throws": {
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > refuses \".\", which a new provider may not be named",
+      "id": "names.require-new-provider.refuse.2",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "."
+          ],
+          "expect": {
+            "throws": {
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > refuses \"..\", which a new provider may not be named",
+      "id": "names.require-new-provider.refuse.3",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            ".."
+          ],
+          "expect": {
+            "throws": {
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > refuses \"../x\", which a new provider may not be named",
+      "id": "names.require-new-provider.refuse.4",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "../x"
+          ],
+          "expect": {
+            "throws": {
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > refuses \"a/b\", which a new provider may not be named",
+      "id": "names.require-new-provider.refuse.5",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a/b"
+          ],
+          "expect": {
+            "throws": {
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > refuses \"a\\\\b\", which a new provider may not be named",
+      "id": "names.require-new-provider.refuse.6",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a\\b"
+          ],
+          "expect": {
+            "throws": {
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > refuses \"/abs\", which a new provider may not be named",
+      "id": "names.require-new-provider.refuse.7",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/abs"
+          ],
+          "expect": {
+            "throws": {
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > refuses \"../../proj/evil\", which a new provider may not be named",
+      "id": "names.require-new-provider.refuse.8",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "../../proj/evil"
+          ],
+          "expect": {
+            "throws": {
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > refuses \"a\\u0000b\", which a new provider may not be named",
+      "id": "names.require-new-provider.refuse.9",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a\u0000b"
+          ],
+          "expect": {
+            "throws": {
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > refuses \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\", which a new provider may not be named",
+      "id": "names.require-new-provider.refuse.10",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          ],
+          "expect": {
+            "throws": {
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > refuses \".hidden\", which a new provider may not be named",
+      "id": "names.require-new-provider.refuse.11",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            ".hidden"
+          ],
+          "expect": {
+            "throws": {
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > refuses \"my profile\", which a new provider may not be named",
+      "id": "names.require-new-provider.refuse.12",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "my profile"
+          ],
+          "expect": {
+            "throws": {
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > refuses \"_old\", which a new provider may not be named",
+      "id": "names.require-new-provider.refuse.13",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "_old"
+          ],
+          "expect": {
+            "throws": {
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > refuses \"-leading\", which a new provider may not be named",
+      "id": "names.require-new-provider.refuse.14",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "-leading"
+          ],
+          "expect": {
+            "throws": {
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > refuses \"@leading\", which a new provider may not be named",
+      "id": "names.require-new-provider.refuse.15",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "@leading"
+          ],
+          "expect": {
+            "throws": {
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > refuses \"a\\nb\", which a new provider may not be named",
+      "id": "names.require-new-provider.refuse.16",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a\nb"
+          ],
+          "expect": {
+            "throws": {
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > refuses \"a\\n\", which a new provider may not be named",
+      "id": "names.require-new-provider.refuse.17",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a\n"
+          ],
+          "expect": {
+            "throws": {
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > refuses \"tab\\there\", which a new provider may not be named",
+      "id": "names.require-new-provider.refuse.18",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "tab\there"
+          ],
+          "expect": {
+            "throws": {
+              "name": "InvalidProviderNameError"
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > accepts \"client-base\"",
+      "id": "names.require-new-provider.accept.1",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "client-base"
+          ],
+          "expect": {
+            "value": {
+              "$undefined": true
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > accepts \"me@example.com\"",
+      "id": "names.require-new-provider.accept.2",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "me@example.com"
+          ],
+          "expect": {
+            "value": {
+              "$undefined": true
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > accepts \"a.b_c-d\"",
+      "id": "names.require-new-provider.accept.3",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a.b_c-d"
+          ],
+          "expect": {
+            "value": {
+              "$undefined": true
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > accepts \"Work2\"",
+      "id": "names.require-new-provider.accept.4",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "Work2"
+          ],
+          "expect": {
+            "value": {
+              "$undefined": true
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > accepts \"0\"",
+      "id": "names.require-new-provider.accept.5",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "0"
+          ],
+          "expect": {
+            "value": {
+              "$undefined": true
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > accepts \"x..y\"",
+      "id": "names.require-new-provider.accept.6",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "x..y"
+          ],
+          "expect": {
+            "value": {
+              "$undefined": true
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > accepts \"a.json\"",
+      "id": "names.require-new-provider.accept.7",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a.json"
+          ],
+          "expect": {
+            "value": {
+              "$undefined": true
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    },
+    {
+      "from": "config/names.test.ts: requireNewProviderName > accepts \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"",
+      "id": "names.require-new-provider.accept.8",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          ],
+          "expect": {
+            "value": {
+              "$undefined": true
+            }
+          },
+          "fn": "requireNewProviderName"
+        }
+      ]
+    }
+  ]
+}

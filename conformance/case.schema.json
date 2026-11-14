@@ -1,0 +1,370 @@
+{
+  "$defs": {
+    "case": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/functionCase"
+        }
+      ]
+    },
+    "codeUnits": {
+      "additionalProperties": false,
+      "description": "Text as UTF-16 code units, for content a JSON string cannot carry (an unpaired surrogate).",
+      "properties": {
+        "codeUnits": {
+          "items": {
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "codeUnits"
+      ],
+      "type": "object"
+    },
+    "entry": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "base64": {
+              "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "base64"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "symlink": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "symlink"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "directory": {
+              "const": true
+            }
+          },
+          "required": [
+            "directory"
+          ],
+          "type": "object"
+        }
+      ],
+      "description": "A file tree entry: text, exact bytes, a symbolic link or an empty directory."
+    },
+    "expect": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "value": {
+              "$ref": "#/$defs/value"
+            }
+          },
+          "required": [
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "throws": {
+              "additionalProperties": false,
+              "properties": {
+                "message": {
+                  "additionalProperties": false,
+                  "minProperties": 1,
+                  "properties": {
+                    "contains": {
+                      "items": {
+                        "$ref": "#/$defs/text"
+                      },
+                      "minItems": 1,
+                      "type": "array"
+                    },
+                    "startsWith": {
+                      "$ref": "#/$defs/text"
+                    }
+                  },
+                  "type": "object"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "throws"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "from": {
+      "description": "Either `<test file>.test.ts: <describe> > <test>`, the original test title the case came from, or `recorded: <source file> (<what>)` for a case written because no test covered the behaviour.",
+      "pattern": "^(?:[A-Za-z0-9_./-]+\\.test\\.ts: .+ > .+|recorded: [A-Za-z0-9_./-]+ \\(.+\\))$",
+      "type": "string"
+    },
+    "functionCase": {
+      "additionalProperties": false,
+      "dependentRequired": {
+        "reason": [
+          "skip"
+        ],
+        "skip": [
+          "reason"
+        ]
+      },
+      "properties": {
+        "files": {
+          "$ref": "#/$defs/tree"
+        },
+        "from": {
+          "$ref": "#/$defs/from"
+        },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "kind": {
+          "const": "function"
+        },
+        "reason": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "skip": {
+          "enum": [
+            "ts",
+            "rust"
+          ]
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/step"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "from",
+        "kind",
+        "steps"
+      ],
+      "type": "object"
+    },
+    "id": {
+      "pattern": "^[a-z0-9][a-z0-9._-]*$",
+      "type": "string"
+    },
+    "number": {
+      "additionalProperties": false,
+      "description": "A number JSON cannot carry.",
+      "properties": {
+        "$number": {
+          "enum": [
+            "-0",
+            "NaN",
+            "Infinity",
+            "-Infinity"
+          ]
+        }
+      },
+      "required": [
+        "$number"
+      ],
+      "type": "object"
+    },
+    "object": {
+      "additionalProperties": false,
+      "description": "An object with its members in the order given, which a canonical file cannot otherwise hold, since it sorts every object's keys.",
+      "properties": {
+        "$object": {
+          "items": {
+            "items": false,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/value"
+              }
+            ],
+            "type": "array"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "$object"
+      ],
+      "type": "object"
+    },
+    "step": {
+      "additionalProperties": false,
+      "properties": {
+        "args": {
+          "items": {
+            "$ref": "#/$defs/value"
+          },
+          "type": "array"
+        },
+        "expect": {
+          "$ref": "#/$defs/expect"
+        },
+        "fn": {
+          "pattern": "^[A-Za-z][A-Za-z0-9.]*$",
+          "type": "string"
+        },
+        "select": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "fn",
+        "args",
+        "expect"
+      ],
+      "type": "object"
+    },
+    "text": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/codeUnits"
+        }
+      ]
+    },
+    "tree": {
+      "additionalProperties": {
+        "$ref": "#/$defs/entry"
+      },
+      "description": "Paths relative to the case's temporary directory, which strings starting `$TMP` name.",
+      "propertyNames": {
+        "not": {
+          "pattern": "(?:^|/)\\.{1,2}(?:/|$)"
+        },
+        "pattern": "^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$",
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "undefined": {
+      "additionalProperties": false,
+      "description": "The JavaScript value undefined, which another implementation reads as absent.",
+      "properties": {
+        "$undefined": {
+          "const": true
+        }
+      },
+      "required": [
+        "$undefined"
+      ],
+      "type": "object"
+    },
+    "value": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/value"
+          },
+          "type": "array"
+        },
+        {
+          "$ref": "#/$defs/codeUnits"
+        },
+        {
+          "$ref": "#/$defs/number"
+        },
+        {
+          "$ref": "#/$defs/undefined"
+        },
+        {
+          "$ref": "#/$defs/object"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/value"
+          },
+          "not": {
+            "required": [
+              "codeUnits"
+            ]
+          },
+          "propertyNames": {
+            "not": {
+              "pattern": "^\\$"
+            },
+            "type": "string"
+          },
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "$id": "https://github.com/ExaDev/agent-shim/tree/main/conformance/case.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One corpus file: the cases extracted from one original test file. The rules the schema cannot express (integers above 2^53-1, negative zero, unpaired surrogates, canonical form, unique ids, the manifest) are in README.md and are checked by every loader beside it.",
+  "properties": {
+    "cases": {
+      "items": {
+        "$ref": "#/$defs/case"
+      },
+      "minItems": 1,
+      "type": "array"
+    }
+  },
+  "required": [
+    "cases"
+  ],
+  "title": "agent-shim conformance corpus file",
+  "type": "object"
+}

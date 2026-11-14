@@ -1,0 +1,40 @@
+{
+  "pairs": [
+    {
+      "codeUnits": [
+        97
+      ],
+      "text": "a"
+    },
+    {
+      "codeUnits": [
+        233
+      ],
+      "text": "é"
+    },
+    {
+      "codeUnits": [
+        26085,
+        26412
+      ],
+      "text": "日本"
+    },
+    {
+      "codeUnits": [
+        55357,
+        56832
+      ],
+      "text": "😀"
+    },
+    {
+      "codeUnits": [
+        65533
+      ],
+      "text": "�"
+    },
+    {
+      "codeUnits": [],
+      "text": ""
+    }
+  ]
+}
