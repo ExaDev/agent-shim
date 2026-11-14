@@ -24,14 +24,14 @@
     },
     "_test": {
       "inputs": [
-        "src/**",
+        "$TURBO_DEFAULT$",
         "vitest.config.ts"
       ],
       "outputs": []
     },
     "_test:coverage": {
       "inputs": [
-        "src/**",
+        "$TURBO_DEFAULT$",
         "vitest.config.ts"
       ],
       "outputs": [
