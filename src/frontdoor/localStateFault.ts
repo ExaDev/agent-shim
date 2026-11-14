@@ -14,14 +14,15 @@ function isLocalStateFault(error: unknown): boolean {
 }
 
 /**
- * `resolve`, with a request whose routing reads a file of the person's local state that cannot be used refused with a 400 that names the fault (`configFaultOf`: its class or code, or the keys a file got wrong) and `agent-shim doctor`, never the error's own message, which names the file's path. Every port the request path reads local state through (identity names, route overrides, the models block, provider targets, usage snapshots, account moves, selector state, provider files) is behind this one boundary, so a port added later is too. A defect still rejects, as it should. Each refusal is also logged, naming the same fault and never the path, so the door's log says why a request was refused.
+ * `resolve`, behind the one boundary every port the request path reads local state through sits behind (identity names, route overrides, the models block, provider targets, usage snapshots, selector state, provider files), so a port added later is too. It answers: a 400 naming the `x-agent-shim-identity` header for a header that names no identity id, the request's own fault, before any port reads a file by it; a retryable 503 naming the code for a read that failed for a reason of the moment (`isTransientReadError`); and a 400 naming the fault (`configFaultOf`: its class or code, or the keys a file got wrong) and `agent-shim doctor` for a local file that cannot be used. None names the file's path, as the error's own message does. A defect still rejects, as it should. Each of these refusals is also logged, naming the same fault and never the path, so the door's log says why a request was refused. A failed write of a session's move request is no read of local state, and the resolver answers it itself.
  */
 export function refusingLocalStateFaults(resolve: (request: RoutedRequest) => Promise<RouteResolution>, log: (line: string) => void): (request: RoutedRequest) => Promise<RouteResolution> {
   return async (request) => {
     // The identity header is the client's to send: an id no identity directory can have is the request's fault, refused before any port reads a file by it.
     const { identity } = request.session;
     if (identity !== undefined && !isIdentityId(identity)) {
-      return { ok: false, status: HTTP_STATUS.badRequest, message: `the ${IDENTITY_HEADER} header does not name an identity id: an id ${STORED_NAME_RULE}, and does not start with a dot` };
+      log(`front door: a request was refused because its ${IDENTITY_HEADER} header names no identity id`);
+      return { ok: false, status: HTTP_STATUS.badRequest, message: `the ${IDENTITY_HEADER} header does not name an identity id: an id ${STORED_NAME_RULE}, and must not start with a dot` };
     }
     try {
       return await resolve(request);

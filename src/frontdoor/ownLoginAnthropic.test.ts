@@ -81,6 +81,33 @@ describe("the session's own login beside a provider file called anthropic", () =
   }, TIMEOUT_MS);
 });
 
+describe("an unmarked anthropic/<model> in a session launched on a provider", () => {
+  const OVERRIDE: RouteOverridesRead = { table: { ...NO_ROUTE_OVERRIDES, global: { "claude-opus-5-5": "anthropic/claude-opus-5-1" } } };
+
+  it("is claimed by a provider file called anthropic, and routed there as any qualified name is", async () => {
+    const door = await world(OVERRIDE);
+    try {
+      const answered = await send(door, { model: "claude-opus-5-5", requestClass: "main", identity: "id-me", provider: "z" });
+      expect(answered.status, answered.text).toBe(HTTP_STATUS.ok);
+      expect(door.upstream.seen.map((seen) => seen.model)).toEqual([OWN_MODEL]);
+      expect(door.anthropicModels).toEqual([]);
+    } finally {
+      await door.close();
+    }
+  }, TIMEOUT_MS);
+
+  it("is refused naming the relaunch when no provider file claims the name", async () => {
+    const started = await startWorld(mainLoopRoutesOfLiveSessions(), HTTP_STATUS.ok, undefined, undefined, undefined, { selectorState: SELF, routeOverrides: () => OVERRIDE, identityNameOf: (id) => (id === "id-me" ? "me" : undefined) });
+    try {
+      const answered = await send(started, { model: "claude-opus-5-5", requestClass: "main", identity: "id-me", provider: "z" });
+      expect(answered.status).toBe(HTTP_STATUS.badRequest);
+      expect(answered.text).toContain("without --provider");
+    } finally {
+      await started.close();
+    }
+  }, TIMEOUT_MS);
+});
+
 describe("a name on a provider-scoped path", () => {
   it.each(["auto/me/claude-opus-5-1", "acct:me/claude-opus-5-1", "acct:work/claude-opus-5-1"])("serves %j as sent on the provider the path names, never expanding it, moving the session or reaching the Anthropic route", async (model) => {
     const moves: string[] = [];

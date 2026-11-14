@@ -104,7 +104,6 @@ export function registerRouteCommand(program: Command, deps: CommandDeps): void 
   ).action(async (model: string, options: Readonly<ScopeOptions & { json?: boolean; yes?: boolean }>) => {
     const scope = scopeOfOptions(options);
     await confirmRemoval(deps, options.yes, `the route override of "${model}" ${describeScope(scope)}`);
-    // The report names the key as stored, as `route set`'s does: what a hand edit stored in another case is named in that case.
     const { removed } = removeRouteOverride(paths, scope, model);
     // `name` is the key as `route set` stores it, and `removed` each key the file held, as stored, which a hand edit may have spelt in more than one case.
     reportMutation(options.json, { action: "removed", kind: "route", name: overrideKeyOf(model), removed }, () => {

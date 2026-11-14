@@ -23,7 +23,7 @@ const WITH_IDENTITY_SCOPE = { ...NO_ROUTE_OVERRIDES, identities: { me: { haiku: 
 /** A virtual model with one provider member, so a request for it ranks members on the identity's usage snapshot. */
 const MODELS: ModelsConfig = { virtual: { ranked: { mode: "ordered", members: ["z/glm-9"] } } };
 
-/** Each port the door calls on the request path that reads the person's local state (`accountMoves` writes, so its failure is the door's own: see below), a request that reaches it, and the ports that make it reach it with that port throwing. */
+/** Each port the door calls on the request path that reads the person's local state (`accountMoves` reads the supervisors' registries and the identity records and writes a move request, so its failure is the door's own: see below), a request that reaches it, and the ports that make it reach it with that port throwing. */
 const PORTS: readonly (readonly [string, string, string | undefined, (thrown: () => never) => ModelPorts])[] = [
   ["identityNameOf", "claude-opus-5-5", undefined, (thrown) => ({ routeOverrides: () => ({ table: WITH_IDENTITY_SCOPE }), identityNameOf: () => thrown() })],
   ["routeOverrides", "claude-opus-5-5", undefined, (thrown) => ({ routeOverrides: () => thrown() })],
