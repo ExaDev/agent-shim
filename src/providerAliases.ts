@@ -12,7 +12,8 @@ import { ownEntry } from "./ownEntry";
  *
  * A running session has its provider's name fixed at launch, and the front door resolves that name against the providers directory on every request, so renaming a provider file alone strands every session launched before the rename. An alias is what keeps those sessions served until they end. Targets are always current provider names: renaming a provider repoints every alias that targeted it, so a lookup is one step and never a chain.
  */
-const ProviderAliasesSchema = z.record(z.string().min(1), z.string().min(1));
+/** A `provider-aliases.json`: each former name of a renamed provider, mapped to the name it became. */
+export const ProviderAliasesSchema = z.record(z.string().min(1), z.string().min(1));
 export type ProviderAliases = z.infer<typeof ProviderAliasesSchema>;
 
 /** Parses the aliases file's JSON, naming the file in the failure. */

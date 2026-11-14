@@ -53,7 +53,7 @@ import { readFrontDoorListeners, realFrontDoorListenerProbes, type FrontDoorList
 import { listFrontDoorSupervisors, type FrontDoorSupervisorListing } from "./frontdoor/supervisorProcesses";
 import { ENV_PREFIX, LEGACY_ENV_PREFIX, LEGACY_HOME_DIRNAME } from "./legacy";
 import { describeUnfinishedRename, finishabilityOf, listRenameJournals, type RenameJournalListing } from "./identityRenameJournal";
-import { aliasFindings, readProviderAliases, type ProviderAliases } from "./providerAliases";
+import { aliasFindings, ProviderAliasesSchema, type ProviderAliases } from "./providerAliases";
 import { describeProviderEndpoint, legacyProviderConversion, LegacyProviderFileError } from "./providersStore";
 import { ambientCredentialFinding } from "./launcher/guard";
 import { poolNameOf } from "./launcher/identity";
@@ -201,8 +201,8 @@ export interface RunDoctorParams {
   readonly usageSnapshots?: Readonly<Record<string, UsageSnapshot>>;
   readonly configProfiles: readonly DoctorConfigProfileInput[];
   readonly providers: readonly DoctorProviderInput[];
-  /** The recorded former names of renamed providers. Omit to leave them out of the findings. */
-  readonly providerAliases?: ProviderAliases;
+  /** `provider-aliases.json`, the recorded former names of renamed providers: absent when no provider was ever renamed. Omit to leave them out of the findings. */
+  readonly providerAliases?: DoctorFileInput;
   /** Probes the base URLs of every valid http provider, up to `MAX_CONCURRENT_PROBES` distinct targets together and any more in rounds of that many, one connection each, each bounded by its provider's connect timeout. Omit to leave reachability out of the findings; with it, a valid http provider whose base URL accepts no connection fails, naming the URL. */
   readonly probeBaseUrls?: BaseUrlBatchProbe;
   /** The providers whose last catalogue refresh, as the serving front door recorded it, failed on a redirect it does not follow, each with the reason it recorded. Omit to leave the finding out. */
@@ -569,8 +569,21 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     }
   }
   const validProfileNames = new Set(profileSources.keys());
+  // The recorded former names: none when no provider was ever renamed, and none, with the failure, for a file that cannot be used.
+  const providerAliases = ((): ProviderAliases => {
+    const input = params.providerAliases;
+    if (input === undefined || (input.raw === undefined && input.unreadable === undefined)) {
+      return {};
+    }
+    const validated = validate(ProviderAliasesSchema, input, "provider");
+    if (!validated.ok) {
+      push("provider", "fail", validated.message);
+      return {};
+    }
+    return validated.data;
+  })();
   // A recorded former name still resolves to the provider it became, so an identity may name a provider by either.
-  const validProviderNames = new Set([...params.providers.map((entry) => entry.name), ...Object.keys(params.providerAliases ?? {})]);
+  const validProviderNames = new Set([...params.providers.map((entry) => entry.name), ...Object.keys(providerAliases)]);
 
   // An id is an identity's when its directory has an `identity.json`, the test `identityIdExists` makes, so that the hint below says what the rename will do. A directory without one is not.
   const identityIds = new Set(params.identities.filter((entry) => !isAbsent(entry)).map((entry) => entry.id));
@@ -732,7 +745,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     }
   }
   const providerNames = new Set(params.providers.map((entry) => entry.name));
-  for (const finding of aliasFindings(params.providerAliases ?? {}, providerNames)) {
+  for (const finding of aliasFindings(providerAliases, providerNames)) {
     push("provider", finding.level, finding.message, finding.alias);
   }
 
@@ -1032,7 +1045,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
     usageSnapshots,
     configProfiles,
     providers,
-    providerAliases: readProviderAliases(paths),
+    providerAliases: { path: paths.providerAliasesFile, ...readForDoctor(realFsPort, paths.providerAliasesFile) },
     probeBaseUrls: realBaseUrlBatchProbe,
     catalogueRedirects: providersWithRedirectedCatalogue(realFarmFs, paths, new Map(providers.map((entry) => [entry.name, currentCatalogueSettings(paths, entry.name)] as const))),
     renameJournals: listRenameJournals(realFarmFs, paths.identityRenamesDir),
