@@ -1,0 +1,25 @@
+# Which workspace crate may depend on which third-party crate. cargo-deny's `wrappers` allows a crate only when one of the listed crates depends on it directly, so each third-party crate stays inside the crates that have a reason for it and cannot spread into the pure library crates. deny.toml holds the allowlist itself, with a reason per crate, and a crate enters it in the change that first depends on it. An entry here that names a workspace crate or a third-party crate not yet in the graph is a confinement waiting for its first use, and cargo-deny reports it as an unmatched wrapper.
+
+[graph]
+all-features = true
+
+[bans]
+deny = [
+    { crate = "tokio", wrappers = ["agent-shim", "agent-shim-net", "agent-shim-door", "agent-shim-claude-print", "hyper", "hyper-util", "tokio-rustls"] },
+    { crate = "hyper", wrappers = ["agent-shim-net", "hyper-util"] },
+    { crate = "hyper-util", wrappers = ["agent-shim-net"] },
+    { crate = "rustls", wrappers = ["agent-shim-net", "tokio-rustls"] },
+    { crate = "tokio-rustls", wrappers = ["agent-shim-net"] },
+    { crate = "ring", wrappers = ["agent-shim-net", "rustls"] },
+    { crate = "webpki-roots", wrappers = ["agent-shim-net"] },
+    { crate = "rustix", wrappers = ["agent-shim-os"] },
+    { crate = "windows-sys", wrappers = ["agent-shim-win", "tokio"] },
+    { crate = "miniz_oxide", wrappers = ["agent-shim-door"] },
+    { crate = "brotli-decompressor", wrappers = ["agent-shim-door"] },
+    { crate = "jiff", wrappers = ["agent-shim-host"] },
+    { crate = "wasm-bindgen", wrappers = ["agent-shim-wasm", "js-sys", "wasm-bindgen-futures"] },
+    { crate = "js-sys", wrappers = ["agent-shim-wasm", "wasm-bindgen-futures"] },
+    { crate = "wasm-bindgen-futures", wrappers = ["agent-shim-wasm"] },
+    { crate = "unicode-segmentation", wrappers = ["agent-shim-core"] },
+    { crate = "unicode-width", wrappers = ["agent-shim-core"] },
+]

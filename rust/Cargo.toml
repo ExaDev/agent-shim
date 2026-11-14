@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = ["tests/agent-shim-conformance", "xtask"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99.1"
+license = "MIT"
+repository = "https://github.com/ExaDev/agent-shim"
+
+[workspace.dependencies]
+serde_json = { version = "1", features = ["float_roundtrip"] }
+
+[workspace.lints.rust]
+# Forbid, not deny, so no source file can allow it again. The lint-config task of xtask (`scripts/rust.sh xtask lint-config`) fails any member that does not inherit this table.
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"

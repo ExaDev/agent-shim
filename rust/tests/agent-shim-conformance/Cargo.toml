@@ -1,0 +1,18 @@
+[package]
+name = "agent-shim-conformance"
+description = "The Rust harness for the language-neutral conformance corpus under conformance/."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[test]]
+name = "conformance"
+path = "tests/conformance/main.rs"
+# A plain main that prints the failing case ids, rather than libtest, so a corpus failure names the case.
+harness = false
+
+[lints]
+workspace = true
