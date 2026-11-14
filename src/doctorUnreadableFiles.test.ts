@@ -25,6 +25,7 @@ const FILES: readonly (readonly [string, DoctorSection, (paths: LayoutPaths) => 
   ["an identity's identity.json", "identity", (paths) => path.join(paths.identitiesDir, "work", "identity.json"), "directory", "fail"],
   ["the ChatGPT sign-in file", "provider", (paths) => paths.chatgptSignInFile, "directory", "warn"],
   ["claude-shim.json", "claude-shim", (paths) => paths.claudeShimFile, "directory", "fail"],
+  ["provider-aliases.json", "provider", (paths) => paths.providerAliasesFile, "directory", "fail"],
 ];
 
 describe("a file doctor cannot read is a finding, never an abort", () => {
