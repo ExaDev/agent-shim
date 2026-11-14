@@ -140,7 +140,7 @@ export function cliSelectorPorts(paths: LayoutPaths, now: () => number, home: st
 
 /** The person's routing state the door reads per request besides the providers: what a selector names among profiles, identities and pools, the route overrides, and the name of the identity a session's header names by id, each read fresh (the overrides on change), so an edit reaches the next request with no restart. */
 export function doorRoutingState(paths: LayoutPaths, log: (line: string) => void, home: string): { readonly selectorState: SelectorStatePorts; readonly routeOverrides: () => RouteOverridesRead; readonly identityNameOf: (id: string) => string | undefined } {
-  return { selectorState: realSelectorStatePorts(paths, () => Date.now(), home), routeOverrides: createRouteOverridesReader(realFsPort, paths.routeOverridesFile, log), identityNameOf: createIdentityNameReader(paths).nameOf };
+  return { selectorState: realSelectorStatePorts(paths, () => Date.now(), home), routeOverrides: createRouteOverridesReader(realFsPort, paths.routeOverridesFile, log), identityNameOf: createIdentityNameReader(paths).requireNameOf };
 }
 
 /**
