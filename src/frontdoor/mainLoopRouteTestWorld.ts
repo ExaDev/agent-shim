@@ -192,9 +192,9 @@ export interface World {
   readonly toAnthropic: string[];
   /** Replaces a provider's file between two requests, as a person editing it does. */
   readonly setProvider: (name: string, definition: unknown) => void;
-  /** The provider reads over this world's provider files, for a test that checks something against the providers the door serves. */
   /** Makes every read or listing of `file` through the door's provider file system throw `error`, or read normally again when `error` is undefined: a test of a read that fails for the moment, or for good. */
   readonly failRead: (file: string, error: Error | undefined) => void;
+  /** The provider reads over this world's provider files, for a test that checks something against the providers the door serves. */
   readonly providerReads: ReturnType<typeof createProviderReads>;
   readonly close: () => Promise<void>;
 }

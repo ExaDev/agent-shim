@@ -113,7 +113,7 @@ export function identityNameOf(paths: LayoutPaths, id: string): string | undefin
 
 /** What reads the name of the identity stored under one id (see `createIdentityNameReader`). `reads` counts the `identity.json` files it has read, so a test can tell a cached answer from a fresh one. */
 export interface IdentityNameReader {
-  /** The name, or undefined when no identity is stored under the id or its `identity.json` cannot be read: for a report that names what it can. */
+  /** The name, or undefined when no identity is stored under the id or its `identity.json` has a fault of its own or names no name: for a report that names what it can. A read that fails for a reason of the moment is thrown. */
   readonly nameOf: (id: string) => string | undefined;
   /** The name, or undefined when no identity is stored under the id; throws `UnreadableIdentityNameError` when its `identity.json` is there and cannot be read or names no name, so a caller that routes by the name never takes an unreadable file for no identity. */
   readonly requireNameOf: (id: string) => string | undefined;
@@ -146,7 +146,7 @@ class UnreadableIdentityNameError extends CliError {
 }
 
 /**
- * Reads the name of the identity stored under an id from that id's own `identity.json` alone, and keeps it for as long as the file's size, modification time and inode stay as they were, so a long-lived process that names an identity on every event (the front door, once per usage snapshot it writes) stats one file instead of reading every identity's. A file whose name cannot be read names no identity; where there is no file, the name is what `identityNameOf` reads, which finds an identity a resync left displaced in a superseded farm, kept for as long as the identities directory keeps its inode, modification time and entry names, since a superseded farm and an identity's directory come and go as entries of it. The file is looked at every call, so a rename is seen as soon as it is written.
+ * Reads the name of the identity stored under an id from that id's own `identity.json` alone, and keeps a name it read (never a failure) for as long as the file's size, modification and change times and inode stay as they were, so a long-lived process that names an identity on every event (the front door, once per usage snapshot it writes) stats one file instead of reading every identity's, and a chmod that fixes the file is read at once. A file that has a fault of its own or names no name gives no name to `nameOf` and raises `UnreadableIdentityNameError` from `requireNameOf`; where there is no file, the name is what `identityNameOf` reads, which finds an identity a resync left displaced in a superseded farm, kept for as long as the identities directory keeps its inode, modification time and entry names, since a superseded farm and an identity's directory come and go as entries of it. The file is looked at every call, so a rename is seen as soon as it is written.
  */
 export function createIdentityNameReader(paths: LayoutPaths): IdentityNameReader {
   // Only a name read is kept, under the file's size, modification and change times and inode: a file that could not be read is read again on the next call, and a chmod that fixes it changes its change time.

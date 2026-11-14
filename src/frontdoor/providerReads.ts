@@ -114,7 +114,7 @@ export function createProviderReads(deps: Readonly<ProviderReadsDeps>): Provider
     }
     return provider;
   };
-  // Only a name the directory lists reaches a read, so a failing read is the file's own fault.
+  // Only a name the directory lists reaches a read, so a read that fails with a fault of the file's own is that file's; one that fails for a reason of the moment is passed on.
   const lookupProvider = (name: string): ProviderLookup => {
     try {
       const definition = providerOf(name);

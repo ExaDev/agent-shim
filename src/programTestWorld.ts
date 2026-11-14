@@ -46,7 +46,7 @@ export interface CliResult {
 export type RunClaude = (args: readonly string[]) => Promise<void>;
 
 export function program(runClaude: RunClaude = vi.fn<RunClaude>(), options: Parameters<typeof fakeCommandDeps>[1] = {}): Command {
-  // The identity commands ask the Keychain whether a login is filed for a directory, and only on macOS, and keep cached credentials in the Keychain or in files: the harness runs them as on macOS on every host, with every Keychain question (a login's, and the credential cache's Keychain store) going to the fake `security`, and the cache's file store under the throwaway root, so no test reads or writes the machine's Keychain and every host takes the same path.
+  // The identity commands ask the Keychain whether a login is filed for a directory, and only on macOS, and keep cached credentials in the Keychain or in files: the harness runs them as on macOS on every host, with every Keychain question (a login's, and the credential cache's Keychain store) going to the fake `security`, and the cache's file store under the throwaway root, so the identity commands never reach the machine's Keychain and every host takes the same path. Other commands (`doctor`, `check`, the `credential` noun) take their own ports and still ask the real `security` on macOS.
   const real = realIdentityRenamePorts(paths);
   return buildProgram({ ...fakeCommandDeps(paths, options), runClaude, identityRenamePorts: { ...real, run: keychain.run, platform: "darwin", credentialCache: { ...real.credentialCache, platform: "darwin", port: createRealCredentialCache(paths.root, { run: (args, stdin) => keychain.run.run("security", args, stdin), platform: "darwin" }) } } });
 }

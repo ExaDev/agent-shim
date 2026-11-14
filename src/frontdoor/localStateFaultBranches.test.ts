@@ -8,6 +8,7 @@ import type { ModelsConfig } from "../config/schema";
 import { readModels } from "../modelsStore";
 import { buildLayoutPaths, type LayoutPaths } from "../paths";
 import { realFarmFs } from "../realPorts";
+import { errorWithCode } from "../test-helpers";
 import { readUsageSnapshot } from "../usage/read";
 import { send, startWorld } from "./mainLoopRouteTestWorld";
 
@@ -56,6 +57,30 @@ describe("each kind of local file fault the door's boundary refuses", () => {
       expect((await send(world, { model: "ranked", requestClass: "main" })).status).toBe(HTTP_STATUS.badRequest);
       expect(logged.filter((line) => line.includes("could not be used") && line.includes("virtual.ranked"))).toHaveLength(1);
       expect(logged.join("\n")).not.toContain(paths.root);
+    } finally {
+      await world.close();
+    }
+  }, TIMEOUT_MS);
+
+  it("logs a read that failed for the moment beside its retryable refusal, naming the code", async () => {
+    const logged: string[] = [];
+    const world = await startWorld(undefined, HTTP_STATUS.ok, undefined, undefined, undefined, { models: () => { throw errorWithCode("EMFILE: too many open files, open '/state/config.json'", "EMFILE"); }, log: (line) => { logged.push(line); } });
+    try {
+      expect((await send(world, { model: "ranked", requestClass: "main" })).status).toBe(HTTP_STATUS.serviceUnavailable);
+      expect(logged.filter((line) => line.includes("for the moment") && line.includes("EMFILE"))).toHaveLength(1);
+      expect(logged.join("\n")).not.toContain("/state/config.json");
+    } finally {
+      await world.close();
+    }
+  }, TIMEOUT_MS);
+
+  it("logs an identity header that names no identity id beside its refusal, never echoing the header", async () => {
+    const logged: string[] = [];
+    const world = await startWorld(undefined, HTTP_STATUS.ok, RANKED, undefined, undefined, { log: (line) => { logged.push(line); } });
+    try {
+      expect((await send(world, { model: "ranked", requestClass: "main", identity: ".secret-looking" })).status).toBe(HTTP_STATUS.badRequest);
+      expect(logged.filter((line) => line.includes("x-agent-shim-identity"))).toHaveLength(1);
+      expect(logged.join("\n")).not.toContain(".secret-looking");
     } finally {
       await world.close();
     }

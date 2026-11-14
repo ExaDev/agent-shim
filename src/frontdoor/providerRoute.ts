@@ -690,7 +690,7 @@ export function createProviderRouteResolver(deps: {
           try {
             moved = sessionId !== "" && ((await deps.accountMoves?.(sessionId, account.identity, account.model)) ?? false);
           } catch (error) {
-            // Leaving the move request writes a file; a write that fails is the door's own failure, never a read of the person's configuration.
+            // Leaving the move request reads the supervisors' registries and the identity records, then writes the request; a failure in any of these is the door's own, never the person's configuration being wrong, so it is answered as the door's 500.
             if (!isSystemReadError(error)) {
               throw error;
             }
