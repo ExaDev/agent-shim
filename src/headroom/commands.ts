@@ -27,6 +27,7 @@ import {
   type HeadroomSession,
   type HeadroomState,
 } from "./state";
+import { appendHeadroomLog } from "./headroomLog";
 import { reportableAllowlistFileProblem, type AllowlistFileProblem, type HeadroomSocketTrustPorts } from "./socket";
 import { currentHeadroomAllowlistInputs, undeterminedFrontDoors, type UndeterminedFrontDoor, resolveSupervisorConfig, runSupervisor, stopSupervisedProcess, type SupervisorPorts } from "./supervisor";
 
@@ -297,7 +298,7 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
       const trust = resolveHeadroomTrustBundle({ caCertFile: paths.frontdoorCaCertFile, bundlesDir: paths.frontdoorCaBundlesDir, inherited: process.env[HEADROOM_CA_BUNDLE], fs: realTrustBundleFs });
       fs.mkdirSync(paths.logsDir, { recursive: true });
       if (trust?.warning !== undefined) {
-        fs.appendFileSync(paths.headroomLogPath, `${new Date().toISOString()} ${trust.warning}\n`);
+        appendHeadroomLog(paths, `${new Date().toISOString()} ${trust.warning}\n`);
       }
       const logFd = fs.openSync(paths.headroomLogPath, "a");
       try {
@@ -315,7 +316,7 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
         child.once("exit", (code, signal) => {
           ownedHeadroom.delete(pid);
           exitedHeadroom.add(pid);
-          fs.appendFileSync(paths.headroomLogPath, `${new Date().toISOString()} agent-shim headroom supervisor: headroom exited (${signal ?? `code ${String(code)}`})\n`);
+          appendHeadroomLog(paths, `${new Date().toISOString()} agent-shim headroom supervisor: headroom exited (${signal ?? `code ${String(code)}`})\n`);
         });
         return pid;
       } finally {
@@ -332,8 +333,8 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
         now: () => Date.now(),
       });
       if (outcome === "still-running") {
-        fs.appendFileSync(
-          paths.headroomLogPath,
+        appendHeadroomLog(
+          paths,
           `${new Date().toISOString()} agent-shim headroom supervisor: pid ${String(pid)} survived SIGKILL within its grace; it is stuck uninterruptibly\n`,
         );
       }
@@ -351,10 +352,10 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
         };
       }
       if (result.stdout !== "") {
-        fs.appendFileSync(paths.headroomLogPath, result.stdout);
+        appendHeadroomLog(paths, result.stdout);
       }
       if (result.stderr !== "") {
-        fs.appendFileSync(paths.headroomLogPath, result.stderr);
+        appendHeadroomLog(paths, result.stderr);
       }
       return result.status === 0 ? { ok: true } : { ok: false, error: `uv tool install exited ${String(result.status)}` };
     },
@@ -364,8 +365,7 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
     },
     installedCommit: readInstalledHeadroomCommit,
     log: (line) => {
-      fs.mkdirSync(paths.logsDir, { recursive: true });
-      fs.appendFileSync(paths.headroomLogPath, `${new Date().toISOString()} ${line}\n`);
+      appendHeadroomLog(paths, `${new Date().toISOString()} ${line}\n`);
     },
   };
 }
