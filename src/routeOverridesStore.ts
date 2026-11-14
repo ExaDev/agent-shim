@@ -34,6 +34,12 @@ function tableOf(overrides: Readonly<RouteOverrides>, scope: RouteOverrideScope)
   return scope.kind === "global" ? overrides.global : ownEntry(overrides[SCOPE_KEYS[scope.kind]], scope.name);
 }
 
+/** The keys a removal of `model` in `scope` takes, as they are stored: the lower-case key, and any a hand edit wrote in another case. */
+export function storedOverrideKeys(overrides: Readonly<RouteOverrides>, scope: RouteOverrideScope, model: string): readonly string[] {
+  const canonical = overrideKeyOf(model);
+  return Object.keys(tableOf(overrides, scope) ?? {}).filter((existing) => existing.toLowerCase() === canonical);
+}
+
 /** The key an override of `model` is stored under: its lower-case spelling, which a request's Claude name is matched against in any case. */
 export function overrideKeyOf(model: string): string {
   return model.toLowerCase();

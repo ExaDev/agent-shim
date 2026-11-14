@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { EXIT_USAGE } from "./cliError";
 import { cli, expectOk, keychain, parseJson, paths } from "./programTestWorld";
 import { realFsPort } from "./realPorts";
-import { createRouteOverridesReader, readRouteOverrides } from "./routeOverridesStore";
+import { createRouteOverridesReader, readRouteOverrides, writeRouteOverrides } from "./routeOverridesStore";
 
 describe("route commands", () => {
   const addZ = ["provider", "add", "z", "--display-name", "z.ai", "--base-url", "https://api.z.ai/api/anthropic", "--credential", "env:Z_API_TOKEN"];
@@ -62,6 +62,16 @@ describe("route commands", () => {
     expect(parseJson((await cli(["route", "remove", "HAIKU", "--yes", "--json"])).stdout)).toEqual({ action: "removed", kind: "route", name: "haiku" });
     expect(parseJson((await cli(["route", "set", "OPUS", "z/glm-5.3", "--json"])).stdout)).toEqual({ action: "updated", kind: "route", name: "opus", value: { scope: "global", model: "opus", target: "z/glm-5.3" } });
     expect((await cli(["route", "set", "Claude-Sonnet-5-5", "z/glm-5.3"])).stdout).toContain("Routing claude-sonnet-5-5 to z/glm-5.3");
+  });
+
+  it("reports a removal by the key as stored, as text and as JSON, and a key a hand edit stored in another case by that spelling", async () => {
+    expectOk(await cli(addZ));
+    expectOk(await cli(["route", "set", "haiku", "z/air"]));
+    expect((await cli(["route", "remove", "HAIKU", "--yes"])).stdout).toContain("Removed the override of haiku ");
+    writeRouteOverrides(paths, { schemaVersion: 1, global: { Opus: "z/glm-5.3" } });
+    expect((await cli(["route", "remove", "opus", "--yes"])).stdout).toContain("Removed the override of Opus ");
+    writeRouteOverrides(paths, { schemaVersion: 1, global: { Opus: "z/glm-5.3" } });
+    expect(parseJson((await cli(["route", "remove", "OPUS", "--yes", "--json"])).stdout)).toEqual({ action: "removed", kind: "route", name: "Opus" });
   });
 
   it("has doctor report an overrides file it cannot read as a failure, print the whole report, and exit 1", async () => {
