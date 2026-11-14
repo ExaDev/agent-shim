@@ -1,7 +1,7 @@
 import { CLAUDE_TIERS, type ClaudeTier } from "../config/schema";
 import { FAMILY_PREFIX } from "./families";
 import { withoutContextMarker } from "./identity";
-import { SELECTOR_PREFIX } from "./reservedModelNames";
+import { ANTHROPIC_ROUTE_NAME, SELECTOR_PREFIX } from "./reservedModelNames";
 
 /**
  * The model-name grammar that routes a request by what it names rather than by a model: `auto/[<kind>:]<word>[/<class-or-model>]`. The word names a configuration profile, an identity, a pool, a provider or a model family, and the optional kind prefix says which when the word names more than one; the class is a Claude tier (`opus`, `sonnet`, `haiku`, `fable`) and any other rest is an exact model, which may carry slashes of its own (an aggregator's `vendor/model`). A trailing `[1m]` context marker is no part of a name and is taken off first. Bare `auto` is not this grammar: it is the model that follows a provider's live served model.
@@ -14,7 +14,7 @@ export const SELECTOR_KINDS = ["profile", "identity", "pool", "provider", "famil
 export type SelectorKind = (typeof SELECTOR_KINDS)[number];
 
 /** The exact name of an Anthropic model, as a refusal offers it in place of a class the door cannot resolve. */
-const ANTHROPIC_SELECTOR_HINT = "anthropic/<model>";
+const ANTHROPIC_SELECTOR_HINT = `${ANTHROPIC_ROUTE_NAME}/<model>`;
 
 /** How each kind is named in a message. */
 const KIND_NOUNS: Readonly<Record<SelectorKind, string>> = { profile: "configuration profile", identity: "identity", pool: "pool", provider: "provider", family: "model family" };
@@ -148,7 +148,7 @@ function onAnthropic(ports: Readonly<SelectorPorts>, target: SelectorTarget, wha
   if (target.kind === "class") {
     const seen = ports.claudeNameOf(target.tier);
     return seen === undefined
-      ? { refusal: `${asked} selects ${what} on the Anthropic route, and this session has sent no ${target.tier} request the door has seen, so it cannot tell which model the class means there: choose it once with /model ${target.tier}, or name the exact model as ${ANTHROPIC_SELECTOR_HINT}` }
+      ? { refusal: `${asked} selects ${what} on the Anthropic route, and this session has sent no ${target.tier} request the door has seen, so it cannot tell which model the class means there: choose it once with /model ${target.tier}${ports.provider(ANTHROPIC_ROUTE_NAME).kind === "absent" ? `, or name the exact model as ${ANTHROPIC_SELECTOR_HINT}` : ""}` }
       : { name: `anthropic/${seen}` };
   }
   return { refusal: `${asked} selects ${what}, which runs on the Anthropic route, where a selector needs a class or an exact model: write ${written}/<class> or ${written}/<model>` };

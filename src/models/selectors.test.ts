@@ -216,6 +216,13 @@ describe("expanding a selector against live state", () => {
     expect(result).toContain("/model sonnet");
   });
 
+  it("offers anthropic/<model> for a class it cannot resolve only while no provider claims the name anthropic", () => {
+    const claimed = ports({ provider: (name) => (name === "z" || name === "anthropic" ? { kind: "found", value: undefined } : { kind: "absent" }) });
+    const refused = expanded("auto/plain/haiku", ME, claimed) ?? "";
+    expect(refused).toContain("/model haiku");
+    expect(refused).not.toContain("anthropic/<model>");
+  });
+
   it("treats a session with no identity as never on the selected login", () => {
     expect(expanded("auto/me/claude-opus-5-5", {})).toBe("acct:me/claude-opus-5-5");
   });

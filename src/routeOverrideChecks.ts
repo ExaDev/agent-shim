@@ -4,7 +4,7 @@ import { listIdentities } from "./identityStore";
 import { FAMILY_PREFIX, buildFamilies, familyNamed } from "./models/families";
 import { withoutContextMarker } from "./models/identity";
 import { expandSelectorName, type SelectorLookup, type SelectorPorts } from "./models/selectors";
-import { ANTHROPIC_ROUTE_NAME } from "./frontdoor/mainLoopRoute";
+import { ANTHROPIC_ROUTE_NAME } from "./models/reservedModelNames";
 import { targetRefs } from "./models/targets";
 import { isBareClaudeName } from "./models/tiers";
 import { readModels } from "./modelsStore";
