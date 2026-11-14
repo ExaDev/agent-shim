@@ -6,7 +6,7 @@ import { z } from "zod";
  * A test is identified by its file and its title path as the suite's own listing resolves them: `<file>: <describe> > <test>`, the form a case's `from` uses. The file is relative to `src/` for a file under it and to the repository root otherwise. A listing holds titles after the suite has run its `each` expansions and evaluated any computed title, so there is no literal and non-literal title here: a title either equals what a `from` or a row says, character for character, or it is unaccounted for.
  */
 
-/** Milliseconds of CPU collection takes per test file: a full listing of 539 files took 162 s of user and 27 s of system CPU on 16 cores, 350 ms a file, rounded up. */
+/** A ceiling of CPU milliseconds per collected test file, kept above what collecting one costs, so a listing that outruns a budget built on it was held back by its host and not slowed by the suite. To re-measure: run `time pnpm exec vitest list --json` in a checkout, add its user and system CPU seconds, and divide by the number of test files `pnpm exec vitest list --filesOnly --json` finds; the result, in milliseconds, must stay below this figure. */
 const COLLECTION_CPU_MS_PER_FILE = 400;
 
 /** The least share of one core a listing is assumed to get: a host that holds a job to two cores and shares them with another job at lowered priority. */
