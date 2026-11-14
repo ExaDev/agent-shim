@@ -111,7 +111,7 @@ function uncaughtVoidChains(module: string, source: string): readonly string[] {
 /** The modules whose failure handlers a log write must not throw out of: the tick modules, the two supervisors' loops, and `keepTicking.ts` itself. */
 const HANDLER_MODULES = [...TICK_MODULES, "frontdoor/supervisor.ts", "headroom/supervisor.ts", "keepTicking.ts"] as const;
 
-/** Each call of a logger (`log`, `<x>.log`, optionally called) inside a catch clause or a `.catch(` callback of `source` that is not a name the module binds to `quietLog(...)`, as `<module> <line>`. */
+/** Each call of a logger named `log` or `<x>.log` (optionally called) written inside a catch clause or a `.catch(` callback of `source` that is not a name the module binds to `quietLog(...)`, as `<module> <line>`. It reads names only: an alias of a logger, a logger passed as the callback itself (`.catch(deps.log)`), a helper that logs, a shadowing parameter, a `.then` rejection handler and a logger by another name pass it. The door's and headroom's loggers drop a line they cannot write wherever they are called (`logFile.repo.test.ts`); this check is about loggers injected into the listed modules. */
 function rawHandlerLogs(module: string, source: string): readonly string[] {
   const file = ts.createSourceFile(module, source, ts.ScriptTarget.Latest, true);
   const quiet = new Set<string>();
@@ -166,7 +166,7 @@ describe("a background loop in a long-lived process", () => {
     expect(TICK_MODULES.flatMap((module) => uncaughtVoidChains(module, sourceOf(module)))).toEqual([]);
   });
 
-  it("logs inside each failure handler of a tick module or supervisor through quietLog, so a log write failing as the failure did throws nothing out of the handler", () => {
+  it("calls no logger named log or <x>.log inside a catch clause or a .catch callback of the listed modules but one bound to quietLog(...); a logger reached another way (an alias, a logger passed as the callback, a helper, a .then rejection handler) is not read", () => {
     expect(HANDLER_MODULES.flatMap((module) => rawHandlerLogs(module, sourceOf(module)))).toEqual([]);
   });
 
