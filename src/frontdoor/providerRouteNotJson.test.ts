@@ -48,8 +48,9 @@ describe("createProviderRouteResolver and a provider file that is not JSON", () 
     expect(resolution.ok).toBe(false);
     if (!resolution.ok) {
       expect(resolution.status).toBe(HTTP_STATUS.internalServerError);
-      expect(resolution.message).toContain("provider garbled is invalid");
-      expect(resolution.message).toContain(`${path.join(providersDir, "garbled.json")} is not valid JSON`);
+      expect(resolution.message).toContain('provider "garbled" cannot be used because its file is invalid (not valid JSON)');
+      // The refusal goes to the client, so it names the fault and never the file's path under the state root.
+      expect(resolution.message).not.toContain(providersDir);
       expect(resolution.message).not.toContain("FAKESECRET");
     }
   });

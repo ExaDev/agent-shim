@@ -38,7 +38,7 @@ describe("the model a helper is sent under, by the provider its main loop is on"
     try {
       const helper = await send(world, { model: HAIKU_NAME, requestClass: "auxiliary" });
       expect(helper.status).toBe(HTTP_STATUS.internalServerError);
-      expect(helper.text).toContain("provider bad is invalid");
+      expect(helper.text).toContain('provider \\"bad\\" cannot be used because its file is invalid');
       expect(world.upstream.seen).toEqual([]);
       expect(world.toAnthropic).toEqual([]);
     } finally {

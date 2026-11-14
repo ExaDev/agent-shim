@@ -1,6 +1,6 @@
 import { holdFrom } from "../elapsedWindow";
 import { createAgyCredentialResolver } from "../antigravity/agyCredential";
-import { ConfigFileNotJsonError, ConfigValidationError } from "../config/load";
+import { configFaultOf, ConfigFileNotJsonError, ConfigValidationError } from "../config/load";
 import { InvalidProviderNameError, isFileName } from "../config/names";
 import { isAntigravityProvider, isCodexProvider, isHttpProvider, type AntigravityProvider, type CodexProvider, type HttpProvider, type Credential, isRouterProvider, type ModelsConfig } from "../config/schema";
 import { HTTP_STATUS } from "../codex/http";
@@ -514,7 +514,7 @@ export function createProviderRouteResolver(deps: {
         return { ok: false, status: HTTP_STATUS.notFound, message: `no provider named ${JSON.stringify(provider)}` };
       }
       if (error instanceof ConfigValidationError || error instanceof LegacyProviderFileError || error instanceof ConfigFileNotJsonError) {
-        return { ok: false, status: HTTP_STATUS.internalServerError, message: `provider ${provider} is invalid: ${error instanceof Error ? error.message : String(error)}` };
+        return { ok: false, status: HTTP_STATUS.internalServerError, message: `provider ${JSON.stringify(provider)} cannot be used because its file is invalid (${configFaultOf(error)}): agent-shim doctor says what is wrong` };
       }
       throw error;
     }

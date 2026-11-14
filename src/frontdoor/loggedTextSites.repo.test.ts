@@ -41,10 +41,9 @@ const RAW_OK: readonly RawAllowance[] = [
   { file: "frontdoor/providerRoute.ts", expression: "line", sites: 1, why: "a log line a subsystem of the door built, scanned where it is built", declaredBy: /^line: string$/ },
   { file: "frontdoor/providerRoute.ts", expression: "bodyTooLargeMessage(limitBytes, provider)", sites: 1, why: "the limit message the door builds from its own limit and the provider named in the request path, which is the client's own text and goes back to it in a JSON error body" },
   { file: "frontdoor/providerRoute.ts", expression: "path", sites: 2, why: "the request path the client sent, echoed back to that client in a JSON error body (an unknown endpoint, and a self-hosted session's request the door never passes to the real API)" },
-  { file: "frontdoor/providerRoute.ts", expression: "JSON.stringify(provider)", sites: 1, why: "the provider name from the request path, quoted with JSON escapes, in a JSON error body to the client that sent it" },
-  { file: "frontdoor/providerRoute.ts", expression: "provider", sites: 2, why: "a provider name: from the person's own configuration or, in a refusal, the request path the client sent, in a JSON error body to that client" },
-  { file: "frontdoor/providerRoute.ts", expression: "error.message", sites: 1, why: "the message of a configuration error naming the person's own provider file and the keys it got wrong" },
-  { file: "frontdoor/providerRoute.ts", expression: "String(error)", sites: 1, why: "a configuration error on the person's own provider file" },
+  { file: "frontdoor/providerRoute.ts", expression: "JSON.stringify(provider)", sites: 2, why: "the provider name from the request path, quoted with JSON escapes, in a JSON error body to the client that sent it" },
+  { file: "frontdoor/providerRoute.ts", expression: "provider", sites: 1, why: "a provider name: from the person's own configuration or, in a refusal, the request path the client sent, in a JSON error body to that client" },
+  { file: "frontdoor/providerRoute.ts", expression: "configFaultOf(error)", sites: 1, why: "the keys the person's own provider file got wrong, or the class or code of its read failure; never a path or a value" },
   { file: "frontdoor/providerRoute.ts", expression: "res.message", sites: 1, why: "the door's own credential resolution message" },
   { file: "frontdoor/providerRoute.ts", expression: "resolution.message", sites: 1, why: "the door's own credential resolution message" },
   { file: "frontdoor/providerRoute.ts", expression: '[...visited, providerName].join(" -> ")', sites: 1, why: "provider names from the person's own routes lists" },
@@ -212,8 +211,9 @@ describe("the text a provider supplied, in a log line or an error message", () =
   it("fails on a new site that spells an allowed expression, and on a site that goes", () => {
     const real = fs.readFileSync(path.join(__dirname, "..", "frontdoor/providerRoute.ts"), "utf8");
     expect(miscounted("frontdoor/providerRoute.ts", real)).toEqual([]);
-    const added = `${real}\nfunction addedLater(deps: { log: (line: string) => void }): void {\n  try {\n    throw new Error("x");\n  } catch (error) {\n    deps.log(\`failed: \${error instanceof Error ? error.message : String(error)}\`);\n  }\n}\n`;
-    expect(miscounted("frontdoor/providerRoute.ts", added)).toEqual(expect.arrayContaining(["error.message", "String(error)"]));
+    // A second site of an allowed expression is one more than its allowance counts.
+    const added = `${real}\nfunction addedLater(deps: { log: (line: string) => void }): void {\n  try {\n    throw new Error("x");\n  } catch (error) {\n    deps.log(\`failed: \${configFaultOf(error)}\`);\n  }\n}\n`;
+    expect(miscounted("frontdoor/providerRoute.ts", added)).toEqual(["configFaultOf(error)"]);
     expect(miscounted("frontdoor/providerRoute.ts", real.replace("message: res.message", 'message: "gone"'))).toEqual(["res.message"]);
   });
 
