@@ -33,10 +33,10 @@ describe("where an override's scope and a selector's route come from", () => {
         expect(line, `${module}: ${line.trim()}`).toContain("sessionRouteProvider(");
       }
     }
-    // The recorded context is read in two places: as the argument of sessionRouteProvider, and as the route the main loop's helpers follow (`current`), which an override's move rightly sets.
+    // The recorded context is read as the argument of sessionRouteProvider, and as the route the main loop's helpers follow (`current`, taken when the request arrives), which an override's move rightly sets: nowhere else.
     const reads = DOOR_MODULES.flatMap((module) => codeLines(fs.readFileSync(path.join(__dirname, module), "utf8")).filter((line) => line.includes(".routeOf(")).map((line) => `${module}: ${line.trim()}`));
     expect(reads).toHaveLength(2);
     expect(reads.filter((read) => read.includes("sessionRouteProvider("))).toHaveLength(1);
-    expect(reads.filter((read) => read.includes('const current = deps.record.routeOf(launch);'))).toHaveLength(1);
+    expect(reads.filter((read) => read.includes("current: deps.record.routeOf(launch)"))).toHaveLength(1);
   });
 });

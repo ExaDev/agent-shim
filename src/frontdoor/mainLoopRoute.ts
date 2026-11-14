@@ -362,7 +362,7 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
   /**
    * `request` with its model renamed by `deps.rename`, and the name it asked for, when the rename replaced it: only a Messages request carries a model, and only its head is read and rewritten, the rest streaming through unread. A request that names the model field twice is refused where it would be rewritten, since only the first field would change. A request the rename leaves alone goes on as the scan's replay, its bytes as they came.
    */
-  const renamed = async (request: RoutedRequest, rename: RenameModel, bodyLimitBytes: number): Promise<{ readonly request: RoutedRequest; readonly asked?: string; readonly overridden?: true } | { readonly refused: RouteResolution }> => {
+  const renamed = async (request: RoutedRequest, arrival: ReturnType<typeof arrivalOf>, rename: RenameModel, bodyLimitBytes: number): Promise<{ readonly request: RoutedRequest; readonly asked?: string; readonly overridden?: true } | { readonly refused: RouteResolution }> => {
     const path = new URL(request.url, "http://127.0.0.1").pathname;
     // A body that declares more than the limit is refused by the resolver from its declared length before any of it is read, so it is not read here either.
     if (!isMessagesRequest(request.method, path) || declaredLength(request.headers) > bodyLimitBytes) {
@@ -379,7 +379,7 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
       session: request.session,
       main: requestClass === undefined || requestClass === MAIN_REQUEST_CLASS,
       unscoped: parseProviderPath(path) === undefined,
-      routeProvider: () => sessionRouteProvider(request.session.provider, launch === undefined ? undefined : deps.record.routeOf(launch)),
+      routeProvider: () => sessionRouteProvider(request.session.provider, arrival === undefined ? (launch === undefined ? undefined : deps.record.routeOf(launch)) : arrival.current),
       claudeNameOf: (tier) => (launch === undefined ? undefined : deps.record.claudeNameOf(launch, tier)),
     });
     if (decided === undefined || asked === undefined) {
@@ -397,15 +397,22 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
     return { request: withModelInHead(scan.replayed, scan.headBytes, asked, decided.name), asked, ...(decided.overridden === undefined ? {} : { overridden: true }) };
   };
 
-  const routed = async (request: RoutedRequest, asked: string | undefined, overridden: boolean): Promise<RouteResolution> => {
+  /** A request the main loop's context governs, its place in the launch's order and the context as it stood, taken when the request arrives and before anything is awaited, so a request whose head is read late cannot out-record one that arrived after it; undefined for any other request. */
+  const arrivalOf = (request: RoutedRequest): { readonly launch: Readonly<FrontDoorLaunch>; readonly ticket: number; readonly current: Readonly<RouteContext> | undefined } | undefined => {
     const { launch, provider } = request.session;
-    const path = new URL(request.url, "http://127.0.0.1").pathname;
-    if (launch === undefined || provider !== undefined || !isMessagesInferencePath(path)) {
+    if (launch === undefined || provider !== undefined || !isMessagesInferencePath(new URL(request.url, "http://127.0.0.1").pathname)) {
+      return undefined;
+    }
+    return { launch, ticket: deps.record.begin(launch), current: deps.record.routeOf(launch) };
+  };
+
+  const routed = async (request: RoutedRequest, arrival: ReturnType<typeof arrivalOf>, asked: string | undefined, overridden: boolean): Promise<RouteResolution> => {
+    if (arrival === undefined) {
       return await resolve(request);
     }
+    const { launch, ticket, current } = arrival;
+    const path = new URL(request.url, "http://127.0.0.1").pathname;
     const requestClass = requestClassOf(request.headers);
-    const ticket = deps.record.begin(launch);
-    const current = deps.record.routeOf(launch);
     if (requestClass !== undefined && requestClass !== MAIN_REQUEST_CLASS) {
       // A helper is placed by the context before anything resolves it. Only a Messages request carries a model, so only its head is read: any other request on a Messages sub-resource goes on with its body untouched.
       const scan = isMessagesRequest(request.method, path) ? await scanRequestHead(request) : undefined;
@@ -470,14 +477,15 @@ export function followingMainLoop(resolve: (request: RoutedRequest) => Promise<R
   };
 
   return async (request) => {
+    const arrival = arrivalOf(request);
     if (deps.rename === undefined) {
-      return await routed(request, undefined, false);
+      return await routed(request, arrival, undefined, false);
     }
-    const named = await renamed(request, deps.rename.model, deps.rename.bodyLimitBytes);
+    const named = await renamed(request, arrival, deps.rename.model, deps.rename.bodyLimitBytes);
     if ("refused" in named) {
       return named.refused;
     }
-    const resolution = await routed(named.request, named.asked, named.overridden === true);
+    const resolution = await routed(named.request, arrival, named.asked, named.overridden === true);
     // The usage log records the name the request asked for, as the context does.
     return resolution.ok && named.asked !== undefined ? { ...resolution, requestedModel: named.asked } : resolution;
   };
