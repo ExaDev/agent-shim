@@ -87,15 +87,21 @@ pub fn run() -> Result<Vec<String>, TaskError> {
         if name == WASM_CRATE
             && let Some(directory) = Path::new(manifest).parent()
         {
-            rust_sources(directory, &mut wasm_sources)?;
+            rust_sources(directory, true, &mut wasm_sources)?;
         }
     }
     let workspace = read(&Path::new(root).join("Cargo.toml"))?;
     Ok(problems_in(&workspace, &members, &wasm_sources))
 }
 
-/// Every `.rs` file under `directory`, as its path and text, leaving out a `target` directory of build output.
-fn rust_sources(directory: &Path, found: &mut Vec<(String, String)>) -> Result<(), TaskError> {
+/// Every `.rs` file under `directory`, as its path and text, leaving out the crate's own `target` directory of build
+/// output (`top` is true for the crate directory itself, so a hand-written module that happens to be called `target` is
+/// still read).
+fn rust_sources(
+    directory: &Path,
+    top: bool,
+    found: &mut Vec<(String, String)>,
+) -> Result<(), TaskError> {
     let mut entries: Vec<_> = std::fs::read_dir(directory)
         .and_then(|listing| {
             listing
@@ -109,14 +115,25 @@ fn rust_sources(directory: &Path, found: &mut Vec<(String, String)>) -> Result<(
     entries.sort();
     for entry in entries {
         if entry.is_dir() {
-            if entry.file_name().is_some_and(|name| name != "target") {
-                rust_sources(&entry, found)?;
+            let build_output = top && entry.file_name().is_some_and(|name| name == "target");
+            if !build_output {
+                rust_sources(&entry, false, found)?;
             }
         } else if entry.extension().is_some_and(|extension| extension == "rs") {
             found.push((entry.display().to_string(), read(&entry)?));
         }
     }
     Ok(())
+}
+
+/// Whether `text` pulls in source this check does not read: `include!`, or a `#[path = "..."]` module, whatever the
+/// spacing.
+fn pulls_in_other_source(text: &str) -> bool {
+    let compact: String = text
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    compact.contains("include!(") || compact.contains("#[path=") || compact.contains("#![path=")
 }
 
 /// Whether `text` holds the word `unsafe`, as a whole word and in any case of context (code, comment or string).
@@ -182,6 +199,9 @@ fn problems_in(
         } else if name == WASM_CRATE {
             problems.extend(exception_problems(name, manifest, &workspace_lints, &[]));
             for (file, text) in wasm_sources {
+                if pulls_in_other_source(text) {
+                    problems.push(format!("{name}: {file} pulls in source with include! or #[path], which this check does not read"));
+                }
                 if mentions_unsafe(text) {
                     problems.push(format!("{name}: {file} holds the word unsafe, which only the macro's generated code may"));
                 }
@@ -586,5 +606,62 @@ dbg_macro = \"deny\"
             ),
             ["agent-shim-third: [lints] workspace = true is missing"]
         );
+    }
+
+    #[test]
+    fn the_binding_crate_may_not_pull_in_source_the_check_does_not_read() {
+        let members = members(&[("agent-shim-wasm", WASM)]);
+        for text in [
+            "include!(\"../shared.rs\");",
+            "include ! (\"gen.inc\")",
+            "#[path = \"../x.rs\"]\nmod x;",
+            "#[ path=\"x.rs\" ] mod x;",
+        ] {
+            assert_eq!(
+                problems_in(WORKSPACE, &members, &source(text)),
+                [
+                    "agent-shim-wasm: src/lib.rs pulls in source with include! or #[path], which this check does not read"
+                ],
+                "{text}"
+            );
+        }
+        assert_eq!(
+            problems_in(
+                WORKSPACE,
+                &members,
+                &source("mod path;\n// include the file\nuse a::path;")
+            ),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn only_the_crates_own_target_directory_is_left_unread() {
+        let root =
+            std::env::temp_dir().join(format!("agent-shim-lint-sources-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for file in [
+            "src/lib.rs",
+            "src/target/mod.rs",
+            "target/debug/build.rs",
+            "build.rs",
+            "notes.txt",
+        ] {
+            let path = root.join(file);
+            std::fs::create_dir_all(path.parent().expect("a parent")).expect("create");
+            std::fs::write(path, "x").expect("write");
+        }
+        let mut found = Vec::new();
+        rust_sources(&root, true, &mut found).expect("reads");
+        let mut names: Vec<String> = found
+            .iter()
+            .map(|(file, _)| {
+                file.trim_start_matches(&root.display().to_string())
+                    .to_owned()
+            })
+            .collect();
+        names.sort();
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(names, ["/build.rs", "/src/lib.rs", "/src/target/mod.rs"]);
     }
 }
