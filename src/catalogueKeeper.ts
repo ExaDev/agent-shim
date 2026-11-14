@@ -58,7 +58,7 @@ export function createCatalogueKeeper(deps: Readonly<CatalogueKeeperDeps>): Cata
       try {
         providers = deps.providers();
       } catch (error) {
-        // The providers could not be listed (a read that failed for the moment, a directory that cannot be read): nothing is refreshed this tick, and the next tick lists them again.
+        // The providers could not be listed: `listProviders` throws a listing or provider read that failed for the moment, and an error that is no file fault. Nothing is refreshed this tick, and the next tick lists them again. A providers directory that is absent or cannot be listed lists no providers rather than reaching here (`listProviderNames`).
         deps.log(`catalogue keeper could not list the providers (${catalogueReadFault(error)})`);
         return;
       }
