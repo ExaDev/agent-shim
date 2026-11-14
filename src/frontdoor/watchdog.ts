@@ -98,12 +98,13 @@ const spawnReplacement = () => {
   if (respawn === undefined || logFile === undefined) return;
   const nextGeneration = respawnGeneration + 1;
   const cooldownMs = Math.min(Math.max(0, nextGeneration - respawnMaxGeneration) * cooldownStepMs, cooldownCapMs);
-  const startingBy = liveLockHolder();
-  if (startingBy !== undefined) {
-    log("not starting a replacement: process " + String(startingBy) + " holds the start lock, so a door is already being started and a second one would race it for the sticky ports");
-    return;
-  }
+  // Inside the try with the spawn: clearing a dead holder's lock can fail (EACCES, EMFILE), and a throw out of here would fail the thread.
   try {
+    const startingBy = liveLockHolder();
+    if (startingBy !== undefined) {
+      log("not starting a replacement: process " + String(startingBy) + " holds the start lock, so a door is already being started and a second one would race it for the sticky ports");
+      return;
+    }
     const out = fs.openSync(logFile, "a");
     const child = require("node:child_process").spawn(respawn.command, respawn.args, { detached: true, stdio: ["ignore", out, out], env: Object.assign({}, respawn.env, { [awaitPidEnv]: String(ownPid), [respawnGenerationEnv]: String(nextGeneration), [delayEnv]: String(cooldownMs) }) });
     child.unref();

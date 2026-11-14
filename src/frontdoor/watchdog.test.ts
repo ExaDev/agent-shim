@@ -82,6 +82,11 @@ async function writtenTextOf(file: string): Promise<string> {
   return textOf(file);
 }
 
+/** A directory its owner can list and enter but not write, so no entry in it can be removed. */
+const READ_ONLY_DIRECTORY_MODE = 0o555;
+/** A directory its owner can write again, so the test's cleanup can remove it. */
+const WRITABLE_DIRECTORY_MODE = 0o755;
+
 describe("the watchdog's derived constants", () => {
   it("is more patient than a launcher is with a door, so a door a launcher still calls busy is never acted on", () => {
     expect(DOOR_STALL_BOUND_MS).toBeGreaterThan(FRONTDOOR_PROBE_ATTEMPTS * PROBE_TIMEOUT_MS);
@@ -457,6 +462,25 @@ describe("startNextRespawnGeneration", () => {
     const marker = path.join(directory, "next");
     await startNextFrom(TEST_RESPAWN_MAX_GENERATION, marker);
     expect(await writtenTextOf(marker)).toBe(`${String(process.pid)} gen ${String(TEST_RESPAWN_MAX_GENERATION + 1)} delay ${String(TEST_COOLDOWN_STEP_MS)}`);
+  });
+
+  it("logs a dead holder's start lock it cannot clear and starts none, rather than failing its thread", async () => {
+    if (process.getuid?.() === 0) return;
+    const locked = path.join(directory, "locked");
+    fs.mkdirSync(locked);
+    const lockedFile = path.join(locked, LOCK_NAME);
+    const dead = spawnSync(process.execPath, ["-e", "0"]).pid;
+    fs.writeFileSync(lockedFile, `${JSON.stringify({ pid: dead, at: 0 })}\n`);
+    // A directory with no write permission: the dead holder's lock in it cannot be removed (EACCES).
+    fs.chmodSync(locked, READ_ONLY_DIRECTORY_MODE);
+    const marker = path.join(directory, "next");
+    try {
+      await startNextRespawnGeneration({ ownPid: process.pid, logFile, respawn: recordingRespawn(marker), respawnGeneration: 1, respawnMaxGeneration: TEST_RESPAWN_MAX_GENERATION, cooldownStepMs: TEST_COOLDOWN_STEP_MS, cooldownCapMs: TEST_COOLDOWN_CAP_MS, startLockFile: lockedFile });
+    } finally {
+      fs.chmodSync(locked, WRITABLE_DIRECTORY_MODE);
+    }
+    expect(textOf(logFile)).toMatch(/could not start a replacement door: EACCES/);
+    expect(fs.existsSync(marker)).toBe(false);
   });
 
   it("starts none while a live process holds the start lock, so a door a launch is already starting is not raced", async () => {
