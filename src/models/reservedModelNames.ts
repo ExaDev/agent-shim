@@ -5,6 +5,9 @@ import { claudeNameTier } from "./tiers";
 /** The model name that means "whichever model the provider's server serves right now". */
 export const AUTO_MODEL = "auto";
 
+/** The provider part that names the Anthropic route in a qualified name (`anthropic/<model>`), unless a provider file of that name claims it. */
+export const ANTHROPIC_ROUTE_NAME = "anthropic";
+
 /** What every model name of the selector grammar starts with (`auto/<selector>[/<class>]`): a name with this prefix is the door's to expand, never a virtual model's or a provider's. */
 export const SELECTOR_PREFIX = `${AUTO_MODEL}/`;
 
