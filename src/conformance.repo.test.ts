@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { getCurrentSuite } from "vitest/suite";
 import { z } from "zod";
 
 import { collect, decodeText, fileProblems, loadCorpus, manifestProblems, runCase, selectFiles, validatorsFrom, type CaseTable } from "../conformance/runner/run.mjs";
@@ -91,23 +92,42 @@ const TABLE: CaseTable = {
 const ManifestSchema = z.object({ files: z.record(z.string(), z.object({ cases: z.number(), skip: z.object({ ts: z.array(z.string()), rust: z.array(z.string()) }) })) });
 
 describe("the conformance corpus", () => {
-  const { cases, problems } = collect(ROOT);
+  const { cases, executed, problems } = collect(ROOT);
   const manifest = ManifestSchema.parse(JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8"))).files;
+  const nameOf = (entry: { readonly file: string; readonly id: string }): string => `${entry.file}: ${entry.id}`;
+
+  // The tests that started, which must each have run their steps to the end: a body that does nothing starts and does not finish.
+  const started = new Set<string>();
+
+  beforeEach(({ task }) => {
+    started.add(task.name);
+  });
 
   it("is well formed, and holds exactly what its manifest lists", () => {
     expect(problems).toEqual([]);
   });
 
-  // Registered here, at collection, so the count below does not depend on what the run later does with the tests (a filter, a bail, a retry, a shuffled order).
   for (const entry of cases) {
-    (entry.skip === "ts" ? it.skip : it)(`${entry.file}: ${entry.id}`, () => {
+    (entry.skip === "ts" ? it.skip : it)(nameOf(entry), () => {
       entry.run(TABLE);
     });
   }
 
-  it("registers every case the manifest counts, and skips exactly the ones it lists for TypeScript", () => {
-    expect(cases.length).toBe(Object.values(manifest).reduce((total, file) => total + file.cases, 0));
-    expect(cases.filter((entry) => entry.skip === "ts").map((entry) => entry.id).sort()).toEqual(Object.values(manifest).flatMap((file) => file.skip.ts).sort());
+  // Read back from the registrations themselves, as vitest holds them before any filter, bail, retry or shuffle applies, so the count is of the tests that will run and the tests that will be skipped, not of the data they were made from: a registration changed to skip, or removed, changes it.
+  const caseNames = new Set(cases.map(nameOf));
+  const registered = getCurrentSuite().tasks.filter((task) => caseNames.has(task.name));
+
+  it("registers every case the manifest counts to run, and skips exactly the ones it lists for TypeScript", () => {
+    const listed = Object.values(manifest);
+    const skipped = listed.flatMap((file) => file.skip.ts).sort();
+    const registeredSkipped = registered.filter((task) => task.mode === "skip").map((task) => task.name);
+    expect(registeredSkipped.sort()).toEqual(cases.filter((entry) => skipped.includes(entry.id)).map(nameOf).sort());
+    expect(registered.filter((task) => task.mode === "run")).toHaveLength(listed.reduce((total, file) => total + file.cases, 0) - skipped.length);
+  });
+
+  afterAll(() => {
+    const unfinished = cases.filter((entry) => started.has(nameOf(entry)) && !executed.has(entry.id)).map(nameOf);
+    expect(unfinished).toEqual([]);
   });
 });
 
