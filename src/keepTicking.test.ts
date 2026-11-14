@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { keepTicking } from "./keepTicking";
+import { faultLog, keepTicking } from "./keepTicking";
+import { errorWithCode } from "./test-helpers";
 
 describe("keepTicking", () => {
   it("does not throw a tick's failure, logs a failure unless it repeats the last one, and logs once when a tick succeeds again", () => {
@@ -36,5 +37,36 @@ describe("keepTicking", () => {
 
   it("goes on with no log, dropping the failure", () => {
     expect(keepTicking("sweep", () => { throw new Error("x"); }, undefined)).not.toThrow();
+  });
+
+  describe.each(["EMFILE", "ENOSPC"])("with a log whose write fails with %s", (code) => {
+    /** A log that fails as an append to a log file does when the process has no descriptor left or the disk no space. */
+    const failingLog = (): never => { throw errorWithCode(`${code}: failed, open '/state/frontdoor/log'`, code); };
+
+    it("does not throw out of the timer when the tick fails too", () => {
+      const callback = keepTicking("catalogue keeper", () => { throw errorWithCode(`${code}: failed, scandir '/state/providers'`, code); }, failingLog);
+      expect(callback).not.toThrow();
+      expect(callback).not.toThrow();
+    });
+
+    it("leaves no rejection unhandled when the tick's promise rejects", async () => {
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown): void => { unhandled.push(reason); };
+      process.on("unhandledRejection", onUnhandled);
+      try {
+        keepTicking("window keeper", async () => { await Promise.reject(errorWithCode(code, code)); }, failingLog)();
+        await new Promise((resolve) => { setImmediate(resolve); });
+        await new Promise((resolve) => { setImmediate(resolve); });
+        expect(unhandled).toEqual([]);
+      } finally {
+        process.off("unhandledRejection", onUnhandled);
+      }
+    });
+
+    it("lets faultLog record a failure and a success without throwing", () => {
+      const faults = faultLog("supervisor tick", failingLog);
+      expect(() => { faults.failed(errorWithCode(code, code)); }).not.toThrow();
+      expect(() => { faults.succeeded(); }).not.toThrow();
+    });
   });
 });
