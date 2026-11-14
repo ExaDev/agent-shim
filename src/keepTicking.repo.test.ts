@@ -35,6 +35,16 @@ function unwrappedTimers(module: string, source: string): readonly string[] {
   return found;
 }
 
+/** The text of `module` under `src`, or an empty text for one that is gone by the time it is read: another test writes and removes a probe module in `src` while the suite runs, and a module that is no longer there holds nothing. */
+function sourceOf(module: string): string {
+  try {
+    return fs.readFileSync(path.join(__dirname, module), "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return "";
+    throw error;
+  }
+}
+
 /** Every non-test module under `src`, relative to it. */
 function modules(directory: string): readonly string[] {
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -45,7 +55,7 @@ function modules(directory: string): readonly string[] {
 }
 
 describe("a background loop in a long-lived process", () => {
-  const found = modules(__dirname).flatMap((module) => unwrappedTimers(module, fs.readFileSync(path.join(__dirname, module), "utf8")));
+  const found = modules(__dirname).flatMap((module) => unwrappedTimers(module, sourceOf(module)));
 
   it("ticks through keepTicking at each setInterval and clock.every in src, but where an allowance says why not", () => {
     expect(found.filter((key) => ALLOWED[key] === undefined)).toEqual([]);
