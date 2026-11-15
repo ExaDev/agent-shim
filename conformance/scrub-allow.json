@@ -111,6 +111,48 @@
       "pointer": "/cases/4/steps/0/expect/value",
       "reason": "A made-up home directory in the original tests, passed in as an argument and never read.",
       "sha256": "f9e409c5c16ecfdd5883da4f3ad045b4af5677740c9e703ad2d47ba231718350"
+    },
+    {
+      "class": "home-path",
+      "file": "function/resolve-projects.json",
+      "pointer": "/cases/0/from",
+      "reason": "The title of the original test, which names a made-up directory under a made-up home and is the case's record of where it came from; the test is gone and its title is the only place the text survives.",
+      "sha256": "69eb62f06f02a93acd61567cf258bb5e3eda3ffd22430beab14cfd7e0bb03177"
+    },
+    {
+      "class": "home-path",
+      "file": "function/resolve-projects.json",
+      "pointer": "/cases/1/from",
+      "reason": "The title of the original test, which names a made-up directory under a made-up home and is the case's record of where it came from; the test is gone and its title is the only place the text survives.",
+      "sha256": "69eb62f06f02a93acd61567cf258bb5e3eda3ffd22430beab14cfd7e0bb03177"
+    },
+    {
+      "class": "home-path",
+      "file": "function/resolve-projects.json",
+      "pointer": "/cases/2/from",
+      "reason": "The title of the original test, which names a made-up directory under a made-up home and is the case's record of where it came from; the test is gone and its title is the only place the text survives.",
+      "sha256": "69eb62f06f02a93acd61567cf258bb5e3eda3ffd22430beab14cfd7e0bb03177"
+    },
+    {
+      "class": "home-path",
+      "file": "function/resolve-projects.json",
+      "pointer": "/cases/3/from",
+      "reason": "The title of the original test, which names a made-up directory under a made-up home and is the case's record of where it came from; the test is gone and its title is the only place the text survives.",
+      "sha256": "69eb62f06f02a93acd61567cf258bb5e3eda3ffd22430beab14cfd7e0bb03177"
+    },
+    {
+      "class": "home-path",
+      "file": "function/resolve-projects.json",
+      "pointer": "/cases/4/from",
+      "reason": "The title of the original test, which names a made-up directory under a made-up home and is the case's record of where it came from; the test is gone and its title is the only place the text survives.",
+      "sha256": "69eb62f06f02a93acd61567cf258bb5e3eda3ffd22430beab14cfd7e0bb03177"
+    },
+    {
+      "class": "home-path",
+      "file": "function/resolve-projects.json",
+      "pointer": "/cases/5/from",
+      "reason": "The title of the original test, which names a made-up directory under a made-up home and is the case's record of where it came from; the test is gone and its title is the only place the text survives.",
+      "sha256": "69eb62f06f02a93acd61567cf258bb5e3eda3ffd22430beab14cfd7e0bb03177"
     }
   ]
 }

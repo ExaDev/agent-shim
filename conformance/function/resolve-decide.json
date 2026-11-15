@@ -1,0 +1,4478 @@
+{
+  "cases": [
+    {
+      "from": "resolve/decide.test.ts: the secret floor > refuses a secret path unconditionally, above the entries lookup rather than beneath it",
+      "id": "decide.secret-floor.unconditional",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            ".credentials.json",
+            [
+              {
+                "categories": {
+                  "knowledge": true,
+                  "runtime": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  ".credentials.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": ".credentials.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups/2026-01-01.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "backups/2026-01-01.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "backups",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        },
+        {
+          "args": [
+            ".credentials.json",
+            [
+              {
+                "categories": {
+                  "knowledge": true,
+                  "runtime": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  ".credentials.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": ".credentials.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups/2026-01-01.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "backups/2026-01-01.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "backups",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "secret-floor"
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "via"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/decide.test.ts: the secret floor > neutralises a glob written under a different prefix that happens to reach a secret path",
+      "id": "decide.secret-floor.neutralises-another-prefix",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            ".credentials.json",
+            [
+              {
+                "entries": {
+                  "runtime/.credentials.json": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  ".credentials.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": ".credentials.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups/2026-01-01.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "backups/2026-01-01.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "backups",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        },
+        {
+          "args": [
+            ".credentials.json",
+            [
+              {
+                "entries": {
+                  "runtime/.credentials.json": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  ".credentials.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": ".credentials.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups/2026-01-01.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "backups/2026-01-01.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "backups",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "secret-floor"
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "via"
+          ]
+        },
+        {
+          "args": [
+            ".credentials.json",
+            [
+              {
+                "entries": {
+                  "runtime/.credentials.json": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  ".credentials.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": ".credentials.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups/2026-01-01.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "backups/2026-01-01.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "backups",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            },
+            "SECRET_PATH_NEUTRALISED"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "resolveEntry.hasDiagnostic"
+        }
+      ]
+    },
+    {
+      "from": "resolve/decide.test.ts: the secret floor > neutralises a broad wildcard that sweeps up a secret path along with everything else",
+      "id": "decide.secret-floor.neutralises-a-wildcard",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            ".credentials.json",
+            [
+              {
+                "entries": {
+                  "runtime/*": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  ".credentials.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": ".credentials.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups/2026-01-01.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "backups/2026-01-01.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "backups",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        },
+        {
+          "args": [
+            ".credentials.json",
+            [
+              {
+                "entries": {
+                  "runtime/*": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  ".credentials.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": ".credentials.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups/2026-01-01.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "backups/2026-01-01.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "backups",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "secret-floor"
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "via"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/decide.test.ts: the secret floor > never symlinks ~/.claude/backups under any configuration",
+      "id": "decide.secret-floor.never-symlinks-backups",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "backups",
+            [
+              {
+                "categories": {
+                  "history": true,
+                  "knowledge": true,
+                  "runtime": true,
+                  "settings": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  ".credentials.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": ".credentials.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups/2026-01-01.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "backups/2026-01-01.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "backups",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        },
+        {
+          "args": [
+            "backups/2026-01-01.json",
+            [
+              {
+                "categories": {
+                  "history": true,
+                  "knowledge": true,
+                  "runtime": true,
+                  "settings": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  ".credentials.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": ".credentials.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups/2026-01-01.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "backups/2026-01-01.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "backups",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        },
+        {
+          "args": [
+            "backups",
+            [
+              {
+                "entries": {
+                  "runtime/backups": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  ".credentials.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": ".credentials.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups/2026-01-01.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "backups/2026-01-01.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "backups",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        },
+        {
+          "args": [
+            "backups/2026-01-01.json",
+            [
+              {
+                "entries": {
+                  "runtime/backups": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  ".credentials.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": ".credentials.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups/2026-01-01.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "backups/2026-01-01.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "backups",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        },
+        {
+          "args": [
+            "backups",
+            [
+              {
+                "entries": {
+                  "knowledge/backups/2026-01-01.json": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  ".credentials.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": ".credentials.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups/2026-01-01.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "backups/2026-01-01.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "backups",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        },
+        {
+          "args": [
+            "backups/2026-01-01.json",
+            [
+              {
+                "entries": {
+                  "knowledge/backups/2026-01-01.json": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  ".credentials.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": ".credentials.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups/2026-01-01.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "backups/2026-01-01.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "backups",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "backups",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/decide.test.ts: unclassified entries > excludes an entry nothing recognises and reports it rather than guessing",
+      "id": "decide.unclassified.excluded-and-reported",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "brand-new-thing",
+            [
+              {
+                "categories": {
+                  "knowledge": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "brand-new-thing/file",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "brand-new-thing/file",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "brand-new-thing",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "brand-new-thing",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        },
+        {
+          "args": [
+            "brand-new-thing",
+            [
+              {
+                "categories": {
+                  "knowledge": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "brand-new-thing/file",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "brand-new-thing/file",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "brand-new-thing",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "brand-new-thing",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "unclassified"
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "via"
+          ]
+        },
+        {
+          "args": [
+            "brand-new-thing",
+            [
+              {
+                "categories": {
+                  "knowledge": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "brand-new-thing/file",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "brand-new-thing/file",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "brand-new-thing",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "brand-new-thing",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            },
+            "UNCLASSIFIED_ENTRY"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "resolveEntry.hasDiagnostic"
+        }
+      ]
+    },
+    {
+      "from": "resolve/decide.test.ts: entries beat categories > lets a shallow layer's specific entry survive a later, deeper layer's blanket category flip",
+      "id": "decide.entries-beat-categories.survives-a-deeper-flip",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "skills/commit",
+            [
+              {
+                "entries": {
+                  "knowledge/skills/commit": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              },
+              {
+                "categories": {
+                  "knowledge": false
+                },
+                "id": 3,
+                "kind": "config-profile",
+                "source": "layer-3"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 2
+                  }
+                ],
+                [
+                  "skills/other/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/other/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/other",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/other",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        },
+        {
+          "args": [
+            "skills/other",
+            [
+              {
+                "entries": {
+                  "knowledge/skills/commit": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              },
+              {
+                "categories": {
+                  "knowledge": false
+                },
+                "id": 3,
+                "kind": "config-profile",
+                "source": "layer-3"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 2
+                  }
+                ],
+                [
+                  "skills/other/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/other/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/other",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/other",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/decide.test.ts: entries beat categories > falls back to a category override only when no entries rule matches",
+      "id": "decide.entries-beat-categories.category-override",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "skills/other",
+            [
+              {
+                "categories": {
+                  "knowledge": false
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 2
+                  }
+                ],
+                [
+                  "skills/other/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/other/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/other",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/other",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "category-override"
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "via"
+          ]
+        },
+        {
+          "args": [
+            "skills/other",
+            [
+              {
+                "categories": {
+                  "knowledge": false
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 2
+                  }
+                ],
+                [
+                  "skills/other/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/other/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/other",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/other",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/decide.test.ts: entries beat categories > falls back to the shipped default when no layer touched the category at all",
+      "id": "decide.entries-beat-categories.shipped-default",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "skills/other",
+            [],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 2
+                  }
+                ],
+                [
+                  "skills/other/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/other/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/other",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/other",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "category-default"
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "via"
+          ]
+        },
+        {
+          "args": [
+            "skills/other",
+            [],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 2
+                  }
+                ],
+                [
+                  "skills/other/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/other/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/other",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/other",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/decide.test.ts: the corrected comparator in practice > lets a later personal glob beat an earlier committed exact key, closing the trust hole",
+      "id": "decide.comparator.later-glob-beats-earlier-exact",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "skills/commit",
+            [
+              {
+                "entries": {
+                  "knowledge/skills/commit": true
+                },
+                "id": 1,
+                "kind": "portable",
+                "source": "committed .agent-shim.json"
+              },
+              {
+                "entries": {
+                  "knowledge/skills/*": false
+                },
+                "id": 2,
+                "kind": "directory-rule",
+                "source": "personal rules"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        },
+        {
+          "args": [
+            "skills/commit",
+            [
+              {
+                "entries": {
+                  "knowledge/skills/commit": true
+                },
+                "id": 1,
+                "kind": "portable",
+                "source": "committed .agent-shim.json"
+              },
+              {
+                "entries": {
+                  "knowledge/skills/*": false
+                },
+                "id": 2,
+                "kind": "directory-rule",
+                "source": "personal rules"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": 2
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "rule",
+            "layer"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/decide.test.ts: the corrected comparator in practice > surfaces that interaction as a diagnostic rather than resolving it silently",
+      "id": "decide.comparator.interaction-is-a-diagnostic",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "skills/commit",
+            [
+              {
+                "entries": {
+                  "knowledge/skills/commit": true
+                },
+                "id": 1,
+                "kind": "portable",
+                "source": "committed"
+              },
+              {
+                "entries": {
+                  "knowledge/skills/*": false
+                },
+                "id": 2,
+                "kind": "directory-rule",
+                "source": "personal"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            },
+            "EXACT_ENTRY_OVERRIDDEN_BY_LATER_GLOB"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "resolveEntry.hasDiagnostic"
+        }
+      ]
+    },
+    {
+      "from": "resolve/decide.test.ts: the corrected comparator in practice > raises no such diagnostic when the earlier exact key and the later glob agree anyway",
+      "id": "decide.comparator.no-diagnostic-when-they-agree",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "skills/commit",
+            [
+              {
+                "entries": {
+                  "knowledge/skills/commit": false
+                },
+                "id": 1,
+                "kind": "portable",
+                "source": "committed"
+              },
+              {
+                "entries": {
+                  "knowledge/skills/*": false
+                },
+                "id": 2,
+                "kind": "directory-rule",
+                "source": "personal"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            },
+            "EXACT_ENTRY_OVERRIDDEN_BY_LATER_GLOB"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "resolveEntry.hasDiagnostic"
+        }
+      ]
+    },
+    {
+      "from": "resolve/decide.test.ts: the corrected comparator in practice > still lets an exact key beat a glob within one layer",
+      "id": "decide.comparator.exact-beats-glob-in-a-layer",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "skills/commit",
+            [
+              {
+                "entries": {
+                  "knowledge/skills/*": false,
+                  "knowledge/skills/commit": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/decide.test.ts: failing conditions > eliminates the more-specific rule and falls through to the next-most-specific matching rule, not to the category",
+      "id": "decide.conditions.eliminated-rule-falls-through",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "projects/-h-work-acme",
+            [
+              {
+                "entries": {
+                  "history/projects/~/work/*": true,
+                  "history/projects/~/work/acme": {
+                    "value": false,
+                    "when": {
+                      "newerThan": "90d"
+                    }
+                  }
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "projects/-h-work-acme/session.jsonl",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1751198400000,
+                    "mtimeMs": 1751198400000,
+                    "relPath": "projects/-h-work-acme/session.jsonl",
+                    "sizeBytes": 10,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects/-h-work-acme",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1751198400000,
+                    "mtimeMs": 0,
+                    "relPath": "projects/-h-work-acme",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 0,
+                    "relPath": "projects",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 20
+                  }
+                ],
+                [
+                  "projects/-h-work-fresh/session.jsonl",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 1768392000000,
+                    "relPath": "projects/-h-work-fresh/session.jsonl",
+                    "sizeBytes": 10,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects/-h-work-fresh",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 0,
+                    "relPath": "projects/-h-work-fresh",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 10
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "entry-rule"
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "via"
+          ]
+        },
+        {
+          "args": [
+            "projects/-h-work-acme",
+            [
+              {
+                "entries": {
+                  "history/projects/~/work/*": true,
+                  "history/projects/~/work/acme": {
+                    "value": false,
+                    "when": {
+                      "newerThan": "90d"
+                    }
+                  }
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "projects/-h-work-acme/session.jsonl",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1751198400000,
+                    "mtimeMs": 1751198400000,
+                    "relPath": "projects/-h-work-acme/session.jsonl",
+                    "sizeBytes": 10,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects/-h-work-acme",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1751198400000,
+                    "mtimeMs": 0,
+                    "relPath": "projects/-h-work-acme",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 0,
+                    "relPath": "projects",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 20
+                  }
+                ],
+                [
+                  "projects/-h-work-fresh/session.jsonl",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 1768392000000,
+                    "relPath": "projects/-h-work-fresh/session.jsonl",
+                    "sizeBytes": 10,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects/-h-work-fresh",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 0,
+                    "relPath": "projects/-h-work-fresh",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 10
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "projects/-h-work-*"
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "rule",
+            "canonicalPattern"
+          ]
+        },
+        {
+          "args": [
+            "projects/-h-work-acme",
+            [
+              {
+                "entries": {
+                  "history/projects/~/work/*": true,
+                  "history/projects/~/work/acme": {
+                    "value": false,
+                    "when": {
+                      "newerThan": "90d"
+                    }
+                  }
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "projects/-h-work-acme/session.jsonl",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1751198400000,
+                    "mtimeMs": 1751198400000,
+                    "relPath": "projects/-h-work-acme/session.jsonl",
+                    "sizeBytes": 10,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects/-h-work-acme",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1751198400000,
+                    "mtimeMs": 0,
+                    "relPath": "projects/-h-work-acme",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 0,
+                    "relPath": "projects",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 20
+                  }
+                ],
+                [
+                  "projects/-h-work-fresh/session.jsonl",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 1768392000000,
+                    "relPath": "projects/-h-work-fresh/session.jsonl",
+                    "sizeBytes": 10,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects/-h-work-fresh",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 0,
+                    "relPath": "projects/-h-work-fresh",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 10
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        },
+        {
+          "args": [
+            "projects/-h-work-acme",
+            [
+              {
+                "entries": {
+                  "history/projects/~/work/*": true,
+                  "history/projects/~/work/acme": {
+                    "value": false,
+                    "when": {
+                      "newerThan": "90d"
+                    }
+                  }
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "projects/-h-work-acme/session.jsonl",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1751198400000,
+                    "mtimeMs": 1751198400000,
+                    "relPath": "projects/-h-work-acme/session.jsonl",
+                    "sizeBytes": 10,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects/-h-work-acme",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1751198400000,
+                    "mtimeMs": 0,
+                    "relPath": "projects/-h-work-acme",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 0,
+                    "relPath": "projects",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 20
+                  }
+                ],
+                [
+                  "projects/-h-work-fresh/session.jsonl",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 1768392000000,
+                    "relPath": "projects/-h-work-fresh/session.jsonl",
+                    "sizeBytes": 10,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects/-h-work-fresh",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 0,
+                    "relPath": "projects/-h-work-fresh",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 10
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "projects/-h-work-acme"
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "eliminated",
+            "0",
+            "rule",
+            "canonicalPattern"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/decide.test.ts: failing conditions > never inverts the eliminated rule's own boolean value",
+      "id": "decide.conditions.never-inverts-the-eliminated-value",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "projects/-h-work-acme",
+            [
+              {
+                "entries": {
+                  "history/projects/~/work/acme": {
+                    "value": true,
+                    "when": {
+                      "newerThan": "90d"
+                    }
+                  }
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "projects/-h-work-acme/session.jsonl",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1751198400000,
+                    "mtimeMs": 1751198400000,
+                    "relPath": "projects/-h-work-acme/session.jsonl",
+                    "sizeBytes": 10,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects/-h-work-acme",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1751198400000,
+                    "mtimeMs": 0,
+                    "relPath": "projects/-h-work-acme",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 0,
+                    "relPath": "projects",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 20
+                  }
+                ],
+                [
+                  "projects/-h-work-fresh/session.jsonl",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 1768392000000,
+                    "relPath": "projects/-h-work-fresh/session.jsonl",
+                    "sizeBytes": 10,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects/-h-work-fresh",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 0,
+                    "relPath": "projects/-h-work-fresh",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 10
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "category-default"
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "via"
+          ]
+        },
+        {
+          "args": [
+            "projects/-h-work-acme",
+            [
+              {
+                "entries": {
+                  "history/projects/~/work/acme": {
+                    "value": true,
+                    "when": {
+                      "newerThan": "90d"
+                    }
+                  }
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "projects/-h-work-acme/session.jsonl",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1751198400000,
+                    "mtimeMs": 1751198400000,
+                    "relPath": "projects/-h-work-acme/session.jsonl",
+                    "sizeBytes": 10,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects/-h-work-acme",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1751198400000,
+                    "mtimeMs": 0,
+                    "relPath": "projects/-h-work-acme",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 0,
+                    "relPath": "projects",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 20
+                  }
+                ],
+                [
+                  "projects/-h-work-fresh/session.jsonl",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 1768392000000,
+                    "relPath": "projects/-h-work-fresh/session.jsonl",
+                    "sizeBytes": 10,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects/-h-work-fresh",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 0,
+                    "relPath": "projects/-h-work-fresh",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 10
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/decide.test.ts: failing conditions > applies the same rule where its condition does hold",
+      "id": "decide.conditions.applies-where-it-holds",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "projects/-h-work-fresh",
+            [
+              {
+                "entries": {
+                  "history/projects/~/work/*": {
+                    "value": true,
+                    "when": {
+                      "newerThan": "90d"
+                    }
+                  }
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "projects/-h-work-acme/session.jsonl",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1751198400000,
+                    "mtimeMs": 1751198400000,
+                    "relPath": "projects/-h-work-acme/session.jsonl",
+                    "sizeBytes": 10,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects/-h-work-acme",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1751198400000,
+                    "mtimeMs": 0,
+                    "relPath": "projects/-h-work-acme",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 0,
+                    "relPath": "projects",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 20
+                  }
+                ],
+                [
+                  "projects/-h-work-fresh/session.jsonl",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 1768392000000,
+                    "relPath": "projects/-h-work-fresh/session.jsonl",
+                    "sizeBytes": 10,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects/-h-work-fresh",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 0,
+                    "relPath": "projects/-h-work-fresh",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 10
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        },
+        {
+          "args": [
+            "projects/-h-work-acme",
+            [
+              {
+                "entries": {
+                  "history/projects/~/work/*": {
+                    "value": true,
+                    "when": {
+                      "newerThan": "90d"
+                    }
+                  }
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "projects/-h-work-acme/session.jsonl",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1751198400000,
+                    "mtimeMs": 1751198400000,
+                    "relPath": "projects/-h-work-acme/session.jsonl",
+                    "sizeBytes": 10,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects/-h-work-acme",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1751198400000,
+                    "mtimeMs": 0,
+                    "relPath": "projects/-h-work-acme",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 0,
+                    "relPath": "projects",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 20
+                  }
+                ],
+                [
+                  "projects/-h-work-fresh/session.jsonl",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 1768392000000,
+                    "relPath": "projects/-h-work-fresh/session.jsonl",
+                    "sizeBytes": 10,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects/-h-work-fresh",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 0,
+                    "relPath": "projects/-h-work-fresh",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 10
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "category-default"
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "via"
+          ]
+        },
+        {
+          "args": [
+            "projects/-h-work-acme",
+            [
+              {
+                "entries": {
+                  "history/projects/~/work/*": {
+                    "value": true,
+                    "when": {
+                      "newerThan": "90d"
+                    }
+                  }
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "projects/-h-work-acme/session.jsonl",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1751198400000,
+                    "mtimeMs": 1751198400000,
+                    "relPath": "projects/-h-work-acme/session.jsonl",
+                    "sizeBytes": 10,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects/-h-work-acme",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1751198400000,
+                    "mtimeMs": 0,
+                    "relPath": "projects/-h-work-acme",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 0,
+                    "relPath": "projects",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 20
+                  }
+                ],
+                [
+                  "projects/-h-work-fresh/session.jsonl",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 1768392000000,
+                    "relPath": "projects/-h-work-fresh/session.jsonl",
+                    "sizeBytes": 10,
+                    "totalSizeBytes": 10
+                  }
+                ],
+                [
+                  "projects/-h-work-fresh",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768392000000,
+                    "mtimeMs": 0,
+                    "relPath": "projects/-h-work-fresh",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 10
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/decide.test.ts: failing conditions > evaluates a branch condition against the injected branch, never a real repository",
+      "id": "decide.conditions.branch-from-the-injected-branch",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "skills/commit",
+            [
+              {
+                "entries": {
+                  "knowledge/skills/commit": {
+                    "value": false,
+                    "when": {
+                      "branch": "client/*"
+                    }
+                  }
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "branch": "client/acme",
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        },
+        {
+          "args": [
+            "skills/commit",
+            [
+              {
+                "entries": {
+                  "knowledge/skills/commit": {
+                    "value": false,
+                    "when": {
+                      "branch": "client/*"
+                    }
+                  }
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "branch": "main",
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/decide.test.ts: failing conditions > evaluates an env condition against the injected environment snapshot",
+      "id": "decide.conditions.env-from-the-injected-snapshot",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "skills/commit",
+            [
+              {
+                "entries": {
+                  "knowledge/skills/commit": {
+                    "value": false,
+                    "when": {
+                      "env": {
+                        "AGENT_SHIM_TEST": "on"
+                      }
+                    }
+                  }
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {
+                "AGENT_SHIM_TEST": "on"
+              },
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        },
+        {
+          "args": [
+            "skills/commit",
+            [
+              {
+                "entries": {
+                  "knowledge/skills/commit": {
+                    "value": false,
+                    "when": {
+                      "env": {
+                        "AGENT_SHIM_TEST": "on"
+                      }
+                    }
+                  }
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/decide.test.ts: selectRule > returns no rule and the full elimination list when every candidate's condition fails",
+      "id": "decide.select-rule.every-candidate-eliminated",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "skills/commit",
+            [
+              {
+                "entries": {
+                  "knowledge/skills/*": {
+                    "value": true,
+                    "when": {
+                      "newerThan": "1d"
+                    }
+                  }
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            "/h",
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": true,
+                "isSymlink": false,
+                "latestMtimeMs": 1733918400000,
+                "mtimeMs": 0,
+                "relPath": "skills/commit",
+                "sizeBytes": 0,
+                "totalSizeBytes": 1
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": {
+              "$undefined": true
+            }
+          },
+          "fn": "selectRule",
+          "select": [
+            "rule"
+          ]
+        },
+        {
+          "args": [
+            "skills/commit",
+            [
+              {
+                "entries": {
+                  "knowledge/skills/*": {
+                    "value": true,
+                    "when": {
+                      "newerThan": "1d"
+                    }
+                  }
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            "/h",
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": true,
+                "isSymlink": false,
+                "latestMtimeMs": 1733918400000,
+                "mtimeMs": 0,
+                "relPath": "skills/commit",
+                "sizeBytes": 0,
+                "totalSizeBytes": 1
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "selectRule",
+          "select": [
+            "eliminated",
+            "length"
+          ]
+        },
+        {
+          "args": [
+            "skills/commit",
+            [
+              {
+                "entries": {
+                  "knowledge/skills/*": {
+                    "value": true,
+                    "when": {
+                      "newerThan": "1d"
+                    }
+                  }
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            "/h",
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": true,
+                "isSymlink": false,
+                "latestMtimeMs": 1733918400000,
+                "mtimeMs": 0,
+                "relPath": "skills/commit",
+                "sizeBytes": 0,
+                "totalSizeBytes": 1
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": [
+              "newerThan"
+            ]
+          },
+          "fn": "selectRule",
+          "select": [
+            "eliminated",
+            "0",
+            "failed"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/decide.test.ts: category prefix cross-check > warns when a key's declared category disagrees with the real classification of the path it matched",
+      "id": "decide.category-prefix.mismatch-warns",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "skills/commit",
+            [
+              {
+                "entries": {
+                  "runtime/skills/commit": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            },
+            "CATEGORY_PREFIX_MISMATCH"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "resolveEntry.hasDiagnostic"
+        },
+        {
+          "args": [
+            "skills/commit",
+            [
+              {
+                "entries": {
+                  "runtime/skills/commit": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "resolveEntry",
+          "select": [
+            "decision",
+            "shared"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/decide.test.ts: resolveAll > decides every entry in the fact manifest and carries phase-one diagnostics through",
+      "id": "decide.resolve-all.decides-every-entry",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "secret/.credentials.json": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  ".credentials.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": ".credentials.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": [
+              ".credentials.json",
+              "skills",
+              "skills/commit",
+              "skills/commit/SKILL.md"
+            ]
+          },
+          "fn": "resolveAll.decisionKeys"
+        },
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "secret/.credentials.json": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "skills/commit/SKILL.md",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "skills/commit/SKILL.md",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills/commit",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills/commit",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "skills",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "skills",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  ".credentials.json",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": ".credentials.json",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            },
+            "SECRET_ENTRY_KEY"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "resolveAll.hasDiagnostic"
+        }
+      ]
+    },
+    {
+      "from": "resolve/decide.test.ts: resolveAll > de-duplicates a diagnostic that would otherwise repeat once per file beneath one unclassified entry",
+      "id": "decide.resolve-all.de-duplicates-diagnostics",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [],
+            {
+              "claudeHome": "/h/.claude",
+              "cwd": "/h/work",
+              "entries": [
+                [
+                  "mystery/a",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "mystery/a",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "mystery",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "mystery",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 3
+                  }
+                ],
+                [
+                  "mystery/b",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "mystery/b",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "mystery/c/d",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": false,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 1768478400000,
+                    "relPath": "mystery/c/d",
+                    "sizeBytes": 1,
+                    "totalSizeBytes": 1
+                  }
+                ],
+                [
+                  "mystery/c",
+                  {
+                    "isDanglingSymlink": false,
+                    "isDirectory": true,
+                    "isSymlink": false,
+                    "latestMtimeMs": 1768478400000,
+                    "mtimeMs": 0,
+                    "relPath": "mystery/c",
+                    "sizeBytes": 0,
+                    "totalSizeBytes": 1
+                  }
+                ]
+              ],
+              "env": {},
+              "home": "/h",
+              "nowMs": 1768478400000
+            },
+            "UNCLASSIFIED_ENTRY"
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "resolveAll.countOf"
+        }
+      ]
+    }
+  ]
+}

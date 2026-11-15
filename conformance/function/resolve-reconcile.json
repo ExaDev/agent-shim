@@ -1,0 +1,896 @@
+{
+  "cases": [
+    {
+      "from": "resolve/reconcile.test.ts: materialised directories > adopts a file Claude Code wrote into a materialised directory since the last resync",
+      "id": "reconcile.materialised.adopts-new-data",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "canonicalListing": [
+                {
+                  "kind": "dir",
+                  "rel": "projects"
+                }
+              ],
+              "farmListing": [
+                {
+                  "kind": "dir",
+                  "rel": "projects"
+                },
+                {
+                  "kind": "symlink",
+                  "rel": "projects/-h-work-old"
+                },
+                {
+                  "kind": "dir",
+                  "rel": "projects/-h-work-new"
+                },
+                {
+                  "contentHash": "aaa",
+                  "kind": "file",
+                  "rel": "projects/-h-work-new/session.jsonl"
+                },
+                {
+                  "kind": "symlink",
+                  "rel": "skills"
+                }
+              ],
+              "manifest": {
+                "builtAtMs": 1768478400000,
+                "claudeHome": "/h/.claude",
+                "cwd": "/h/work",
+                "identity": "testing",
+                "links": [],
+                "materialised": [
+                  "projects"
+                ],
+                "version": 1
+              }
+            },
+            "projects/-h-work-new/session.jsonl"
+          ],
+          "expect": {
+            "value": {
+              "kind": "adopt",
+              "reason": "absent-from-canonical",
+              "rel": "projects/-h-work-new/session.jsonl"
+            }
+          },
+          "fn": "planReconciliation.actionFor"
+        }
+      ]
+    },
+    {
+      "from": "resolve/reconcile.test.ts: materialised directories > leaves the symlinks the previous resync placed alone",
+      "id": "reconcile.materialised.leaves-its-symlinks-alone",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "canonicalListing": [],
+              "farmListing": [
+                {
+                  "kind": "dir",
+                  "rel": "projects"
+                },
+                {
+                  "kind": "symlink",
+                  "rel": "projects/-h-work-old"
+                },
+                {
+                  "kind": "dir",
+                  "rel": "projects/-h-work-new"
+                },
+                {
+                  "contentHash": "aaa",
+                  "kind": "file",
+                  "rel": "projects/-h-work-new/session.jsonl"
+                },
+                {
+                  "kind": "symlink",
+                  "rel": "skills"
+                }
+              ],
+              "manifest": {
+                "builtAtMs": 1768478400000,
+                "claudeHome": "/h/.claude",
+                "cwd": "/h/work",
+                "identity": "testing",
+                "links": [],
+                "materialised": [
+                  "projects"
+                ],
+                "version": 1
+              }
+            },
+            "projects/-h-work-old"
+          ],
+          "expect": {
+            "value": {
+              "kind": "skip",
+              "reason": "is-symlink",
+              "rel": "projects/-h-work-old"
+            }
+          },
+          "fn": "planReconciliation.actionFor"
+        },
+        {
+          "args": [
+            {
+              "canonicalListing": [],
+              "farmListing": [
+                {
+                  "kind": "dir",
+                  "rel": "projects"
+                },
+                {
+                  "kind": "symlink",
+                  "rel": "projects/-h-work-old"
+                },
+                {
+                  "kind": "dir",
+                  "rel": "projects/-h-work-new"
+                },
+                {
+                  "contentHash": "aaa",
+                  "kind": "file",
+                  "rel": "projects/-h-work-new/session.jsonl"
+                },
+                {
+                  "kind": "symlink",
+                  "rel": "skills"
+                }
+              ],
+              "manifest": {
+                "builtAtMs": 1768478400000,
+                "claudeHome": "/h/.claude",
+                "cwd": "/h/work",
+                "identity": "testing",
+                "links": [],
+                "materialised": [
+                  "projects"
+                ],
+                "version": 1
+              }
+            },
+            "skills"
+          ],
+          "expect": {
+            "value": {
+              "kind": "skip",
+              "reason": "is-symlink",
+              "rel": "skills"
+            }
+          },
+          "fn": "planReconciliation.actionFor"
+        }
+      ]
+    },
+    {
+      "from": "resolve/reconcile.test.ts: materialised directories > recognises a directory it materialised itself rather than treating it as new data",
+      "id": "reconcile.materialised.recognises-its-own-directory",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "canonicalListing": [],
+              "farmListing": [
+                {
+                  "kind": "dir",
+                  "rel": "projects"
+                },
+                {
+                  "kind": "symlink",
+                  "rel": "projects/-h-work-old"
+                },
+                {
+                  "kind": "dir",
+                  "rel": "projects/-h-work-new"
+                },
+                {
+                  "contentHash": "aaa",
+                  "kind": "file",
+                  "rel": "projects/-h-work-new/session.jsonl"
+                },
+                {
+                  "kind": "symlink",
+                  "rel": "skills"
+                }
+              ],
+              "manifest": {
+                "builtAtMs": 1768478400000,
+                "claudeHome": "/h/.claude",
+                "cwd": "/h/work",
+                "identity": "testing",
+                "links": [],
+                "materialised": [
+                  "projects"
+                ],
+                "version": 1
+              }
+            },
+            "projects"
+          ],
+          "expect": {
+            "value": {
+              "kind": "skip",
+              "reason": "tracked-materialised-dir",
+              "rel": "projects"
+            }
+          },
+          "fn": "planReconciliation.actionFor"
+        }
+      ]
+    },
+    {
+      "from": "resolve/reconcile.test.ts: materialised directories > emits no action for a real directory Claude Code created, only for its contents, so the pass stays idempotent",
+      "id": "reconcile.materialised.no-action-for-a-directory-claude-made",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "canonicalListing": [],
+              "farmListing": [
+                {
+                  "kind": "dir",
+                  "rel": "projects"
+                },
+                {
+                  "kind": "symlink",
+                  "rel": "projects/-h-work-old"
+                },
+                {
+                  "kind": "dir",
+                  "rel": "projects/-h-work-new"
+                },
+                {
+                  "contentHash": "aaa",
+                  "kind": "file",
+                  "rel": "projects/-h-work-new/session.jsonl"
+                },
+                {
+                  "kind": "symlink",
+                  "rel": "skills"
+                }
+              ],
+              "manifest": {
+                "builtAtMs": 1768478400000,
+                "claudeHome": "/h/.claude",
+                "cwd": "/h/work",
+                "identity": "testing",
+                "links": [],
+                "materialised": [
+                  "projects"
+                ],
+                "version": 1
+              }
+            },
+            "projects/-h-work-new"
+          ],
+          "expect": {
+            "value": {
+              "$undefined": true
+            }
+          },
+          "fn": "planReconciliation.actionFor"
+        }
+      ]
+    },
+    {
+      "from": "resolve/reconcile.test.ts: materialised directories > adopts an empty directory outright, since it has no contents to imply its existence",
+      "id": "reconcile.materialised.adopts-an-empty-directory",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "canonicalListing": [],
+              "farmListing": [
+                {
+                  "kind": "dir",
+                  "rel": "projects"
+                },
+                {
+                  "kind": "dir",
+                  "rel": "projects/-h-empty"
+                }
+              ],
+              "manifest": {
+                "builtAtMs": 1768478400000,
+                "claudeHome": "/h/.claude",
+                "cwd": "/h/work",
+                "identity": "testing",
+                "links": [],
+                "materialised": [
+                  "projects"
+                ],
+                "version": 1
+              }
+            },
+            "projects/-h-empty"
+          ],
+          "expect": {
+            "value": {
+              "kind": "adopt",
+              "reason": "absent-from-canonical",
+              "rel": "projects/-h-empty"
+            }
+          },
+          "fn": "planReconciliation.actionFor"
+        }
+      ]
+    },
+    {
+      "from": "resolve/reconcile.test.ts: idempotency across an interrupted resync > emits only skip(identical-content) on a second run against the same old farm",
+      "id": "reconcile.idempotency.second-run-skips-identical-content",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "canonicalListing": [
+                {
+                  "kind": "dir",
+                  "rel": "projects"
+                }
+              ],
+              "farmListing": [
+                {
+                  "kind": "dir",
+                  "rel": "projects"
+                },
+                {
+                  "kind": "dir",
+                  "rel": "projects/-h-work-new"
+                },
+                {
+                  "contentHash": "aaa",
+                  "kind": "file",
+                  "rel": "projects/-h-work-new/session.jsonl"
+                }
+              ],
+              "manifest": {
+                "builtAtMs": 1768478400000,
+                "claudeHome": "/h/.claude",
+                "cwd": "/h/work",
+                "identity": "testing",
+                "links": [],
+                "materialised": [
+                  "projects"
+                ],
+                "version": 1
+              }
+            },
+            "adopt"
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "planReconciliation.actionsOfKind",
+          "select": [
+            "length"
+          ]
+        },
+        {
+          "args": [
+            {
+              "canonicalListing": [
+                {
+                  "kind": "dir",
+                  "rel": "projects"
+                },
+                {
+                  "kind": "dir",
+                  "rel": "projects/-h-work-new"
+                },
+                {
+                  "contentHash": "aaa",
+                  "kind": "file",
+                  "rel": "projects/-h-work-new/session.jsonl"
+                }
+              ],
+              "farmListing": [
+                {
+                  "kind": "dir",
+                  "rel": "projects"
+                },
+                {
+                  "kind": "dir",
+                  "rel": "projects/-h-work-new"
+                },
+                {
+                  "contentHash": "aaa",
+                  "kind": "file",
+                  "rel": "projects/-h-work-new/session.jsonl"
+                }
+              ],
+              "manifest": {
+                "builtAtMs": 1768478400000,
+                "claudeHome": "/h/.claude",
+                "cwd": "/h/work",
+                "identity": "testing",
+                "links": [],
+                "materialised": [
+                  "projects"
+                ],
+                "version": 1
+              }
+            },
+            "adopt"
+          ],
+          "expect": {
+            "value": []
+          },
+          "fn": "planReconciliation.actionsOfKind"
+        },
+        {
+          "args": [
+            {
+              "canonicalListing": [
+                {
+                  "kind": "dir",
+                  "rel": "projects"
+                },
+                {
+                  "kind": "dir",
+                  "rel": "projects/-h-work-new"
+                },
+                {
+                  "contentHash": "aaa",
+                  "kind": "file",
+                  "rel": "projects/-h-work-new/session.jsonl"
+                }
+              ],
+              "farmListing": [
+                {
+                  "kind": "dir",
+                  "rel": "projects"
+                },
+                {
+                  "kind": "dir",
+                  "rel": "projects/-h-work-new"
+                },
+                {
+                  "contentHash": "aaa",
+                  "kind": "file",
+                  "rel": "projects/-h-work-new/session.jsonl"
+                }
+              ],
+              "manifest": {
+                "builtAtMs": 1768478400000,
+                "claudeHome": "/h/.claude",
+                "cwd": "/h/work",
+                "identity": "testing",
+                "links": [],
+                "materialised": [
+                  "projects"
+                ],
+                "version": 1
+              }
+            },
+            "adopt-conflict"
+          ],
+          "expect": {
+            "value": []
+          },
+          "fn": "planReconciliation.actionsOfKind"
+        },
+        {
+          "args": [
+            {
+              "canonicalListing": [
+                {
+                  "kind": "dir",
+                  "rel": "projects"
+                },
+                {
+                  "kind": "dir",
+                  "rel": "projects/-h-work-new"
+                },
+                {
+                  "contentHash": "aaa",
+                  "kind": "file",
+                  "rel": "projects/-h-work-new/session.jsonl"
+                }
+              ],
+              "farmListing": [
+                {
+                  "kind": "dir",
+                  "rel": "projects"
+                },
+                {
+                  "kind": "dir",
+                  "rel": "projects/-h-work-new"
+                },
+                {
+                  "contentHash": "aaa",
+                  "kind": "file",
+                  "rel": "projects/-h-work-new/session.jsonl"
+                }
+              ],
+              "manifest": {
+                "builtAtMs": 1768478400000,
+                "claudeHome": "/h/.claude",
+                "cwd": "/h/work",
+                "identity": "testing",
+                "links": [],
+                "materialised": [
+                  "projects"
+                ],
+                "version": 1
+              }
+            },
+            "projects/-h-work-new/session.jsonl"
+          ],
+          "expect": {
+            "value": {
+              "kind": "skip",
+              "reason": "identical-content",
+              "rel": "projects/-h-work-new/session.jsonl"
+            }
+          },
+          "fn": "planReconciliation.actionFor"
+        }
+      ]
+    },
+    {
+      "from": "resolve/reconcile.test.ts: conflicts > reports a farm file whose canonical counterpart exists with different content rather than overwriting either",
+      "id": "reconcile.conflicts.reported-not-overwritten",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "canonicalListing": [
+                {
+                  "contentHash": "canonical-version",
+                  "kind": "file",
+                  "rel": "projects/-a/session.jsonl"
+                }
+              ],
+              "farmListing": [
+                {
+                  "kind": "dir",
+                  "rel": "projects"
+                },
+                {
+                  "kind": "dir",
+                  "rel": "projects/-a"
+                },
+                {
+                  "contentHash": "farm-version",
+                  "kind": "file",
+                  "rel": "projects/-a/session.jsonl"
+                }
+              ],
+              "manifest": {
+                "builtAtMs": 1768478400000,
+                "claudeHome": "/h/.claude",
+                "cwd": "/h/work",
+                "identity": "testing",
+                "links": [],
+                "materialised": [
+                  "projects"
+                ],
+                "version": 1
+              }
+            },
+            "projects/-a/session.jsonl"
+          ],
+          "expect": {
+            "value": "adopt-conflict"
+          },
+          "fn": "planReconciliation.actionFor",
+          "select": [
+            "kind"
+          ]
+        },
+        {
+          "args": [
+            {
+              "canonicalListing": [
+                {
+                  "contentHash": "canonical-version",
+                  "kind": "file",
+                  "rel": "projects/-a/session.jsonl"
+                }
+              ],
+              "farmListing": [
+                {
+                  "kind": "dir",
+                  "rel": "projects"
+                },
+                {
+                  "kind": "dir",
+                  "rel": "projects/-a"
+                },
+                {
+                  "contentHash": "farm-version",
+                  "kind": "file",
+                  "rel": "projects/-a/session.jsonl"
+                }
+              ],
+              "manifest": {
+                "builtAtMs": 1768478400000,
+                "claudeHome": "/h/.claude",
+                "cwd": "/h/work",
+                "identity": "testing",
+                "links": [],
+                "materialised": [
+                  "projects"
+                ],
+                "version": 1
+              }
+            },
+            "RECONCILE_CONFLICT"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "planReconciliation.hasDiagnostic"
+        }
+      ]
+    },
+    {
+      "from": "resolve/reconcile.test.ts: conservative mode > treats every real directory as materialised when the manifest is missing, never silently doing nothing",
+      "id": "reconcile.conservative.every-real-directory-is-materialised",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "canonicalListing": [],
+              "farmListing": [
+                {
+                  "kind": "dir",
+                  "rel": "projects"
+                },
+                {
+                  "kind": "dir",
+                  "rel": "projects/-a"
+                },
+                {
+                  "contentHash": "aaa",
+                  "kind": "file",
+                  "rel": "projects/-a/session.jsonl"
+                },
+                {
+                  "kind": "symlink",
+                  "rel": "skills"
+                }
+              ]
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "planReconciliation",
+          "select": [
+            "conservative"
+          ]
+        },
+        {
+          "args": [
+            {
+              "canonicalListing": [],
+              "farmListing": [
+                {
+                  "kind": "dir",
+                  "rel": "projects"
+                },
+                {
+                  "kind": "dir",
+                  "rel": "projects/-a"
+                },
+                {
+                  "contentHash": "aaa",
+                  "kind": "file",
+                  "rel": "projects/-a/session.jsonl"
+                },
+                {
+                  "kind": "symlink",
+                  "rel": "skills"
+                }
+              ]
+            },
+            "projects/-a/session.jsonl"
+          ],
+          "expect": {
+            "value": "adopt"
+          },
+          "fn": "planReconciliation.actionFor",
+          "select": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/reconcile.test.ts: conservative mode > warns rather than crashing or no-opping",
+      "id": "reconcile.conservative.warns",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "canonicalListing": [],
+              "farmListing": [
+                {
+                  "kind": "dir",
+                  "rel": "projects"
+                },
+                {
+                  "kind": "dir",
+                  "rel": "projects/-a"
+                },
+                {
+                  "contentHash": "aaa",
+                  "kind": "file",
+                  "rel": "projects/-a/session.jsonl"
+                },
+                {
+                  "kind": "symlink",
+                  "rel": "skills"
+                }
+              ]
+            },
+            "FARM_MANIFEST_MISSING"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "planReconciliation.hasDiagnostic"
+        }
+      ]
+    },
+    {
+      "from": "resolve/reconcile.test.ts: conservative mode > still leaves symlinks alone in conservative mode",
+      "id": "reconcile.conservative.leaves-symlinks-alone",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "canonicalListing": [],
+              "farmListing": [
+                {
+                  "kind": "dir",
+                  "rel": "projects"
+                },
+                {
+                  "kind": "dir",
+                  "rel": "projects/-a"
+                },
+                {
+                  "contentHash": "aaa",
+                  "kind": "file",
+                  "rel": "projects/-a/session.jsonl"
+                },
+                {
+                  "kind": "symlink",
+                  "rel": "skills"
+                }
+              ]
+            },
+            "skills"
+          ],
+          "expect": {
+            "value": "skip"
+          },
+          "fn": "planReconciliation.actionFor",
+          "select": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/reconcile.test.ts: conservative mode > reports conservative as false when a manifest is present",
+      "id": "reconcile.conservative.false-with-a-manifest",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "canonicalListing": [],
+              "farmListing": [],
+              "manifest": {
+                "builtAtMs": 1768478400000,
+                "claudeHome": "/h/.claude",
+                "cwd": "/h/work",
+                "identity": "testing",
+                "links": [],
+                "materialised": [],
+                "version": 1
+              }
+            }
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "planReconciliation",
+          "select": [
+            "conservative"
+          ]
+        },
+        {
+          "args": [
+            {
+              "canonicalListing": [],
+              "farmListing": [],
+              "manifest": {
+                "builtAtMs": 1768478400000,
+                "claudeHome": "/h/.claude",
+                "cwd": "/h/work",
+                "identity": "testing",
+                "links": [],
+                "materialised": [],
+                "version": 1
+              }
+            }
+          ],
+          "expect": {
+            "value": []
+          },
+          "fn": "planReconciliation",
+          "select": [
+            "diagnostics"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/reconcile.test.ts: independence from the new resolved state > takes no decisions and no farm plan as input at all, so it cannot be skipped for a directory about to be omitted",
+      "id": "reconcile.independence.takes-no-resolved-state",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "canonicalListing": [],
+              "farmListing": [
+                {
+                  "kind": "dir",
+                  "rel": "projects"
+                },
+                {
+                  "kind": "dir",
+                  "rel": "projects/-a"
+                },
+                {
+                  "contentHash": "aaa",
+                  "kind": "file",
+                  "rel": "projects/-a/session.jsonl"
+                }
+              ],
+              "manifest": {
+                "builtAtMs": 1768478400000,
+                "claudeHome": "/h/.claude",
+                "cwd": "/h/work",
+                "identity": "testing",
+                "links": [],
+                "materialised": [
+                  "projects"
+                ],
+                "version": 1
+              }
+            },
+            "projects/-a/session.jsonl"
+          ],
+          "expect": {
+            "value": "adopt"
+          },
+          "fn": "planReconciliation.actionFor",
+          "select": [
+            "kind"
+          ]
+        }
+      ]
+    }
+  ]
+}

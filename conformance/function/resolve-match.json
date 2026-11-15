@@ -1,0 +1,1261 @@
+{
+  "cases": [
+    {
+      "from": "resolve/match.test.ts: canonicaliseEntryKey > strips the category prefix and keeps the rest as written",
+      "id": "match.canonicalise.strips-the-category-prefix",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "knowledge/skills/commit",
+            "/h"
+          ],
+          "expect": {
+            "value": {
+              "canonicalPattern": "skills/commit",
+              "declaredCategory": "knowledge"
+            }
+          },
+          "fn": "canonicaliseEntryKey"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: canonicaliseEntryKey > keeps the declared category so the resolver can cross-check it against the real classification",
+      "id": "match.canonicalise.keeps-the-declared-category",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "runtime/.credentials.json",
+            "/h"
+          ],
+          "expect": {
+            "value": "runtime"
+          },
+          "fn": "canonicaliseEntryKey",
+          "select": [
+            "declaredCategory"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: canonicaliseEntryKey > encodes a history/projects/ fragment as a real path, since that directory's only children are encoded names",
+      "id": "match.canonicalise.encodes-a-project-fragment",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "history/projects/~/work/clients/*",
+            "/h"
+          ],
+          "expect": {
+            "value": "projects/-h-work-clients-*"
+          },
+          "fn": "canonicaliseEntryKey",
+          "select": [
+            "canonicalPattern"
+          ]
+        },
+        {
+          "args": [
+            "history/projects/~/work/clients/*",
+            "/h"
+          ],
+          "expect": {
+            "value": "~/work/clients/*"
+          },
+          "fn": "canonicaliseEntryKey",
+          "select": [
+            "projectFragment"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: canonicaliseEntryKey > applies the project encoding nowhere else — every other key is a literal path or an ordinary glob",
+      "id": "match.canonicalise.encodes-nowhere-else",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "history/sessions/~weird",
+            "/h"
+          ],
+          "expect": {
+            "value": "sessions/~weird"
+          },
+          "fn": "canonicaliseEntryKey",
+          "select": [
+            "canonicalPattern"
+          ]
+        },
+        {
+          "args": [
+            "knowledge/skills/a.b.c",
+            "/h"
+          ],
+          "expect": {
+            "value": "skills/a.b.c"
+          },
+          "fn": "canonicaliseEntryKey",
+          "select": [
+            "canonicalPattern"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: canonicaliseEntryKey > normalises redundant separators and `.` segments outside history/projects/",
+      "id": "match.canonicalise.normalises-separators",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "skills//commit/"
+          ],
+          "expect": {
+            "value": "skills/commit"
+          },
+          "fn": "normaliseRelative"
+        },
+        {
+          "args": [
+            "knowledge/./skills//commit/",
+            "/h"
+          ],
+          "expect": {
+            "value": "skills/commit"
+          },
+          "fn": "canonicaliseEntryKey",
+          "select": [
+            "canonicalPattern"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: canonicaliseEntryKey > rejects a key with no category prefix",
+      "id": "match.canonicalise.rejects-a-key-without-a-category",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "skills/commit-only",
+            "/h"
+          ],
+          "expect": {
+            "throws": {
+              "name": "EntryKeyError"
+            }
+          },
+          "fn": "canonicaliseEntryKey"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: canonicaliseEntryKey > rejects a history/projects/ fragment that is not rooted",
+      "id": "match.canonicalise.rejects-an-unrooted-project-fragment",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "history/projects/work/acme",
+            "/h"
+          ],
+          "expect": {
+            "throws": {
+              "name": "EntryKeyError"
+            }
+          },
+          "fn": "canonicaliseEntryKey"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: canonicaliseEntryKey > collapses two syntactically different but equivalent project keys to one canonical pattern",
+      "id": "match.canonicalise.collapses-equivalent-project-keys",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "history/projects/~/work/x",
+            "/h"
+          ],
+          "expect": {
+            "value": "projects/-h-work-x"
+          },
+          "fn": "canonicaliseEntryKey",
+          "select": [
+            "canonicalPattern"
+          ]
+        },
+        {
+          "args": [
+            "history/projects//h/work/x",
+            "/h"
+          ],
+          "expect": {
+            "value": "projects/-h-work-x"
+          },
+          "fn": "canonicaliseEntryKey",
+          "select": [
+            "canonicalPattern"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: compileMatcher > matches the pattern itself and everything beneath it, so a rule on a directory covers its contents",
+      "id": "match.matcher.covers-the-subtree",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "skills",
+            "skills"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "compileMatcher"
+        },
+        {
+          "args": [
+            "skills",
+            "skills/commit"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "compileMatcher"
+        },
+        {
+          "args": [
+            "skills",
+            "skills/commit/SKILL.md"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "compileMatcher"
+        },
+        {
+          "args": [
+            "skills",
+            "agents"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "compileMatcher"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: compileMatcher > covers the contents of a glob-matched directory too",
+      "id": "match.matcher.covers-a-glob-matched-subtree",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "projects/-a-b-*",
+            "projects/-a-b-c"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "compileMatcher"
+        },
+        {
+          "args": [
+            "projects/-a-b-*",
+            "projects/-a-b-c/session.jsonl"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "compileMatcher"
+        },
+        {
+          "args": [
+            "projects/-a-b-*",
+            "projects/-x-y-z"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "compileMatcher"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: compileMatcher > matches a leading-dot entry, which a glob would otherwise skip",
+      "id": "match.matcher.matches-a-leading-dot",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            ".git*",
+            ".gitignore"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "compileMatcher"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: compileMatcher > matches case-sensitively whatever the host filesystem does",
+      "id": "match.matcher.is-case-sensitive",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "skills",
+            "Skills"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "compileMatcher"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: patternCouldReachUnder > says projects/* could reach under projects: true",
+      "id": "match.could-reach-under.1",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "projects/*",
+            "projects"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "patternCouldReachUnder"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: patternCouldReachUnder > says projects/-a-* could reach under projects: true",
+      "id": "match.could-reach-under.2",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "projects/-a-*",
+            "projects"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "patternCouldReachUnder"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: patternCouldReachUnder > says projects could reach under projects: true",
+      "id": "match.could-reach-under.3",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "projects",
+            "projects"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "patternCouldReachUnder"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: patternCouldReachUnder > says projects/-a-b could reach under projects: true",
+      "id": "match.could-reach-under.4",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "projects/-a-b",
+            "projects"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "patternCouldReachUnder"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: patternCouldReachUnder > says skills/** could reach under projects: false",
+      "id": "match.could-reach-under.5",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "skills/**",
+            "projects"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "patternCouldReachUnder"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: patternCouldReachUnder > says skills/commit could reach under skills: true",
+      "id": "match.could-reach-under.6",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "skills/commit",
+            "skills"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "patternCouldReachUnder"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: patternCouldReachUnder > says skills/commit could reach under agents: false",
+      "id": "match.could-reach-under.7",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "skills/commit",
+            "agents"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "patternCouldReachUnder"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: patternCouldReachUnder > says ** could reach under anything/deep: true",
+      "id": "match.could-reach-under.8",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "**",
+            "anything/deep"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "patternCouldReachUnder"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: patternCouldReachUnder > says skills could reach under skills/commit: true",
+      "id": "match.could-reach-under.9",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "skills",
+            "skills/commit"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "patternCouldReachUnder"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: patternCouldReachUnder > says a/*/c could reach under a/b: true",
+      "id": "match.could-reach-under.10",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a/*/c",
+            "a/b"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "patternCouldReachUnder"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: patternCouldReachUnder > says a/*/c could reach under z/b: false",
+      "id": "match.could-reach-under.11",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a/*/c",
+            "z/b"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "patternCouldReachUnder"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: patternCouldReachUnder > answers structurally rather than from the current listing, so it holds for files that do not exist yet",
+      "id": "match.could-reach-under.is-structural",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "projects/*",
+            "projects"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "patternCouldReachUnder"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: compareSpecificity > ranks a later layer above an earlier one, whatever their exactness",
+      "id": "match.specificity.later-layer-wins",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "canonicalPattern": "skills/*",
+              "layer": 3,
+              "ordinal": 0
+            },
+            {
+              "canonicalPattern": "skills/commit",
+              "layer": 1,
+              "ordinal": 0
+            }
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "compareSpecificity.sign"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "skills/commit",
+              "layer": 1,
+              "ordinal": 0
+            },
+            {
+              "canonicalPattern": "skills/*",
+              "layer": 3,
+              "ordinal": 0
+            }
+          ],
+          "expect": {
+            "value": -1
+          },
+          "fn": "compareSpecificity.sign"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: compareSpecificity > ranks an exact literal above a glob within the same layer",
+      "id": "match.specificity.exact-beats-glob",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "canonicalPattern": "skills/commit",
+              "layer": 2,
+              "ordinal": 1
+            },
+            {
+              "canonicalPattern": "skills/*",
+              "layer": 2,
+              "ordinal": 0
+            }
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "compareSpecificity.sign"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: compareSpecificity > ranks the longer literal prefix above the shorter one within the same layer",
+      "id": "match.specificity.longer-prefix-wins",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "canonicalPattern": "projects/-a-b-c*",
+              "layer": 2,
+              "ordinal": 0
+            },
+            {
+              "canonicalPattern": "projects/*",
+              "layer": 2,
+              "ordinal": 1
+            }
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "compareSpecificity.sign"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: compareSpecificity > ranks more path segments above fewer, separating a one-wildcard pattern from a two-wildcard one",
+      "id": "match.specificity.more-segments-win",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "canonicalPattern": "a/*/*",
+              "layer": 2,
+              "ordinal": 0
+            },
+            {
+              "canonicalPattern": "a/*",
+              "layer": 2,
+              "ordinal": 1
+            }
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "compareSpecificity.sign"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: compareSpecificity > falls back to source order within one layer when everything else ties",
+      "id": "match.specificity.source-order-last",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "canonicalPattern": "b/*",
+              "layer": 2,
+              "ordinal": 1
+            },
+            {
+              "canonicalPattern": "a/*",
+              "layer": 2,
+              "ordinal": 0
+            }
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "compareSpecificity.sign"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: compareSpecificity > is a total order — it never returns 0 for two distinct rules, which would make the winner iteration-order-dependent",
+      "id": "match.specificity.is-a-total-order",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "canonicalPattern": "a/*",
+              "layer": 0,
+              "ordinal": 0
+            },
+            {
+              "canonicalPattern": "a/*",
+              "layer": 0,
+              "ordinal": 0
+            }
+          ],
+          "expect": {
+            "value": 0
+          },
+          "fn": "compareSpecificity"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "a/*",
+              "layer": 0,
+              "ordinal": 0
+            },
+            {
+              "canonicalPattern": "a/b",
+              "layer": 0,
+              "ordinal": 0
+            }
+          ],
+          "expect": {
+            "value": -1
+          },
+          "fn": "compareSpecificity.sign"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "a/*",
+              "layer": 0,
+              "ordinal": 0
+            },
+            {
+              "canonicalPattern": "b/*",
+              "layer": 1,
+              "ordinal": 0
+            }
+          ],
+          "expect": {
+            "value": -1
+          },
+          "fn": "compareSpecificity.sign"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "a/*",
+              "layer": 0,
+              "ordinal": 0
+            },
+            {
+              "canonicalPattern": "a/*/*",
+              "layer": 1,
+              "ordinal": 3
+            }
+          ],
+          "expect": {
+            "value": -1
+          },
+          "fn": "compareSpecificity.sign"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "a/*",
+              "layer": 0,
+              "ordinal": 0
+            },
+            {
+              "canonicalPattern": "aa/*",
+              "layer": 1,
+              "ordinal": 3
+            }
+          ],
+          "expect": {
+            "value": -1
+          },
+          "fn": "compareSpecificity.sign"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "a/b",
+              "layer": 0,
+              "ordinal": 0
+            },
+            {
+              "canonicalPattern": "a/*",
+              "layer": 0,
+              "ordinal": 0
+            }
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "compareSpecificity.sign"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "a/b",
+              "layer": 0,
+              "ordinal": 0
+            },
+            {
+              "canonicalPattern": "a/b",
+              "layer": 0,
+              "ordinal": 0
+            }
+          ],
+          "expect": {
+            "value": 0
+          },
+          "fn": "compareSpecificity"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "a/b",
+              "layer": 0,
+              "ordinal": 0
+            },
+            {
+              "canonicalPattern": "b/*",
+              "layer": 1,
+              "ordinal": 0
+            }
+          ],
+          "expect": {
+            "value": -1
+          },
+          "fn": "compareSpecificity.sign"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "a/b",
+              "layer": 0,
+              "ordinal": 0
+            },
+            {
+              "canonicalPattern": "a/*/*",
+              "layer": 1,
+              "ordinal": 3
+            }
+          ],
+          "expect": {
+            "value": -1
+          },
+          "fn": "compareSpecificity.sign"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "a/b",
+              "layer": 0,
+              "ordinal": 0
+            },
+            {
+              "canonicalPattern": "aa/*",
+              "layer": 1,
+              "ordinal": 3
+            }
+          ],
+          "expect": {
+            "value": -1
+          },
+          "fn": "compareSpecificity.sign"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "b/*",
+              "layer": 1,
+              "ordinal": 0
+            },
+            {
+              "canonicalPattern": "a/*",
+              "layer": 0,
+              "ordinal": 0
+            }
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "compareSpecificity.sign"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "b/*",
+              "layer": 1,
+              "ordinal": 0
+            },
+            {
+              "canonicalPattern": "a/b",
+              "layer": 0,
+              "ordinal": 0
+            }
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "compareSpecificity.sign"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "b/*",
+              "layer": 1,
+              "ordinal": 0
+            },
+            {
+              "canonicalPattern": "b/*",
+              "layer": 1,
+              "ordinal": 0
+            }
+          ],
+          "expect": {
+            "value": 0
+          },
+          "fn": "compareSpecificity"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "b/*",
+              "layer": 1,
+              "ordinal": 0
+            },
+            {
+              "canonicalPattern": "a/*/*",
+              "layer": 1,
+              "ordinal": 3
+            }
+          ],
+          "expect": {
+            "value": -1
+          },
+          "fn": "compareSpecificity.sign"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "b/*",
+              "layer": 1,
+              "ordinal": 0
+            },
+            {
+              "canonicalPattern": "aa/*",
+              "layer": 1,
+              "ordinal": 3
+            }
+          ],
+          "expect": {
+            "value": -1
+          },
+          "fn": "compareSpecificity.sign"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "a/*/*",
+              "layer": 1,
+              "ordinal": 3
+            },
+            {
+              "canonicalPattern": "a/*",
+              "layer": 0,
+              "ordinal": 0
+            }
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "compareSpecificity.sign"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "a/*/*",
+              "layer": 1,
+              "ordinal": 3
+            },
+            {
+              "canonicalPattern": "a/b",
+              "layer": 0,
+              "ordinal": 0
+            }
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "compareSpecificity.sign"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "a/*/*",
+              "layer": 1,
+              "ordinal": 3
+            },
+            {
+              "canonicalPattern": "b/*",
+              "layer": 1,
+              "ordinal": 0
+            }
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "compareSpecificity.sign"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "a/*/*",
+              "layer": 1,
+              "ordinal": 3
+            },
+            {
+              "canonicalPattern": "a/*/*",
+              "layer": 1,
+              "ordinal": 3
+            }
+          ],
+          "expect": {
+            "value": 0
+          },
+          "fn": "compareSpecificity"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "a/*/*",
+              "layer": 1,
+              "ordinal": 3
+            },
+            {
+              "canonicalPattern": "aa/*",
+              "layer": 1,
+              "ordinal": 3
+            }
+          ],
+          "expect": {
+            "value": -1
+          },
+          "fn": "compareSpecificity.sign"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "aa/*",
+              "layer": 1,
+              "ordinal": 3
+            },
+            {
+              "canonicalPattern": "a/*",
+              "layer": 0,
+              "ordinal": 0
+            }
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "compareSpecificity.sign"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "aa/*",
+              "layer": 1,
+              "ordinal": 3
+            },
+            {
+              "canonicalPattern": "a/b",
+              "layer": 0,
+              "ordinal": 0
+            }
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "compareSpecificity.sign"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "aa/*",
+              "layer": 1,
+              "ordinal": 3
+            },
+            {
+              "canonicalPattern": "b/*",
+              "layer": 1,
+              "ordinal": 0
+            }
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "compareSpecificity.sign"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "aa/*",
+              "layer": 1,
+              "ordinal": 3
+            },
+            {
+              "canonicalPattern": "a/*/*",
+              "layer": 1,
+              "ordinal": 3
+            }
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "compareSpecificity.sign"
+        },
+        {
+          "args": [
+            {
+              "canonicalPattern": "aa/*",
+              "layer": 1,
+              "ordinal": 3
+            },
+            {
+              "canonicalPattern": "aa/*",
+              "layer": 1,
+              "ordinal": 3
+            }
+          ],
+          "expect": {
+            "value": 0
+          },
+          "fn": "compareSpecificity"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: compareSpecificity > sorts identically regardless of the order the candidates arrive in",
+      "id": "match.specificity.sorts-the-same-whatever-the-arrival-order",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "canonicalPattern": "a/b",
+                "layer": 0,
+                "ordinal": 0
+              },
+              {
+                "canonicalPattern": "a/*",
+                "layer": 2,
+                "ordinal": 1
+              },
+              {
+                "canonicalPattern": "a/*/*",
+                "layer": 2,
+                "ordinal": 0
+              }
+            ]
+          ],
+          "expect": {
+            "value": [
+              "a/*/*",
+              "a/*",
+              "a/b"
+            ]
+          },
+          "fn": "sortBySpecificity"
+        },
+        {
+          "args": [
+            [
+              {
+                "canonicalPattern": "a/*/*",
+                "layer": 2,
+                "ordinal": 0
+              },
+              {
+                "canonicalPattern": "a/*",
+                "layer": 2,
+                "ordinal": 1
+              },
+              {
+                "canonicalPattern": "a/b",
+                "layer": 0,
+                "ordinal": 0
+              }
+            ]
+          ],
+          "expect": {
+            "value": [
+              "a/*/*",
+              "a/*",
+              "a/b"
+            ]
+          },
+          "fn": "sortBySpecificity"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: literalPrefixOf > reads the literal prefix of skills/commit as skills/commit",
+      "id": "match.literal-prefix.1",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "skills/commit"
+          ],
+          "expect": {
+            "value": "skills/commit"
+          },
+          "fn": "literalPrefixOf"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: literalPrefixOf > reads the literal prefix of projects/-a-b-* as projects/-a-b-",
+      "id": "match.literal-prefix.2",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "projects/-a-b-*"
+          ],
+          "expect": {
+            "value": "projects/-a-b-"
+          },
+          "fn": "literalPrefixOf"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: literalPrefixOf > reads the literal prefix of * as ",
+      "id": "match.literal-prefix.3",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "*"
+          ],
+          "expect": {
+            "value": ""
+          },
+          "fn": "literalPrefixOf"
+        }
+      ]
+    },
+    {
+      "from": "resolve/match.test.ts: literalPrefixOf > reads the literal prefix of a/**/b as a/",
+      "id": "match.literal-prefix.4",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a/**/b"
+          ],
+          "expect": {
+            "value": "a/"
+          },
+          "fn": "literalPrefixOf"
+        }
+      ]
+    }
+  ]
+}

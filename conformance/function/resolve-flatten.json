@@ -1,0 +1,2083 @@
+{
+  "cases": [
+    {
+      "from": "resolve/flatten.test.ts: phase one: categories > plain-overwrites a later layer's value for the same category over an earlier one",
+      "id": "flatten.categories.later-layer-overwrites",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "categories": {
+                  "history": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              },
+              {
+                "categories": {
+                  "history": false
+                },
+                "id": 1,
+                "kind": "config-profile",
+                "source": "layer-1"
+              }
+            ],
+            "/h",
+            "history"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "flattenLayers.category"
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: categories > leaves a category no layer touched absent, so the shipped default still applies",
+      "id": "flatten.categories.untouched-is-absent",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "categories": {
+                  "history": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            "/h",
+            "knowledge"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "flattenLayers.hasCategory"
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: categories > keeps categories from different layers side by side when they do not collide",
+      "id": "flatten.categories.side-by-side",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "categories": {
+                  "history": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              },
+              {
+                "categories": {
+                  "knowledge": false
+                },
+                "id": 1,
+                "kind": "config-profile",
+                "source": "layer-1"
+              }
+            ],
+            "/h",
+            "history"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "flattenLayers.category"
+        },
+        {
+          "args": [
+            [
+              {
+                "categories": {
+                  "history": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              },
+              {
+                "categories": {
+                  "knowledge": false
+                },
+                "id": 1,
+                "kind": "config-profile",
+                "source": "layer-1"
+              }
+            ],
+            "/h",
+            "knowledge"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "flattenLayers.category"
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: entries > keys the accumulator by canonical pattern, so equivalent keys from different layers collapse into one rule",
+      "id": "flatten.entries.collapse-by-canonical-pattern",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "history/projects/~/work/x": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              },
+              {
+                "entries": {
+                  "history/projects//h/work/x": false
+                },
+                "id": 1,
+                "kind": "config-profile",
+                "source": "layer-1"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "flattenLayers.ruleCount"
+        },
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "history/projects/~/work/x": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              },
+              {
+                "entries": {
+                  "history/projects//h/work/x": false
+                },
+                "id": 1,
+                "kind": "config-profile",
+                "source": "layer-1"
+              }
+            ],
+            "/h",
+            "projects/-h-work-x"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "flattenLayers.rule",
+          "select": [
+            "value"
+          ]
+        },
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "history/projects/~/work/x": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              },
+              {
+                "entries": {
+                  "history/projects//h/work/x": false
+                },
+                "id": 1,
+                "kind": "config-profile",
+                "source": "layer-1"
+              }
+            ],
+            "/h",
+            "projects/-h-work-x"
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "flattenLayers.rule",
+          "select": [
+            "layer"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: entries > records each rule's own layer and ordinal, which is what lets phase two tell same-layer from cross-layer",
+      "id": "flatten.entries.layer-and-ordinal",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "$object": [
+                    [
+                      "knowledge/skills/a",
+                      true
+                    ],
+                    [
+                      "knowledge/skills/b",
+                      false
+                    ]
+                  ]
+                },
+                "id": 3,
+                "kind": "config-profile",
+                "source": "layer-3"
+              }
+            ],
+            "/h",
+            "skills/a"
+          ],
+          "expect": {
+            "value": 0
+          },
+          "fn": "flattenLayers.rule",
+          "select": [
+            "ordinal"
+          ]
+        },
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "$object": [
+                    [
+                      "knowledge/skills/a",
+                      true
+                    ],
+                    [
+                      "knowledge/skills/b",
+                      false
+                    ]
+                  ]
+                },
+                "id": 3,
+                "kind": "config-profile",
+                "source": "layer-3"
+              }
+            ],
+            "/h",
+            "skills/b"
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "flattenLayers.rule",
+          "select": [
+            "ordinal"
+          ]
+        },
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "$object": [
+                    [
+                      "knowledge/skills/a",
+                      true
+                    ],
+                    [
+                      "knowledge/skills/b",
+                      false
+                    ]
+                  ]
+                },
+                "id": 3,
+                "kind": "config-profile",
+                "source": "layer-3"
+              }
+            ],
+            "/h",
+            "skills/b"
+          ],
+          "expect": {
+            "value": 3
+          },
+          "fn": "flattenLayers.rule",
+          "select": [
+            "layer"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: entries > uses the explicitly captured entry order rather than whatever order the validated object happens to have",
+      "id": "flatten.entries.captured-order",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "$object": [
+                    [
+                      "knowledge/skills/a",
+                      true
+                    ],
+                    [
+                      "knowledge/skills/b",
+                      true
+                    ]
+                  ]
+                },
+                "entryOrder": [
+                  "knowledge/skills/b",
+                  "knowledge/skills/a"
+                ],
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            "/h",
+            "skills/b"
+          ],
+          "expect": {
+            "value": 0
+          },
+          "fn": "flattenLayers.rule",
+          "select": [
+            "ordinal"
+          ]
+        },
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "$object": [
+                    [
+                      "knowledge/skills/a",
+                      true
+                    ],
+                    [
+                      "knowledge/skills/b",
+                      true
+                    ]
+                  ]
+                },
+                "entryOrder": [
+                  "knowledge/skills/b",
+                  "knowledge/skills/a"
+                ],
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            "/h",
+            "skills/a"
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "flattenLayers.rule",
+          "select": [
+            "ordinal"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: entries > appends a key missing from the captured order rather than silently dropping it",
+      "id": "flatten.entries.appends-a-missing-key",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "$object": [
+                    [
+                      "knowledge/skills/a",
+                      true
+                    ],
+                    [
+                      "knowledge/skills/b",
+                      true
+                    ]
+                  ]
+                },
+                "entryOrder": [
+                  "knowledge/skills/b"
+                ],
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": 2
+          },
+          "fn": "flattenLayers.ruleCount"
+        },
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "$object": [
+                    [
+                      "knowledge/skills/a",
+                      true
+                    ],
+                    [
+                      "knowledge/skills/b",
+                      true
+                    ]
+                  ]
+                },
+                "entryOrder": [
+                  "knowledge/skills/b"
+                ],
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            "/h",
+            "skills/b"
+          ],
+          "expect": {
+            "value": 0
+          },
+          "fn": "flattenLayers.rule",
+          "select": [
+            "ordinal"
+          ]
+        },
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "$object": [
+                    [
+                      "knowledge/skills/a",
+                      true
+                    ],
+                    [
+                      "knowledge/skills/b",
+                      true
+                    ]
+                  ]
+                },
+                "entryOrder": [
+                  "knowledge/skills/b"
+                ],
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            "/h",
+            "skills/a"
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "flattenLayers.rule",
+          "select": [
+            "ordinal"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: entries > compiles a conditional value into a rule that keeps its condition",
+      "id": "flatten.entries.conditional-value-keeps-its-condition",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "history/projects/~/work/*": {
+                    "value": true,
+                    "when": {
+                      "newerThan": "90d"
+                    }
+                  }
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            "/h",
+            "projects/-h-work-*"
+          ],
+          "expect": {
+            "value": {
+              "newerThan": "90d"
+            }
+          },
+          "fn": "flattenLayers.rule",
+          "select": [
+            "when"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: the secret prefix > rejects a deliberate secret/ key outright and contributes no rule at all",
+      "id": "flatten.secret.rejected-outright",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "secret/.credentials.json": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": 0
+          },
+          "fn": "flattenLayers.ruleCount"
+        },
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "secret/.credentials.json": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            "/h",
+            "SECRET_ENTRY_KEY"
+          ],
+          "expect": {
+            "value": "error"
+          },
+          "fn": "flattenLayers.diagnostic",
+          "select": [
+            "severity"
+          ]
+        },
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "secret/.credentials.json": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            "/h",
+            "SECRET_ENTRY_KEY"
+          ],
+          "expect": {
+            "value": "secret/.credentials.json"
+          },
+          "fn": "flattenLayers.diagnostic",
+          "select": [
+            "subject"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: the secret prefix > does not reject a key under another prefix at compile time — the resolve-time floor catches that one",
+      "id": "flatten.secret.other-prefix-not-rejected-here",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "runtime/.credentials.json": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "flattenLayers.ruleCount"
+        },
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "runtime/.credentials.json": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            "/h",
+            "SECRET_ENTRY_KEY"
+          ],
+          "expect": {
+            "value": []
+          },
+          "fn": "flattenLayers.diagnosticsOfCode"
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: malformed keys > reports an unrooted history/projects/ fragment",
+      "id": "flatten.malformed.unrooted-project-fragment",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "history/projects/work/acme": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": [
+              "UNROOTED_PROJECT_PATH"
+            ]
+          },
+          "fn": "flattenLayers.diagnosticCodes"
+        },
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "history/projects/work/acme": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": 0
+          },
+          "fn": "flattenLayers.ruleCount"
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: malformed keys > reports a key with no category prefix",
+      "id": "flatten.malformed.no-category-prefix",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "skills/commit": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": [
+              "MALFORMED_ENTRY_KEY"
+            ]
+          },
+          "fn": "flattenLayers.diagnosticCodes"
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: malformed keys > warns about an empty when object, which is vacuously true",
+      "id": "flatten.malformed.empty-when",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "knowledge/skills/a": {
+                    "value": true,
+                    "when": {}
+                  }
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": [
+              "EMPTY_WHEN"
+            ]
+          },
+          "fn": "flattenLayers.diagnosticCodes"
+        },
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "knowledge/skills/a": {
+                    "value": true,
+                    "when": {}
+                  }
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "flattenLayers.ruleCount"
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: models > keeps picker label spacing from a models layer",
+      "id": "flatten.models.picker-label-spacing",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "models": {
+                  "pickerLabelSpaces": false
+                },
+                "source": "layer-0"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "flattenLayers",
+          "select": [
+            "models",
+            "pickerLabelSpaces"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: models > lets a deeper layer restore spaces in picker labels",
+      "id": "flatten.models.deeper-restores-spaces",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "models": {
+                  "pickerLabelSpaces": false
+                },
+                "source": "layer-0"
+              },
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "models": {
+                  "pickerLabelSpaces": true
+                },
+                "source": "layer-0"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "flattenLayers",
+          "select": [
+            "models",
+            "pickerLabelSpaces"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: models > merges definitions per name, the deeper layer winning, and hides and shows replace wholesale",
+      "id": "flatten.models.merge-per-name",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "models": {
+                  "hide": [
+                    "a",
+                    "b"
+                  ],
+                  "tiers": {
+                    "opus": "fast"
+                  },
+                  "virtual": {
+                    "fast": {
+                      "members": [
+                        "z/1"
+                      ],
+                      "mode": "ordered"
+                    },
+                    "slow": {
+                      "members": [
+                        "m/2"
+                      ],
+                      "mode": "spread"
+                    }
+                  }
+                },
+                "source": "layer-0"
+              },
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "models": {
+                  "show": [
+                    "fast"
+                  ],
+                  "virtual": {
+                    "fast": {
+                      "members": [
+                        "z/3"
+                      ],
+                      "mode": "cheapest"
+                    }
+                  }
+                },
+                "source": "layer-0"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": {
+              "hide": [
+                "a",
+                "b"
+              ],
+              "show": [
+                "fast"
+              ],
+              "tiers": {
+                "opus": "fast"
+              },
+              "virtual": {
+                "fast": {
+                  "members": [
+                    "z/3"
+                  ],
+                  "mode": "cheapest"
+                },
+                "slow": {
+                  "members": [
+                    "m/2"
+                  ],
+                  "mode": "spread"
+                }
+              }
+            }
+          },
+          "fn": "flattenLayers",
+          "select": [
+            "models"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: models > removes what a null in a deeper layer names, and drops the piece nothing fills",
+      "id": "flatten.models.null-removes",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "models": {
+                  "tiers": {
+                    "opus": "fast",
+                    "sonnet": "gone"
+                  },
+                  "virtual": {
+                    "fast": {
+                      "members": [
+                        "z/1"
+                      ],
+                      "mode": "ordered"
+                    },
+                    "gone": {
+                      "members": [
+                        "m/2"
+                      ],
+                      "mode": "ordered"
+                    }
+                  }
+                },
+                "source": "layer-0"
+              },
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "models": {
+                  "tiers": {
+                    "sonnet": null
+                  },
+                  "virtual": {
+                    "gone": null
+                  }
+                },
+                "source": "layer-0"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": {
+              "tiers": {
+                "opus": "fast"
+              },
+              "virtual": {
+                "fast": {
+                  "members": [
+                    "z/1"
+                  ],
+                  "mode": "ordered"
+                }
+              }
+            }
+          },
+          "fn": "flattenLayers",
+          "select": [
+            "models"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: models > accumulates identity assertions across layers without repeating one, and merges family settings per key with null removing",
+      "id": "flatten.models.identity-assertions-accumulate",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "models": {
+                  "distinct": [
+                    [
+                      "a/x",
+                      "c/z"
+                    ]
+                  ],
+                  "families": {
+                    "glm-5-1": {
+                      "mode": "ordered"
+                    },
+                    "gone": {
+                      "vision": false
+                    }
+                  },
+                  "same": [
+                    [
+                      "a/x",
+                      "b/y"
+                    ]
+                  ]
+                },
+                "source": "layer-0"
+              },
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "models": {
+                  "distinct": [
+                    [
+                      "a/x",
+                      "c/z"
+                    ],
+                    [
+                      "f/m",
+                      "g/n"
+                    ]
+                  ],
+                  "families": {
+                    "glm-5-1": {
+                      "mode": "cheapest",
+                      "names": [
+                        "o/odd"
+                      ]
+                    },
+                    "gone": null
+                  },
+                  "same": [
+                    [
+                      "a/x",
+                      "b/y"
+                    ],
+                    [
+                      "d/p",
+                      "e/q"
+                    ]
+                  ]
+                },
+                "source": "layer-0"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": {
+              "distinct": [
+                [
+                  "a/x",
+                  "c/z"
+                ],
+                [
+                  "f/m",
+                  "g/n"
+                ]
+              ],
+              "families": {
+                "glm-5-1": {
+                  "mode": "cheapest",
+                  "names": [
+                    "o/odd"
+                  ]
+                }
+              },
+              "same": [
+                [
+                  "a/x",
+                  "b/y"
+                ],
+                [
+                  "d/p",
+                  "e/q"
+                ]
+              ]
+            }
+          },
+          "fn": "flattenLayers",
+          "select": [
+            "models"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: models > is absent when no layer carries models, and a layer removing everything empties the block",
+      "id": "flatten.models.absent-or-emptied",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": {
+              "$undefined": true
+            }
+          },
+          "fn": "flattenLayers",
+          "select": [
+            "models"
+          ]
+        },
+        {
+          "args": [
+            [
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "models": {
+                  "virtual": {
+                    "only": {
+                      "members": [
+                        "z/1"
+                      ],
+                      "mode": "ordered"
+                    }
+                  }
+                },
+                "source": "layer-0"
+              },
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "models": {
+                  "virtual": {
+                    "only": null
+                  }
+                },
+                "source": "layer-0"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": {
+              "$undefined": true
+            }
+          },
+          "fn": "flattenLayers",
+          "select": [
+            "models"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: launch explain > takes the last layer's value",
+      "id": "flatten.launch.explain-last-wins",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "launch": {
+                  "explain": true
+                },
+                "source": "layer-0"
+              },
+              {
+                "id": 1,
+                "kind": "config-profile",
+                "launch": {
+                  "explain": false
+                },
+                "source": "layer-1"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": {
+              "explain": false
+            }
+          },
+          "fn": "flattenLayers",
+          "select": [
+            "launch"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: launch delay and pause > takes the last layer's delay and pause, each decided on its own",
+      "id": "flatten.launch.delay-and-pause",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "launch": {
+                  "delay": "5s",
+                  "pause": true
+                },
+                "source": "layer-0"
+              },
+              {
+                "id": 1,
+                "kind": "config-profile",
+                "launch": {
+                  "delay": "1s"
+                },
+                "source": "layer-1"
+              },
+              {
+                "id": 2,
+                "kind": "config-profile",
+                "launch": {
+                  "skipPermissions": true
+                },
+                "source": "layer-2"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": {
+              "delay": "1s",
+              "pause": true,
+              "skipPermissions": true
+            }
+          },
+          "fn": "flattenLayers",
+          "select": [
+            "launch"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: launch flags > resolves each flag independently, last layer wins",
+      "id": "flatten.launch.flags-independently",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "launch": {
+                  "remoteControl": true,
+                  "skipPermissions": true
+                },
+                "source": "layer-0"
+              },
+              {
+                "id": 1,
+                "kind": "config-profile",
+                "launch": {
+                  "remoteControl": false
+                },
+                "source": "layer-1"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": {
+              "remoteControl": false,
+              "skipPermissions": true
+            }
+          },
+          "fn": "flattenLayers",
+          "select": [
+            "launch"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: launch flags > resolves the provider selection last-layer-wins alongside the other flags",
+      "id": "flatten.launch.provider-last-wins",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "launch": {
+                  "provider": "z"
+                },
+                "source": "layer-0"
+              },
+              {
+                "id": 1,
+                "kind": "config-profile",
+                "launch": {
+                  "skipPermissions": true
+                },
+                "source": "layer-1"
+              },
+              {
+                "id": 2,
+                "kind": "config-profile",
+                "launch": {
+                  "provider": "o"
+                },
+                "source": "layer-2"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": {
+              "provider": "o",
+              "skipPermissions": true
+            }
+          },
+          "fn": "flattenLayers",
+          "select": [
+            "launch"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: launch flags > resolves headroom last-layer-wins like every other launch flag",
+      "id": "flatten.launch.headroom-last-wins",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "launch": {
+                  "headroom": true
+                },
+                "source": "layer-0"
+              },
+              {
+                "id": 1,
+                "kind": "config-profile",
+                "launch": {
+                  "headroom": false
+                },
+                "source": "layer-1"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": {
+              "headroom": false
+            }
+          },
+          "fn": "flattenLayers",
+          "select": [
+            "launch"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: launch flags > resolves trackUsage last-layer-wins, independently of headroom",
+      "id": "flatten.launch.track-usage-last-wins",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "launch": {
+                  "headroom": true,
+                  "trackUsage": true
+                },
+                "source": "layer-0"
+              },
+              {
+                "id": 1,
+                "kind": "config-profile",
+                "launch": {
+                  "trackUsage": false
+                },
+                "source": "layer-1"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": {
+              "headroom": true,
+              "trackUsage": false
+            }
+          },
+          "fn": "flattenLayers",
+          "select": [
+            "launch"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: matchingRules > returns every matching rule ranked most-specific first",
+      "id": "flatten.matching-rules.most-specific-first",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "knowledge/skills/*": true,
+                  "knowledge/skills/commit": false
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            "/h",
+            "skills/commit"
+          ],
+          "expect": {
+            "value": [
+              "skills/commit",
+              "skills/*"
+            ]
+          },
+          "fn": "matchingRules"
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: matchingRules > returns nothing for a path no rule matches",
+      "id": "flatten.matching-rules.none",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "entries": {
+                  "knowledge/skills/*": true
+                },
+                "id": 0,
+                "kind": "config-profile",
+                "source": "layer-0"
+              }
+            ],
+            "/h",
+            "agents/foo"
+          ],
+          "expect": {
+            "value": []
+          },
+          "fn": "matchingRules"
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: launch proxyBypass > takes the deepest layer's list whole, and an empty list clears the shallower ones",
+      "id": "flatten.launch.proxy-bypass",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "launch": {
+                  "proxyBypass": [
+                    "a.example.com"
+                  ]
+                },
+                "source": "layer-0"
+              },
+              {
+                "id": 1,
+                "kind": "config-profile",
+                "launch": {
+                  "proxyBypass": [
+                    "b.example.com",
+                    "c.example.com"
+                  ]
+                },
+                "source": "layer-1"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": {
+              "proxyBypass": [
+                "b.example.com",
+                "c.example.com"
+              ]
+            }
+          },
+          "fn": "flattenLayers",
+          "select": [
+            "launch"
+          ]
+        },
+        {
+          "args": [
+            [
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "launch": {
+                  "proxyBypass": [
+                    "a.example.com"
+                  ]
+                },
+                "source": "layer-0"
+              },
+              {
+                "id": 1,
+                "kind": "config-profile",
+                "launch": {
+                  "proxyBypass": []
+                },
+                "source": "layer-1"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": {
+              "proxyBypass": []
+            }
+          },
+          "fn": "flattenLayers",
+          "select": [
+            "launch"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: launch statusline > lays a layer's preset beneath that layer's own keys and over the shallower layers' settings",
+      "id": "flatten.statusline.preset-beneath-own-keys",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "launch": {
+                  "statusline": {
+                    "bar": {
+                      "width": 6
+                    },
+                    "layout": {
+                      "header": [
+                        "model",
+                        "account"
+                      ]
+                    }
+                  }
+                },
+                "source": "layer-0"
+              },
+              {
+                "id": 1,
+                "kind": "config-profile",
+                "launch": {
+                  "statusline": {
+                    "git": {
+                      "showDirty": false
+                    },
+                    "preset": "minimal"
+                  }
+                },
+                "source": "layer-1"
+              },
+              {
+                "id": 2,
+                "kind": "config-profile",
+                "launch": {
+                  "statusline": {
+                    "language": "zh-Hans"
+                  }
+                },
+                "source": "layer-2"
+              }
+            ],
+            "/h",
+            {
+              "bar": {
+                "width": 6
+              },
+              "git": {
+                "enabled": true,
+                "showAheadBehind": false,
+                "showDirty": false
+              },
+              "language": "zh-Hans",
+              "layout": {
+                "header": [
+                  "model",
+                  "project",
+                  "vcs",
+                  "extra"
+                ],
+                "rows": [
+                  "context",
+                  "addedDirs"
+                ]
+              },
+              "preset": "minimal"
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "flattenLayers.launchStatuslineHolds"
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: launch statusline > merges key by key in every group, so a deeper layer that sets one label leaves a shallower layer's thresholds and the other label alone",
+      "id": "flatten.statusline.merges-key-by-key",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "launch": {
+                  "statusline": {
+                    "bands": {
+                      "criticalAt": 85,
+                      "warnAt": 60
+                    },
+                    "bar": {
+                      "width": 8
+                    }
+                  }
+                },
+                "source": "layer-0"
+              },
+              {
+                "id": 1,
+                "kind": "config-profile",
+                "launch": {
+                  "statusline": {
+                    "bar": {
+                      "width": 6
+                    },
+                    "labels": {
+                      "fiveHour": "Session"
+                    }
+                  }
+                },
+                "source": "layer-1"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": {
+              "bands": {
+                "criticalAt": 85,
+                "warnAt": 60
+              },
+              "bar": {
+                "width": 6
+              },
+              "labels": {
+                "fiveHour": "Session"
+              }
+            }
+          },
+          "fn": "flattenLayers",
+          "select": [
+            "launch",
+            "statusline"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: launch statusline > takes the deepest layer's list whole",
+      "id": "flatten.statusline.deepest-list-whole",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "launch": {
+                  "statusline": {
+                    "layout": {
+                      "header": [
+                        "model",
+                        "provider"
+                      ]
+                    }
+                  }
+                },
+                "source": "layer-0"
+              },
+              {
+                "id": 1,
+                "kind": "config-profile",
+                "launch": {
+                  "statusline": {
+                    "layout": {
+                      "header": [
+                        "identity"
+                      ]
+                    }
+                  }
+                },
+                "source": "layer-1"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": {
+              "layout": {
+                "header": [
+                  "identity"
+                ]
+              }
+            }
+          },
+          "fn": "flattenLayers",
+          "select": [
+            "launch",
+            "statusline"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: launch statusline > lets a deeper layer unset an optional setting a shallower one set, and a deeper one still set it again",
+      "id": "flatten.statusline.unset-and-set-again",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "launch": {
+                  "statusline": {
+                    "bar": {
+                      "width": 1
+                    },
+                    "context": {
+                      "warnAt": 50
+                    }
+                  }
+                },
+                "source": "layer-0"
+              },
+              {
+                "id": 1,
+                "kind": "config-profile",
+                "launch": {
+                  "statusline": {
+                    "bar": {
+                      "width": 2
+                    }
+                  }
+                },
+                "source": "layer-1"
+              },
+              {
+                "id": 2,
+                "kind": "config-profile",
+                "launch": {
+                  "statusline": {
+                    "bar": {
+                      "width": 3
+                    }
+                  }
+                },
+                "source": "layer-2"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": {
+              "bar": {
+                "width": 3
+              },
+              "context": {
+                "warnAt": 50
+              }
+            }
+          },
+          "fn": "flattenLayers",
+          "select": [
+            "launch",
+            "statusline"
+          ]
+        },
+        {
+          "args": [
+            [
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "launch": {
+                  "statusline": {
+                    "bar": {
+                      "width": 1
+                    },
+                    "context": {
+                      "warnAt": 50
+                    }
+                  }
+                },
+                "source": "layer-0"
+              },
+              {
+                "id": 1,
+                "kind": "config-profile",
+                "launch": {
+                  "statusline": {
+                    "bar": {
+                      "width": 2
+                    },
+                    "context": {
+                      "warnAt": null
+                    }
+                  }
+                },
+                "source": "layer-1"
+              },
+              {
+                "id": 2,
+                "kind": "config-profile",
+                "launch": {
+                  "statusline": {
+                    "bar": {
+                      "width": 3
+                    }
+                  }
+                },
+                "source": "layer-2"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": {
+              "bar": {
+                "width": 3
+              },
+              "context": {}
+            }
+          },
+          "fn": "flattenLayers",
+          "select": [
+            "launch",
+            "statusline"
+          ]
+        },
+        {
+          "args": [
+            [
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "launch": {
+                  "statusline": {
+                    "bar": {
+                      "width": 1
+                    },
+                    "context": {
+                      "warnAt": 50
+                    }
+                  }
+                },
+                "source": "layer-0"
+              },
+              {
+                "id": 1,
+                "kind": "config-profile",
+                "launch": {
+                  "statusline": {
+                    "bar": {
+                      "width": 2
+                    },
+                    "context": {
+                      "warnAt": null
+                    }
+                  }
+                },
+                "source": "layer-1"
+              },
+              {
+                "id": 2,
+                "kind": "config-profile",
+                "launch": {
+                  "statusline": {
+                    "bar": {
+                      "width": 3
+                    },
+                    "context": {
+                      "warnAt": 65
+                    }
+                  }
+                },
+                "source": "layer-2"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": {
+              "bar": {
+                "width": 3
+              },
+              "context": {
+                "warnAt": 65
+              }
+            }
+          },
+          "fn": "flattenLayers",
+          "select": [
+            "launch",
+            "statusline"
+          ]
+        },
+        {
+          "args": [
+            [
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "launch": {
+                  "statusline": {
+                    "bar": {
+                      "width": 1
+                    }
+                  }
+                },
+                "source": "layer-0"
+              },
+              {
+                "id": 1,
+                "kind": "config-profile",
+                "launch": {
+                  "statusline": {
+                    "bar": {
+                      "width": 2
+                    },
+                    "context": {
+                      "warnAt": null
+                    }
+                  }
+                },
+                "source": "layer-1"
+              }
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": {
+              "bar": {
+                "width": 2
+              },
+              "context": {}
+            }
+          },
+          "fn": "flattenLayers",
+          "select": [
+            "launch",
+            "statusline"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/flatten.test.ts: phase one: launch statusline > leaves the setting absent when no layer sets it",
+      "id": "flatten.statusline.absent-when-unset",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              {
+                "id": 0,
+                "kind": "config-profile",
+                "launch": {
+                  "headroom": true
+                },
+                "source": "layer-0"
+              }
+            ],
+            "/h",
+            "statusline"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "flattenLayers.hasLaunchField"
+        }
+      ]
+    }
+  ]
+}
