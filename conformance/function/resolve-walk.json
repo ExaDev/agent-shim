@@ -1,0 +1,788 @@
+{
+  "cases": [
+    {
+      "from": "resolve/walk.test.ts: walkDirectoryAncestors > returns the working directory and every ancestor, shallowest-first",
+      "id": "walk.ancestors.cwd-and-ancestors",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/h/work/clients/acme",
+            {
+              "home": "/h"
+            }
+          ],
+          "expect": {
+            "value": [
+              "/h",
+              "/h/work",
+              "/h/work/clients",
+              "/h/work/clients/acme"
+            ]
+          },
+          "fn": "walkDirectoryAncestors"
+        }
+      ]
+    },
+    {
+      "from": "resolve/walk.test.ts: walkDirectoryAncestors > stops at, and includes, the limit directory",
+      "id": "walk.ancestors.stops-at-the-limit",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/h/work/clients",
+            {
+              "home": "/h",
+              "limit": "/h/work"
+            }
+          ],
+          "expect": {
+            "value": [
+              "/h/work",
+              "/h/work/clients"
+            ]
+          },
+          "fn": "walkDirectoryAncestors"
+        }
+      ]
+    },
+    {
+      "from": "resolve/walk.test.ts: walkDirectoryAncestors > returns just the working directory when it is the limit",
+      "id": "walk.ancestors.cwd-is-the-limit",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/h",
+            {
+              "home": "/h"
+            }
+          ],
+          "expect": {
+            "value": [
+              "/h"
+            ]
+          },
+          "fn": "walkDirectoryAncestors"
+        }
+      ]
+    },
+    {
+      "from": "resolve/walk.test.ts: walkDirectoryAncestors > stops at the filesystem root when the working directory is not beneath the limit at all",
+      "id": "walk.ancestors.stops-at-the-root",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/var/tmp/scratch",
+            {
+              "home": "/h"
+            }
+          ],
+          "expect": {
+            "value": "/"
+          },
+          "fn": "walkDirectoryAncestors",
+          "select": [
+            "0"
+          ]
+        },
+        {
+          "args": [
+            "/var/tmp/scratch",
+            {
+              "home": "/h"
+            }
+          ],
+          "expect": {
+            "value": "/var/tmp/scratch"
+          },
+          "fn": "walkDirectoryAncestors.last"
+        }
+      ]
+    },
+    {
+      "from": "resolve/walk.test.ts: walkDirectoryAncestors > stops at an unreadable ancestor rather than failing the launch",
+      "id": "walk.ancestors.stops-at-an-unreadable-ancestor",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/h/work/clients/acme",
+            {
+              "home": "/h",
+              "unreadable": [
+                "/h/work"
+              ]
+            }
+          ],
+          "expect": {
+            "value": [
+              "/h/work/clients",
+              "/h/work/clients/acme"
+            ]
+          },
+          "fn": "walkDirectoryAncestors"
+        }
+      ]
+    },
+    {
+      "from": "resolve/walk.test.ts: walkDirectoryAncestors > returns nothing when the working directory itself is unreadable",
+      "id": "walk.ancestors.unreadable-cwd",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/h/secret",
+            {
+              "allUnreadable": true,
+              "home": "/h"
+            }
+          ],
+          "expect": {
+            "value": []
+          },
+          "fn": "walkDirectoryAncestors"
+        }
+      ]
+    },
+    {
+      "from": "resolve/walk.test.ts: assembleCascade global models > carries the global config's models block as the shallowest layer, so deeper layers add to or remove from it",
+      "id": "walk.global-models.shallowest-layer",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "globalConfig": {
+                "config": {
+                  "models": {
+                    "virtual": {
+                      "fast": {
+                        "members": [
+                          "z/glm-5.3"
+                        ],
+                        "mode": "ordered"
+                      }
+                    }
+                  }
+                },
+                "filepath": "/cfg/config.json"
+              },
+              "home": "/h",
+              "profiles": {}
+            },
+            {
+              "kind": "global-config",
+              "models": {
+                "virtual": {
+                  "fast": {
+                    "members": [
+                      "z/glm-5.3"
+                    ],
+                    "mode": "ordered"
+                  }
+                }
+              }
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "assembleCascade.firstLayerHolds"
+        }
+      ]
+    },
+    {
+      "from": "resolve/walk.test.ts: assembleCascade layer ordering > puts the global config first, the base profile chain next, then directory levels, then CLI overrides",
+      "id": "walk.ordering.global-then-profile-then-levels-then-cli",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "baseConfigProfile": "work",
+              "cliOverride": {
+                "categories": {
+                  "history": false
+                }
+              },
+              "globalConfig": {
+                "config": {
+                  "categories": {
+                    "knowledge": true
+                  }
+                },
+                "filepath": "/cfg/config.json"
+              },
+              "home": "/h",
+              "levels": [
+                {
+                  "dir": "/h/work",
+                  "portable": {
+                    "config": {
+                      "categories": {
+                        "history": true
+                      }
+                    },
+                    "filepath": "/h/work/.agent-shim.json"
+                  }
+                }
+              ],
+              "profiles": {
+                "base": {
+                  "profile": {}
+                },
+                "strict": {
+                  "profile": {}
+                },
+                "work": {
+                  "profile": {
+                    "extends": [
+                      "base"
+                    ]
+                  }
+                }
+              }
+            },
+            "kind"
+          ],
+          "expect": {
+            "value": [
+              "global-config",
+              "config-profile",
+              "config-profile",
+              "portable",
+              "cli-override"
+            ]
+          },
+          "fn": "assembleCascade.layerField"
+        },
+        {
+          "args": [
+            {
+              "baseConfigProfile": "work",
+              "cliOverride": {
+                "categories": {
+                  "history": false
+                }
+              },
+              "globalConfig": {
+                "config": {
+                  "categories": {
+                    "knowledge": true
+                  }
+                },
+                "filepath": "/cfg/config.json"
+              },
+              "home": "/h",
+              "levels": [
+                {
+                  "dir": "/h/work",
+                  "portable": {
+                    "config": {
+                      "categories": {
+                        "history": true
+                      }
+                    },
+                    "filepath": "/h/work/.agent-shim.json"
+                  }
+                }
+              ],
+              "profiles": {
+                "base": {
+                  "profile": {}
+                },
+                "strict": {
+                  "profile": {}
+                },
+                "work": {
+                  "profile": {
+                    "extends": [
+                      "base"
+                    ]
+                  }
+                }
+              }
+            },
+            "id"
+          ],
+          "expect": {
+            "value": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ]
+          },
+          "fn": "assembleCascade.layerField"
+        }
+      ]
+    },
+    {
+      "from": "resolve/walk.test.ts: assembleCascade layer ordering > folds a level's three sources most-personal-last: committed file, then this user's rules, then the local override",
+      "id": "walk.ordering.most-personal-last",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "home": "/h",
+              "levels": [
+                {
+                  "dir": "/h/work",
+                  "portable": {
+                    "config": {},
+                    "filepath": "committed"
+                  },
+                  "portableLocal": {
+                    "config": {},
+                    "filepath": "local"
+                  },
+                  "rules": [
+                    {
+                      "filepath": "rules",
+                      "rule": {
+                        "path": "/h/work"
+                      }
+                    }
+                  ]
+                }
+              ],
+              "profiles": {
+                "base": {
+                  "profile": {}
+                },
+                "strict": {
+                  "profile": {}
+                },
+                "work": {
+                  "profile": {
+                    "extends": [
+                      "base"
+                    ]
+                  }
+                }
+              }
+            },
+            "source"
+          ],
+          "expect": {
+            "value": [
+              "committed",
+              "rules",
+              "local"
+            ]
+          },
+          "fn": "assembleCascade.layerField"
+        }
+      ]
+    },
+    {
+      "from": "resolve/walk.test.ts: assembleCascade layer ordering > keeps the whole shallowest-to-deepest walk as one continuous sequence, not gathered per source across the tree",
+      "id": "walk.ordering.one-continuous-walk",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "home": "/h",
+              "levels": [
+                {
+                  "dir": "/h/work",
+                  "portable": {
+                    "config": {},
+                    "filepath": "shallow-committed"
+                  },
+                  "portableLocal": {
+                    "config": {},
+                    "filepath": "shallow-local"
+                  }
+                },
+                {
+                  "dir": "/h/work/acme",
+                  "portable": {
+                    "config": {},
+                    "filepath": "deep-committed"
+                  }
+                }
+              ],
+              "profiles": {
+                "base": {
+                  "profile": {}
+                },
+                "strict": {
+                  "profile": {}
+                },
+                "work": {
+                  "profile": {
+                    "extends": [
+                      "base"
+                    ]
+                  }
+                }
+              }
+            },
+            "source"
+          ],
+          "expect": {
+            "value": [
+              "shallow-committed",
+              "shallow-local",
+              "deep-committed"
+            ]
+          },
+          "fn": "assembleCascade.layerField"
+        }
+      ]
+    },
+    {
+      "from": "resolve/walk.test.ts: assembleCascade layer ordering > preserves the file order of several rules matching the same directory",
+      "id": "walk.ordering.rules-in-file-order",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "home": "/h",
+              "levels": [
+                {
+                  "dir": "/h/work",
+                  "rules": [
+                    {
+                      "filepath": "rule-1",
+                      "rule": {
+                        "path": "/h/work"
+                      }
+                    },
+                    {
+                      "filepath": "rule-2",
+                      "rule": {
+                        "path": "/h/work"
+                      }
+                    }
+                  ]
+                }
+              ],
+              "profiles": {
+                "base": {
+                  "profile": {}
+                },
+                "strict": {
+                  "profile": {}
+                },
+                "work": {
+                  "profile": {
+                    "extends": [
+                      "base"
+                    ]
+                  }
+                }
+              }
+            },
+            "source"
+          ],
+          "expect": {
+            "value": [
+              "rule-1",
+              "rule-2"
+            ]
+          },
+          "fn": "assembleCascade.layerField"
+        }
+      ]
+    },
+    {
+      "from": "resolve/walk.test.ts: assembleCascade profile composition > composes a level's selected profile in before that level's own inline overrides, rather than swapping it in wholesale",
+      "id": "walk.profile.composes-before-inline-overrides",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "home": "/h",
+              "levels": [
+                {
+                  "dir": "/h/work",
+                  "rules": [
+                    {
+                      "filepath": "rules",
+                      "rule": {
+                        "configProfile": "client-strict",
+                        "entries": {
+                          "knowledge/skills/commit": true
+                        },
+                        "path": "/h/work"
+                      }
+                    }
+                  ]
+                }
+              ],
+              "profiles": {
+                "client-strict": {
+                  "profile": {
+                    "categories": {
+                      "history": false
+                    },
+                    "extends": [
+                      "work-default"
+                    ]
+                  }
+                },
+                "work-default": {
+                  "profile": {
+                    "categories": {
+                      "history": true
+                    }
+                  }
+                }
+              }
+            },
+            "source"
+          ],
+          "expect": {
+            "value": [
+              "work-default",
+              "client-strict",
+              "rules"
+            ]
+          },
+          "fn": "assembleCascade.layerField"
+        },
+        {
+          "args": [
+            {
+              "home": "/h",
+              "levels": [
+                {
+                  "dir": "/h/work",
+                  "rules": [
+                    {
+                      "filepath": "rules",
+                      "rule": {
+                        "configProfile": "client-strict",
+                        "entries": {
+                          "knowledge/skills/commit": true
+                        },
+                        "path": "/h/work"
+                      }
+                    }
+                  ]
+                }
+              ],
+              "profiles": {
+                "client-strict": {
+                  "profile": {
+                    "categories": {
+                      "history": false
+                    },
+                    "extends": [
+                      "work-default"
+                    ]
+                  }
+                },
+                "work-default": {
+                  "profile": {
+                    "categories": {
+                      "history": true
+                    }
+                  }
+                }
+              }
+            }
+          ],
+          "expect": {
+            "value": {
+              "knowledge/skills/commit": true
+            }
+          },
+          "fn": "assembleCascade.lastLayer",
+          "select": [
+            "entries"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/walk.test.ts: assembleCascade profile composition > reports a missing profile named by a directory rule",
+      "id": "walk.profile.reports-a-missing-profile",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "home": "/h",
+              "levels": [
+                {
+                  "dir": "/h/work",
+                  "rules": [
+                    {
+                      "filepath": "rules",
+                      "rule": {
+                        "configProfile": "gone",
+                        "path": "/h/work"
+                      }
+                    }
+                  ]
+                }
+              ],
+              "profiles": {
+                "client-strict": {
+                  "profile": {
+                    "categories": {
+                      "history": false
+                    },
+                    "extends": [
+                      "work-default"
+                    ]
+                  }
+                },
+                "work-default": {
+                  "profile": {
+                    "categories": {
+                      "history": true
+                    }
+                  }
+                }
+              }
+            }
+          ],
+          "expect": {
+            "value": [
+              "MISSING_PROFILE"
+            ]
+          },
+          "fn": "assembleCascade.diagnosticCodes"
+        }
+      ]
+    },
+    {
+      "from": "resolve/walk.test.ts: assembleCascade pins > reports the deepest identity pin, which the launcher uses as a safety net beneath an explicit @name",
+      "id": "walk.pins.deepest-identity",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "home": "/h",
+              "levels": [
+                {
+                  "dir": "/h/work",
+                  "rules": [
+                    {
+                      "filepath": "a",
+                      "rule": {
+                        "identity": "work",
+                        "path": "/h/work"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "dir": "/h/work/acme",
+                  "rules": [
+                    {
+                      "filepath": "b",
+                      "rule": {
+                        "identity": "acme",
+                        "path": "/h/work/acme"
+                      }
+                    }
+                  ]
+                }
+              ],
+              "profiles": {}
+            }
+          ],
+          "expect": {
+            "value": "acme"
+          },
+          "fn": "assembleCascade",
+          "select": [
+            "identityPin"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/walk.test.ts: assembleCascade pins > reports no identity pin when no level sets one",
+      "id": "walk.pins.no-identity",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "home": "/h",
+              "levels": [
+                {
+                  "dir": "/h"
+                }
+              ],
+              "profiles": {}
+            }
+          ],
+          "expect": {
+            "value": {
+              "$undefined": true
+            }
+          },
+          "fn": "assembleCascade",
+          "select": [
+            "identityPin"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/walk.test.ts: assembleCascade pins > reports the deepest directory-level profile selection",
+      "id": "walk.pins.deepest-profile-selection",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "home": "/h",
+              "levels": [
+                {
+                  "dir": "/h/work",
+                  "portable": {
+                    "config": {
+                      "configProfile": "a"
+                    },
+                    "filepath": "a"
+                  }
+                },
+                {
+                  "dir": "/h/work/acme",
+                  "portable": {
+                    "config": {
+                      "configProfile": "b"
+                    },
+                    "filepath": "b"
+                  }
+                }
+              ],
+              "profiles": {
+                "a": {
+                  "profile": {}
+                },
+                "b": {
+                  "profile": {}
+                }
+              }
+            }
+          ],
+          "expect": {
+            "value": "b"
+          },
+          "fn": "assembleCascade",
+          "select": [
+            "directoryConfigProfile"
+          ]
+        }
+      ]
+    }
+  ]
+}

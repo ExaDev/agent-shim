@@ -1,0 +1,1795 @@
+{
+  "cases": [
+    {
+      "from": "resolve/conditions.test.ts: parseDuration > parses 500ms as 500 ms",
+      "id": "conditions.parse-duration.parses.1",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "500ms"
+          ],
+          "expect": {
+            "value": 500
+          },
+          "fn": "parseDuration"
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: parseDuration > parses 45s as 45000 ms",
+      "id": "conditions.parse-duration.parses.2",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "45s"
+          ],
+          "expect": {
+            "value": 45000
+          },
+          "fn": "parseDuration"
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: parseDuration > parses 30m as 1800000 ms",
+      "id": "conditions.parse-duration.parses.3",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "30m"
+          ],
+          "expect": {
+            "value": 1800000
+          },
+          "fn": "parseDuration"
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: parseDuration > parses 12h as 43200000 ms",
+      "id": "conditions.parse-duration.parses.4",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "12h"
+          ],
+          "expect": {
+            "value": 43200000
+          },
+          "fn": "parseDuration"
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: parseDuration > parses 90d as 7776000000 ms",
+      "id": "conditions.parse-duration.parses.5",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "90d"
+          ],
+          "expect": {
+            "value": 7776000000
+          },
+          "fn": "parseDuration"
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: parseDuration > parses 2w as 1209600000 ms",
+      "id": "conditions.parse-duration.parses.6",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "2w"
+          ],
+          "expect": {
+            "value": 1209600000
+          },
+          "fn": "parseDuration"
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: parseDuration > parses 0d as 0 ms",
+      "id": "conditions.parse-duration.parses.7",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "0d"
+          ],
+          "expect": {
+            "value": 0
+          },
+          "fn": "parseDuration"
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: parseDuration > throws on the malformed duration 90",
+      "id": "conditions.parse-duration.rejects.1",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "90"
+          ],
+          "expect": {
+            "throws": {
+              "name": "Error"
+            }
+          },
+          "fn": "parseDuration"
+        },
+        {
+          "args": [
+            "90"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isDuration"
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: parseDuration > throws on the malformed duration d",
+      "id": "conditions.parse-duration.rejects.2",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "d"
+          ],
+          "expect": {
+            "throws": {
+              "name": "Error"
+            }
+          },
+          "fn": "parseDuration"
+        },
+        {
+          "args": [
+            "d"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isDuration"
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: parseDuration > throws on the malformed duration 1.5d",
+      "id": "conditions.parse-duration.rejects.3",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "1.5d"
+          ],
+          "expect": {
+            "throws": {
+              "name": "Error"
+            }
+          },
+          "fn": "parseDuration"
+        },
+        {
+          "args": [
+            "1.5d"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isDuration"
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: parseDuration > throws on the malformed duration -1d",
+      "id": "conditions.parse-duration.rejects.4",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "-1d"
+          ],
+          "expect": {
+            "throws": {
+              "name": "Error"
+            }
+          },
+          "fn": "parseDuration"
+        },
+        {
+          "args": [
+            "-1d"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isDuration"
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: parseDuration > throws on the malformed duration 90 d",
+      "id": "conditions.parse-duration.rejects.5",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "90 d"
+          ],
+          "expect": {
+            "throws": {
+              "name": "Error"
+            }
+          },
+          "fn": "parseDuration"
+        },
+        {
+          "args": [
+            "90 d"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isDuration"
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: parseDuration > throws on the malformed duration 90days",
+      "id": "conditions.parse-duration.rejects.6",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "90days"
+          ],
+          "expect": {
+            "throws": {
+              "name": "Error"
+            }
+          },
+          "fn": "parseDuration"
+        },
+        {
+          "args": [
+            "90days"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isDuration"
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: parseDuration > throws on the malformed duration ",
+      "id": "conditions.parse-duration.rejects.7",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            ""
+          ],
+          "expect": {
+            "throws": {
+              "name": "Error"
+            }
+          },
+          "fn": "parseDuration"
+        },
+        {
+          "args": [
+            ""
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "isDuration"
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: matchBranch > matches a glob pattern against the checked-out branch",
+      "id": "conditions.match-branch.glob",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "client/*",
+            "client/acme"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "matchBranch"
+        },
+        {
+          "args": [
+            "client/*",
+            "main"
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "matchBranch"
+        },
+        {
+          "args": [
+            "main",
+            "main"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "matchBranch"
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: matchBranch > never matches when the directory is not a repository",
+      "id": "conditions.match-branch.not-a-repository",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "*",
+            {
+              "$undefined": true
+            }
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "matchBranch"
+        },
+        {
+          "args": [
+            "*",
+            ""
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "matchBranch"
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: matchBranch > never matches on a detached HEAD, where there is no branch to compare",
+      "id": "conditions.match-branch.detached-head",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "*",
+            "main",
+            true
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "matchBranch"
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: evaluateWhen > passes when there is no condition at all",
+      "id": "conditions.evaluate.no-condition",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "$undefined": true
+            },
+            {
+              "env": {},
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "definite"
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "status"
+          ]
+        },
+        {
+          "args": [
+            {
+              "$undefined": true
+            },
+            {
+              "env": {},
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "passed"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: evaluateWhen > passes vacuously on an empty condition object",
+      "id": "conditions.evaluate.empty-object",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {},
+            {
+              "env": {},
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "passed"
+          ]
+        },
+        {
+          "args": [
+            {},
+            {
+              "env": {},
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "definite"
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "status"
+          ]
+        },
+        {
+          "args": [
+            {},
+            {
+              "env": {},
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": []
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "checked"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: evaluateWhen > ANDs every present field within one object",
+      "id": "conditions.evaluate.ands-the-fields",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "branch": "client/*",
+              "newerThan": "1d"
+            },
+            {
+              "branch": "client/acme",
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": false,
+                "isSymlink": false,
+                "latestMtimeMs": 1768478400000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 1,
+                "totalSizeBytes": 1
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "definite"
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "status"
+          ]
+        },
+        {
+          "args": [
+            {
+              "branch": "client/*",
+              "newerThan": "1d"
+            },
+            {
+              "branch": "client/acme",
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": false,
+                "isSymlink": false,
+                "latestMtimeMs": 1768478400000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 1,
+                "totalSizeBytes": 1
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "passed"
+          ]
+        },
+        {
+          "args": [
+            {
+              "branch": "other/*",
+              "newerThan": "1d"
+            },
+            {
+              "branch": "client/acme",
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": false,
+                "isSymlink": false,
+                "latestMtimeMs": 1768478400000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 1,
+                "totalSizeBytes": 1
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "definite"
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "status"
+          ]
+        },
+        {
+          "args": [
+            {
+              "branch": "other/*",
+              "newerThan": "1d"
+            },
+            {
+              "branch": "client/acme",
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": false,
+                "isSymlink": false,
+                "latestMtimeMs": 1768478400000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 1,
+                "totalSizeBytes": 1
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "passed"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: evaluateWhen > requires every named environment variable to equal its given value",
+      "id": "conditions.evaluate.environment-must-equal",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "env": {
+                "CI": "1"
+              }
+            },
+            {
+              "env": {
+                "CI": "1",
+                "STAGE": "prod"
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "definite"
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "status"
+          ]
+        },
+        {
+          "args": [
+            {
+              "env": {
+                "CI": "1"
+              }
+            },
+            {
+              "env": {
+                "CI": "1",
+                "STAGE": "prod"
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "passed"
+          ]
+        },
+        {
+          "args": [
+            {
+              "env": {
+                "CI": "1",
+                "STAGE": "prod"
+              }
+            },
+            {
+              "env": {
+                "CI": "1",
+                "STAGE": "prod"
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "definite"
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "status"
+          ]
+        },
+        {
+          "args": [
+            {
+              "env": {
+                "CI": "1",
+                "STAGE": "prod"
+              }
+            },
+            {
+              "env": {
+                "CI": "1",
+                "STAGE": "prod"
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "passed"
+          ]
+        },
+        {
+          "args": [
+            {
+              "env": {
+                "CI": "1",
+                "STAGE": "dev"
+              }
+            },
+            {
+              "env": {
+                "CI": "1",
+                "STAGE": "prod"
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "definite"
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "status"
+          ]
+        },
+        {
+          "args": [
+            {
+              "env": {
+                "CI": "1",
+                "STAGE": "dev"
+              }
+            },
+            {
+              "env": {
+                "CI": "1",
+                "STAGE": "prod"
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "passed"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: evaluateWhen > reports which fields it checked and which of those failed",
+      "id": "conditions.evaluate.reports-checked-and-failed",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "branch": "nope",
+              "env": {
+                "CI": "1"
+              }
+            },
+            {
+              "branch": "main",
+              "env": {
+                "CI": "1"
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "definite"
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "status"
+          ]
+        },
+        {
+          "args": [
+            {
+              "branch": "nope",
+              "env": {
+                "CI": "1"
+              }
+            },
+            {
+              "branch": "main",
+              "env": {
+                "CI": "1"
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": [
+              "branch",
+              "env"
+            ]
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "checked"
+          ]
+        },
+        {
+          "args": [
+            {
+              "branch": "nope",
+              "env": {
+                "CI": "1"
+              }
+            },
+            {
+              "branch": "main",
+              "env": {
+                "CI": "1"
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": [
+              "branch"
+            ]
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "failed"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: evaluateWhen > leaves a size or age condition indeterminate when there is no entry fact to read, naming what was missing",
+      "id": "conditions.evaluate.indeterminate-without-a-fact",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "newerThan": "1d"
+            },
+            {
+              "env": {},
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "indeterminate"
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "status"
+          ]
+        },
+        {
+          "args": [
+            {
+              "newerThan": "1d"
+            },
+            {
+              "env": {},
+              "nowMs": 1768478400000
+            },
+            "entry.latestMtimeMs"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "evaluateWhen.reasonContains"
+        },
+        {
+          "args": [
+            {
+              "maxSizeBytes": 10
+            },
+            {
+              "env": {},
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "indeterminate"
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "status"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: evaluateWhen > leaves a named-but-unset environment variable indeterminate rather than failed",
+      "id": "conditions.evaluate.unset-environment-is-indeterminate",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "env": {
+                "MISSING": "x"
+              }
+            },
+            {
+              "env": {},
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "indeterminate"
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "status"
+          ]
+        },
+        {
+          "args": [
+            {
+              "env": {
+                "MISSING": "x"
+              }
+            },
+            {
+              "env": {},
+              "nowMs": 1768478400000
+            },
+            "env.MISSING"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "evaluateWhen.reasonContains"
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: evaluateWhen > evaluates the predicate form through the same facts: OR, NOT and a reference the context cannot answer",
+      "id": "conditions.evaluate.predicate-form",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "kind": "anyOf",
+              "operands": [
+                {
+                  "kind": "compare",
+                  "left": {
+                    "key": "entry.latestMtimeMs",
+                    "kind": "reference"
+                  },
+                  "op": "gte",
+                  "right": {
+                    "kind": "numberLiteral",
+                    "value": 1760702400000
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "key": "entry.totalSizeBytes",
+                    "kind": "reference"
+                  },
+                  "op": "lte",
+                  "right": {
+                    "kind": "numberLiteral",
+                    "value": 10
+                  }
+                }
+              ]
+            },
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": false,
+                "isSymlink": false,
+                "latestMtimeMs": 1751198400000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 1,
+                "totalSizeBytes": 5
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "definite"
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "status"
+          ]
+        },
+        {
+          "args": [
+            {
+              "kind": "anyOf",
+              "operands": [
+                {
+                  "kind": "compare",
+                  "left": {
+                    "key": "entry.latestMtimeMs",
+                    "kind": "reference"
+                  },
+                  "op": "gte",
+                  "right": {
+                    "kind": "numberLiteral",
+                    "value": 1760702400000
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "key": "entry.totalSizeBytes",
+                    "kind": "reference"
+                  },
+                  "op": "lte",
+                  "right": {
+                    "kind": "numberLiteral",
+                    "value": 10
+                  }
+                }
+              ]
+            },
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": false,
+                "isSymlink": false,
+                "latestMtimeMs": 1751198400000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 1,
+                "totalSizeBytes": 5
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "passed"
+          ]
+        },
+        {
+          "args": [
+            {
+              "kind": "anyOf",
+              "operands": [
+                {
+                  "kind": "compare",
+                  "left": {
+                    "key": "entry.latestMtimeMs",
+                    "kind": "reference"
+                  },
+                  "op": "gte",
+                  "right": {
+                    "kind": "numberLiteral",
+                    "value": 1760702400000
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "key": "entry.totalSizeBytes",
+                    "kind": "reference"
+                  },
+                  "op": "lte",
+                  "right": {
+                    "kind": "numberLiteral",
+                    "value": 10
+                  }
+                }
+              ]
+            },
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": false,
+                "isSymlink": false,
+                "latestMtimeMs": 1751198400000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 1,
+                "totalSizeBytes": 5
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": [
+              "predicate"
+            ]
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "checked"
+          ]
+        },
+        {
+          "args": [
+            {
+              "kind": "not",
+              "operand": {
+                "kind": "anyOf",
+                "operands": [
+                  {
+                    "kind": "compare",
+                    "left": {
+                      "key": "entry.latestMtimeMs",
+                      "kind": "reference"
+                    },
+                    "op": "gte",
+                    "right": {
+                      "kind": "numberLiteral",
+                      "value": 1760702400000
+                    }
+                  },
+                  {
+                    "kind": "compare",
+                    "left": {
+                      "key": "entry.totalSizeBytes",
+                      "kind": "reference"
+                    },
+                    "op": "lte",
+                    "right": {
+                      "kind": "numberLiteral",
+                      "value": 10
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": false,
+                "isSymlink": false,
+                "latestMtimeMs": 1751198400000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 1,
+                "totalSizeBytes": 5
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "definite"
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "status"
+          ]
+        },
+        {
+          "args": [
+            {
+              "kind": "not",
+              "operand": {
+                "kind": "anyOf",
+                "operands": [
+                  {
+                    "kind": "compare",
+                    "left": {
+                      "key": "entry.latestMtimeMs",
+                      "kind": "reference"
+                    },
+                    "op": "gte",
+                    "right": {
+                      "kind": "numberLiteral",
+                      "value": 1760702400000
+                    }
+                  },
+                  {
+                    "kind": "compare",
+                    "left": {
+                      "key": "entry.totalSizeBytes",
+                      "kind": "reference"
+                    },
+                    "op": "lte",
+                    "right": {
+                      "kind": "numberLiteral",
+                      "value": 10
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": false,
+                "isSymlink": false,
+                "latestMtimeMs": 1751198400000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 1,
+                "totalSizeBytes": 5
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "passed"
+          ]
+        },
+        {
+          "args": [
+            {
+              "kind": "textCompare",
+              "left": {
+                "key": "env.NOWHERE",
+                "kind": "reference"
+              },
+              "op": "equals",
+              "right": {
+                "kind": "textLiteral",
+                "value": "x"
+              }
+            },
+            {
+              "env": {},
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "indeterminate"
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "status"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: newerThan and olderThan > includes a fresh entry and excludes a stale one under the same window",
+      "id": "conditions.newer-than.includes-fresh-excludes-stale",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "newerThan": "90d"
+            },
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": false,
+                "isSymlink": false,
+                "latestMtimeMs": 1768392000000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 1,
+                "totalSizeBytes": 1
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "definite"
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "status"
+          ]
+        },
+        {
+          "args": [
+            {
+              "newerThan": "90d"
+            },
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": false,
+                "isSymlink": false,
+                "latestMtimeMs": 1768392000000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 1,
+                "totalSizeBytes": 1
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "passed"
+          ]
+        },
+        {
+          "args": [
+            {
+              "newerThan": "90d"
+            },
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": false,
+                "isSymlink": false,
+                "latestMtimeMs": 1751198400000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 1,
+                "totalSizeBytes": 1
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "definite"
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "status"
+          ]
+        },
+        {
+          "args": [
+            {
+              "newerThan": "90d"
+            },
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": false,
+                "isSymlink": false,
+                "latestMtimeMs": 1751198400000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 1,
+                "totalSizeBytes": 1
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "passed"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: newerThan and olderThan > inverts exactly, so olderThan and newerThan never both hold for the same entry and window",
+      "id": "conditions.newer-than.older-than-inverts",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "newerThan": "90d"
+            },
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": false,
+                "isSymlink": false,
+                "latestMtimeMs": 1768392000000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 1,
+                "totalSizeBytes": 1
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "definite"
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "status"
+          ]
+        },
+        {
+          "args": [
+            {
+              "newerThan": "90d"
+            },
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": false,
+                "isSymlink": false,
+                "latestMtimeMs": 1768392000000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 1,
+                "totalSizeBytes": 1
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "passed"
+          ]
+        },
+        {
+          "args": [
+            {
+              "olderThan": "90d"
+            },
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": false,
+                "isSymlink": false,
+                "latestMtimeMs": 1768392000000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 1,
+                "totalSizeBytes": 1
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "definite"
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "status"
+          ]
+        },
+        {
+          "args": [
+            {
+              "olderThan": "90d"
+            },
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": false,
+                "isSymlink": false,
+                "latestMtimeMs": 1768392000000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 1,
+                "totalSizeBytes": 1
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "passed"
+          ]
+        },
+        {
+          "args": [
+            {
+              "newerThan": "90d"
+            },
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": false,
+                "isSymlink": false,
+                "latestMtimeMs": 1751198400000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 1,
+                "totalSizeBytes": 1
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "definite"
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "status"
+          ]
+        },
+        {
+          "args": [
+            {
+              "newerThan": "90d"
+            },
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": false,
+                "isSymlink": false,
+                "latestMtimeMs": 1751198400000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 1,
+                "totalSizeBytes": 1
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "passed"
+          ]
+        },
+        {
+          "args": [
+            {
+              "olderThan": "90d"
+            },
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": false,
+                "isSymlink": false,
+                "latestMtimeMs": 1751198400000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 1,
+                "totalSizeBytes": 1
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "definite"
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "status"
+          ]
+        },
+        {
+          "args": [
+            {
+              "olderThan": "90d"
+            },
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": false,
+                "isSymlink": false,
+                "latestMtimeMs": 1751198400000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 1,
+                "totalSizeBytes": 1
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "passed"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: directory-scoped conditions read the subtree, not the directory's own inode > uses the subtree's most recent mtime for newerThan",
+      "id": "conditions.directory.newer-than-reads-the-subtree",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "newerThan": "90d"
+            },
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": true,
+                "isSymlink": false,
+                "latestMtimeMs": 1768392000000,
+                "mtimeMs": 1733918400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 0,
+                "totalSizeBytes": 10
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "definite"
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "status"
+          ]
+        },
+        {
+          "args": [
+            {
+              "newerThan": "90d"
+            },
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": true,
+                "isSymlink": false,
+                "latestMtimeMs": 1768392000000,
+                "mtimeMs": 1733918400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 0,
+                "totalSizeBytes": 10
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "passed"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/conditions.test.ts: directory-scoped conditions read the subtree, not the directory's own inode > uses the subtree's recursive total size for maxSizeBytes",
+      "id": "conditions.directory.max-size-reads-the-subtree",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            {
+              "maxSizeBytes": 10000
+            },
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": true,
+                "isSymlink": false,
+                "latestMtimeMs": 1768478400000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 4096,
+                "totalSizeBytes": 15096
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "definite"
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "status"
+          ]
+        },
+        {
+          "args": [
+            {
+              "maxSizeBytes": 10000
+            },
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": true,
+                "isSymlink": false,
+                "latestMtimeMs": 1768478400000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 4096,
+                "totalSizeBytes": 15096
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": false
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "passed"
+          ]
+        },
+        {
+          "args": [
+            {
+              "maxSizeBytes": 20000
+            },
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": true,
+                "isSymlink": false,
+                "latestMtimeMs": 1768478400000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 4096,
+                "totalSizeBytes": 15096
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": "definite"
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "status"
+          ]
+        },
+        {
+          "args": [
+            {
+              "maxSizeBytes": 20000
+            },
+            {
+              "env": {},
+              "fact": {
+                "isDanglingSymlink": false,
+                "isDirectory": true,
+                "isSymlink": false,
+                "latestMtimeMs": 1768478400000,
+                "mtimeMs": 1768478400000,
+                "relPath": "projects/-a-b",
+                "sizeBytes": 4096,
+                "totalSizeBytes": 15096
+              },
+              "nowMs": 1768478400000
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "evaluateWhen",
+          "select": [
+            "passed"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,915 @@
+{
+  "cases": [
+    {
+      "from": "resolve/extends.test.ts: lineariseProfile > emits a linear chain base-first",
+      "id": "extends.linearise.chain-base-first",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "client-acme",
+            {
+              "base": {
+                "profile": {}
+              },
+              "client-acme": {
+                "profile": {
+                  "extends": [
+                    "work"
+                  ]
+                }
+              },
+              "work": {
+                "profile": {
+                  "extends": [
+                    "base"
+                  ]
+                }
+              }
+            }
+          ],
+          "expect": {
+            "value": [
+              "base",
+              "work",
+              "client-acme"
+            ]
+          },
+          "fn": "lineariseProfile",
+          "select": [
+            "order"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/extends.test.ts: lineariseProfile > emits a single profile with no extends as itself",
+      "id": "extends.linearise.single-profile",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "solo",
+            {
+              "solo": {
+                "profile": {}
+              }
+            }
+          ],
+          "expect": {
+            "value": [
+              "solo"
+            ]
+          },
+          "fn": "lineariseProfile",
+          "select": [
+            "order"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/extends.test.ts: lineariseProfile > emits multiple extends in the order they were written, so the later one wins",
+      "id": "extends.linearise.extends-in-written-order",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "both",
+            {
+              "base": {
+                "profile": {}
+              },
+              "both": {
+                "profile": {
+                  "extends": [
+                    "base",
+                    "work"
+                  ]
+                }
+              },
+              "work": {
+                "profile": {}
+              }
+            }
+          ],
+          "expect": {
+            "value": [
+              "base",
+              "work",
+              "both"
+            ]
+          },
+          "fn": "lineariseProfile",
+          "select": [
+            "order"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/extends.test.ts: diamond extends > emits the shared base exactly once, post-order, rather than re-emitting it per branch",
+      "id": "extends.diamond.base-once-post-order",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "c",
+            {
+              "a": {
+                "profile": {
+                  "categories": {
+                    "history": false
+                  },
+                  "extends": [
+                    "base"
+                  ]
+                }
+              },
+              "b": {
+                "profile": {
+                  "extends": [
+                    "base"
+                  ]
+                }
+              },
+              "base": {
+                "profile": {
+                  "categories": {
+                    "history": true,
+                    "knowledge": true
+                  }
+                }
+              },
+              "c": {
+                "profile": {
+                  "extends": [
+                    "a",
+                    "b"
+                  ]
+                }
+              }
+            }
+          ],
+          "expect": {
+            "value": [
+              "base",
+              "a",
+              "b",
+              "c"
+            ]
+          },
+          "fn": "lineariseProfile",
+          "select": [
+            "order"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/extends.test.ts: diamond extends > never re-applies the shared base's values on top of an intermediate profile's own override",
+      "id": "extends.diamond.base-not-reapplied",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "c",
+            {
+              "a": {
+                "profile": {
+                  "categories": {
+                    "history": false
+                  },
+                  "extends": [
+                    "base"
+                  ]
+                }
+              },
+              "b": {
+                "profile": {
+                  "extends": [
+                    "base"
+                  ]
+                }
+              },
+              "base": {
+                "profile": {
+                  "categories": {
+                    "history": true,
+                    "knowledge": true
+                  }
+                }
+              },
+              "c": {
+                "profile": {
+                  "extends": [
+                    "a",
+                    "b"
+                  ]
+                }
+              }
+            }
+          ],
+          "expect": {
+            "value": [
+              "base",
+              "a",
+              "b",
+              "c"
+            ]
+          },
+          "fn": "lineariseProfile",
+          "select": [
+            "order"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/extends.test.ts: diamond extends > raises zero cycle diagnostics for a legitimate diamond",
+      "id": "extends.diamond.no-cycle-diagnostics",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "c",
+            {
+              "a": {
+                "profile": {
+                  "categories": {
+                    "history": false
+                  },
+                  "extends": [
+                    "base"
+                  ]
+                }
+              },
+              "b": {
+                "profile": {
+                  "extends": [
+                    "base"
+                  ]
+                }
+              },
+              "base": {
+                "profile": {
+                  "categories": {
+                    "history": true,
+                    "knowledge": true
+                  }
+                }
+              },
+              "c": {
+                "profile": {
+                  "extends": [
+                    "a",
+                    "b"
+                  ]
+                }
+              }
+            }
+          ],
+          "expect": {
+            "value": []
+          },
+          "fn": "lineariseProfile",
+          "select": [
+            "diagnostics"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/extends.test.ts: diamond extends > resolves a diamond's layers so the intermediate override survives into the flattened result",
+      "id": "extends.diamond.override-survives-in-layers",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "c",
+            {
+              "a": {
+                "profile": {
+                  "categories": {
+                    "history": false
+                  },
+                  "extends": [
+                    "base"
+                  ]
+                }
+              },
+              "b": {
+                "profile": {
+                  "extends": [
+                    "base"
+                  ]
+                }
+              },
+              "base": {
+                "profile": {
+                  "categories": {
+                    "history": true,
+                    "knowledge": true
+                  }
+                }
+              },
+              "c": {
+                "profile": {
+                  "extends": [
+                    "a",
+                    "b"
+                  ]
+                }
+              }
+            },
+            0,
+            "source"
+          ],
+          "expect": {
+            "value": [
+              "base",
+              "a",
+              "b",
+              "c"
+            ]
+          },
+          "fn": "profileLayers.layerField"
+        },
+        {
+          "args": [
+            "c",
+            {
+              "a": {
+                "profile": {
+                  "categories": {
+                    "history": false
+                  },
+                  "extends": [
+                    "base"
+                  ]
+                }
+              },
+              "b": {
+                "profile": {
+                  "extends": [
+                    "base"
+                  ]
+                }
+              },
+              "base": {
+                "profile": {
+                  "categories": {
+                    "history": true,
+                    "knowledge": true
+                  }
+                }
+              },
+              "c": {
+                "profile": {
+                  "extends": [
+                    "a",
+                    "b"
+                  ]
+                }
+              }
+            },
+            0,
+            "categories.history"
+          ],
+          "expect": {
+            "value": [
+              true,
+              false,
+              {
+                "$undefined": true
+              },
+              {
+                "$undefined": true
+              }
+            ]
+          },
+          "fn": "profileLayers.layerField"
+        }
+      ]
+    },
+    {
+      "from": "resolve/extends.test.ts: cycle detection > detects a direct two-profile cycle without looping or overflowing the stack",
+      "id": "extends.cycle.direct",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a",
+            {
+              "a": {
+                "profile": {
+                  "extends": [
+                    "b"
+                  ]
+                }
+              },
+              "b": {
+                "profile": {
+                  "extends": [
+                    "a"
+                  ]
+                }
+              }
+            },
+            "EXTENDS_CYCLE"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "lineariseProfile.hasDiagnostic"
+        },
+        {
+          "args": [
+            "a",
+            {
+              "a": {
+                "profile": {
+                  "extends": [
+                    "b"
+                  ]
+                }
+              },
+              "b": {
+                "profile": {
+                  "extends": [
+                    "a"
+                  ]
+                }
+              }
+            }
+          ],
+          "expect": {
+            "value": [
+              "b",
+              "a"
+            ]
+          },
+          "fn": "lineariseProfile",
+          "select": [
+            "order"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/extends.test.ts: cycle detection > detects a self-referential profile",
+      "id": "extends.cycle.self-referential",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a",
+            {
+              "a": {
+                "profile": {
+                  "extends": [
+                    "a"
+                  ]
+                }
+              }
+            }
+          ],
+          "expect": {
+            "value": [
+              "EXTENDS_CYCLE"
+            ]
+          },
+          "fn": "lineariseProfile.diagnosticCodes"
+        },
+        {
+          "args": [
+            "a",
+            {
+              "a": {
+                "profile": {
+                  "extends": [
+                    "a"
+                  ]
+                }
+              }
+            }
+          ],
+          "expect": {
+            "value": [
+              "a"
+            ]
+          },
+          "fn": "lineariseProfile",
+          "select": [
+            "order"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/extends.test.ts: cycle detection > detects a longer cycle and names the whole path in the diagnostic",
+      "id": "extends.cycle.names-the-whole-path",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a",
+            {
+              "a": {
+                "profile": {
+                  "extends": [
+                    "b"
+                  ]
+                }
+              },
+              "b": {
+                "profile": {
+                  "extends": [
+                    "c"
+                  ]
+                }
+              },
+              "c": {
+                "profile": {
+                  "extends": [
+                    "a"
+                  ]
+                }
+              }
+            },
+            "EXTENDS_CYCLE",
+            "a -> b -> c -> a"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "lineariseProfile.messageContains"
+        }
+      ]
+    },
+    {
+      "from": "resolve/extends.test.ts: cycle detection > still emits every profile exactly once when a cycle is broken",
+      "id": "extends.cycle.every-profile-once",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "a",
+            {
+              "a": {
+                "profile": {
+                  "extends": [
+                    "b"
+                  ]
+                }
+              },
+              "b": {
+                "profile": {
+                  "extends": [
+                    "c"
+                  ]
+                }
+              },
+              "c": {
+                "profile": {
+                  "extends": [
+                    "a"
+                  ]
+                }
+              }
+            }
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "lineariseProfile.orderIsUnique"
+        }
+      ]
+    },
+    {
+      "from": "resolve/extends.test.ts: missing profiles > reports a missing profile rather than silently skipping it",
+      "id": "extends.missing.reported",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "work",
+            {
+              "work": {
+                "profile": {
+                  "extends": [
+                    "nonexistent"
+                  ]
+                }
+              }
+            }
+          ],
+          "expect": {
+            "value": [
+              "MISSING_PROFILE"
+            ]
+          },
+          "fn": "lineariseProfile.diagnosticCodes"
+        },
+        {
+          "args": [
+            "work",
+            {
+              "work": {
+                "profile": {
+                  "extends": [
+                    "nonexistent"
+                  ]
+                }
+              }
+            }
+          ],
+          "expect": {
+            "value": [
+              "work"
+            ]
+          },
+          "fn": "lineariseProfile",
+          "select": [
+            "order"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/extends.test.ts: missing profiles > reports a missing root profile",
+      "id": "extends.missing.root",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "nothing",
+            {}
+          ],
+          "expect": {
+            "value": []
+          },
+          "fn": "lineariseProfile",
+          "select": [
+            "order"
+          ]
+        },
+        {
+          "args": [
+            "nothing",
+            {}
+          ],
+          "expect": {
+            "value": "MISSING_PROFILE"
+          },
+          "fn": "lineariseProfile",
+          "select": [
+            "diagnostics",
+            "0",
+            "code"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/extends.test.ts: missing profiles > reports each missing profile only once even when several branches reference it",
+      "id": "extends.missing.once-per-profile",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "c",
+            {
+              "a": {
+                "profile": {
+                  "extends": [
+                    "gone"
+                  ]
+                }
+              },
+              "b": {
+                "profile": {
+                  "extends": [
+                    "gone"
+                  ]
+                }
+              },
+              "c": {
+                "profile": {
+                  "extends": [
+                    "a",
+                    "b"
+                  ]
+                }
+              }
+            },
+            "MISSING_PROFILE"
+          ],
+          "expect": {
+            "value": 1
+          },
+          "fn": "lineariseProfile.countOf"
+        }
+      ]
+    },
+    {
+      "from": "resolve/extends.test.ts: profileLayers > assigns strictly ascending layer ids starting from the given index",
+      "id": "extends.layers.ascending-ids",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "work",
+            {
+              "base": {
+                "profile": {}
+              },
+              "work": {
+                "profile": {
+                  "extends": [
+                    "base"
+                  ]
+                }
+              }
+            },
+            5,
+            "id"
+          ],
+          "expect": {
+            "value": [
+              5,
+              6
+            ]
+          },
+          "fn": "profileLayers.layerField"
+        },
+        {
+          "args": [
+            "work",
+            {
+              "base": {
+                "profile": {}
+              },
+              "work": {
+                "profile": {
+                  "extends": [
+                    "base"
+                  ]
+                }
+              }
+            },
+            5
+          ],
+          "expect": {
+            "value": 7
+          },
+          "fn": "profileLayers",
+          "select": [
+            "nextId"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/extends.test.ts: profileLayers > carries each profile's categories, entries, entry order, and launch flags onto its layer",
+      "id": "extends.layers.carries-each-field",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "work",
+            {
+              "work": {
+                "entryOrder": [
+                  "knowledge/skills/commit"
+                ],
+                "filepath": "/cfg/work.json",
+                "profile": {
+                  "categories": {
+                    "history": true
+                  },
+                  "entries": {
+                    "knowledge/skills/commit": true
+                  },
+                  "launch": {
+                    "skipPermissions": true
+                  }
+                }
+              }
+            },
+            0
+          ],
+          "expect": {
+            "value": "/cfg/work.json"
+          },
+          "fn": "profileLayers.firstLayer",
+          "select": [
+            "source"
+          ]
+        },
+        {
+          "args": [
+            "work",
+            {
+              "work": {
+                "entryOrder": [
+                  "knowledge/skills/commit"
+                ],
+                "filepath": "/cfg/work.json",
+                "profile": {
+                  "categories": {
+                    "history": true
+                  },
+                  "entries": {
+                    "knowledge/skills/commit": true
+                  },
+                  "launch": {
+                    "skipPermissions": true
+                  }
+                }
+              }
+            },
+            0
+          ],
+          "expect": {
+            "value": {
+              "history": true
+            }
+          },
+          "fn": "profileLayers.firstLayer",
+          "select": [
+            "categories"
+          ]
+        },
+        {
+          "args": [
+            "work",
+            {
+              "work": {
+                "entryOrder": [
+                  "knowledge/skills/commit"
+                ],
+                "filepath": "/cfg/work.json",
+                "profile": {
+                  "categories": {
+                    "history": true
+                  },
+                  "entries": {
+                    "knowledge/skills/commit": true
+                  },
+                  "launch": {
+                    "skipPermissions": true
+                  }
+                }
+              }
+            },
+            0
+          ],
+          "expect": {
+            "value": [
+              "knowledge/skills/commit"
+            ]
+          },
+          "fn": "profileLayers.firstLayer",
+          "select": [
+            "entryOrder"
+          ]
+        },
+        {
+          "args": [
+            "work",
+            {
+              "work": {
+                "entryOrder": [
+                  "knowledge/skills/commit"
+                ],
+                "filepath": "/cfg/work.json",
+                "profile": {
+                  "categories": {
+                    "history": true
+                  },
+                  "entries": {
+                    "knowledge/skills/commit": true
+                  },
+                  "launch": {
+                    "skipPermissions": true
+                  }
+                }
+              }
+            },
+            0
+          ],
+          "expect": {
+            "value": {
+              "skipPermissions": true
+            }
+          },
+          "fn": "profileLayers.firstLayer",
+          "select": [
+            "launch"
+          ]
+        }
+      ]
+    }
+  ]
+}

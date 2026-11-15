@@ -42,6 +42,76 @@
         "ts": []
       }
     },
+    "function/resolve-conditions.json": {
+      "cases": 29,
+      "skip": {
+        "rust": [],
+        "ts": []
+      }
+    },
+    "function/resolve-decide.json": {
+      "cases": 21,
+      "skip": {
+        "rust": [],
+        "ts": []
+      }
+    },
+    "function/resolve-extends.json": {
+      "cases": 16,
+      "skip": {
+        "rust": [],
+        "ts": []
+      }
+    },
+    "function/resolve-flatten.json": {
+      "cases": 33,
+      "skip": {
+        "rust": [],
+        "ts": []
+      }
+    },
+    "function/resolve-match.json": {
+      "cases": 35,
+      "skip": {
+        "rust": [],
+        "ts": []
+      }
+    },
+    "function/resolve-pipeline.json": {
+      "cases": 33,
+      "skip": {
+        "rust": [],
+        "ts": []
+      }
+    },
+    "function/resolve-plan.json": {
+      "cases": 16,
+      "skip": {
+        "rust": [],
+        "ts": []
+      }
+    },
+    "function/resolve-projects.json": {
+      "cases": 28,
+      "skip": {
+        "rust": [],
+        "ts": []
+      }
+    },
+    "function/resolve-reconcile.json": {
+      "cases": 12,
+      "skip": {
+        "rust": [],
+        "ts": []
+      }
+    },
+    "function/resolve-walk.json": {
+      "cases": 16,
+      "skip": {
+        "rust": [],
+        "ts": []
+      }
+    },
     "function/same-directory.json": {
       "cases": 3,
       "skip": {

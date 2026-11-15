@@ -1,0 +1,613 @@
+{
+  "cases": [
+    {
+      "from": "resolve/projects.test.ts: encodeProjectPath > collapses the whole non-alphanumeric class in /Users/alice/work/clients/acme",
+      "id": "projects.encode-path.collapses-the-non-alphanumeric-class.1",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/h/work/clients/acme"
+          ],
+          "expect": {
+            "value": "-h-work-clients-acme"
+          },
+          "fn": "encodeProjectPath"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: encodeProjectPath > collapses the whole non-alphanumeric class in /Users/alice/dev/app-v1.2.3",
+      "id": "projects.encode-path.collapses-the-non-alphanumeric-class.2",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/h/dev/app-v1.2.3"
+          ],
+          "expect": {
+            "value": "-h-dev-app-v1-2-3"
+          },
+          "fn": "encodeProjectPath"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: encodeProjectPath > collapses the whole non-alphanumeric class in /Users/alice/My Documents/notes",
+      "id": "projects.encode-path.collapses-the-non-alphanumeric-class.3",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/h/My Documents/notes"
+          ],
+          "expect": {
+            "value": "-h-My-Documents-notes"
+          },
+          "fn": "encodeProjectPath"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: encodeProjectPath > collapses the whole non-alphanumeric class in /Users/alice/some_dir/other_thing",
+      "id": "projects.encode-path.collapses-the-non-alphanumeric-class.4",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/h/some_dir/other_thing"
+          ],
+          "expect": {
+            "value": "-h-some-dir-other-thing"
+          },
+          "fn": "encodeProjectPath"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: encodeProjectPath > collapses the whole non-alphanumeric class in /Users/alice/@scope/pkg",
+      "id": "projects.encode-path.collapses-the-non-alphanumeric-class.5",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/h/@scope/pkg"
+          ],
+          "expect": {
+            "value": "-h--scope-pkg"
+          },
+          "fn": "encodeProjectPath"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: encodeProjectPath > collapses the whole non-alphanumeric class in /Users/alice/CamelCase/9lives",
+      "id": "projects.encode-path.collapses-the-non-alphanumeric-class.6",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/h/CamelCase/9lives"
+          ],
+          "expect": {
+            "value": "-h-CamelCase-9lives"
+          },
+          "fn": "encodeProjectPath"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: encodeProjectPath > preserves case rather than lowercasing",
+      "id": "projects.encode-path.preserves-case",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/A/b/CdE"
+          ],
+          "expect": {
+            "value": "-A-b-CdE"
+          },
+          "fn": "encodeProjectPath"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: encodeProjectPath > collapses `.` and `_` and ` ` exactly as it collapses `/`, which is what makes the encoding many-to-one",
+      "id": "projects.encode-path.is-many-to-one",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/a/b-c"
+          ],
+          "expect": {
+            "value": "-a-b-c"
+          },
+          "fn": "encodeProjectPath"
+        },
+        {
+          "args": [
+            "/a-b-c"
+          ],
+          "expect": {
+            "value": "-a-b-c"
+          },
+          "fn": "encodeProjectPath"
+        },
+        {
+          "args": [
+            "/a/b.c"
+          ],
+          "expect": {
+            "value": "-a-b-c"
+          },
+          "fn": "encodeProjectPath"
+        },
+        {
+          "args": [
+            "/a/b/c"
+          ],
+          "expect": {
+            "value": "-a-b-c"
+          },
+          "fn": "encodeProjectPath"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: splitOnWildcards > keeps wildcard tokens out of the literal runs, so encoding never turns a `*` into a `-`",
+      "id": "projects.split.keeps-wildcards-out-of-literals",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/a/b/*"
+          ],
+          "expect": {
+            "value": [
+              {
+                "kind": "literal",
+                "text": "/a/b/"
+              },
+              {
+                "kind": "wildcard",
+                "text": "*"
+              }
+            ]
+          },
+          "fn": "splitOnWildcards"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: splitOnWildcards > treats `**` as one token rather than two `*`",
+      "id": "projects.split.double-star-is-one-token",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/a/**/b"
+          ],
+          "expect": {
+            "value": [
+              {
+                "kind": "literal",
+                "text": "/a/"
+              },
+              {
+                "kind": "wildcard",
+                "text": "**"
+              },
+              {
+                "kind": "literal",
+                "text": "/b"
+              }
+            ]
+          },
+          "fn": "splitOnWildcards"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: splitOnWildcards > handles `?` and adjacent wildcards",
+      "id": "projects.split.question-mark-and-adjacent",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "?*x"
+          ],
+          "expect": {
+            "value": [
+              {
+                "kind": "wildcard",
+                "text": "?"
+              },
+              {
+                "kind": "wildcard",
+                "text": "*"
+              },
+              {
+                "kind": "literal",
+                "text": "x"
+              }
+            ]
+          },
+          "fn": "splitOnWildcards"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: expandHome > expands a leading `~/`",
+      "id": "projects.expand-home.leading-tilde-slash",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "~/work",
+            "/h"
+          ],
+          "expect": {
+            "value": "/h/work"
+          },
+          "fn": "expandHome"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: expandHome > expands a bare `~`",
+      "id": "projects.expand-home.bare-tilde",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "~",
+            "/h"
+          ],
+          "expect": {
+            "value": "/h"
+          },
+          "fn": "expandHome"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: expandHome > leaves a `~` that is not the first character alone",
+      "id": "projects.expand-home.not-first",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/a/~b",
+            "/h"
+          ],
+          "expect": {
+            "value": "/a/~b"
+          },
+          "fn": "expandHome"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: expandHome > does not expand `~name`, which is another user's home, not this one's",
+      "id": "projects.expand-home.another-users-home",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "~bob/work",
+            "/h"
+          ],
+          "expect": {
+            "value": "~bob/work"
+          },
+          "fn": "expandHome"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: encodeProjectPattern > expands `~` before encoding, never after — encoding first would turn the `~` into a `-` and lose the reference",
+      "id": "projects.encode-pattern.expands-before-encoding",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "~/work/clients/acme",
+            "/h"
+          ],
+          "expect": {
+            "value": "-h-work-clients-acme"
+          },
+          "fn": "encodeProjectPattern"
+        },
+        {
+          "args": [
+            "/h/work/clients/acme"
+          ],
+          "expect": {
+            "value": "-h-work-clients-acme"
+          },
+          "fn": "encodeProjectPath"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: encodeProjectPattern > carries wildcard tokens through encoding as wildcards",
+      "id": "projects.encode-pattern.carries-wildcards",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "~/work/clients/*",
+            "/h"
+          ],
+          "expect": {
+            "value": "-h-work-clients-*"
+          },
+          "fn": "encodeProjectPattern"
+        },
+        {
+          "args": [
+            "~/work/**",
+            "/h"
+          ],
+          "expect": {
+            "value": "-h-work-**"
+          },
+          "fn": "encodeProjectPattern"
+        },
+        {
+          "args": [
+            "/a/?/b",
+            "/h"
+          ],
+          "expect": {
+            "value": "-a-?-b"
+          },
+          "fn": "encodeProjectPattern"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: encodeProjectPattern > encodes an absolute path with no `~` at all",
+      "id": "projects.encode-pattern.absolute-path",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "/var/tmp/x",
+            "/h"
+          ],
+          "expect": {
+            "value": "-var-tmp-x"
+          },
+          "fn": "encodeProjectPattern"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: encodeProjectPattern > rejects a fragment that is neither home-rooted nor absolute",
+      "id": "projects.encode-pattern.rejects-an-unrooted-fragment",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "work/clients/acme",
+            "/h"
+          ],
+          "expect": {
+            "throws": {
+              "name": "UnrootedProjectPathError"
+            }
+          },
+          "fn": "encodeProjectPattern"
+        },
+        {
+          "args": [
+            "*",
+            "/h"
+          ],
+          "expect": {
+            "throws": {
+              "name": "UnrootedProjectPathError"
+            }
+          },
+          "fn": "encodeProjectPattern"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: encodeProjectPattern > encodes ~/dev/app-v1.2.3 to -Users-alice-dev-app-v1-2-3",
+      "id": "projects.encode-pattern.encodes.1",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "~/dev/app-v1.2.3",
+            "/h"
+          ],
+          "expect": {
+            "value": "-h-dev-app-v1-2-3"
+          },
+          "fn": "encodeProjectPattern"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: encodeProjectPattern > encodes ~/My Documents to -Users-alice-My-Documents",
+      "id": "projects.encode-pattern.encodes.2",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "~/My Documents",
+            "/h"
+          ],
+          "expect": {
+            "value": "-h-My-Documents"
+          },
+          "fn": "encodeProjectPattern"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: encodeProjectPattern > encodes ~/some_dir to -Users-alice-some-dir",
+      "id": "projects.encode-pattern.encodes.3",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "~/some_dir",
+            "/h"
+          ],
+          "expect": {
+            "value": "-h-some-dir"
+          },
+          "fn": "encodeProjectPattern"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: encodeProjectPattern > encodes ~/@scope to -Users-alice--scope",
+      "id": "projects.encode-pattern.encodes.4",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            "~/@scope",
+            "/h"
+          ],
+          "expect": {
+            "value": "-h--scope"
+          },
+          "fn": "encodeProjectPattern"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: detectEncodingAmbiguity > flags a literal containing a character besides `/` that encodes to `-`",
+      "id": "projects.ambiguity.flags-a-lossy-literal",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              "~/work/app-v1.2"
+            ],
+            "/h",
+            "lossy-characters"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "detectEncodingAmbiguity.hasReason"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: detectEncodingAmbiguity > does not flag a literal whose only lossy characters are separators",
+      "id": "projects.ambiguity.ignores-separators",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              "~/work/clients/acme"
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": []
+          },
+          "fn": "detectEncodingAmbiguity"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: detectEncodingAmbiguity > flags two distinct fragments that encode identically, which proves a collision outright",
+      "id": "projects.ambiguity.flags-a-collision",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              "/work/clients/acme",
+              "/work/clients-acme"
+            ],
+            "/h",
+            "collides-with-sibling-pattern"
+          ],
+          "expect": {
+            "value": 2
+          },
+          "fn": "detectEncodingAmbiguity.byReason",
+          "select": [
+            "length"
+          ]
+        },
+        {
+          "args": [
+            [
+              "/work/clients/acme",
+              "/work/clients-acme"
+            ],
+            "/h",
+            "collides-with-sibling-pattern"
+          ],
+          "expect": {
+            "value": "-work-clients-acme"
+          },
+          "fn": "detectEncodingAmbiguity.byReason",
+          "select": [
+            "0",
+            "encoded"
+          ]
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: detectEncodingAmbiguity > reports how many real project directories the encoded form currently matches, when given the listing",
+      "id": "projects.ambiguity.counts-existing-directories",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              "~/work/app.v1"
+            ],
+            "/h",
+            [
+              "-h-work-app-v1",
+              "-h-other"
+            ],
+            "matches 1 existing project directory name(s)"
+          ],
+          "expect": {
+            "value": true
+          },
+          "fn": "detectEncodingAmbiguity.firstDetailContains"
+        }
+      ]
+    },
+    {
+      "from": "resolve/projects.test.ts: detectEncodingAmbiguity > skips a fragment it cannot encode rather than throwing mid-report",
+      "id": "projects.ambiguity.skips-an-unencodable-fragment",
+      "kind": "function",
+      "steps": [
+        {
+          "args": [
+            [
+              "not-rooted"
+            ],
+            "/h"
+          ],
+          "expect": {
+            "value": []
+          },
+          "fn": "detectEncodingAmbiguity"
+        }
+      ]
+    }
+  ]
+}

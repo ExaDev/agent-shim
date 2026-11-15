@@ -1,11 +1,13 @@
 import type { CaseTable } from "../../conformance/runner/run.mjs";
 import { configTable } from "./config";
+import { resolveTable } from "./resolve";
 import { rootTable } from "./root";
 
 /** The area tables, one module per area of the source, so an extraction adds its functions in its own module and one line here. */
 const AREAS: readonly (readonly [string, CaseTable])[] = [
   ["root", rootTable],
   ["config", configTable],
+  ["resolve", resolveTable],
 ];
 
 /**
