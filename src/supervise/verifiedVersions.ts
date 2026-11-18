@@ -1,5 +1,5 @@
 /** The Claude Code versions the control plugin and the door's goal, compaction and turn routes were verified on end to end (`docs/rc-slash-commands.md`). A version on the list is gated through silently; how every other version is gated is `claudeCodeVersionGate`'s decision. */
-export const RC_SESSION_COMMAND_VERIFIED_VERSIONS: readonly string[] = ["2.1.319", "2.1.325"];
+export const RC_SESSION_COMMAND_VERIFIED_VERSIONS: readonly string[] = ["2.1.319", "2.1.325", "2.1.326"];
 
 /** A plain dotted-numeric release version such as `2.1.325`: what the gate lists and the launcher pins. Prereleases and builds are never release versions. */
 const RELEASE_VERSION = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u;
