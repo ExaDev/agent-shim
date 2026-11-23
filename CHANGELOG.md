@@ -1,3 +1,17 @@
+## [14.11.1](https://github.com/ExaDev/agent-shim/compare/v14.11.0...v14.11.1) (2026-11-23)
+
+### Documentation
+
+* remove references to a private repository and a client ([f2db6bd](https://github.com/ExaDev/agent-shim/commit/f2db6bd6cc5e5dd52d8bdbed2885dc5514fc74c4))
+
+### Tests
+
+* account for the tests this change rewords and name the listing limit ([1288fb7](https://github.com/ExaDev/agent-shim/commit/1288fb7f5d8eb92ce7e397918000b20cfbce0fd5))
+* bound both vitest calls of the suite listing and the deleted-test job from one budget ([7f5953c](https://github.com/ExaDev/agent-shim/commit/7f5953c9914311b3f67f97ba9945cfb02c4b3f73))
+* count the cases of one test as one account when deleted tests are checked ([7493009](https://github.com/ExaDev/agent-shim/commit/7493009c79aef2049cf0e5cf5e00d8b519f6ec15))
+* derive which pushes run the kept-tests guard from what the guard reads ([2dd6f84](https://github.com/ExaDev/agent-shim/commit/2dd6f8458b899d3fe3009ce3ffc178093f84f8e1))
+* move the resolver's tests into the corpus as function cases ([625e50d](https://github.com/ExaDev/agent-shim/commit/625e50db85734859f7778a4da0ea1106022da9ca))
+
 ## [14.11.0](https://github.com/ExaDev/agent-shim/compare/v14.10.0...v14.11.0) (2026-11-14)
 
 ### Features
