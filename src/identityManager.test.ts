@@ -136,12 +136,12 @@ describe("identityManager", () => {
   describe("runIdentityWizard", () => {
     it("creates the identity, a profile, and sets it as active when the user accepts every step", async () => {
       const prompts = scriptedIdentityPrompts(["create", "create", "work", ["history"]]);
-      const result = await runIdentityWizard(prompts, paths, "scienap", NO_KEYCHAIN);
+      const result = await runIdentityWizard(prompts, paths, "acme", NO_KEYCHAIN);
 
       expect(result).toBe(true);
-      expect(readIdentity(paths, "scienap")).toBeDefined();
-      expect(readActiveIdentity(paths)).toBe("scienap");
-      expect(readIdentity(paths, "scienap")?.defaultConfigProfile).toBe("work");
+      expect(readIdentity(paths, "acme")).toBeDefined();
+      expect(readActiveIdentity(paths)).toBe("acme");
+      expect(readIdentity(paths, "acme")?.defaultConfigProfile).toBe("work");
     });
 
     it("creates only the identity when the user skips profile creation", async () => {
