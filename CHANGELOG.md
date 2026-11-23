@@ -1,3 +1,9 @@
+## [14.12.0](https://github.com/ExaDev/agent-shim/compare/v14.11.1...v14.12.0) (2026-11-23)
+
+### Features
+
+* **rc:** verify the goal, compaction and turn verbs on Claude Code 2.1.326 2.1.327 2.1.328 2.1.329 ([d73ee4e](https://github.com/ExaDev/agent-shim/commit/d73ee4ee0218f937177c1ef2265c9b7459d5df78))
+
 ## [14.11.1](https://github.com/ExaDev/agent-shim/compare/v14.11.0...v14.11.1) (2026-11-23)
 
 ### Documentation
