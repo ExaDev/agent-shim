@@ -1045,7 +1045,8 @@ jobs:
       - name: Install Homebrew on Linux
         run: |
           if ! command -v brew >/dev/null 2>&1 && ! [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
-            /bin/bash -c "$(curl -fsSL --retry 6 --retry-delay 5 --retry-all-errors https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" </dev/null
+            curl -fsSL --retry 6 --retry-delay 5 --retry-all-errors -o "$RUNNER_TEMP/homebrew-install.sh" https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh
+            /bin/bash "$RUNNER_TEMP/homebrew-install.sh" </dev/null
           fi
           echo "/home/linuxbrew/.linuxbrew/bin" >> "$GITHUB_PATH"
       - uses: actions/checkout@v7
@@ -1254,7 +1255,8 @@ jobs:
         run: |
           scratch_dir="$RUNNER_TEMP/agent-shim-install-test"
           mkdir -p "$scratch_dir"
-          AGENT_SHIM_INSTALL_DIR="$scratch_dir" sh -c "$(curl -fsSL --retry 6 --retry-delay 5 --retry-all-errors "https://github.com/ExaDev/agent-shim/releases/download/${RELEASE_TAG}/install.sh")"
+          curl -fsSL --retry 6 --retry-delay 5 --retry-all-errors -o "$scratch_dir/install.sh" "https://github.com/ExaDev/agent-shim/releases/download/${RELEASE_TAG}/install.sh"
+          AGENT_SHIM_INSTALL_DIR="$scratch_dir" sh "$scratch_dir/install.sh"
           echo "$scratch_dir" >> "$GITHUB_PATH"
       - name: Check installed version matches the tag, and that claude is not installed by default
         run: |
@@ -1303,7 +1305,8 @@ jobs:
         run: |
           scratch_dir="$RUNNER_TEMP/agent-shim-install-test"
           mkdir -p "$scratch_dir"
-          AGENT_SHIM_INSTALL_DIR="$scratch_dir" sh -c "$(curl -fsSL --retry 6 --retry-delay 5 --retry-all-errors "https://github.com/ExaDev/agent-shim/releases/download/${RELEASE_TAG}/install.sh")"
+          curl -fsSL --retry 6 --retry-delay 5 --retry-all-errors -o "$scratch_dir/install.sh" "https://github.com/ExaDev/agent-shim/releases/download/${RELEASE_TAG}/install.sh"
+          AGENT_SHIM_INSTALL_DIR="$scratch_dir" sh "$scratch_dir/install.sh"
           echo "$scratch_dir" >> "$GITHUB_PATH"
       - name: Check installed version matches the tag, and that claude is not installed by default
         run: |

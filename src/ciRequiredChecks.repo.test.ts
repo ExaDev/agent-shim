@@ -194,15 +194,20 @@ describe("the release step", () => {
 });
 
 describe("the workflow's network fetches", () => {
-  /** Every `curl` a step runs, comments left out: a fetch that does not retry fails the job on one dropped stream, which turns main red for a failure that says nothing about the code. */
-  const fetches = fs
+  /** Every command of a step's script that runs `curl`, with its continuation lines joined and comments left out: a fetch that does not retry fails the job on one dropped stream, which turns main red for a failure that says nothing about the code. */
+  const commands = fs
     .readFileSync(path.join(__dirname, "..", ".github", "workflows", "ci.yml"), "utf8")
+    .replace(/\\\n\s*/g, " ")
     .split("\n")
-    .map((text, index) => ({ line: index + 1, text }))
-    .filter(({ text }) => /\bcurl\b/.test(text) && !text.trim().startsWith("#"));
+    .map((text, index) => ({ line: index + 1, text: text.trim() }))
+    .filter(({ text }) => /\bcurl\b/.test(text) && !text.startsWith("#"));
 
   it("retry transient errors", () => {
-    expect(fetches.length).toBeGreaterThan(0);
-    expect(fetches.filter(({ text }) => !text.includes("--retry")).map(({ line }) => line)).toEqual([]);
+    expect(commands.length).toBeGreaterThan(0);
+    expect(commands.filter(({ text }) => !/\s--retry(\s|$)/.test(text)).map(({ line }) => line)).toEqual([]);
+  });
+
+  it("never feed a retried download straight into a shell, since a retry after a dropped stream appends the whole body to the part already received", () => {
+    expect(commands.filter(({ text }) => /\$\(\s*curl\b/.test(text) && /\b(?:ba|z)?sh\b/.test(text)).map(({ line }) => line)).toEqual([]);
   });
 });
