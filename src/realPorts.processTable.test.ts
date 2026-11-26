@@ -59,6 +59,7 @@ describe.skipIf(process.platform === "win32")("realRunningAmong process-table re
     const [mine, theirs] = await Promise.all([realRunningAmong([process.pid]), realRunningAmong([process.ppid, gone])]);
     expect(mine).toEqual(new Set([process.pid]));
     expect(theirs.has(gone)).toBe(false);
+    expect(theirs.has(process.ppid)).toBe(true);
   });
 
   it("reports nothing for a read that cannot be started and reads again for the next caller", async () => {

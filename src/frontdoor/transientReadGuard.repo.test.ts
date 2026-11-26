@@ -12,6 +12,7 @@ const CLASSIFIERS = ["isTransientReadError(", "fileFaultCodeOf(", "unreachableCo
 /** The catches that need not classify a failure, by module and enclosing function, each with why. A catch around a JSON parse alone (`JSON`) is about the text read. */
 const ALLOWED: Readonly<Record<string, string>> = {
   "realPorts.ts realIsProcessAlive": "a process signal's answer, which is no file",
+  "realPorts.ts startProcessStateRead": "a ps that cannot be started, which is no file, and which reports no states exactly as a ps that fails does",
   "routeOverridesStore.ts revisionOf": "a stat that fails names no revision, so the file is read and nothing is kept",
   "frontdoor/providerReads.ts revisionOf": "a stat that fails names no revision, so the file is read and nothing is kept",
   "storedCatalogue.ts read": "hands the error itself to onUnreadable, and raiseUnreadableCatalogue, the one that answers for the file, keeps a failure of the moment's code",
