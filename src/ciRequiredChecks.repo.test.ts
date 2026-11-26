@@ -194,13 +194,20 @@ describe("the release step", () => {
 });
 
 describe("the workflow's network fetches", () => {
-  /** Every command of a step's script that runs `curl`, with its continuation lines joined and comments left out: a fetch that does not retry fails the job on one dropped stream, which turns main red for a failure that says nothing about the code. */
-  const commands = fs
-    .readFileSync(path.join(__dirname, "..", ".github", "workflows", "ci.yml"), "utf8")
-    .replace(/\\\n\s*/g, " ")
-    .split("\n")
-    .map((text, index) => ({ line: index + 1, text: text.trim() }))
-    .filter(({ text }) => /\bcurl\b/.test(text) && !text.startsWith("#"));
+  /** Every command of a step's script that runs `curl`, comments left out, with its continuation lines joined and the number of the physical line it starts on: a fetch that does not retry fails the job on one dropped stream, which turns main red for a failure that says nothing about the code. */
+  const commands: { readonly line: number; readonly text: string }[] = [];
+  let pending: { readonly line: number; text: string } | undefined;
+  for (const [index, physical] of fs.readFileSync(path.join(__dirname, "..", ".github", "workflows", "ci.yml"), "utf8").split("\n").entries()) {
+    const joined = pending === undefined ? { line: index + 1, text: physical.trim() } : { line: pending.line, text: `${pending.text} ${physical.trim()}` };
+    if (joined.text.endsWith("\\")) {
+      pending = { line: joined.line, text: joined.text.slice(0, -1).trimEnd() };
+      continue;
+    }
+    pending = undefined;
+    if (/\bcurl\b/.test(joined.text) && !joined.text.startsWith("#")) {
+      commands.push(joined);
+    }
+  }
 
   it("retry transient errors", () => {
     expect(commands.length).toBeGreaterThan(0);
@@ -209,8 +216,10 @@ describe("the workflow's network fetches", () => {
 
   it("never feed a retried download straight into a shell, since a retry after a dropped stream appends the whole body to the part already received", () => {
     /** A shell named as a command word: not part of a file name such as install.sh. */
-    const shell = String.raw`(?<![\w.-])(?:ba|z)?sh(?![\w.-])`;
-    const fedToShell = new RegExp(String.raw`<\(\s*curl\b|${shell}[^\n]*\$\(\s*curl\b|curl\b[^\n]*\|\s*${shell}`);
+    const shell = String.raw`(?<![\w.-])(?:ba|z|da)?sh(?![\w.-])`;
+    /** What may stand between a pipe and the shell it feeds: a wrapper command with its options, or a path. */
+    const wrapper = String.raw`(?:(?:sudo|env|exec|command|nice|time)\s+(?:-\S+\s+)*)*`;
+    const fedToShell = new RegExp(String.raw`<\(\s*curl\b|${shell}[^\n]*\$\(\s*curl\b|curl\b[^\n]*\|\s*${wrapper}(?:\S*/)?${shell}`);
     expect(commands.filter(({ text }) => fedToShell.test(text)).map(({ line }) => line)).toEqual([]);
   });
 });
