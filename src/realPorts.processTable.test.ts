@@ -2,7 +2,7 @@ import type * as ChildProcess from "node:child_process";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 
-const psRuns = vi.hoisted(() => ({ count: 0, active: 0, mostActive: 0 }));
+const psRuns = vi.hoisted(() => ({ count: 0, active: 0, mostActive: 0, throwNext: false }));
 
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof ChildProcess>();
@@ -10,6 +10,10 @@ vi.mock("node:child_process", async (importOriginal) => {
     ...actual,
     execFile: ((command: string, ...rest: readonly unknown[]) => {
       if (command === "ps") {
+        if (psRuns.throwNext) {
+          psRuns.throwNext = false;
+          throw new Error("spawn refused");
+        }
         psRuns.count += 1;
         psRuns.active += 1;
         psRuns.mostActive = Math.max(psRuns.mostActive, psRuns.active);
@@ -55,5 +59,16 @@ describe.skipIf(process.platform === "win32")("realRunningAmong process-table re
     const [mine, theirs] = await Promise.all([realRunningAmong([process.pid]), realRunningAmong([process.ppid, gone])]);
     expect(mine).toEqual(new Set([process.pid]));
     expect(theirs.has(gone)).toBe(false);
+  });
+
+  it("reports nothing for a read that cannot be started and reads again for the next caller", async () => {
+    psRuns.throwNext = true;
+    expect(await realRunningAmong([process.pid])).toEqual(new Set([process.pid]));
+    expect(await realRunningAmong([process.pid])).toEqual(new Set([process.pid]));
+  });
+
+  it("is not made to fail by a pid ps cannot read, and still answers for the others asking at once", async () => {
+    const [, good] = await Promise.all([realRunningAmong([0, -1]), realRunningAmong([process.pid, exitedPid()])]);
+    expect(good).toEqual(new Set([process.pid]));
   });
 });

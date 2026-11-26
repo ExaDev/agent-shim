@@ -402,7 +402,7 @@ interface ProcessStateWaiter {
 let processStateWaiters: ProcessStateWaiter[] = [];
 let processStateReadRunning = false;
 
-/** Starts one `ps` over every waiting caller's pids, if none is running and any caller waits, and hands every caller in that batch the states it read. The next batch starts when this read ends, so a caller always gets a read that began after it asked, and a burst of callers costs two reads at most. The read is bounded by the longest limit in its batch. */
+/** Starts one `ps` over every waiting caller's pids, if none is running and any caller waits, and hands every caller in that batch the states it read. The next batch starts when this read ends, so a caller always gets a read that began after it asked, and at most one `ps` runs at a time however many callers ask. The read is bounded by the longest limit in its batch, and only the `ps` run is bounded: a caller that asks while another read runs also waits for that read. A `ps` that cannot be started reports nothing, like one that fails. Only positive whole pids are passed on, since `ps` fails the whole read for any other. */
 function startProcessStateRead(): void {
   if (processStateReadRunning || processStateWaiters.length === 0) {
     return;
@@ -410,9 +410,9 @@ function startProcessStateRead(): void {
   const batch = processStateWaiters;
   processStateWaiters = [];
   processStateReadRunning = true;
-  const pids = [...new Set(batch.flatMap((waiter) => waiter.pids))];
+  const pids = [...new Set(batch.flatMap((waiter) => waiter.pids))].filter((pid) => Number.isInteger(pid) && pid > 0);
   const timeoutMs = Math.max(...batch.map((waiter) => waiter.timeoutMs));
-  execFile("ps", ["-o", "pid=,stat=", "-p", pids.map(String).join(",")], { encoding: "utf8", timeout: timeoutMs }, (_error, stdout) => {
+  const finish = (stdout: string): void => {
     const states = new Map<number, string>();
     for (const line of stdout.split("\n")) {
       const [pidText, stat] = line.trim().split(/\s+/);
@@ -425,10 +425,21 @@ function startProcessStateRead(): void {
       waiter.resolve(states);
     }
     startProcessStateRead();
-  });
+  };
+  if (pids.length === 0) {
+    finish("");
+    return;
+  }
+  try {
+    execFile("ps", ["-o", "pid=,stat=", "-p", pids.map(String).join(",")], { encoding: "utf8", timeout: timeoutMs }, (_error, stdout) => {
+      finish(stdout);
+    });
+  } catch {
+    finish("");
+  }
 }
 
-/** The state column `ps` reports for each of `pids` it knows, read without blocking the calling thread and shared with every other caller that asks while a read runs (see `startProcessStateRead`): `ps` is bounded by `timeoutMs`, and a run that fails or times out reports nothing, so no pid is then in the map. The map may hold pids other callers asked about. */
+/** The state column `ps` reports for each of `pids` it knows, read without blocking the calling thread and shared with every other caller that asks while a read runs (see `startProcessStateRead`): the `ps` run is bounded by `timeoutMs` (the longest of the callers sharing it), and a run that fails or times out reports nothing, so no pid is then in the map. The map may hold pids other callers asked about. */
 async function readProcessStates(pids: readonly number[], timeoutMs: number): Promise<ReadonlyMap<number, string>> {
   return await new Promise((resolve) => {
     processStateWaiters.push({ pids, timeoutMs, resolve });
