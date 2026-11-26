@@ -208,6 +208,9 @@ describe("the workflow's network fetches", () => {
   });
 
   it("never feed a retried download straight into a shell, since a retry after a dropped stream appends the whole body to the part already received", () => {
-    expect(commands.filter(({ text }) => /\$\(\s*curl\b/.test(text) && /\b(?:ba|z)?sh\b/.test(text)).map(({ line }) => line)).toEqual([]);
+    /** A shell named as a command word: not part of a file name such as install.sh. */
+    const shell = String.raw`(?<![\w.-])(?:ba|z)?sh(?![\w.-])`;
+    const fedToShell = new RegExp(String.raw`<\(\s*curl\b|${shell}[^\n]*\$\(\s*curl\b|curl\b[^\n]*\|\s*${shell}`);
+    expect(commands.filter(({ text }) => fedToShell.test(text)).map(({ line }) => line)).toEqual([]);
   });
 });
