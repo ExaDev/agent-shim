@@ -391,19 +391,48 @@ export function realFrontDoorLiveness(pids: readonly number[]): FrontDoorLivenes
   });
 }
 
-/** The state column `ps` reports for each of `pids` it knows, read without blocking the calling thread: `ps` is bounded by `timeoutMs`, and a run that fails or times out reports nothing, so no pid is then in the map. */
+/** A caller of `readProcessStates` waiting for a read that starts after it asked. */
+interface ProcessStateWaiter {
+  readonly pids: readonly number[];
+  readonly timeoutMs: number;
+  readonly resolve: (states: ReadonlyMap<number, string>) => void;
+}
+
+/** Callers waiting for the next read; whether a read is running now. At most one `ps` runs at a time, however many callers ask. */
+let processStateWaiters: ProcessStateWaiter[] = [];
+let processStateReadRunning = false;
+
+/** Starts one `ps` over every waiting caller's pids, if none is running and any caller waits, and hands every caller in that batch the states it read. The next batch starts when this read ends, so a caller always gets a read that began after it asked, and a burst of callers costs two reads at most. The read is bounded by the longest limit in its batch. */
+function startProcessStateRead(): void {
+  if (processStateReadRunning || processStateWaiters.length === 0) {
+    return;
+  }
+  const batch = processStateWaiters;
+  processStateWaiters = [];
+  processStateReadRunning = true;
+  const pids = [...new Set(batch.flatMap((waiter) => waiter.pids))];
+  const timeoutMs = Math.max(...batch.map((waiter) => waiter.timeoutMs));
+  execFile("ps", ["-o", "pid=,stat=", "-p", pids.map(String).join(",")], { encoding: "utf8", timeout: timeoutMs }, (_error, stdout) => {
+    const states = new Map<number, string>();
+    for (const line of stdout.split("\n")) {
+      const [pidText, stat] = line.trim().split(/\s+/);
+      if (stat !== undefined) {
+        states.set(Number(pidText), stat);
+      }
+    }
+    processStateReadRunning = false;
+    for (const waiter of batch) {
+      waiter.resolve(states);
+    }
+    startProcessStateRead();
+  });
+}
+
+/** The state column `ps` reports for each of `pids` it knows, read without blocking the calling thread and shared with every other caller that asks while a read runs (see `startProcessStateRead`): `ps` is bounded by `timeoutMs`, and a run that fails or times out reports nothing, so no pid is then in the map. The map may hold pids other callers asked about. */
 async function readProcessStates(pids: readonly number[], timeoutMs: number): Promise<ReadonlyMap<number, string>> {
   return await new Promise((resolve) => {
-    execFile("ps", ["-o", "pid=,stat=", "-p", pids.map(String).join(",")], { encoding: "utf8", timeout: timeoutMs }, (_error, stdout) => {
-      const states = new Map<number, string>();
-      for (const line of stdout.split("\n")) {
-        const [pidText, stat] = line.trim().split(/\s+/);
-        if (stat !== undefined) {
-          states.set(Number(pidText), stat);
-        }
-      }
-      resolve(states);
-    });
+    processStateWaiters.push({ pids, timeoutMs, resolve });
+    startProcessStateRead();
   });
 }
 
