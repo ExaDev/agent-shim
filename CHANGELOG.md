@@ -1,3 +1,14 @@
+## [14.12.1](https://github.com/ExaDev/agent-shim/compare/v14.12.0...v14.12.1) (2026-11-26)
+
+### Bug Fixes
+
+* keep the shared process-table read from hanging or failing on one bad pid ([6aa01eb](https://github.com/ExaDev/agent-shim/commit/6aa01ebf0eeffff2cb3eb276e4a59b266c6950d0)), references [#918](https://github.com/ExaDev/agent-shim/issues/918)
+* share one process-table read among concurrent running-process checks ([9a24bff](https://github.com/ExaDev/agent-shim/commit/9a24bff5c036fdf6859bacddedc1690e58275d70)), references [#918](https://github.com/ExaDev/agent-shim/issues/918)
+
+### Tests
+
+* name the unstartable ps catch in the transient-read guard and assert both callers answer ([f6f9d53](https://github.com/ExaDev/agent-shim/commit/f6f9d53302fb7c3f825a2b0ffb6be08381e07787)), references [#918](https://github.com/ExaDev/agent-shim/issues/918)
+
 ## [14.12.0](https://github.com/ExaDev/agent-shim/compare/v14.11.1...v14.12.0) (2026-11-23)
 
 ### Features
