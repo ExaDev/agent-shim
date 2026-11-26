@@ -192,3 +192,17 @@ describe("the release step", () => {
     expect(releaseSteps.map((step) => step.env?.HUSKY)).toEqual(["0"]);
   });
 });
+
+describe("the workflow's network fetches", () => {
+  /** Every `curl` a step runs, comments left out: a fetch that does not retry fails the job on one dropped stream, which turns main red for a failure that says nothing about the code. */
+  const fetches = fs
+    .readFileSync(path.join(__dirname, "..", ".github", "workflows", "ci.yml"), "utf8")
+    .split("\n")
+    .map((text, index) => ({ line: index + 1, text }))
+    .filter(({ text }) => /\bcurl\b/.test(text) && !text.trim().startsWith("#"));
+
+  it("retry transient errors", () => {
+    expect(fetches.length).toBeGreaterThan(0);
+    expect(fetches.filter(({ text }) => !text.includes("--retry")).map(({ line }) => line)).toEqual([]);
+  });
+});
