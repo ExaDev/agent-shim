@@ -17,6 +17,7 @@ describe("classifyEntries against the shipped map", () => {
     ["projects", "history"],
     ["todos", "history"],
     ["skills", "knowledge"],
+    ["output-styles", "knowledge"],
     ["CLAUDE.md", "knowledge"],
     ["settings.json", "settings"],
     ["settings.local.json", "settings"],

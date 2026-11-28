@@ -78,7 +78,7 @@ Every top-level entry in `~/.claude` is classified into one of five categories, 
 | `secret` | **Never** — hardcoded, cannot be overridden by any configuration layer | `.credentials.json`, `backups`, `settings.json.bak*` |
 | `runtime` | No | `daemon*`, `.git*`, `.DS_Store`, `mcp-needs-auth-cache.json`, `codex-quota.json`, `file-transfers`, `shell-snapshots`, `statsig`, `telemetry`, `stats-cache.json`, `usage-data`, `ide`, `cache`, `scheduled_tasks.lock`, `policy-limits.json*`, `remote-settings.json*`, `state` |
 | `history` | Yes | `projects`, `sessions`, `session-env`, `teams`, `tasks`, `todos`, `history.jsonl`, `transcripts`, `paste-cache`, `file-history`, `plans`, `workflows`, `jobs`, `debug`, `downloads`, `chrome` |
-| `knowledge` | Yes | `skills`, `agents`, `rules`, `memory`, `commands`, `plugins`, `hooks`, `AGENTS.md`, `CLAUDE.md`, `README.md` |
+| `knowledge` | Yes | `skills`, `output-styles`, `agents`, `rules`, `memory`, `commands`, `plugins`, `hooks`, `AGENTS.md`, `CLAUDE.md`, `README.md` |
 | `settings` | Yes | `settings.json`, `settings.local.json` |
 
 Sharing composes through a cascade (shipped defaults, then a user-global override, then the active configuration profile, then directory rules for `$PWD`, shallowest to deepest); a specific path override always outranks a category default regardless of which layer set it. A committed `.agent-shim.json` at a project's root makes this portable: anyone who clones the repo and runs `claude` inside it gets the same isolation rules with no local setup.

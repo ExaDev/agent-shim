@@ -39,6 +39,7 @@
   ],
   "knowledge": [
     "skills",
+    "output-styles",
     "agents",
     "rules",
     "memory",
