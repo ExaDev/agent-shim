@@ -96,7 +96,7 @@ Every top-level entry in `~/.claude` is classified into one of five categories, 
 | `secret` | **Never** — hardcoded, cannot be overridden by any configuration layer | `.credentials.json`, `backups` |
 | `runtime` | No | `daemon*`, `.git*`, `.DS_Store`, `mcp-needs-auth-cache.json`, `shell-snapshots`, `statsig`, `telemetry`, `stats-cache.json`, `usage-data`, `ide`, `cache`, `scheduled_tasks.lock`, `policy-limits.json*`, `remote-settings.json*`, `state` |
 | `history` | Yes | `projects`, `sessions`, `session-env`, `teams`, `tasks`, `todos`, `history.jsonl`, `transcripts`, `paste-cache`, `file-history`, `plans`, `workflows`, `jobs`, `debug`, `downloads`, `chrome` |
-| `knowledge` | Yes | `skills`, `agents`, `rules`, `memory`, `commands`, `plugins`, `hooks`, `AGENTS.md`, `CLAUDE.md`, `README.md` |
+| `knowledge` | Yes | `skills`, `output-styles`, `agents`, `rules`, `memory`, `commands`, `plugins`, `hooks`, `AGENTS.md`, `CLAUDE.md`, `README.md` |
 | `settings` | Yes | `settings.json`, `settings.local.json` |
 
 The default posture is "identities differ only in credentials": `knowledge`, `settings`, and `history` are all shared out of the box, and only `runtime` stays closed — not as a confidentiality boundary, but because daemon locks, PIDs, `.git` state, and IDE/shell snapshots are live per-process or per-machine artifacts that make no sense symlinked across two separate running identities. A configuration profile can close `history` (or `runtime`, or anything else) wholesale for a specific identity or directory — e.g. to keep a client engagement's sessions from leaking into a personal or internal identity — or share/hide individual items within an otherwise-closed category.
