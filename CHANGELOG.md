@@ -1,3 +1,19 @@
+## [14.12.2](https://github.com/ExaDev/agent-shim/compare/v14.12.1...v14.12.2) (2026-11-28)
+
+### Bug Fixes
+
+* **config:** share output-styles between identities as a knowledge entry ([8ae5562](https://github.com/ExaDev/agent-shim/commit/8ae55627ae6d6170c2ba6aa5ffec4006a3c91edc)), references [#922](https://github.com/ExaDev/agent-shim/issues/922)
+
+### Continuous Integration
+
+* download install scripts to a file before running them ([a405fc8](https://github.com/ExaDev/agent-shim/commit/a405fc8d311186c775a32a0950e34cac7e322d50)), references [#920](https://github.com/ExaDev/agent-shim/issues/920)
+* retry every network fetch in the workflow ([76e998f](https://github.com/ExaDev/agent-shim/commit/76e998f3a11047ef75ae73fafb7dee928e781ec7)), closes [#920](https://github.com/ExaDev/agent-shim/issues/920)
+
+### Tests
+
+* catch a download piped into a wrapped or pathed shell and report real line numbers ([72e1105](https://github.com/ExaDev/agent-shim/commit/72e1105d5c47a31e70dc087929bcf74d9d396ec6)), references [#920](https://github.com/ExaDev/agent-shim/issues/920)
+* catch a download piped or substituted into any shell form, and not a file name ending in .sh ([83e4900](https://github.com/ExaDev/agent-shim/commit/83e4900c77dc1b6cbde851abfc686ddac86f1014)), references [#920](https://github.com/ExaDev/agent-shim/issues/920)
+
 ## [14.12.1](https://github.com/ExaDev/agent-shim/compare/v14.12.0...v14.12.1) (2026-11-26)
 
 ### Bug Fixes
